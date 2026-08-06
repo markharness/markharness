@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+# Cargo.lock はバイナリクレートのためコミット対象（以下の行を削除済み）
+
+# Build / run artifacts
+check_output.txt
+report.json
+
+# Backup folders (internal development files)
+**/bkup/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
