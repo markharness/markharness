@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn generates_empty_list_for_empty_knowledge_dir() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
 
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
 
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn generates_single_testcase_from_one_feature_condition_expected() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
         write_feature(dir.path(), "player-jump", &["gameplay", "animation"]);
         write_condition(
             dir.path(),
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn generates_multiple_testcases_in_seq_order_for_multiple_expected_files() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
         write_feature(dir.path(), "player-jump", &["gameplay"]);
         write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
         write_expected(
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn sorts_testcases_by_id_across_multiple_features() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
         write_feature(dir.path(), "player-jump", &["gameplay"]);
         write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
         write_expected(
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn produces_no_testcase_for_condition_without_expected_files() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
         write_feature(dir.path(), "player-jump", &["gameplay"]);
         write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
 
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn generate_is_deterministic_across_repeated_runs() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
         write_feature(dir.path(), "player-jump", &["gameplay"]);
         write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
         write_expected(

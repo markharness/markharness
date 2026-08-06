@@ -15,11 +15,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Initialize the knowledge/generated/changes directory structure
-    Init {
-        #[arg(long)]
-        force: bool,
-    },
+    /// Initialize the UC1-UC8 physical directory structure
+    Init,
     /// Manage test knowledge under knowledge/
     #[command(subcommand)]
     Knowledge(KnowledgeCommand),
@@ -35,11 +32,11 @@ pub enum KnowledgeCommand {
 
 pub fn run(cli: Cli) -> io::Result<()> {
     match cli.command {
-        Command::Init { force } => {
+        Command::Init => {
             let root = env::current_dir()?;
-            init::run_init(&root, force)?;
+            init::run_init(&root)?;
             println!(
-                "initialized knowledge/, generated/, changes/ under {}",
+                "initialized knowledge/, axes/, generated/, executions/, changes/, schema/, tools/ under {}",
                 root.display()
             );
             Ok(())

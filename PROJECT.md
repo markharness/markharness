@@ -61,11 +61,13 @@ markharness は Git リポジトリ自身(ワーキングツリー・blob SHA・
 
 ## ディレクトリ構成
 
+`markharness init` は以下7ディレクトリ(論文 §3.5、UC1〜UC8の前提)を、存在しないものだけ作成する(既存ディレクトリ・ファイルはそのまま)。UC8(既存ツールからのインポート)は専用ディレクトリを持たず `knowledge/` に書き込む。
+
 ```text
 src/
 └── main.rs           # CLI エントリポイント
 
-knowledge/             # テスト知識(Test Designer が手動記述、UC1)
+knowledge/             # テスト知識(Test Designer が手動記述、UC1 / UC1b)
 └── <feature>/
     ├── feature.yaml
     └── <condition>/
@@ -73,11 +75,17 @@ knowledge/             # テスト知識(Test Designer が手動記述、UC1)
         └── expected/
             └── 001.yaml, 002.yaml, ...
 
+axes/                  # 横断的観点(Axis)のレジストリ(UC1、§3.1)
 generated/
-└── testcases.yaml     # knowledge/ から CI が決定的に再生成(UC2)
+└── testcases.yaml     # knowledge/ から CI が決定的に再生成(UC2 / UC3)
+
+executions/             # マイルストーンごとの実行結果(UC4)
 
 changes/
-└── <milestone>.yaml   # マイルストーン間の derived_from(ChangeEvent、UC5)
+└── <milestone>.yaml   # マイルストーン間の derived_from(ChangeEvent、UC5 / UC6)
+
+schema/                 # フォーマット・正規化ルール定義(UC7)
+tools/                  # 生成・検証スクリプト(UC2 / UC5 / UC6 / UC7)
 
 docs/                  # 設計ドキュメント(論文・運用イメージ・生成アルゴリズム設計)
 ```

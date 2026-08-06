@@ -6,39 +6,42 @@
 
 ## 1. 実装済みコマンド
 
-### 1.1 `markharness init` — プロジェクトの初期化(UC1 の前提)
+### 1.1 `markharness init` — プロジェクトの初期化(UC1〜UC8 の前提)
 
 ```text
-markharness init [--force]
+markharness init
 ```
 
-**用途**: `knowledge/`・`generated/`・`changes/` の3ディレクトリを作成し、以降のコマンドが動作できる状態にする。
+**用途**: UC1〜UC8を支える物理ディレクトリ構成(論文 §3.5, 244-273行目)のうち、対象リポジトリ上に作成が必要な7ディレクトリを作成し、以降のコマンドが動作できる状態にする。
 
-**オプション**
-
-| オプション | 説明 |
+| ディレクトリ | 対応UC |
 |---|---|
-| `--force` | 既に初期化済みでもエラーにせず再実行する。既存の `knowledge/` 配下のファイルは削除・上書きされない(存在しないディレクトリのみ作成)。 |
+| `knowledge/` | UC1(知識を記述する)/ UC1b(forked_from を手動記述する) |
+| `axes/` | UC1(横断的観点 Axis のレジストリ、§3.1) |
+| `generated/` | UC2(TestCaseを決定的生成する)/ UC3(生成物をレビュー・マージする) |
+| `executions/` | UC4(マイルストーンをタグ付けする、実行結果の記録先) |
+| `changes/` | UC5(ChangeEventを自動計算する)/ UC6(バックフィルを非同期実行する) |
+| `schema/` | UC7(idキャッシュを破棄・再構築する。フォーマット・正規化ルール定義) |
+| `tools/` | UC2/UC5/UC6/UC7 で使う生成・検証スクリプト置き場 |
+
+UC8(既存ツールからのインポート)は専用ディレクトリを持たず、変換結果を `knowledge/` に書き込む想定のため対象外。
 
 **動作**
 
-- 3ディレクトリのいずれかが既に存在し、`--force` を指定しなかった場合はエラーで終了する(誤って既存プロジェクトを壊さないためのフェイルセーフ)。
+- 各ディレクトリについて、存在しなければ作成し、既に存在すればそのまま(中身も含めて)何もしない冪等な処理。すでに初期化済みのプロジェクトで再実行してもエラーにはならず、不足しているディレクトリだけが追加で作成される。
 - 成功すると作成先のパスを標準出力に表示する。
 
 **使用例**
 
 ```console
 $ markharness init
-initialized knowledge/, generated/, changes/ under /path/to/project
+initialized knowledge/, axes/, generated/, executions/, changes/, schema/, tools/ under /path/to/project
 
 $ markharness init
-error: /path/to/project/knowledge already exists; pass --force to re-initialize
-
-$ markharness init --force
-initialized knowledge/, generated/, changes/ under /path/to/project
+initialized knowledge/, axes/, generated/, executions/, changes/, schema/, tools/ under /path/to/project
 ```
 
-**ユースケース対応**: どのUCにも明示的には現れないが、UC1(知識を記述する)を開始する前提条件を満たすための補助コマンド。
+**ユースケース対応**: どのUCにも明示的には現れないが、UC1〜UC8の全ユースケースを開始する前提条件を満たすための補助コマンド。
 
 ---
 

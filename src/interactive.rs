@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn creates_new_feature_condition_and_expected_from_scratch() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
 
         run_with_input(
             dir.path(),
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn reuses_existing_feature_and_skips_axis_prompt() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
         run_with_input(
             dir.path(),
             "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn reuses_existing_condition_and_skips_summary_prompt() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
         run_with_input(
             dir.path(),
             "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn reprompts_on_empty_expected_result_input() {
         let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path(), false).unwrap();
+        crate::init::run_init(dir.path()).unwrap();
 
         run_with_input(
             dir.path(),
