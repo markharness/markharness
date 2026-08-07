@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::generate;
 use crate::init;
 use crate::interactive;
+use crate::verify;
 
 #[derive(Parser)]
 #[command(name = "markharness")]
@@ -25,8 +26,10 @@ pub enum Command {
     /// Manage test knowledge under knowledge/
     #[command(subcommand)]
     Knowledge(KnowledgeCommand),
-    /// Deterministically (re)generate generated/testcases.yaml from knowledge/
+    /// Deterministically (re)generate generated/testcases/*.yml from knowledge/
     Generate,
+    /// Verify that generated/testcases/*.yml matches a fresh regeneration from knowledge/ (UC3 CI check)
+    Verify,
 }
 
 #[derive(Subcommand)]
@@ -66,15 +69,41 @@ pub fn run(cli: Cli) -> io::Result<()> {
         Command::Generate => {
             let root = env::current_dir()?;
             let testcases = generate::generate_testcases(&root.join("knowledge"))?;
-            let yaml = generate::serialize_testcases(&testcases);
-            let generated_dir = root.join("generated");
-            std::fs::create_dir_all(&generated_dir)?;
-            std::fs::write(generated_dir.join("testcases.yaml"), yaml)?;
+            let testcases_dir = root.join("generated").join("testcases");
+            if testcases_dir.is_dir() {
+                std::fs::remove_dir_all(&testcases_dir)?;
+            }
+            std::fs::create_dir_all(&testcases_dir)?;
+            for testcase in &testcases {
+                let file_name = format!("{}.yml", testcase.file_stem());
+                std::fs::write(
+                    testcases_dir.join(file_name),
+                    generate::serialize_testcase(testcase),
+                )?;
+            }
             println!(
-                "generated {} testcase(s) into generated/testcases.yaml",
+                "generated {} testcase(s) into generated/testcases/",
                 testcases.len()
             );
             Ok(())
+        }
+        Command::Verify => {
+            let root = env::current_dir()?;
+            let diffs = verify::diff_generated_testcases(&root)?;
+            if diffs.is_empty() {
+                println!("generated/testcases/ is up to date with knowledge/");
+                Ok(())
+            } else {
+                for diff in &diffs {
+                    let label = match diff.kind {
+                        verify::DiffKind::Added => "added",
+                        verify::DiffKind::Removed => "removed",
+                        verify::DiffKind::Changed => "changed",
+                    };
+                    println!("{label}: generated/testcases/{}", diff.file_name);
+                }
+                std::process::exit(1);
+            }
         }
     }
 }

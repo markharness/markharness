@@ -2,16 +2,32 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::knowledge::{parse_condition, parse_expected_result, parse_feature};
+use serde::Serialize;
 
-#[derive(Debug, PartialEq, Eq)]
+use crate::knowledge::{parse_behavior, parse_condition, parse_expected_result, parse_feature};
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct GeneratedFrom {
+    pub feature: String,
+    pub behavior: String,
+    pub condition: String,
+    pub expected_results: Vec<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct TestCase {
-    pub id: String,
-    pub feature_id: String,
-    pub condition_id: String,
-    pub axis: Vec<String>,
+    pub case_id: String,
+    pub generated_from: GeneratedFrom,
     pub title: String,
-    pub expected_result: String,
+    pub steps: Vec<String>,
+    pub expected: Vec<String>,
+}
+
+impl TestCase {
+    /// The base name (without extension) used for `generated/testcases/<file_stem>.yml`.
+    pub fn file_stem(&self) -> &str {
+        &self.generated_from.condition
+    }
 }
 
 fn sorted_subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
@@ -27,11 +43,13 @@ fn sorted_subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(dirs)
 }
 
-fn find_condition_dirs(feature_dir: &Path) -> io::Result<Vec<PathBuf>> {
+/// Recursively searches `root` for directories directly containing `marker_file`,
+/// stopping the search along a branch as soon as a match is found.
+fn find_dirs_with_marker(root: &Path, marker_file: &str) -> io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
-    let mut stack = vec![feature_dir.to_path_buf()];
+    let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        if dir.join("condition.yaml").is_file() {
+        if dir.join(marker_file).is_file() {
             found.push(dir);
             continue;
         }
@@ -47,70 +65,68 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
     let mut testcases = Vec::new();
 
     for feature_dir in sorted_subdirs(knowledge_root)? {
-        let feature_path = feature_dir.join("feature.yaml");
+        let feature_path = feature_dir.join("feature.yml");
         if !feature_path.is_file() {
             continue;
         }
         let feature = parse_feature(&fs::read_to_string(&feature_path)?)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        for condition_dir in find_condition_dirs(&feature_dir)? {
-            let condition_path = condition_dir.join("condition.yaml");
-            let condition = parse_condition(&fs::read_to_string(&condition_path)?)
+        for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
+            let behavior_path = behavior_dir.join("behavior.yml");
+            let behavior = parse_behavior(&fs::read_to_string(&behavior_path)?)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-            let expected_dir = condition_dir.join("expected");
-            if !expected_dir.is_dir() {
-                continue;
-            }
-            let mut expected_paths: Vec<PathBuf> = fs::read_dir(&expected_dir)?
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.path())
-                .filter(|path| path.is_file())
-                .collect();
-            expected_paths.sort();
-
-            for (index, expected_path) in expected_paths.into_iter().enumerate() {
-                let seq = index + 1;
-                let expected = parse_expected_result(&fs::read_to_string(&expected_path)?)
+            for condition_dir in find_dirs_with_marker(&behavior_dir, "condition.yml")? {
+                let condition_path = condition_dir.join("condition.yml");
+                let condition = parse_condition(&fs::read_to_string(&condition_path)?)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
+                let expected_dir = condition_dir.join("expected");
+                if !expected_dir.is_dir() {
+                    continue;
+                }
+                let mut expected_paths: Vec<PathBuf> = fs::read_dir(&expected_dir)?
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_file())
+                    .collect();
+                expected_paths.sort();
+                if expected_paths.is_empty() {
+                    continue;
+                }
+
+                let mut expected_results = Vec::new();
+                let mut expected_texts = Vec::new();
+                for expected_path in &expected_paths {
+                    let expected = parse_expected_result(&fs::read_to_string(expected_path)?)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    expected_results.push(expected.id);
+                    expected_texts.push(expected.description);
+                }
+
                 testcases.push(TestCase {
-                    id: format!("{}-{}-{:03}", feature.id, condition.id, seq),
-                    feature_id: feature.id.clone(),
-                    condition_id: condition.id.clone(),
-                    axis: feature.axis.clone(),
-                    title: format!("{} (#{})", condition.summary, seq),
-                    expected_result: format!(
-                        "{} (condition: {})",
-                        expected.result, condition.summary
-                    ),
+                    case_id: format!("tc-{}-001", condition.id),
+                    generated_from: GeneratedFrom {
+                        feature: feature.id.clone(),
+                        behavior: behavior.id.clone(),
+                        condition: condition.id.clone(),
+                        expected_results,
+                    },
+                    title: condition.description,
+                    steps: vec![behavior.description.clone()],
+                    expected: expected_texts,
                 });
             }
         }
     }
 
-    testcases.sort_by(|a, b| a.id.cmp(&b.id));
+    testcases.sort_by(|a, b| a.case_id.cmp(&b.case_id));
     Ok(testcases)
 }
 
-pub fn serialize_testcases(testcases: &[TestCase]) -> String {
-    if testcases.is_empty() {
-        return "[]\n".to_string();
-    }
-    let mut out = String::new();
-    for tc in testcases {
-        out.push_str(&format!("- id: {}\n", tc.id));
-        out.push_str(&format!("  feature_id: {}\n", tc.feature_id));
-        out.push_str(&format!("  condition_id: {}\n", tc.condition_id));
-        out.push_str("  axis:\n");
-        for a in &tc.axis {
-            out.push_str(&format!("    - {a}\n"));
-        }
-        out.push_str(&format!("  title: {}\n", tc.title));
-        out.push_str(&format!("  expected_result: {}\n", tc.expected_result));
-    }
-    out
+pub fn serialize_testcase(testcase: &TestCase) -> String {
+    serde_yaml_ng::to_string(testcase).expect("TestCase serialization is infallible")
 }
 
 #[cfg(test)]
@@ -121,20 +137,42 @@ mod tests {
     fn write_feature(root: &std::path::Path, feature: &str, axis: &[&str]) {
         let dir = root.join("knowledge").join(feature);
         fs::create_dir_all(&dir).unwrap();
-        let axis_lines: String = axis.iter().map(|a| format!("  - {a}\n")).collect();
+        let axis_line = axis.join(", ");
         fs::write(
-            dir.join("feature.yaml"),
-            format!("id: {feature}\nkind: feature\naxis:\n{axis_lines}"),
+            dir.join("feature.yml"),
+            format!("id: {feature}\nlabel: {feature}\naxis: [{axis_line}]\n"),
         )
         .unwrap();
     }
 
-    fn write_condition(root: &std::path::Path, feature: &str, condition: &str, summary: &str) {
-        let dir = root.join("knowledge").join(feature).join(condition);
+    fn write_behavior(root: &std::path::Path, feature: &str, behavior: &str, description: &str) {
+        let dir = root.join("knowledge").join(feature).join(behavior);
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            dir.join("condition.yaml"),
-            format!("id: {condition}\nkind: condition\nsummary: {summary}\n"),
+            dir.join("behavior.yml"),
+            format!(
+                "id: {behavior}\nfeature: {feature}\naxis: [ui]\ndescription: |\n  {description}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_condition(
+        root: &std::path::Path,
+        feature: &str,
+        behavior: &str,
+        condition: &str,
+        description: &str,
+    ) {
+        let dir = root
+            .join("knowledge")
+            .join(feature)
+            .join(behavior)
+            .join(condition);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("condition.yml"),
+            format!("id: {condition}\nbehavior: {behavior}\ndescription: |\n  {description}\n"),
         )
         .unwrap();
     }
@@ -142,19 +180,22 @@ mod tests {
     fn write_expected(
         root: &std::path::Path,
         feature: &str,
+        behavior: &str,
         condition: &str,
         seq: &str,
-        result: &str,
+        id: &str,
+        description: &str,
     ) {
         let dir = root
             .join("knowledge")
             .join(feature)
+            .join(behavior)
             .join(condition)
             .join("expected");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            dir.join(format!("{seq}.yaml")),
-            format!("id: placeholder\nkind: expected-result\nresult: {result}\n"),
+            dir.join(format!("{seq}.yml")),
+            format!("id: {id}\ncondition: {condition}\ndescription: |\n  {description}\n"),
         )
         .unwrap();
     }
@@ -170,112 +211,176 @@ mod tests {
     }
 
     #[test]
-    fn generates_single_testcase_from_one_feature_condition_expected() {
+    fn generates_single_testcase_aggregating_all_expected_files_under_one_condition() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "player-jump", &["gameplay", "animation"]);
+        write_feature(dir.path(), "todo", &["ui", "data"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
         write_condition(
             dir.path(),
-            "player-jump",
-            "jump-ground",
-            "Jump from the ground and land",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
         );
         write_expected(
             dir.path(),
-            "player-jump",
-            "jump-ground",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
             "001",
-            "lands safely",
+            "todo-add-task-empty-input-001",
+            "Shows a validation error.",
         );
 
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
 
         assert_eq!(testcases.len(), 1);
         let tc = &testcases[0];
-        assert_eq!(tc.id, "player-jump-jump-ground-001");
-        assert_eq!(tc.feature_id, "player-jump");
-        assert_eq!(tc.condition_id, "jump-ground");
+        assert_eq!(tc.case_id, "tc-todo-add-task-empty-input-001");
+        assert_eq!(tc.generated_from.feature, "todo");
+        assert_eq!(tc.generated_from.behavior, "todo-add-task");
+        assert_eq!(tc.generated_from.condition, "todo-add-task-empty-input");
         assert_eq!(
-            tc.axis,
-            vec!["gameplay".to_string(), "animation".to_string()]
+            tc.generated_from.expected_results,
+            vec!["todo-add-task-empty-input-001".to_string()]
         );
-        assert_eq!(tc.title, "Jump from the ground and land (#1)");
-        assert_eq!(
-            tc.expected_result,
-            "lands safely (condition: Jump from the ground and land)"
-        );
+        assert_eq!(tc.title, "Title is empty.\n");
+        assert_eq!(tc.steps, vec!["User adds a task.\n".to_string()]);
+        assert_eq!(tc.expected, vec!["Shows a validation error.\n".to_string()]);
     }
 
     #[test]
-    fn generates_multiple_testcases_in_seq_order_for_multiple_expected_files() {
+    fn aggregates_multiple_expected_files_into_a_single_testcase() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "player-jump", &["gameplay"]);
-        write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
-        write_expected(
+        write_feature(dir.path(), "todo", &["ui"]);
+        write_behavior(
             dir.path(),
-            "player-jump",
-            "jump-ground",
-            "001",
-            "lands safely",
+            "todo",
+            "todo-complete-task",
+            "User checks a task.",
         );
-        write_expected(
-            dir.path(),
-            "player-jump",
-            "jump-ground",
-            "002",
-            "falls over",
-        );
-
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
-
-        assert_eq!(testcases.len(), 2);
-        assert_eq!(testcases[0].id, "player-jump-jump-ground-001");
-        assert_eq!(testcases[1].id, "player-jump-jump-ground-002");
-    }
-
-    #[test]
-    fn sorts_testcases_by_id_across_multiple_features() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "player-jump", &["gameplay"]);
-        write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
-        write_expected(
-            dir.path(),
-            "player-jump",
-            "jump-ground",
-            "001",
-            "lands safely",
-        );
-
-        write_feature(dir.path(), "enemy-attack", &["combat"]);
         write_condition(
             dir.path(),
-            "enemy-attack",
-            "melee-range",
-            "Attack in melee range",
+            "todo",
+            "todo-complete-task",
+            "todo-complete-task-toggle-done",
+            "Task is unchecked.",
         );
         write_expected(
             dir.path(),
-            "enemy-attack",
-            "melee-range",
+            "todo",
+            "todo-complete-task",
+            "todo-complete-task-toggle-done",
             "001",
-            "deals damage",
+            "todo-complete-task-toggle-done-001",
+            "Task becomes done.",
+        );
+        write_expected(
+            dir.path(),
+            "todo",
+            "todo-complete-task",
+            "todo-complete-task-toggle-done",
+            "002",
+            "todo-complete-task-toggle-done-002",
+            "completedAt is recorded.",
+        );
+
+        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+
+        assert_eq!(testcases.len(), 1);
+        let tc = &testcases[0];
+        assert_eq!(tc.case_id, "tc-todo-complete-task-toggle-done-001");
+        assert_eq!(
+            tc.generated_from.expected_results,
+            vec![
+                "todo-complete-task-toggle-done-001".to_string(),
+                "todo-complete-task-toggle-done-002".to_string(),
+            ]
+        );
+        assert_eq!(
+            tc.expected,
+            vec![
+                "Task becomes done.\n".to_string(),
+                "completedAt is recorded.\n".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sorts_testcases_by_case_id_across_multiple_features() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_feature(dir.path(), "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_condition(
+            dir.path(),
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+        );
+        write_expected(
+            dir.path(),
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "001",
+            "todo-add-task-empty-input-001",
+            "Shows a validation error.",
+        );
+
+        write_feature(dir.path(), "enemy", &["combat"]);
+        write_behavior(dir.path(), "enemy", "enemy-attack", "Enemy attacks.");
+        write_condition(
+            dir.path(),
+            "enemy",
+            "enemy-attack",
+            "enemy-attack-melee-range",
+            "Enemy is in melee range.",
+        );
+        write_expected(
+            dir.path(),
+            "enemy",
+            "enemy-attack",
+            "enemy-attack-melee-range",
+            "001",
+            "enemy-attack-melee-range-001",
+            "Deals damage.",
         );
 
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
 
         assert_eq!(testcases.len(), 2);
-        assert_eq!(testcases[0].id, "enemy-attack-melee-range-001");
-        assert_eq!(testcases[1].id, "player-jump-jump-ground-001");
+        assert_eq!(testcases[0].case_id, "tc-enemy-attack-melee-range-001");
+        assert_eq!(testcases[1].case_id, "tc-todo-add-task-empty-input-001");
     }
 
     #[test]
     fn produces_no_testcase_for_condition_without_expected_files() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "player-jump", &["gameplay"]);
-        write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
+        write_feature(dir.path(), "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_condition(
+            dir.path(),
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+        );
+
+        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+
+        assert!(testcases.is_empty());
+    }
+
+    #[test]
+    fn produces_no_testcase_for_feature_without_behavior() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_feature(dir.path(), "todo", &["ui"]);
 
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
 
@@ -286,33 +391,80 @@ mod tests {
     fn generate_is_deterministic_across_repeated_runs() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "player-jump", &["gameplay"]);
-        write_condition(dir.path(), "player-jump", "jump-ground", "Jump and land");
-        write_expected(
+        write_feature(dir.path(), "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_condition(
             dir.path(),
-            "player-jump",
-            "jump-ground",
-            "001",
-            "lands safely",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
         );
         write_expected(
             dir.path(),
-            "player-jump",
-            "jump-ground",
-            "002",
-            "falls over",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "001",
+            "todo-add-task-empty-input-001",
+            "Shows a validation error.",
         );
 
-        let first =
-            serialize_testcases(&generate_testcases(&dir.path().join("knowledge")).unwrap());
-        let second =
-            serialize_testcases(&generate_testcases(&dir.path().join("knowledge")).unwrap());
+        let first: Vec<String> = generate_testcases(&dir.path().join("knowledge"))
+            .unwrap()
+            .iter()
+            .map(serialize_testcase)
+            .collect();
+        let second: Vec<String> = generate_testcases(&dir.path().join("knowledge"))
+            .unwrap()
+            .iter()
+            .map(serialize_testcase)
+            .collect();
 
         assert_eq!(first, second);
     }
 
     #[test]
-    fn serializes_empty_testcase_list_as_empty_yaml_array() {
-        assert_eq!(serialize_testcases(&[]), "[]\n");
+    fn serialized_testcase_contains_no_leading_comment() {
+        let testcase = TestCase {
+            case_id: "tc-todo-add-task-empty-input-001".to_string(),
+            generated_from: GeneratedFrom {
+                feature: "todo".to_string(),
+                behavior: "todo-add-task".to_string(),
+                condition: "todo-add-task-empty-input".to_string(),
+                expected_results: vec!["todo-add-task-empty-input-001".to_string()],
+            },
+            title: "Title is empty.".to_string(),
+            steps: vec!["User adds a task.".to_string()],
+            expected: vec!["Shows a validation error.".to_string()],
+        };
+
+        let yaml = serialize_testcase(&testcase);
+
+        assert!(!yaml.starts_with('#'));
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(
+            parsed["case_id"].as_str(),
+            Some("tc-todo-add-task-empty-input-001")
+        );
+        assert_eq!(parsed["generated_from"]["feature"].as_str(), Some("todo"));
+    }
+
+    #[test]
+    fn file_stem_matches_condition_id() {
+        let testcase = TestCase {
+            case_id: "tc-todo-add-task-empty-input-001".to_string(),
+            generated_from: GeneratedFrom {
+                feature: "todo".to_string(),
+                behavior: "todo-add-task".to_string(),
+                condition: "todo-add-task-empty-input".to_string(),
+                expected_results: vec!["todo-add-task-empty-input-001".to_string()],
+            },
+            title: "Title is empty.".to_string(),
+            steps: vec!["User adds a task.".to_string()],
+            expected: vec!["Shows a validation error.".to_string()],
+        };
+
+        assert_eq!(testcase.file_stem(), "todo-add-task-empty-input");
     }
 }

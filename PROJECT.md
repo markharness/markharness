@@ -14,7 +14,7 @@
 | 主要機能 | 右の一覧を参照 |
 
 - `knowledge/**/{feature,condition,expected/*}.yaml` へのテスト知識の手動記述(UC1)
-- Feature + Condition からの `TestCase` 決定的生成と CI 差分検証(`generated/testcases.yaml`、UC2/UC3)
+- Feature + Behavior + Condition からの `TestCase` 決定的生成(`markharness generate`)と CI 差分検証(`markharness verify`、`generated/testcases/*.yml`、UC2/UC3)
 - マイルストーンタグ間の `ChangeEvent`(`derived_from`)自動計算 — blob SHA 比較 + `git merge-base`(UC5、核心的貢献)
 - 大規模既存リポジトリ向けの非同期・優先度付きバックフィル(`git notes` で進捗管理、UC6)
 - id 解決キャッシュの破棄・再構築(UC7)、既存 TMS(TestRail / Xray 等)からのインポート(UC8)
@@ -69,15 +69,18 @@ src/
 
 knowledge/             # テスト知識(Test Designer が手動記述、UC1 / UC1b)
 └── <feature>/
-    ├── feature.yaml
-    └── <condition>/
-        ├── condition.yaml
-        └── expected/
-            └── 001.yaml, 002.yaml, ...
+    ├── feature.yml
+    └── <behavior>/
+        ├── behavior.yml
+        └── <condition>/
+            ├── condition.yml
+            └── expected/
+                └── 001.yml, 002.yml, ...
 
 axes/                  # 横断的観点(Axis)のレジストリ(UC1、§3.1)
 generated/
-└── testcases.yaml     # knowledge/ から CI が決定的に再生成(UC2 / UC3)
+└── testcases/
+    └── <condition>.yml  # knowledge/ から CI が決定的に再生成(1 Condition = 1 ファイル、UC2 / UC3)
 
 executions/             # マイルストーンごとの実行結果(UC4)
 
@@ -98,5 +101,5 @@ PR を作成する前に以下をすべて満たすこと:
 - [ ] Lint エラーゼロ(`cargo clippy --all-targets -- -D warnings`)
 - [ ] フォーマット済み(`cargo fmt --check`)
 - [ ] `cargo audit` で脆弱性なし
-- [ ] `generated/testcases.yaml` 等の生成物が `knowledge/` の内容と一致(決定的生成の再検証)
+- [ ] `generated/testcases/*.yml` が `knowledge/` の内容と一致(`markharness verify` で再検証)
 - [ ] コード・ログ・チャット出力にシークレットが含まれない

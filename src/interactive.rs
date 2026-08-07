@@ -3,9 +3,9 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use crate::knowledge::{
-    Condition, ExpectedResult, Feature, contains_non_ascii, is_valid_slug,
-    normalize_slug_candidate, romanize_label, serialize_condition, serialize_expected_result,
-    serialize_feature, strip_redundant_condition_prefix,
+    Behavior, Condition, ExpectedResult, Feature, contains_non_ascii, is_valid_slug,
+    normalize_slug_candidate, romanize_label, serialize_behavior, serialize_condition,
+    serialize_expected_result, serialize_feature, strip_redundant_condition_prefix,
 };
 
 fn list_candidate_ids(dir: &Path, marker_file: &str) -> Vec<String> {
@@ -51,7 +51,7 @@ fn prompt_id_or_label<R: BufRead, W: Write>(
     writer: &mut W,
     label: &str,
     candidates: &[String],
-) -> io::Result<(String, Option<String>)> {
+) -> io::Result<(String, String)> {
     for (i, id) in candidates.iter().enumerate() {
         writeln!(writer, "  {}) {}", i + 1, id)?;
     }
@@ -61,11 +61,12 @@ fn prompt_id_or_label<R: BufRead, W: Write>(
             && n >= 1
             && n <= candidates.len()
         {
-            return Ok((candidates[n - 1].clone(), None));
+            let id = candidates[n - 1].clone();
+            return Ok((id.clone(), id));
         }
         if !contains_non_ascii(&value) {
             if is_valid_slug(&value) {
-                return Ok((value, None));
+                return Ok((value.clone(), value));
             }
             writeln!(
                 writer,
@@ -103,8 +104,21 @@ fn prompt_id_or_label<R: BufRead, W: Write>(
             )?;
             continue;
         }
-        return Ok((final_id, Some(value)));
+        return Ok((final_id, value));
     }
+}
+
+fn prompt_axis<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    label: &str,
+) -> io::Result<Vec<String>> {
+    let axis_line = prompt_line(reader, writer, label)?;
+    Ok(axis_line
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
 }
 
 pub fn run_add<R: BufRead, W: Write>(
@@ -114,7 +128,7 @@ pub fn run_add<R: BufRead, W: Write>(
 ) -> io::Result<()> {
     let knowledge_root = root.join("knowledge");
 
-    let feature_candidates = list_candidate_ids(&knowledge_root, "feature.yaml");
+    let feature_candidates = list_candidate_ids(&knowledge_root, "feature.yml");
     let (feature_id, feature_label) = prompt_id_or_label(
         reader,
         writer,
@@ -122,58 +136,86 @@ pub fn run_add<R: BufRead, W: Write>(
         &feature_candidates,
     )?;
     let feature_dir = knowledge_root.join(&feature_id);
-    let feature_path = feature_dir.join("feature.yaml");
+    let feature_path = feature_dir.join("feature.yml");
     if feature_path.exists() {
         writeln!(writer, "既存のFeature '{feature_id}' を再利用します。")?;
     } else {
-        let axis_line = prompt_line(
+        let axis = prompt_axis(
             reader,
             writer,
             "Axis (comma separated, e.g. ui, validation): ",
         )?;
-        let axis: Vec<String> = axis_line
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
         fs::create_dir_all(&feature_dir)?;
         let feature = Feature {
             id: feature_id.clone(),
-            axis,
             label: feature_label,
+            axis,
+            description: None,
         };
         fs::write(&feature_path, serialize_feature(&feature))?;
     }
 
-    let condition_candidates = list_candidate_ids(&feature_dir, "condition.yaml");
-    let (raw_condition_id, condition_label) = prompt_id_or_label(
+    let behavior_candidates = list_candidate_ids(&feature_dir, "behavior.yml");
+    let (behavior_id, _behavior_label) = prompt_id_or_label(
+        reader,
+        writer,
+        "Behavior name (e.g. add-task): ",
+        &behavior_candidates,
+    )?;
+    let behavior_dir = feature_dir.join(&behavior_id);
+    let behavior_path = behavior_dir.join("behavior.yml");
+    if behavior_path.exists() {
+        writeln!(writer, "既存のBehavior '{behavior_id}' を再利用します。")?;
+    } else {
+        let axis = prompt_axis(
+            reader,
+            writer,
+            "Behavior axis (comma separated, e.g. ui, validation): ",
+        )?;
+        let description = prompt_line(
+            reader,
+            writer,
+            "Behavior description (e.g. User adds a new task to the list.): ",
+        )?;
+        fs::create_dir_all(&behavior_dir)?;
+        let behavior = Behavior {
+            id: behavior_id.clone(),
+            feature: feature_id.clone(),
+            axis,
+            description,
+        };
+        fs::write(&behavior_path, serialize_behavior(&behavior))?;
+    }
+
+    let condition_candidates = list_candidate_ids(&behavior_dir, "condition.yml");
+    let (raw_condition_id, _condition_label) = prompt_id_or_label(
         reader,
         writer,
         "Condition name (e.g. empty-title): ",
         &condition_candidates,
     )?;
     let condition_id = {
-        let raw_path = feature_dir.join(&raw_condition_id).join("condition.yaml");
+        let raw_path = behavior_dir.join(&raw_condition_id).join("condition.yml");
         if raw_path.exists() {
             raw_condition_id
         } else if let Some(stripped) =
-            strip_redundant_condition_prefix(&feature_id, &raw_condition_id)
+            strip_redundant_condition_prefix(&behavior_id, &raw_condition_id)
         {
             writeln!(
                 writer,
-                "Condition id '{raw_condition_id}' から Feature id '{feature_id}' と重複する接頭辞を除去し、'{stripped}' として作成します。"
+                "Condition id '{raw_condition_id}' から Behavior id '{behavior_id}' と重複する接頭辞を除去し、'{stripped}' として作成します。"
             )?;
             stripped
         } else {
             raw_condition_id
         }
     };
-    let condition_dir = feature_dir.join(&condition_id);
-    let condition_path = condition_dir.join("condition.yaml");
+    let condition_dir = behavior_dir.join(&condition_id);
+    let condition_path = condition_dir.join("condition.yml");
     if condition_path.exists() {
         writeln!(writer, "既存のCondition '{condition_id}' を再利用します。")?;
     } else {
-        let summary = prompt_line(
+        let description = prompt_line(
             reader,
             writer,
             "Scenario (e.g. Submit the todo form with an empty title): ",
@@ -181,8 +223,8 @@ pub fn run_add<R: BufRead, W: Write>(
         fs::create_dir_all(&condition_dir)?;
         let condition = Condition {
             id: condition_id.clone(),
-            summary,
-            label: condition_label,
+            behavior: behavior_id.clone(),
+            description,
         };
         fs::write(&condition_path, serialize_condition(&condition))?;
     }
@@ -193,19 +235,19 @@ pub fn run_add<R: BufRead, W: Write>(
         .filter(|entry| entry.is_ok())
         .count();
     let seq = existing_count + 1;
-    let expected_id = format!("{feature_id}-{condition_id}-{seq:03}");
+    let expected_id = format!("{condition_id}-{seq:03}");
 
-    let result = prompt_line(
+    let description = prompt_line(
         reader,
         writer,
         "Expected result (e.g. shows a validation error): ",
     )?;
     let expected = ExpectedResult {
         id: expected_id,
-        result,
-        label: None,
+        condition: condition_id.clone(),
+        description,
     };
-    let expected_path = expected_dir.join(format!("{seq:03}.yaml"));
+    let expected_path = expected_dir.join(format!("{seq:03}.yml"));
     fs::write(&expected_path, serialize_expected_result(&expected))?;
 
     Ok(())
@@ -230,35 +272,39 @@ mod tests {
         String::from_utf8(writer).unwrap()
     }
 
+    const FULL_INPUT: &str = "player-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n";
+
     #[test]
-    fn creates_new_feature_condition_and_expected_from_scratch() {
+    fn creates_new_feature_behavior_condition_and_expected_from_scratch() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        run_with_input(
-            dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
-        );
+        run_with_input(dir.path(), FULL_INPUT);
 
-        let feature_path = dir.path().join("knowledge/player-jump/feature.yaml");
+        let feature_path = dir.path().join("knowledge/player-jump/feature.yml");
+        let behavior_path = dir.path().join("knowledge/player-jump/jump/behavior.yml");
         let condition_path = dir
             .path()
-            .join("knowledge/player-jump/jump-ground/condition.yaml");
+            .join("knowledge/player-jump/jump/ground/condition.yml");
         let expected_path = dir
             .path()
-            .join("knowledge/player-jump/jump-ground/expected/001.yaml");
+            .join("knowledge/player-jump/jump/ground/expected/001.yml");
 
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: player-jump\nkind: feature\naxis:\n  - gameplay\n  - animation\n"
+            "id: player-jump\nlabel: player-jump\naxis: [gameplay, animation]\n"
+        );
+        assert_eq!(
+            fs::read_to_string(behavior_path).unwrap(),
+            "id: jump\nfeature: player-jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
         );
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
-            "id: jump-ground\nkind: condition\nsummary: Jump from the ground and land\n"
+            "id: ground\nbehavior: jump\ndescription: |\n  Jump from the ground and land\n"
         );
         assert_eq!(
             fs::read_to_string(expected_path).unwrap(),
-            "id: player-jump-jump-ground-001\nkind: expected-result\nresult: lands safely\n"
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
         );
     }
 
@@ -266,50 +312,63 @@ mod tests {
     fn reuses_existing_feature_and_skips_axis_prompt() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        run_with_input(
-            dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
-        );
+        run_with_input(dir.path(), FULL_INPUT);
 
         // Second run reuses the feature: no axis prompt is consumed, so the
-        // second input line is the condition id, not an axis list.
+        // second input line is the behavior id, not an axis list.
         run_with_input(
             dir.path(),
-            "player-jump\njump-air\nJump while airborne\nlands on platform\n",
+            "player-jump\nair\ngameplay\nPlayer presses jump while airborne.\nspace\nJump while airborne\nlands on platform\n",
         );
 
-        let feature_path = dir.path().join("knowledge/player-jump/feature.yaml");
+        let feature_path = dir.path().join("knowledge/player-jump/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: player-jump\nkind: feature\naxis:\n  - gameplay\n  - animation\n"
+            "id: player-jump\nlabel: player-jump\naxis: [gameplay, animation]\n"
         );
-        let condition_path = dir
-            .path()
-            .join("knowledge/player-jump/jump-air/condition.yaml");
+        let behavior_path = dir.path().join("knowledge/player-jump/air/behavior.yml");
         assert_eq!(
-            fs::read_to_string(condition_path).unwrap(),
-            "id: jump-air\nkind: condition\nsummary: Jump while airborne\n"
+            fs::read_to_string(behavior_path).unwrap(),
+            "id: air\nfeature: player-jump\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\n"
         );
     }
 
     #[test]
-    fn reuses_existing_condition_and_skips_summary_prompt() {
+    fn reuses_existing_behavior_and_skips_axis_and_description_prompt() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
+        run_with_input(dir.path(), FULL_INPUT);
+
+        // Second run reuses feature and behavior: no axis/description prompts.
         run_with_input(
             dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+            "player-jump\njump\nair\nJump while airborne\nlands on platform\n",
         );
 
-        // Second run reuses feature and condition: no axis/summary prompts.
-        run_with_input(dir.path(), "player-jump\njump-ground\nfalls over\n");
+        let condition_path = dir
+            .path()
+            .join("knowledge/player-jump/jump/air/condition.yml");
+        assert_eq!(
+            fs::read_to_string(condition_path).unwrap(),
+            "id: air\nbehavior: jump\ndescription: |\n  Jump while airborne\n"
+        );
+    }
+
+    #[test]
+    fn reuses_existing_condition_and_skips_scenario_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        run_with_input(dir.path(), FULL_INPUT);
+
+        // Second run reuses feature, behavior and condition: no scenario prompt.
+        run_with_input(dir.path(), "player-jump\njump\nground\nfalls over\n");
 
         let expected_002 = dir
             .path()
-            .join("knowledge/player-jump/jump-ground/expected/002.yaml");
+            .join("knowledge/player-jump/jump/ground/expected/002.yml");
         assert_eq!(
             fs::read_to_string(expected_002).unwrap(),
-            "id: player-jump-jump-ground-002\nkind: expected-result\nresult: falls over\n"
+            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
         );
     }
 
@@ -320,15 +379,15 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\n\nlands safely\n",
+            "player-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\n\nlands safely\n",
         );
 
         let expected_path = dir
             .path()
-            .join("knowledge/player-jump/jump-ground/expected/001.yaml");
+            .join("knowledge/player-jump/jump/ground/expected/001.yml");
         assert_eq!(
             fs::read_to_string(expected_path).unwrap(),
-            "id: player-jump-jump-ground-001\nkind: expected-result\nresult: lands safely\n"
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
         );
     }
 
@@ -337,10 +396,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        let output = run_with_input_capturing_output(
-            dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
-        );
+        let output = run_with_input_capturing_output(dir.path(), FULL_INPUT);
 
         assert!(!output.contains("1)"));
     }
@@ -350,21 +406,36 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        run_with_input(
-            dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
-        );
+        run_with_input(dir.path(), FULL_INPUT);
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "1\njump-air\nJump while airborne\nlands on platform\n",
+            "1\nair\ngameplay\nPlayer presses jump while airborne.\nspace\nJump while airborne\nlands on platform\n",
         );
 
         assert!(output.contains("  1) player-jump\n"));
         assert!(output.contains("既存のFeature 'player-jump' を再利用します。"));
+        let behavior_path = dir.path().join("knowledge/player-jump/air/behavior.yml");
+        assert!(behavior_path.exists());
+    }
+
+    #[test]
+    fn lists_behavior_candidates_by_number_and_selects_by_index() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(dir.path(), FULL_INPUT);
+
+        let output = run_with_input_capturing_output(
+            dir.path(),
+            "player-jump\n1\nspace\nJump while airborne\nlands on platform\n",
+        );
+
+        assert!(output.contains("  1) jump\n"));
+        assert!(output.contains("既存のBehavior 'jump' を再利用します。"));
         let condition_path = dir
             .path()
-            .join("knowledge/player-jump/jump-air/condition.yaml");
+            .join("knowledge/player-jump/jump/space/condition.yml");
         assert!(condition_path.exists());
     }
 
@@ -373,18 +444,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        run_with_input(
-            dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
-        );
+        run_with_input(dir.path(), FULL_INPUT);
 
-        let output = run_with_input_capturing_output(dir.path(), "player-jump\n1\nfalls over\n");
+        let output =
+            run_with_input_capturing_output(dir.path(), "player-jump\njump\n1\nfalls over\n");
 
-        assert!(output.contains("  1) jump-ground\n"));
-        assert!(output.contains("既存のCondition 'jump-ground' を再利用します。"));
+        assert!(output.contains("  1) ground\n"));
+        assert!(output.contains("既存のCondition 'ground' を再利用します。"));
         let expected_002 = dir
             .path()
-            .join("knowledge/player-jump/jump-ground/expected/002.yaml");
+            .join("knowledge/player-jump/jump/ground/expected/002.yml");
         assert!(expected_002.exists());
     }
 
@@ -393,19 +462,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        run_with_input(
-            dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
-        );
+        run_with_input(dir.path(), FULL_INPUT);
 
-        run_with_input(dir.path(), "player-jump\njump-ground\nfalls over\n");
+        run_with_input(dir.path(), "player-jump\njump\nground\nfalls over\n");
 
         let expected_002 = dir
             .path()
-            .join("knowledge/player-jump/jump-ground/expected/002.yaml");
+            .join("knowledge/player-jump/jump/ground/expected/002.yml");
         assert_eq!(
             fs::read_to_string(expected_002).unwrap(),
-            "id: player-jump-jump-ground-002\nkind: expected-result\nresult: falls over\n"
+            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
         );
     }
 
@@ -416,25 +482,25 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "player-jump\ngameplay, animation\nplayer-jump-ground\nJump from the ground and land\nlands safely\n",
+            "player-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\njump-ground\nJump from the ground and land\nlands safely\n",
         );
 
         assert!(output.contains(
-            "Condition id 'player-jump-ground' から Feature id 'player-jump' と重複する接頭辞を除去し、'ground' として作成します。"
+            "Condition id 'jump-ground' から Behavior id 'jump' と重複する接頭辞を除去し、'ground' として作成します。"
         ));
         assert!(
             dir.path()
-                .join("knowledge/player-jump/ground/condition.yaml")
+                .join("knowledge/player-jump/jump/ground/condition.yml")
                 .exists()
         );
         assert!(
             dir.path()
-                .join("knowledge/player-jump/ground/expected/001.yaml")
+                .join("knowledge/player-jump/jump/ground/expected/001.yml")
                 .exists()
         );
         assert!(
             !dir.path()
-                .join("knowledge/player-jump/player-jump-ground")
+                .join("knowledge/player-jump/jump/jump-ground")
                 .exists()
         );
     }
@@ -446,26 +512,26 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "player-jump\ngameplay, animation\nplayer-jump-ground\nJump from the ground and land\nlands safely\n",
+            "player-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\njump-ground\nJump from the ground and land\nlands safely\n",
         );
         // Above run already dedupes to `ground/`; create a legacy dir with the
         // literal redundant name directly on disk to simulate pre-existing data.
-        let legacy_dir = dir.path().join("knowledge/player-jump/player-jump-ground");
+        let legacy_dir = dir.path().join("knowledge/player-jump/jump/jump-ground");
         fs::create_dir_all(&legacy_dir).unwrap();
         fs::write(
-            legacy_dir.join("condition.yaml"),
-            "id: player-jump-ground\nkind: condition\nsummary: legacy\n",
+            legacy_dir.join("condition.yml"),
+            "id: jump-ground\nbehavior: jump\ndescription: |\n  legacy\n",
         )
         .unwrap();
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "player-jump\nplayer-jump-ground\nfell over\n",
+            "player-jump\njump\njump-ground\nfell over\n",
         );
 
         assert!(!output.contains("重複する接頭辞を除去"));
-        assert!(output.contains("既存のCondition 'player-jump-ground' を再利用します。"));
-        assert!(legacy_dir.join("expected/001.yaml").exists());
+        assert!(output.contains("既存のCondition 'jump-ground' を再利用します。"));
+        assert!(legacy_dir.join("expected/001.yml").exists());
     }
 
     #[test]
@@ -478,7 +544,7 @@ mod tests {
             prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &[]).unwrap();
 
         assert_eq!(id, "pureiyaa-ga-janpu-suru");
-        assert_eq!(label, Some("プレイヤーがジャンプする".to_string()));
+        assert_eq!(label, "プレイヤーがジャンプする");
         let output = String::from_utf8(writer).unwrap();
         assert!(output.contains("pureiyaa-ga-janpu-suru"));
     }
@@ -493,7 +559,7 @@ mod tests {
             prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &[]).unwrap();
 
         assert_eq!(id, "player-jump");
-        assert_eq!(label, Some("プレイヤーがジャンプする".to_string()));
+        assert_eq!(label, "プレイヤーがジャンプする");
     }
 
     #[test]
@@ -507,13 +573,13 @@ mod tests {
             prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &candidates).unwrap();
 
         assert_eq!(id, "player-jump");
-        assert_eq!(label, Some("プレイヤーがジャンプする".to_string()));
+        assert_eq!(label, "プレイヤーがジャンプする");
         let output = String::from_utf8(writer).unwrap();
         assert!(output.contains("既存の候補と衝突しています"));
     }
 
     #[test]
-    fn prompt_id_or_label_returns_none_label_for_direct_ascii_input() {
+    fn prompt_id_or_label_returns_same_value_as_label_for_direct_ascii_input() {
         let input = "player-jump\n";
         let mut reader = Cursor::new(input.as_bytes());
         let mut writer = Vec::new();
@@ -522,7 +588,7 @@ mod tests {
             prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &[]).unwrap();
 
         assert_eq!(id, "player-jump");
-        assert_eq!(label, None);
+        assert_eq!(label, "player-jump");
     }
 
     #[test]
@@ -532,34 +598,15 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "プレイヤーがジャンプする\n\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+            "プレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n",
         );
 
         let feature_path = dir
             .path()
-            .join("knowledge/pureiyaa-ga-janpu-suru/feature.yaml");
+            .join("knowledge/pureiyaa-ga-janpu-suru/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: pureiyaa-ga-janpu-suru\nlabel: プレイヤーがジャンプする\nkind: feature\naxis:\n  - gameplay\n  - animation\n"
-        );
-    }
-
-    #[test]
-    fn creates_new_condition_with_japanese_label_and_saves_it_to_yaml() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-
-        run_with_input(
-            dir.path(),
-            "player-jump\ngameplay, animation\n地上からジャンプ\n\nJump from the ground and land\nlands safely\n",
-        );
-
-        let condition_path = dir
-            .path()
-            .join("knowledge/player-jump/chijou-kara-janpu/condition.yaml");
-        assert_eq!(
-            fs::read_to_string(condition_path).unwrap(),
-            "id: chijou-kara-janpu\nlabel: 地上からジャンプ\nkind: condition\nsummary: Jump from the ground and land\n"
+            "id: pureiyaa-ga-janpu-suru\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
         );
     }
 
@@ -568,13 +615,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        let output = run_with_input_capturing_output(
-            dir.path(),
-            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
-        );
+        let output = run_with_input_capturing_output(dir.path(), FULL_INPUT);
 
         assert!(output.contains("Feature name (e.g. add-todo): "));
         assert!(output.contains("Axis (comma separated, e.g. ui, validation): "));
+        assert!(output.contains("Behavior name (e.g. add-task): "));
+        assert!(output.contains("Behavior axis (comma separated, e.g. ui, validation): "));
+        assert!(output.contains("Behavior description (e.g. User adds a new task to the list.): "));
         assert!(output.contains("Condition name (e.g. empty-title): "));
         assert!(output.contains("Scenario (e.g. Submit the todo form with an empty title): "));
         assert!(output.contains("Expected result (e.g. shows a validation error): "));
@@ -587,20 +634,17 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "プレイヤーがジャンプする\n\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+            "プレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n",
         );
 
         let feature_path = dir
             .path()
-            .join("knowledge/pureiyaa-ga-janpu-suru/feature.yaml");
+            .join("knowledge/pureiyaa-ga-janpu-suru/feature.yml");
         let before = fs::read_to_string(&feature_path).unwrap();
 
-        // Select the existing feature by number; a numeric selection always
-        // yields label = None, so this also proves the None doesn't overwrite
-        // the file (the exists() guard skips the write entirely).
         run_with_input(
             dir.path(),
-            "1\njump-air\nJump while airborne\nlands on platform\n",
+            "1\nair\ngameplay\nPlayer presses jump while airborne.\nspace\nJump while airborne\nlands on platform\n",
         );
 
         let after = fs::read_to_string(&feature_path).unwrap();
@@ -615,21 +659,21 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "player-jump\ngameplay, animation\nground\nlanded on the ground\nlands safely\n",
+            "player-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nlanded on the ground\nlands safely\n",
         );
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "player-jump\nplayer-jump-ground\nfalls over\n",
+            "player-jump\njump\njump-ground\nfalls over\n",
         );
 
         assert!(output.contains(
-            "Condition id 'player-jump-ground' から Feature id 'player-jump' と重複する接頭辞を除去し、'ground' として作成します。"
+            "Condition id 'jump-ground' から Behavior id 'jump' と重複する接頭辞を除去し、'ground' として作成します。"
         ));
         assert!(output.contains("既存のCondition 'ground' を再利用します。"));
         let expected_002 = dir
             .path()
-            .join("knowledge/player-jump/ground/expected/002.yaml");
+            .join("knowledge/player-jump/jump/ground/expected/002.yml");
         assert!(expected_002.exists());
     }
 }

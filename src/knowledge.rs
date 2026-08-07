@@ -3,28 +3,39 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Feature {
     pub id: String,
+    pub label: String,
     pub axis: Vec<String>,
     #[serde(default)]
-    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct Behavior {
+    pub id: String,
+    pub feature: String,
+    pub axis: Vec<String>,
+    pub description: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Condition {
     pub id: String,
-    pub summary: String,
-    #[serde(default)]
-    pub label: Option<String>,
+    pub behavior: String,
+    pub description: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ExpectedResult {
     pub id: String,
-    pub result: String,
-    #[serde(default)]
-    pub label: Option<String>,
+    pub condition: String,
+    pub description: String,
 }
 
 pub fn parse_feature(yaml: &str) -> Result<Feature, serde_yaml_ng::Error> {
+    serde_yaml_ng::from_str(yaml)
+}
+
+pub fn parse_behavior(yaml: &str) -> Result<Behavior, serde_yaml_ng::Error> {
     serde_yaml_ng::from_str(yaml)
 }
 
@@ -36,28 +47,45 @@ pub fn parse_expected_result(yaml: &str) -> Result<ExpectedResult, serde_yaml_ng
     serde_yaml_ng::from_str(yaml)
 }
 
+fn yaml_flow_array(items: &[String]) -> String {
+    format!("[{}]", items.join(", "))
+}
+
 pub fn serialize_feature(feature: &Feature) -> String {
-    let mut out = format!("id: {}\n", feature.id);
-    if let Some(label) = &feature.label {
-        out.push_str(&format!("label: {label}\n"));
-    }
-    out.push_str("kind: feature\naxis:\n");
-    for a in &feature.axis {
-        out.push_str(&format!("  - {a}\n"));
+    let mut out = format!(
+        "id: {}\nlabel: {}\naxis: {}\n",
+        feature.id,
+        feature.label,
+        yaml_flow_array(&feature.axis)
+    );
+    if let Some(description) = &feature.description {
+        out.push_str(&format!("description: |\n  {description}\n"));
     }
     out
 }
 
+pub fn serialize_behavior(behavior: &Behavior) -> String {
+    format!(
+        "id: {}\nfeature: {}\naxis: {}\ndescription: |\n  {}\n",
+        behavior.id,
+        behavior.feature,
+        yaml_flow_array(&behavior.axis),
+        behavior.description
+    )
+}
+
 pub fn serialize_condition(condition: &Condition) -> String {
-    let mut out = format!("id: {}\n", condition.id);
-    if let Some(label) = &condition.label {
-        out.push_str(&format!("label: {label}\n"));
-    }
-    out.push_str(&format!(
-        "kind: condition\nsummary: {}\n",
-        condition.summary
-    ));
-    out
+    format!(
+        "id: {}\nbehavior: {}\ndescription: |\n  {}\n",
+        condition.id, condition.behavior, condition.description
+    )
+}
+
+pub fn serialize_expected_result(expected: &ExpectedResult) -> String {
+    format!(
+        "id: {}\ncondition: {}\ndescription: |\n  {}\n",
+        expected.id, expected.condition, expected.description
+    )
 }
 
 pub fn strip_redundant_condition_prefix(feature_id: &str, condition_id: &str) -> Option<String> {
@@ -118,97 +146,136 @@ pub fn is_valid_slug(s: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-pub fn serialize_expected_result(expected: &ExpectedResult) -> String {
-    let mut out = format!("id: {}\n", expected.id);
-    if let Some(label) = &expected.label {
-        out.push_str(&format!("label: {label}\n"));
-    }
-    out.push_str(&format!(
-        "kind: expected-result\nresult: {}\n",
-        expected.result
-    ));
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn parses_feature_yaml() {
-        let yaml = "id: player-jump\nkind: feature\naxis:\n  - gameplay\n  - animation\n";
+        let yaml = "id: player-jump\nlabel: player-jump\naxis: [gameplay, animation]\n";
 
         let feature: Feature = parse_feature(yaml).unwrap();
 
         assert_eq!(feature.id, "player-jump");
+        assert_eq!(feature.label, "player-jump");
         assert_eq!(feature.axis, vec!["gameplay", "animation"]);
+        assert_eq!(feature.description, None);
+    }
+
+    #[test]
+    fn parses_behavior_yaml() {
+        let yaml = "id: player-jump-jump\nfeature: player-jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n";
+
+        let behavior: Behavior = parse_behavior(yaml).unwrap();
+
+        assert_eq!(behavior.id, "player-jump-jump");
+        assert_eq!(behavior.feature, "player-jump");
+        assert_eq!(behavior.axis, vec!["gameplay"]);
+        assert_eq!(behavior.description, "Player presses jump.\n");
     }
 
     #[test]
     fn parses_condition_yaml() {
-        let yaml = "id: jump-ground\nkind: condition\nsummary: Jump from the ground and land\n";
+        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\ndescription: |\n  Jump from the ground and land.\n";
 
         let condition: Condition = parse_condition(yaml).unwrap();
 
-        assert_eq!(condition.id, "jump-ground");
-        assert_eq!(condition.summary, "Jump from the ground and land");
+        assert_eq!(condition.id, "player-jump-jump-ground");
+        assert_eq!(condition.behavior, "player-jump-jump");
+        assert_eq!(condition.description, "Jump from the ground and land.\n");
     }
 
     #[test]
     fn parses_expected_result_yaml() {
-        let yaml = "id: player-jump-ground-001\nkind: expected-result\nresult: lands safely\n";
+        let yaml = "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\n";
 
         let expected: ExpectedResult = parse_expected_result(yaml).unwrap();
 
-        assert_eq!(expected.id, "player-jump-ground-001");
-        assert_eq!(expected.result, "lands safely");
+        assert_eq!(expected.id, "player-jump-jump-ground-001");
+        assert_eq!(expected.condition, "player-jump-jump-ground");
+        assert_eq!(expected.description, "Lands safely.\n");
     }
 
     #[test]
     fn serializes_feature_to_deterministic_yaml() {
         let feature = Feature {
             id: "player-jump".to_string(),
+            label: "player-jump".to_string(),
             axis: vec!["gameplay".to_string(), "animation".to_string()],
-            label: None,
+            description: None,
         };
 
         let yaml = serialize_feature(&feature);
 
         assert_eq!(
             yaml,
-            "id: player-jump\nkind: feature\naxis:\n  - gameplay\n  - animation\n"
+            "id: player-jump\nlabel: player-jump\naxis: [gameplay, animation]\n"
+        );
+    }
+
+    #[test]
+    fn serializes_feature_with_description_when_present() {
+        let feature = Feature {
+            id: "player-jump".to_string(),
+            label: "プレイヤージャンプ".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: Some("Jump related behaviors.".to_string()),
+        };
+
+        let yaml = serialize_feature(&feature);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump\nlabel: プレイヤージャンプ\naxis: [gameplay]\ndescription: |\n  Jump related behaviors.\n"
+        );
+    }
+
+    #[test]
+    fn serializes_behavior_to_deterministic_yaml() {
+        let behavior = Behavior {
+            id: "player-jump-jump".to_string(),
+            feature: "player-jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: "Player presses jump.".to_string(),
+        };
+
+        let yaml = serialize_behavior(&behavior);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump\nfeature: player-jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
         );
     }
 
     #[test]
     fn serializes_condition_to_deterministic_yaml() {
         let condition = Condition {
-            id: "jump-ground".to_string(),
-            summary: "Jump from the ground and land".to_string(),
-            label: None,
+            id: "player-jump-jump-ground".to_string(),
+            behavior: "player-jump-jump".to_string(),
+            description: "Jump from the ground and land.".to_string(),
         };
 
         let yaml = serialize_condition(&condition);
 
         assert_eq!(
             yaml,
-            "id: jump-ground\nkind: condition\nsummary: Jump from the ground and land\n"
+            "id: player-jump-jump-ground\nbehavior: player-jump-jump\ndescription: |\n  Jump from the ground and land.\n"
         );
     }
 
     #[test]
     fn serializes_expected_result_to_deterministic_yaml() {
         let expected = ExpectedResult {
-            id: "player-jump-ground-001".to_string(),
-            result: "lands safely".to_string(),
-            label: None,
+            id: "player-jump-jump-ground-001".to_string(),
+            condition: "player-jump-jump-ground".to_string(),
+            description: "Lands safely.".to_string(),
         };
 
         let yaml = serialize_expected_result(&expected);
 
         assert_eq!(
             yaml,
-            "id: player-jump-ground-001\nkind: expected-result\nresult: lands safely\n"
+            "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\n"
         );
     }
 
@@ -288,53 +355,5 @@ mod tests {
     #[test]
     fn normalize_slug_candidate_strips_unsupported_symbols() {
         assert_eq!(normalize_slug_candidate("Player!! Jump??"), "player-jump");
-    }
-
-    #[test]
-    fn serializes_feature_with_label_when_present() {
-        let feature = Feature {
-            id: "player-jump".to_string(),
-            axis: vec!["gameplay".to_string()],
-            label: Some("プレイヤージャンプ".to_string()),
-        };
-
-        let yaml = serialize_feature(&feature);
-
-        assert_eq!(
-            yaml,
-            "id: player-jump\nlabel: プレイヤージャンプ\nkind: feature\naxis:\n  - gameplay\n"
-        );
-    }
-
-    #[test]
-    fn serializes_condition_with_label_when_present() {
-        let condition = Condition {
-            id: "jump-ground".to_string(),
-            summary: "Jump from the ground and land".to_string(),
-            label: Some("地上からジャンプ".to_string()),
-        };
-
-        let yaml = serialize_condition(&condition);
-
-        assert_eq!(
-            yaml,
-            "id: jump-ground\nlabel: 地上からジャンプ\nkind: condition\nsummary: Jump from the ground and land\n"
-        );
-    }
-
-    #[test]
-    fn serializes_expected_result_with_label_when_present() {
-        let expected = ExpectedResult {
-            id: "player-jump-ground-001".to_string(),
-            result: "lands safely".to_string(),
-            label: Some("安全に着地".to_string()),
-        };
-
-        let yaml = serialize_expected_result(&expected);
-
-        assert_eq!(
-            yaml,
-            "id: player-jump-ground-001\nlabel: 安全に着地\nkind: expected-result\nresult: lands safely\n"
-        );
     }
 }
