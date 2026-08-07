@@ -1,6 +1,6 @@
 # markharness CLI マニュアル
 
-本資料は `markharness` CLI の使用方法を、**実装済みコマンド**と**未実装(今後実装予定)のコマンド**に分けてまとめたものです。ユースケース(UC1〜UC8)の対応は `docs/product-operation.md` の「3. ユースケース記述」表に基づきます。実装済みコマンドの具体的な生成規則は `docs/testcase-generation-design.md` を参照してください(ただし `generate`/`verify` の現行実装は、同ドキュメント作成後に `feature → behavior → condition → expected` の4階層モデルへ刷新されており、詳細は本マニュアル 1.3/1.4 節を正としてください)。
+本資料は `markharness` CLI の使用方法を、**実装済みコマンド**と**未実装(今後実装予定)のコマンド**に分けてまとめたものです。ユースケース(UC1〜UC8)の対応は `docs/product-operation.md` の「3. ユースケース記述」表に基づきます。実装済みコマンドの具体的な生成規則は `docs/testcase-generation-design.md` を参照してください(ただし `generate`/`verify` の現行実装は、同ドキュメント作成後に `feature → behavior → condition → expected` の4階層モデルへ刷新されており、詳細は本マニュアル 1.5/1.6 節を正としてください)。`knowledge validate`/`apply`(非対話・TTY非依存版、1.3/1.4節)の詳細設計は `docs/knowledge-apply-cli-spec.md` を正としてください。
 
 ---
 
@@ -232,7 +232,184 @@ Expected result (e.g. shows a validation error): shows a length validation error
 
 ---
 
-### 1.3 `markharness generate` — TestCase の決定的生成(UC2: TestCaseを決定的生成する)
+### 1.3 `markharness knowledge validate` — ドラフトYAMLの検証(UC1: 知識を記述する。非対話・TTY非依存)
+
+```text
+markharness knowledge validate <draft-file> [--json] [-d, --dir <path>]
+```
+
+**用途**: `knowledge add`(1.2節)が前提とするTTY上での逐次プロンプトに依存せず、Requirement→Feature→Behavior→Condition→ExpectedResultの1チェーン分を1つのドラフトYAMLファイルとして与え、スキーマ・整合性を検証する。**副作用はなく、ファイルへの書き込みは一切行わない。** Claude Code等のAIエージェントによる非対話呼び出しや、将来のGUI実装からの利用を想定している。詳細な設計意図・バリデーションルール一覧は `docs/knowledge-apply-cli-spec.md` を正とする。
+
+**オプション**
+
+| オプション | 説明 |
+|---|---|
+| `<draft-file>` | (必須)ドラフトYAMLファイルのパス |
+| `-d, --dir <path>` | 対象プロジェクトディレクトリ(`knowledge/` の親)。省略時はカレントディレクトリ |
+| `--json` | エラー・結果を1行のJSONで出力する。省略時は人間可読なテキストを出力する |
+
+**ドラフトYAMLの形式**(1回の実行で1本のチェーンを検証する。複数チェーンの一括検証は非対応)
+
+```yaml
+requirement:
+  id: controls          # 必須。ASCII slug
+  label: controls        # 省略可(既存id再利用時は省略可)
+  axis: [gameplay]        # 新規作成時は必須。既存id再利用時は省略可
+  description: null       # 省略可
+
+feature:
+  id: player-jump
+  label: player-jump
+  axis: [gameplay, animation]
+
+behavior:
+  id: jump
+  label: jump
+  axis: [gameplay]
+  description: Player presses jump.   # Behaviorのみdescriptionが必須(新規作成時)
+
+condition:
+  id: ground
+  label: ground
+  description: Jump from the ground and land
+
+expected:
+  - description: lands safely
+  - description: takes fall damage if height > 3m
+```
+
+`axis`/`label`/`description` は、既存id(すでに `knowledge/` 配下にファイルが存在するRequirement/Feature/Behavior/Condition)を再利用する場合は省略できる。省略されたフィールドは既存値との比較対象から除外され、指定されたフィールドのみ既存ファイルの値と突合される(`conflicting_existing_value` エラー)。
+
+**バリデーションルール(概要。詳細は spec §5)**
+
+| エラーコード | 内容 |
+|---|---|
+| `invalid_slug` | idが小文字英数字とハイフン以外を含む |
+| `missing_axis` | 新規作成のRequirement/Feature/Behaviorで `axis` が空・未指定 |
+| `missing_description` | 新規作成のBehavior/Condition、または各ExpectedResultで `description` が空 |
+| `unknown_axis` | `axes/*.yml` レジストリに登録されていない観点値(近似候補があれば `suggestion` に提示) |
+| `redundant_prefix` | `condition.id` が `{behavior.id}-` で始まる(`knowledge apply` の `--strip-redundant-prefix` 未指定時。1.4節参照) |
+| `conflicting_existing_value` | 既存id再利用時、指定した `label`/`axis`/`description` が既存ファイルの値と不一致 |
+| `parent_not_found` | 既存ファイルに記録された親参照(例: `feature.yml` の `requirement:`)がドラフトのチェーンと矛盾 |
+
+**終了コード**
+
+| コード | 意味 |
+|---|---|
+| 0 | 成功(エラーなし) |
+| 1 | バリデーションエラーあり(エラー内容はstderr、`--json`指定時はstdoutにJSONで出力) |
+| 2 | 使用方法エラー(ファイル不在・YAMLパース不能) |
+
+**使用例(成功・人間可読)**
+
+```console
+$ markharness knowledge validate draft.yml --dir tmp/todo-sample
+$ echo $?
+0
+```
+(標準出力・標準エラーとも何も出力しない)
+
+**使用例(成功・`--json`)**
+
+```console
+$ markharness knowledge validate draft.yml --dir tmp/todo-sample --json
+{"ok":true}
+```
+
+**使用例(失敗・人間可読)**
+
+```console
+$ markharness knowledge validate draft.yml --dir tmp/todo-sample
+error: unknown_axis: axis "validdation" is not registered (path=behavior.axis[0])
+error: redundant_prefix: condition.id "jump-ground" starts with behavior.id "jump-" prefix (suggested="ground", path=condition.id)
+$ echo $?
+1
+```
+
+**使用例(失敗・`--json`)**
+
+```console
+$ markharness knowledge validate draft.yml --dir tmp/todo-sample --json
+{"ok":false,"errors":[{"code":"unknown_axis","path":"behavior.axis[0]","value":"validdation","message":"axis \"validdation\" is not registered","suggestion":"validation"}]}
+$ echo $?
+1
+```
+
+**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。1.2節の `knowledge add` と同じ検証ロジックを共有する。
+
+---
+
+### 1.4 `markharness knowledge apply` — ドラフトYAMLの検証+書き込み(UC1: 知識を記述する。非対話・TTY非依存)
+
+```text
+markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
+```
+
+**用途**: `knowledge validate`(1.3節)と同じ検証を行い、問題がなければ `knowledge/` 配下に**アトミックに**書き込む。5階層(Requirement〜ExpectedResult)のうち一部だけを新規作成する場合でも、全バリデーションが通過した後にまとめて書き込む(一時ファイル+リネーム。書き込み中にI/Oエラーが発生した場合は成功済みファイルも含めてロールバックする)。既存id(再利用)のファイルは上書きしない。
+
+**オプション**
+
+| オプション | 説明 |
+|---|---|
+| `<draft-file>` | (必須)ドラフトYAMLファイルのパス。形式は1.3節と共通 |
+| `-d, --dir <path>` | 1.3節と同様 |
+| `--json` | 1.3節と同様。成功時は書き込んだファイル一覧を出力する(下記参照) |
+| `--strip-redundant-prefix` | `condition.id` が `{behavior.id}-` で始まる場合、確認なしで接頭辞を除去したidを採用する。未指定の場合は `redundant_prefix` エラーで停止する(1.3節参照)。除去後idと同名のディレクトリが既に存在する(レガシーデータ)場合は、`knowledge add` と同様に除去せず既存のものをそのまま再利用する |
+| `--dry-run` | `knowledge validate` と同義(検証のみ行い書き込まない)。CI等での用途を想定した別名 |
+
+**終了コード**
+
+| コード | 意味 |
+|---|---|
+| 0 | 成功(書き込み成功。`--dry-run` 指定時はエラーなし) |
+| 1 | バリデーションエラーあり(1.3節と同じ形式。ファイルは一切書き込まれない) |
+| 2 | 使用方法エラー(ファイル不在・YAMLパース不能) |
+| 3 | ファイルシステムエラー(書き込み失敗など) |
+
+**使用例(成功・`--json`)**
+
+```console
+$ markharness knowledge apply draft.yml --dir tmp/todo-sample --json
+{"ok":true,"written":["knowledge/controls/player-jump/jump/ground/expected/002.yml"]}
+$ echo $?
+0
+```
+`written` には新規に書き込まれたファイルのみ(既存id再利用でスキップしたファイルは含まない)が、対象ディレクトリ(`--dir`)からの相対パスで列挙される。
+
+**使用例(`--strip-redundant-prefix` でCondition idの重複接頭辞を除去)**
+
+```console
+$ markharness knowledge apply draft.yml --dir tmp/todo-sample --strip-redundant-prefix
+$ echo $?
+0
+```
+`draft.yml` の `condition.id: add-task-max-length`(Behavior id `add-task` と重複)は `max-length` として書き込まれる。`knowledge add`(1.2節)の自動除去と同じ挙動。
+
+**使用例(`--dry-run`)**
+
+```console
+$ markharness knowledge apply draft.yml --dir tmp/todo-sample --dry-run --json
+{"ok":true}
+$ echo $?
+0
+```
+(ファイルは書き込まれない)
+
+**使用例(バリデーションエラーで書き込み拒否)**
+
+```console
+$ markharness knowledge apply draft.yml --dir tmp/todo-sample
+error: missing_description: behavior.description must not be empty (path=behavior.description)
+$ echo $?
+1
+```
+(`knowledge/` 配下には一切ファイルが作成されない)
+
+**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。AIエージェント・将来のGUI実装が知識を確定登録するための共通エントリポイント。人間向けの `$EDITOR` 起動ラッパー(`knowledge add --edit`)は未実装(2章参照)。
+
+---
+
+### 1.5 `markharness generate` — TestCase の決定的生成(UC2: TestCaseを決定的生成する)
 
 ```text
 markharness generate
@@ -251,6 +428,7 @@ markharness generate
 - `title` = `condition.description`、`steps` = `[behavior.description]`、`expected` = 各 `expected/*.yml` の `description` をファイル名のソート順で列挙。
 - `generated_from` に `requirement` / `feature` / `behavior` / `condition` の各 id と、集約元の `expected_results`(`expected/*.yml` の `id` の一覧)を記録する。トレーサビリティ索引(`generated/traceability-index.json` 等)自体は未実装だが、この `requirement` フィールドにより生成済み TestCase 単体からでも由来する Requirement を追跡できる。
 - 出力は `serde_yaml_ng` によるシリアライズで、同一入力に対して常に同一の出力になる(決定性、CIでの差分検証の前提)。
+- **既知の未対応事項**: `テスト知識管理のGit-nativeモデル_統合版V2.md` §3.4「axisの継承」は `FEATURE` の `axis` を生成された `TestCase` にコピーする設計だが、現行の `TestCase` 構造体(`src/generate.rs`)には `axis` フィールドが存在せず、継承されていない。2章の未実装タスク一覧を参照。
 
 **使用例**
 
@@ -281,11 +459,11 @@ expected:
 
 `knowledge/` に何も無い場合は `generated/testcases/` が空(0ファイル)になる。
 
-**ユースケース対応**: UC2「TestCaseを決定的生成する」(`docs/product-operation.md` 105行目)。CI上での差分検証(UC3)は 1.4 節の `markharness verify` で行う。
+**ユースケース対応**: UC2「TestCaseを決定的生成する」(`docs/product-operation.md` 105行目)。CI上での差分検証(UC3)は 1.6 節の `markharness verify` で行う。
 
 ---
 
-### 1.4 `markharness verify` — 生成物の差分検証(UC3: 生成物をレビュー・マージする)
+### 1.6 `markharness verify` — 生成物の差分検証(UC3: 生成物をレビュー・マージする)
 
 ```text
 markharness verify
@@ -330,12 +508,14 @@ $ echo $?
 |---|---|---|---|---|
 | UC1b | `forked_from` を手動記述する | (専用コマンドなし。`feature.yml` に `forked_from` フィールドを直接追記する運用を想定。将来的に `markharness knowledge fork <from-feature-id> <to-feature-id>` のような補助コマンドを検討) | Test Designer | 別Featureからの概念的派生を明示化する。Git履歴からは自動導出できないため必須の手動記述(§3.1, 153行目)。 |
 | — | `generated/traceability-index.json` の生成 | 未定 | Test Designer / CI Bot | Requirement → Feature → Behavior → Condition → TestCase の対応関係を機械可読な索引として保持する(製品化提案、スコープは別タスクで検討)。なお `knowledge/<requirement>/requirement.yml` の記録自体は `knowledge add`(1.2節)で実装済み。 |
-| — | 参照整合性検証(`behavior.feature` 等とディレクトリ階層の一致確認) | `markharness knowledge validate`(暫定) | Test Designer / CI Bot | `feature:` / `behavior:` / `condition:` フィールドが実際の親ディレクトリと一致しているかを検証する(スコープは別タスクで検討)。 |
+| — | `knowledge add --edit`(`$EDITOR` 起動ラッパー) | `markharness knowledge add --edit`(暫定) | Test Designer | テンプレートドラフトを一時ファイルに生成し `$EDITOR` を起動、保存後に `knowledge apply`(1.4節)相当の処理を呼ぶ。バリデーションエラー時はエディタを再度開いて修正させる(`docs/knowledge-apply-cli-spec.md` §3.3/§9.3)。参照整合性検証(`feature:`/`behavior:`/`condition:` とディレクトリ階層の一致確認)自体は `knowledge validate`/`apply`(1.3/1.4節)で実装済み。 |
+| — | `markharness axes list` | `markharness axes list [--json]`(暫定) | Test Designer / AIエージェント | `axes/*.yml` に登録済みの観点(axis)一覧を出力する。`knowledge apply` の `unknown_axis` エラーを事前に回避するための参照コマンド(`docs/knowledge-apply-cli-spec.md` §8)。 |
 | UC4 | マイルストーンをタグ付けする | 専用コマンドなし(`git tag <milestone>` を直接使用) | Release Manager | リリースタイミングの意思決定そのものであり、人間の判断ポイント(図3)。 |
 | UC5 | ChangeEventを自動計算する | `markharness changes compute <from-milestone> <to-milestone>`(暫定) | CI Bot | 2マイルストーン間でid解決経由のblob SHAを比較し `derived_from` を算出、`changes/<milestone>.yaml` に書き込む(本研究の核心的貢献、§3.2-3.4)。 |
 | UC6 | バックフィルを非同期実行する | `markharness backfill run`(暫定) | Backfill Worker | 直近マイルストーンから優先的に過去の系譜を計算し、`git notes` に進捗を記録しながら `changes/*.yaml` を段階的に埋める(§4.1-4.2)。 |
 | UC7 | idキャッシュを破棄・再構築する | `markharness cache rebuild` / 各コマンドの `--no-cache` オプション(暫定) | Test Designer / CI Bot | id解決キャッシュの不整合が疑われる場合に明示的に破棄・再構築するフェイルセーフ(199行目)。 |
 | UC8 | 既存ツールからインポートする | `markharness import --from <testrail\|xray\|testlink> <file>`(暫定) | Data Migration Operator | 既存TMSのエクスポートファイルを `knowledge/` 構造に変換する(§4.5)。 |
+| — | `TestCase` への `axis` 継承 | `generate` の内部ロジック修正(専用コマンドなし) | CI Bot | `テスト知識管理のGit-nativeモデル_統合版V2.md` §3.4で設計されている「`FEATURE.axis` を生成された `TestCase` にコピーする」処理が未実装(1.5節「既知の未対応事項」参照)。`TestCase` 構造体への `axis` フィールド追加と、`generated/traceability-index.json`(本表2番目の項目)での観点別集計の前提になる。 |
 
 これらは現時点で未着手であり、実装順序は別途チェックリスト(`/plan-checklist`)で管理する。
 
@@ -343,7 +523,7 @@ $ echo $?
 
 ## 3. 動作確認・テスト
 
-実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/generate.rs` / `src/verify.rs` の `#[cfg(test)] mod tests` を参照)。Pre-PR チェックリスト(`PROJECT.md`)に従い、コミット前に以下を実行すること:
+実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/generate.rs` / `src/verify.rs` の `#[cfg(test)] mod tests`、および `knowledge validate`/`apply` の終了コード・出力を検証する `tests/knowledge_cli.rs` を参照)。Pre-PR チェックリスト(`PROJECT.md`)に従い、コミット前に以下を実行すること:
 
 ```bash
 cargo test
