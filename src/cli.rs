@@ -32,7 +32,11 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum KnowledgeCommand {
     /// Interactively record a Feature/Condition/ExpectedResult
-    Add,
+    Add {
+        /// Target project directory containing knowledge/. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
 }
 
 pub fn run(cli: Cli) -> io::Result<()> {
@@ -49,8 +53,11 @@ pub fn run(cli: Cli) -> io::Result<()> {
             );
             Ok(())
         }
-        Command::Knowledge(KnowledgeCommand::Add) => {
-            let root = env::current_dir()?;
+        Command::Knowledge(KnowledgeCommand::Add { dir }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
             let stdin = io::stdin();
             let mut reader = stdin.lock();
             let mut stdout = io::stdout();
@@ -93,6 +100,34 @@ mod tests {
         match cli.command {
             Command::Init { dir } => assert_eq!(dir, None),
             _ => panic!("expected Init command"),
+        }
+    }
+
+    #[test]
+    fn parses_knowledge_add_dir_option() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "knowledge",
+            "add",
+            "--dir",
+            "tmp/todo-sample",
+        ]);
+
+        match cli.command {
+            Command::Knowledge(KnowledgeCommand::Add { dir }) => {
+                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")))
+            }
+            _ => panic!("expected Knowledge Add command"),
+        }
+    }
+
+    #[test]
+    fn parses_knowledge_add_without_dir_option() {
+        let cli = Cli::parse_from(["markharness", "knowledge", "add"]);
+
+        match cli.command {
+            Command::Knowledge(KnowledgeCommand::Add { dir }) => assert_eq!(dir, None),
+            _ => panic!("expected Knowledge Add command"),
         }
     }
 

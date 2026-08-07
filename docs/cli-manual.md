@@ -48,26 +48,48 @@ initialized knowledge/, axes/, generated/, executions/, changes/, schema/, tools
 ### 1.2 `markharness knowledge add` — 知識の対話的記述(UC1: 知識を記述する)
 
 ```text
-markharness knowledge add
+markharness knowledge add [--dir <path>]
 ```
 
 **用途**: Test Designer が `Feature` → `Condition` → `ExpectedResult` を対話形式(標準入力への逐次プロンプト)で記述し、`knowledge/` 配下にYAMLファイルを作成する。
+
+**オプション**
+
+| オプション | 説明 |
+|---|---|
+| `-d, --dir <path>` | 対象プロジェクトディレクトリ(`knowledge/` の親)を指定する。省略時はカレントディレクトリを対象にする。 |
+
+**使用例(カレントディレクトリ以外を対象にする)**
+
+```console
+$ markharness knowledge add --dir tmp/todo-sample
+Feature id: player-jump
+Axis (comma separated): gameplay, animation
+Condition id: jump-ground
+Summary: Jump from the ground and land
+Expected result: lands safely
+```
+→ `tmp/todo-sample/knowledge/player-jump/...` にファイルが作成される。
 
 **アクター**: Test Designer(`docs/product-operation.md` UC1)
 
 **フロー**
 
 1. `Feature id:` — Feature の slug(小文字英数字とハイフンのみ)を入力
+   - `knowledge/` 配下に既存の Feature が1件以上あれば、プロンプトの前に `N) id` 形式で番号付き一覧を表示する。番号を入力すると対応する Feature を選択でき、既存の id をそのまま直接入力しても再利用できる(挙動は変わらない)。候補が0件の場合は一覧を表示しない。
    - 既存の `knowledge/<feature_id>/feature.yaml` があれば再利用し、次のプロンプトへスキップする
    - 新規の場合のみ `Axis (comma separated):` で観点をカンマ区切りで入力し、`feature.yaml` を新規作成する
 2. `Condition id:` — Condition の slug を入力
-   - 既存の `knowledge/<feature_id>/<condition_id>/condition.yaml` があれば再利用し、次のプロンプトへスキップする
+   - 選択した Feature 配下に既存の Condition が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
+   - 新規に作成する Condition id が `{feature_id}-` で始まる場合(Feature id を重複して含めてしまった場合)、その接頭辞を自動的に除去してから作成し、その旨を通知する(例: Feature `player-jump` に Condition id `player-jump-ground` と入力すると `ground` として作成される)。ただし、入力された id そのままのディレクトリが既に存在する場合は除去せずそのまま再利用する(過去に手動で重複した名前のまま作成されたデータを壊さないため)。
+   - 既存の `knowledge/<feature_id>/<condition_id>/condition.yaml` があれば(除去後の id で判定し)再利用し、次のプロンプトへスキップする
    - 新規の場合のみ `Summary:` で条件の要約を入力し、`condition.yaml` を新規作成する
 3. `Expected result:` — 期待結果のテキストを入力し、`expected/NNN.yaml`(3桁連番、既存ファイル数+1)を作成する
 
 **入力バリデーション**
 
 - id(Feature id / Condition id)は小文字英数字とハイフンのみ許可。不正な場合は再入力を促す。
+- 候補一覧が表示されている場合、1以上・候補件数以下の整数を入力すると対応する候補が選択される。範囲外の整数や非数値は通常のid入力として扱われる。
 - すべてのプロンプトで空入力(trim後に空)は再入力を促す。
 
 **生成されるファイル**(例: `player-jump` / `jump-ground` / 1件目)
@@ -112,17 +134,36 @@ Summary: Jump from the ground and land
 Expected result: lands safely
 ```
 
-**使用例(既存Featureへの2件目のExpectedResult追加)**
+**使用例(既存Featureへの2件目のExpectedResult追加、番号選択)**
+
+```console
+$ markharness knowledge add
+Feature id:
+  1) player-jump
+1
+既存のFeature 'player-jump' を再利用します。
+Condition id:
+  1) jump-ground
+1
+既存のCondition 'jump-ground' を再利用します。
+Expected result: falls over
+```
+→ `knowledge/player-jump/jump-ground/expected/002.yaml` が作成される。番号の代わりに `player-jump` / `jump-ground` を直接入力しても同じ結果になる。
+
+**使用例(Condition id の重複接頭辞を自動除去)**
 
 ```console
 $ markharness knowledge add
 Feature id: player-jump
 既存のFeature 'player-jump' を再利用します。
-Condition id: jump-ground
-既存のCondition 'jump-ground' を再利用します。
-Expected result: falls over
+Condition id:
+  1) jump-ground
+player-jump-ground
+Condition id 'player-jump-ground' から Feature id 'player-jump' と重複する接頭辞を除去し、'ground' として作成します。
+Summary: Jump and land, then stand still
+Expected result: stands still
 ```
-→ `knowledge/player-jump/jump-ground/expected/002.yaml` が作成される。
+→ `knowledge/player-jump/ground/condition.yaml` と `knowledge/player-jump/ground/expected/001.yaml` が作成される(`player-jump-ground/` ディレクトリは作成されない)。
 
 **ユースケース対応**: UC1「知識を記述する」(手動記述、`docs/product-operation.md` 103行目)を対話形式で支援する。
 

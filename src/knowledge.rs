@@ -45,6 +45,14 @@ pub fn serialize_condition(condition: &Condition) -> String {
     )
 }
 
+pub fn strip_redundant_condition_prefix(feature_id: &str, condition_id: &str) -> Option<String> {
+    let prefix = format!("{feature_id}-");
+    condition_id
+        .strip_prefix(prefix.as_str())
+        .filter(|rest| !rest.is_empty())
+        .map(|rest| rest.to_string())
+}
+
 pub fn is_valid_slug(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
@@ -150,5 +158,29 @@ mod tests {
     #[test]
     fn accepts_lowercase_alphanumeric_hyphen_slug() {
         assert!(is_valid_slug("player-jump-001"));
+    }
+
+    #[test]
+    fn strips_redundant_prefix_when_condition_id_starts_with_feature_id() {
+        assert_eq!(
+            strip_redundant_condition_prefix("player-jump", "player-jump-ground"),
+            Some("ground".to_string())
+        );
+    }
+
+    #[test]
+    fn does_not_strip_when_condition_id_has_no_matching_prefix() {
+        assert_eq!(
+            strip_redundant_condition_prefix("player-jump", "jump-ground"),
+            None
+        );
+    }
+
+    #[test]
+    fn does_not_strip_when_remainder_would_be_empty() {
+        assert_eq!(
+            strip_redundant_condition_prefix("player-jump", "player-jump-"),
+            None
+        );
     }
 }

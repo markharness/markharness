@@ -4,8 +4,27 @@ use std::path::Path;
 
 use crate::knowledge::{
     Condition, ExpectedResult, Feature, is_valid_slug, serialize_condition,
-    serialize_expected_result, serialize_feature,
+    serialize_expected_result, serialize_feature, strip_redundant_condition_prefix,
 };
+
+fn list_candidate_ids(dir: &Path, marker_file: &str) -> Vec<String> {
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let mut ids: Vec<String> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join(marker_file).is_file())
+        .filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .collect();
+    ids.sort();
+    ids
+}
 
 fn prompt_line<R: BufRead, W: Write>(
     reader: &mut R,
@@ -30,9 +49,19 @@ fn prompt_slug<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     label: &str,
+    candidates: &[String],
 ) -> io::Result<String> {
+    for (i, id) in candidates.iter().enumerate() {
+        writeln!(writer, "  {}) {}", i + 1, id)?;
+    }
     loop {
         let value = prompt_line(reader, writer, label)?;
+        if let Ok(n) = value.parse::<usize>()
+            && n >= 1
+            && n <= candidates.len()
+        {
+            return Ok(candidates[n - 1].clone());
+        }
         if is_valid_slug(&value) {
             return Ok(value);
         }
@@ -50,7 +79,8 @@ pub fn run_add<R: BufRead, W: Write>(
 ) -> io::Result<()> {
     let knowledge_root = root.join("knowledge");
 
-    let feature_id = prompt_slug(reader, writer, "Feature id: ")?;
+    let feature_candidates = list_candidate_ids(&knowledge_root, "feature.yaml");
+    let feature_id = prompt_slug(reader, writer, "Feature id: ", &feature_candidates)?;
     let feature_dir = knowledge_root.join(&feature_id);
     let feature_path = feature_dir.join("feature.yaml");
     if feature_path.exists() {
@@ -70,7 +100,24 @@ pub fn run_add<R: BufRead, W: Write>(
         fs::write(&feature_path, serialize_feature(&feature))?;
     }
 
-    let condition_id = prompt_slug(reader, writer, "Condition id: ")?;
+    let condition_candidates = list_candidate_ids(&feature_dir, "condition.yaml");
+    let raw_condition_id = prompt_slug(reader, writer, "Condition id: ", &condition_candidates)?;
+    let condition_id = {
+        let raw_path = feature_dir.join(&raw_condition_id).join("condition.yaml");
+        if raw_path.exists() {
+            raw_condition_id
+        } else if let Some(stripped) =
+            strip_redundant_condition_prefix(&feature_id, &raw_condition_id)
+        {
+            writeln!(
+                writer,
+                "Condition id '{raw_condition_id}' から Feature id '{feature_id}' と重複する接頭辞を除去し、'{stripped}' として作成します。"
+            )?;
+            stripped
+        } else {
+            raw_condition_id
+        }
+    };
     let condition_dir = feature_dir.join(&condition_id);
     let condition_path = condition_dir.join("condition.yaml");
     if condition_path.exists() {
@@ -114,6 +161,13 @@ mod tests {
         let mut reader = Cursor::new(input.as_bytes());
         let mut writer = Vec::new();
         run_add(root, &mut reader, &mut writer).unwrap();
+    }
+
+    fn run_with_input_capturing_output(root: &std::path::Path, input: &str) -> String {
+        let mut reader = Cursor::new(input.as_bytes());
+        let mut writer = Vec::new();
+        run_add(root, &mut reader, &mut writer).unwrap();
+        String::from_utf8(writer).unwrap()
     }
 
     #[test]
@@ -216,5 +270,166 @@ mod tests {
             fs::read_to_string(expected_path).unwrap(),
             "id: player-jump-jump-ground-001\nkind: expected-result\nresult: lands safely\n"
         );
+    }
+
+    #[test]
+    fn no_candidate_list_printed_for_fresh_knowledge_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        let output = run_with_input_capturing_output(
+            dir.path(),
+            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        assert!(!output.contains("1)"));
+    }
+
+    #[test]
+    fn lists_feature_candidates_by_number_and_selects_by_index() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        let output = run_with_input_capturing_output(
+            dir.path(),
+            "1\njump-air\nJump while airborne\nlands on platform\n",
+        );
+
+        assert!(output.contains("  1) player-jump\n"));
+        assert!(output.contains("既存のFeature 'player-jump' を再利用します。"));
+        let condition_path = dir
+            .path()
+            .join("knowledge/player-jump/jump-air/condition.yaml");
+        assert!(condition_path.exists());
+    }
+
+    #[test]
+    fn lists_condition_candidates_by_number_and_selects_by_index() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        let output = run_with_input_capturing_output(dir.path(), "player-jump\n1\nfalls over\n");
+
+        assert!(output.contains("  1) jump-ground\n"));
+        assert!(output.contains("既存のCondition 'jump-ground' を再利用します。"));
+        let expected_002 = dir
+            .path()
+            .join("knowledge/player-jump/jump-ground/expected/002.yaml");
+        assert!(expected_002.exists());
+    }
+
+    #[test]
+    fn typing_literal_existing_id_with_candidates_present_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        run_with_input(dir.path(), "player-jump\njump-ground\nfalls over\n");
+
+        let expected_002 = dir
+            .path()
+            .join("knowledge/player-jump/jump-ground/expected/002.yaml");
+        assert_eq!(
+            fs::read_to_string(expected_002).unwrap(),
+            "id: player-jump-jump-ground-002\nkind: expected-result\nresult: falls over\n"
+        );
+    }
+
+    #[test]
+    fn auto_dedup_strips_redundant_condition_prefix_and_notifies() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        let output = run_with_input_capturing_output(
+            dir.path(),
+            "player-jump\ngameplay, animation\nplayer-jump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        assert!(output.contains(
+            "Condition id 'player-jump-ground' から Feature id 'player-jump' と重複する接頭辞を除去し、'ground' として作成します。"
+        ));
+        assert!(
+            dir.path()
+                .join("knowledge/player-jump/ground/condition.yaml")
+                .exists()
+        );
+        assert!(
+            dir.path()
+                .join("knowledge/player-jump/ground/expected/001.yaml")
+                .exists()
+        );
+        assert!(
+            !dir.path()
+                .join("knowledge/player-jump/player-jump-ground")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn legacy_condition_dir_with_redundant_prefix_is_reused_without_stripping() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "player-jump\ngameplay, animation\nplayer-jump-ground\nJump from the ground and land\nlands safely\n",
+        );
+        // Above run already dedupes to `ground/`; create a legacy dir with the
+        // literal redundant name directly on disk to simulate pre-existing data.
+        let legacy_dir = dir.path().join("knowledge/player-jump/player-jump-ground");
+        fs::create_dir_all(&legacy_dir).unwrap();
+        fs::write(
+            legacy_dir.join("condition.yaml"),
+            "id: player-jump-ground\nkind: condition\nsummary: legacy\n",
+        )
+        .unwrap();
+
+        let output = run_with_input_capturing_output(
+            dir.path(),
+            "player-jump\nplayer-jump-ground\nfell over\n",
+        );
+
+        assert!(!output.contains("重複する接頭辞を除去"));
+        assert!(output.contains("既存のCondition 'player-jump-ground' を再利用します。"));
+        assert!(legacy_dir.join("expected/001.yaml").exists());
+    }
+
+    #[test]
+    fn stripped_id_matches_a_different_preexisting_condition_reuses_it() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "player-jump\ngameplay, animation\nground\nlanded on the ground\nlands safely\n",
+        );
+
+        let output = run_with_input_capturing_output(
+            dir.path(),
+            "player-jump\nplayer-jump-ground\nfalls over\n",
+        );
+
+        assert!(output.contains(
+            "Condition id 'player-jump-ground' から Feature id 'player-jump' と重複する接頭辞を除去し、'ground' として作成します。"
+        ));
+        assert!(output.contains("既存のCondition 'ground' を再利用します。"));
+        let expected_002 = dir
+            .path()
+            .join("knowledge/player-jump/ground/expected/002.yaml");
+        assert!(expected_002.exists());
     }
 }
