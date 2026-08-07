@@ -426,9 +426,10 @@ markharness generate
 - `case_id = "tc-{condition.id}-001"`。連番は将来 1 Condition から複数 TestCase を生成する拡張のために予約されており、現状は常に `001`。
 - 出力ファイル名は `generated/testcases/{condition.id}.yml`(`case_id` の `tc-` 接頭辞は付けない)。
 - `title` = `condition.description`、`steps` = `[behavior.description]`、`expected` = 各 `expected/*.yml` の `description` をファイル名のソート順で列挙。
-- `generated_from` に `requirement` / `feature` / `behavior` / `condition` の各 id と、集約元の `expected_results`(`expected/*.yml` の `id` の一覧)を記録する。トレーサビリティ索引(`generated/traceability-index.json` 等)自体は未実装だが、この `requirement` フィールドにより生成済み TestCase 単体からでも由来する Requirement を追跡できる。
+- `generated_from` に `requirement` / `feature` / `behavior` / `condition` の各 id と、集約元の `expected_results`(`expected/*.yml` の `id` の一覧)を記録する。
+- `axis`: `Requirement` / `Feature` / `Behavior` の `axis` を合成(union、重複除去のうえソート)した観点一覧(§3.4「axisの継承」)。
 - 出力は `serde_yaml_ng` によるシリアライズで、同一入力に対して常に同一の出力になる(決定性、CIでの差分検証の前提)。
-- **既知の未対応事項**: `テスト知識管理のGit-nativeモデル_統合版V2.md` §3.4「axisの継承」は `FEATURE` の `axis` を生成された `TestCase` にコピーする設計だが、現行の `TestCase` 構造体(`src/generate.rs`)には `axis` フィールドが存在せず、継承されていない。2章の未実装タスク一覧を参照。
+- `generate` は `generated/testcases/*.yml` に加えて `generated/traceability-index.json`(Requirement → Feature → Behavior → Condition → TestCase の対応関係を持つ機械可読索引。`serde_json` による整形済みJSON)も同時に再生成する。`markharness verify`(1.6節)はこのファイルも差分検証対象に含める。
 
 **使用例**
 
@@ -469,14 +470,14 @@ expected:
 markharness verify
 ```
 
-**用途**: `knowledge/` から `generate` と同じロジックで TestCase を再構築し(ディスクへは書き込まない)、コミット済みの `generated/testcases/*.yml` と1ファイルずつ比較する。CI上でこのコマンドを実行し、`knowledge/` の変更を `generated/testcases/` へ反映し忘れていないかを検証する想定。
+**用途**: `knowledge/` から `generate` と同じロジックで TestCase と `traceability-index.json` を再構築し(ディスクへは書き込まない)、コミット済みの `generated/testcases/*.yml` および `generated/traceability-index.json` と比較する。CI上でこのコマンドを実行し、`knowledge/` の変更を `generated/` へ反映し忘れていないかを検証する想定。
 
 **アクター**: Reviewer / CI Bot(UC3)
 
 **動作**
 
 - 差分が無ければ `generated/testcases/ is up to date with knowledge/` を表示し、終了コード `0`。
-- 差分があれば、追加・削除・変更されたファイルを `added:` / `removed:` / `changed:` のラベル付きでファイル名のソート順に一覧表示し、終了コード `1` で終了する(内容のunified diffまでは表示しない)。
+- 差分があれば、追加・削除・変更されたファイルを `added:` / `removed:` / `changed:` のラベル付きでファイル名のソート順に一覧表示し、終了コード `1` で終了する(内容のunified diffまでは表示しない)。`generated/traceability-index.json` も他の生成物と同じ扱いで一覧に含まれる(ファイル名は `traceability-index.json`)。
 
 **使用例(差分なし)**
 
@@ -500,22 +501,151 @@ $ echo $?
 
 ---
 
+### 1.7 `markharness axes list` — 観点(axis)レジストリの一覧表示
+
+```text
+markharness axes list [--json] [-d, --dir <path>]
+```
+
+**用途**: `axes/*.yml` に登録済みの観点一覧を、id昇順で出力する。`knowledge validate`/`apply` の `unknown_axis` エラーを事前に回避するための参照コマンド。
+
+**動作**: `--json` 未指定時は `id (label)`(label が id と同じ場合は id のみ)を1行ずつ表示し、登録が0件なら `no axes registered under axes/` と表示する。`--json` 指定時は `[{"id":...,"label":...|null}]` を1行のJSONで出力する。
+
+**使用例**
+
+```console
+$ markharness axes list --dir tmp/todo-sample
+gameplay (Gameplay)
+ui
+
+$ markharness axes list --dir tmp/todo-sample --json
+[{"id":"gameplay","label":"Gameplay"},{"id":"ui","label":null}]
+```
+
+**ユースケース対応**: どのUCにも明示的には現れない補助コマンド(`docs/knowledge-apply-cli-spec.md` §8)。
+
+---
+
+### 1.8 `forked_from`(UC1b: 別Featureからの概念的派生を手動記述する)
+
+専用コマンドはなく、`feature.yml` の `forked_from` フィールドに派生元Featureのidを直接記述する運用(§3.1)。`knowledge validate`/`apply`(1.3/1.4節)のドラフトYAMLでも `feature.forked_from` を受け付け、参照先のFeatureが `knowledge/` 配下のどこにも存在しない場合は `unknown_forked_from` エラーで停止する。Git履歴からは自動導出できないドメイン知識のため、`derived_from`(同一Featureの版履歴、§3.2〜3.4)とは異なり検証のみ行い自動計算はしない。
+
+```yaml
+feature:
+  id: player-double-jump
+  label: player-double-jump
+  axis: [gameplay]
+  forked_from: player-jump   # 概念的な派生元(既存Feature id)。省略可
+```
+
+---
+
+### 1.9 `markharness knowledge add --edit` — ドラフトYAMLの$EDITOR編集(UC1: 知識を記述する)
+
+```text
+markharness knowledge add --edit [-d, --dir <path>]
+```
+
+**用途**: `knowledge add`(1.2節)の対話プロンプトの代わりに、空のドラフトYAMLテンプレート(1.3節と同じ形式)を一時ファイルに書き出して `$VISUAL`(未設定なら `$EDITOR`)を起動する。保存してエディタを終了すると `knowledge apply`(1.4節)と同じ検証・書き込みを行い、バリデーションエラーがあればエラー内容を表示したうえで同じファイルを再度エディタで開く(ループ)。`$VISUAL`/`$EDITOR` がいずれも未設定の場合はエラーを表示して終了コード `2` で終了する。
+
+**使用例**
+
+```console
+$ EDITOR=vim markharness knowledge add --edit
+wrote knowledge/controls/player-jump/jump/ground/expected/001.yml
+```
+
+**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)。`knowledge apply` の非対話検証ロジックをそのまま再利用する。
+
+---
+
+### 1.10 `markharness cache rebuild` — idキャッシュの破棄(UC7: idキャッシュを破棄・再構築する)
+
+```text
+markharness cache rebuild [-d, --dir <path>]
+```
+
+**用途**: `.markharness-cache/`(1.11節の `changes compute` が使う、Featureのid→blob SHA解決結果の非コミットキャッシュ)を丸ごと削除する。即時の再計算は行わない(次回 `changes compute` 実行時に遅延計算される)。キャッシュディレクトリが存在しない場合もエラーにならない(冪等)。
+
+**使用例**
+
+```console
+$ markharness cache rebuild
+removed .markharness-cache/ under /path/to/project
+```
+
+**ユースケース対応**: UC7「idキャッシュを破棄・再構築する」(`docs/product-operation.md`)。id解決の不整合が疑われる場合のフェイルセーフ。
+
+---
+
+### 1.11 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
+
+```text
+markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --dir <path>]
+```
+
+**用途**: 2つのマイルストーン(git tag名をそのまま使用。マイルストーン境界の判定はタグ名一致のみで、`executions/*/milestone.yml` との対応は呼び出し側の責務)間で、`knowledge/` 配下の各Featureのblob SHAを `git ls-tree -r <tag> -- knowledge` で比較し、変化したFeatureごとに `ChangeEvent` を算出して `changes/<to-milestone>.yaml` に書き込む。id解決は簡易版(論文§3.3の本格的な非コミットキャッシュ設計ではなく、`knowledge/` のディレクトリ名がそのままFeature idであるという前提での直接走査)。
+
+**アクター**: CI Bot(UC5)
+
+**動作**
+
+- Feature単位で `from_blob`/`to_blob` を比較し、一致すれば何もしない。片方にのみ存在すれば追加/削除、両方に存在し値が異なれば変更として `ChangeEvent` を1件生成する。
+- `impacted_testcases` は現在の(HEAD時点の)`knowledge/` から `generate`(1.5節)と同じ生成グラフを構築し、変更されたFeatureに由来する `TestCase.case_id` を列挙したもの(§3.2(A)の構造的生成グラフ。版履歴は使わない)。
+- `change_type`(仕様変更/バグ修正等)は出力に含まない。人間が `changes/<to-milestone>.yaml` を編集して追記する運用(§3.5)。
+- `--no-cache` を指定しない場合、Feature blob解決結果を `.markharness-cache/` に読み書きする(1.10節)。
+
+**出力例**(`changes/m2.yaml`)
+
+```yaml
+- event_id: player-jump--m1--m2
+  feature_id: player-jump
+  from_milestone: m1
+  to_milestone: m2
+  from_blob: 1a2b3c...
+  to_blob: 4d5e6f...
+  impacted_testcases:
+  - tc-ground-001
+```
+
+**ユースケース対応**: UC5「ChangeEventを自動計算する」。本モデルの核心的貢献(§3.2〜3.4)の簡易実装。
+
+---
+
+### 1.12 `markharness backfill run` — 過去マイルストーンの一括処理(UC6: バックフィルを非同期実行する)
+
+```text
+markharness backfill run [--no-cache] [-d, --dir <path>]
+```
+
+**用途**: `executions/*/milestone.yml` が存在するマイルストーンを対象に、対応する git tag のコミット日時(committer date)で新しい順に並べ、隣接する2マイルストーンごとに `changes compute`(1.11節)相当の処理を実行して `changes/<milestone>.yaml` を生成する。1回の実行で全ペアを処理し終了する(常駐デーモンではない。CI等からの定期実行を想定)。
+
+**動作**
+
+- 最も古いマイルストーンは比較対象がないためスキップされる。
+- 各マイルストーン(to側)の処理完了は `git notes --ref=markharness-backfill` に記録され、次回実行時に同じペアは再計算されずスキップされる(§4.3)。
+- `--no-cache` を指定しない場合、`changes compute` と同じ `.markharness-cache/` を共有する。
+
+**使用例**
+
+```console
+$ markharness backfill run
+backfilled changes/2026-08-release.yaml
+backfill: 1 processed, 2 already up to date
+```
+
+**ユースケース対応**: UC6「バックフィルを非同期実行する」(§4.1〜4.3の簡易実装。マイルストーン限定・git notesによる進捗管理は本編どおり、非同期ワーカー化は見送り)。
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。
 
 | # | ユースケース | 想定コマンド(暫定) | アクター | 概要 |
 |---|---|---|---|---|
-| UC1b | `forked_from` を手動記述する | (専用コマンドなし。`feature.yml` に `forked_from` フィールドを直接追記する運用を想定。将来的に `markharness knowledge fork <from-feature-id> <to-feature-id>` のような補助コマンドを検討) | Test Designer | 別Featureからの概念的派生を明示化する。Git履歴からは自動導出できないため必須の手動記述(§3.1, 153行目)。 |
-| — | `generated/traceability-index.json` の生成 | 未定 | Test Designer / CI Bot | Requirement → Feature → Behavior → Condition → TestCase の対応関係を機械可読な索引として保持する(製品化提案、スコープは別タスクで検討)。なお `knowledge/<requirement>/requirement.yml` の記録自体は `knowledge add`(1.2節)で実装済み。 |
-| — | `knowledge add --edit`(`$EDITOR` 起動ラッパー) | `markharness knowledge add --edit`(暫定) | Test Designer | テンプレートドラフトを一時ファイルに生成し `$EDITOR` を起動、保存後に `knowledge apply`(1.4節)相当の処理を呼ぶ。バリデーションエラー時はエディタを再度開いて修正させる(`docs/knowledge-apply-cli-spec.md` §3.3/§9.3)。参照整合性検証(`feature:`/`behavior:`/`condition:` とディレクトリ階層の一致確認)自体は `knowledge validate`/`apply`(1.3/1.4節)で実装済み。 |
-| — | `markharness axes list` | `markharness axes list [--json]`(暫定) | Test Designer / AIエージェント | `axes/*.yml` に登録済みの観点(axis)一覧を出力する。`knowledge apply` の `unknown_axis` エラーを事前に回避するための参照コマンド(`docs/knowledge-apply-cli-spec.md` §8)。 |
 | UC4 | マイルストーンをタグ付けする | 専用コマンドなし(`git tag <milestone>` を直接使用) | Release Manager | リリースタイミングの意思決定そのものであり、人間の判断ポイント(図3)。 |
-| UC5 | ChangeEventを自動計算する | `markharness changes compute <from-milestone> <to-milestone>`(暫定) | CI Bot | 2マイルストーン間でid解決経由のblob SHAを比較し `derived_from` を算出、`changes/<milestone>.yaml` に書き込む(本研究の核心的貢献、§3.2-3.4)。 |
-| UC6 | バックフィルを非同期実行する | `markharness backfill run`(暫定) | Backfill Worker | 直近マイルストーンから優先的に過去の系譜を計算し、`git notes` に進捗を記録しながら `changes/*.yaml` を段階的に埋める(§4.1-4.2)。 |
-| UC7 | idキャッシュを破棄・再構築する | `markharness cache rebuild` / 各コマンドの `--no-cache` オプション(暫定) | Test Designer / CI Bot | id解決キャッシュの不整合が疑われる場合に明示的に破棄・再構築するフェイルセーフ(199行目)。 |
-| UC8 | 既存ツールからインポートする | `markharness import --from <testrail\|xray\|testlink> <file>`(暫定) | Data Migration Operator | 既存TMSのエクスポートファイルを `knowledge/` 構造に変換する(§4.5)。 |
-| — | `TestCase` への `axis` 継承 | `generate` の内部ロジック修正(専用コマンドなし) | CI Bot | `テスト知識管理のGit-nativeモデル_統合版V2.md` §3.4で設計されている「`FEATURE.axis` を生成された `TestCase` にコピーする」処理が未実装(1.5節「既知の未対応事項」参照)。`TestCase` 構造体への `axis` フィールド追加と、`generated/traceability-index.json`(本表2番目の項目)での観点別集計の前提になる。 |
+| UC8 | 既存ツールからインポートする | `markharness import --from <testrail\|xray\|testlink> <file>`(暫定) | Data Migration Operator | 既存TMSのエクスポートファイルを `knowledge/` 構造に変換する(§4.5)。今回の実装スコープ外。 |
 
 これらは現時点で未着手であり、実装順序は別途チェックリスト(`/plan-checklist`)で管理する。
 
@@ -523,7 +653,7 @@ $ echo $?
 
 ## 3. 動作確認・テスト
 
-実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/generate.rs` / `src/verify.rs` の `#[cfg(test)] mod tests`、および `knowledge validate`/`apply` の終了コード・出力を検証する `tests/knowledge_cli.rs` を参照)。Pre-PR チェックリスト(`PROJECT.md`)に従い、コミット前に以下を実行すること:
+実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/knowledge_edit.rs` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge validate`/`apply` の終了コード・出力を検証する `tests/knowledge_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`PROJECT.md`)に従い、コミット前に以下を実行すること:
 
 ```bash
 cargo test

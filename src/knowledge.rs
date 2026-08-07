@@ -17,6 +17,9 @@ pub struct Feature {
     pub axis: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// 概念的な派生元Feature id(§3.1)。Git履歴に現れないドメイン知識のため手動記述。
+    #[serde(default)]
+    pub forked_from: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -90,6 +93,9 @@ pub fn serialize_feature(feature: &Feature) -> String {
     );
     if let Some(description) = &feature.description {
         out.push_str(&format!("description: |\n  {description}\n"));
+    }
+    if let Some(forked_from) = &feature.forked_from {
+        out.push_str(&format!("forked_from: {forked_from}\n"));
     }
     out
 }
@@ -284,6 +290,7 @@ mod tests {
             label: "player-jump".to_string(),
             axis: vec!["gameplay".to_string(), "animation".to_string()],
             description: None,
+            forked_from: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -302,6 +309,7 @@ mod tests {
             label: "プレイヤージャンプ".to_string(),
             axis: vec!["gameplay".to_string()],
             description: Some("Jump related behaviors.".to_string()),
+            forked_from: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -309,6 +317,44 @@ mod tests {
         assert_eq!(
             yaml,
             "id: player-jump\nrequirement: player-controls\nlabel: プレイヤージャンプ\naxis: [gameplay]\ndescription: |\n  Jump related behaviors.\n"
+        );
+    }
+
+    #[test]
+    fn parses_feature_yaml_with_forked_from() {
+        let yaml = "id: player-double-jump\nrequirement: player-controls\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n";
+
+        let feature: Feature = parse_feature(yaml).unwrap();
+
+        assert_eq!(feature.forked_from, Some("player-jump".to_string()));
+    }
+
+    #[test]
+    fn parses_feature_yaml_without_forked_from_as_none() {
+        let feature: Feature = parse_feature(
+            "id: player-jump\nrequirement: player-controls\nlabel: player-jump\naxis: [gameplay]\n",
+        )
+        .unwrap();
+
+        assert_eq!(feature.forked_from, None);
+    }
+
+    #[test]
+    fn serializes_feature_with_forked_from_when_present() {
+        let feature = Feature {
+            id: "player-double-jump".to_string(),
+            requirement: "player-controls".to_string(),
+            label: "player-double-jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: None,
+            forked_from: Some("player-jump".to_string()),
+        };
+
+        let yaml = serialize_feature(&feature);
+
+        assert_eq!(
+            yaml,
+            "id: player-double-jump\nrequirement: player-controls\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n"
         );
     }
 

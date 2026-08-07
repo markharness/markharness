@@ -8,6 +8,9 @@
 check_output.txt
 report.json
 
+# markharness id resolution cache (§3.3, 非コミット・毎プロジェクトで再構築)
+.markharness-cache/
+
 # Backup folders (internal development files)
 **/bkup/
 

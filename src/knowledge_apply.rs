@@ -102,6 +102,7 @@ pub fn apply_draft(
                 .unwrap_or_else(|| draft.feature.id.clone()),
             axis: draft.feature.axis.clone().unwrap_or_default(),
             description: draft.feature.description.clone(),
+            forked_from: draft.feature.forked_from.clone(),
         };
         pending.push((feature_path, knowledge::serialize_feature(&feature)));
     }

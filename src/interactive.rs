@@ -183,6 +183,7 @@ pub fn run_add<R: BufRead, W: Write>(
             label: feature_label,
             axis,
             description: None,
+            forked_from: None,
         };
         fs::write(&feature_path, serialize_feature(&feature))?;
     }

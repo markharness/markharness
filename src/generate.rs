@@ -24,6 +24,21 @@ pub struct TestCase {
     pub title: String,
     pub steps: Vec<String>,
     pub expected: Vec<String>,
+    /// Requirement/Feature/Behavior の axis を合成(union)したもの。決定性のため
+    /// 重複除去のうえソートする(§3.4 axisの継承)。
+    pub axis: Vec<String>,
+}
+
+/// Deduplicates and sorts axis values from multiple hierarchy levels into one
+/// deterministic list, independent of input order or duplication.
+fn union_axis(sources: &[&[String]]) -> Vec<String> {
+    let mut union: Vec<String> = sources
+        .iter()
+        .flat_map(|axis| axis.iter().cloned())
+        .collect();
+    union.sort();
+    union.dedup();
+    union
 }
 
 impl TestCase {
@@ -117,6 +132,8 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
                         expected_texts.push(expected.description);
                     }
 
+                    let axis = union_axis(&[&requirement.axis, &feature.axis, &behavior.axis]);
+
                     testcases.push(TestCase {
                         case_id: format!("tc-{}-001", condition.id),
                         generated_from: GeneratedFrom {
@@ -129,6 +146,7 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
                         title: condition.description,
                         steps: vec![behavior.description.clone()],
                         expected: expected_texts,
+                        axis,
                     });
                 }
             }
@@ -533,6 +551,7 @@ mod tests {
             title: "Title is empty.".to_string(),
             steps: vec!["User adds a task.".to_string()],
             expected: vec!["Shows a validation error.".to_string()],
+            axis: vec!["ui".to_string()],
         };
 
         let yaml = serialize_testcase(&testcase);
@@ -544,6 +563,48 @@ mod tests {
             Some("tc-todo-add-task-empty-input-001")
         );
         assert_eq!(parsed["generated_from"]["feature"].as_str(), Some("todo"));
+    }
+
+    #[test]
+    fn testcase_axis_is_union_of_requirement_feature_and_behavior_axis() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security", "ui"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui", "data"]);
+        write_behavior(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "User adds a task.",
+        );
+        write_condition(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+        );
+        write_expected(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "001",
+            "todo-add-task-empty-input-001",
+            "Shows a validation error.",
+        );
+
+        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+
+        // write_behavior always uses axis [ui]; combined with requirement's
+        // [security, ui] and feature's [ui, data], duplicates must collapse.
+        assert_eq!(
+            testcases[0].axis,
+            vec!["data".to_string(), "security".to_string(), "ui".to_string()]
+        );
     }
 
     #[test]
@@ -560,6 +621,7 @@ mod tests {
             title: "Title is empty.".to_string(),
             steps: vec!["User adds a task.".to_string()],
             expected: vec!["Shows a validation error.".to_string()],
+            axis: vec!["ui".to_string()],
         };
 
         assert_eq!(testcase.file_stem(), "todo-add-task-empty-input");

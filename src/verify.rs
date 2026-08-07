@@ -4,6 +4,7 @@ use std::io;
 use std::path::Path;
 
 use crate::generate::{generate_testcases, serialize_testcase};
+use crate::traceability::{build_index, serialize_index};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum DiffKind {
@@ -69,6 +70,21 @@ pub fn diff_generated_testcases(root: &Path) -> io::Result<Vec<DiffEntry>> {
         }
     }
 
+    let index = build_index(&testcases);
+    let expected_index_json = serialize_index(&index);
+    let index_path = root.join("generated").join("traceability-index.json");
+    match fs::read_to_string(&index_path) {
+        Err(_) => diffs.push(DiffEntry {
+            file_name: "traceability-index.json".to_string(),
+            kind: DiffKind::Added,
+        }),
+        Ok(existing_json) if existing_json != expected_index_json => diffs.push(DiffEntry {
+            file_name: "traceability-index.json".to_string(),
+            kind: DiffKind::Changed,
+        }),
+        Ok(_) => {}
+    }
+
     diffs.sort_by(|a, b| a.file_name.cmp(&b.file_name));
     Ok(diffs)
 }
@@ -109,10 +125,24 @@ mod tests {
         .unwrap();
     }
 
+    /// Writes `generated/traceability-index.json` matching a fresh
+    /// regeneration from `root/knowledge`, so tests can isolate the
+    /// testcases-file diff behavior from the index-file diff behavior.
+    fn write_matching_index(root: &Path) {
+        let testcases = generate_testcases(&root.join("knowledge")).unwrap();
+        let index = build_index(&testcases);
+        fs::write(
+            root.join("generated/traceability-index.json"),
+            serialize_index(&index),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn reports_no_diff_when_generated_dir_missing_and_knowledge_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
+        write_matching_index(dir.path());
 
         let diffs = diff_generated_testcases(dir.path()).unwrap();
 
@@ -124,6 +154,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_knowledge_todo_add_task(dir.path());
+        write_matching_index(dir.path());
 
         let diffs = diff_generated_testcases(dir.path()).unwrap();
 
@@ -152,6 +183,7 @@ mod tests {
             )
             .unwrap();
         }
+        write_matching_index(dir.path());
 
         let diffs = diff_generated_testcases(dir.path()).unwrap();
 
@@ -171,6 +203,7 @@ mod tests {
             "stale content\n",
         )
         .unwrap();
+        write_matching_index(dir.path());
 
         let diffs = diff_generated_testcases(dir.path()).unwrap();
 
@@ -191,6 +224,7 @@ mod tests {
         let testcases_dir = dir.path().join("generated/testcases");
         fs::create_dir_all(&testcases_dir).unwrap();
         fs::write(testcases_dir.join("stale-condition.yml"), "stale content\n").unwrap();
+        write_matching_index(dir.path());
 
         let diffs = diff_generated_testcases(dir.path()).unwrap();
 
@@ -199,6 +233,65 @@ mod tests {
             vec![DiffEntry {
                 file_name: "stale-condition.yml".to_string(),
                 kind: DiffKind::Removed,
+            }]
+        );
+    }
+
+    #[test]
+    fn reports_added_for_traceability_index_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_knowledge_todo_add_task(dir.path());
+        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases_dir = dir.path().join("generated/testcases");
+        fs::create_dir_all(&testcases_dir).unwrap();
+        for testcase in &testcases {
+            fs::write(
+                testcases_dir.join(format!("{}.yml", testcase.file_stem())),
+                serialize_testcase(testcase),
+            )
+            .unwrap();
+        }
+
+        let diffs = diff_generated_testcases(dir.path()).unwrap();
+
+        assert_eq!(
+            diffs,
+            vec![DiffEntry {
+                file_name: "traceability-index.json".to_string(),
+                kind: DiffKind::Added,
+            }]
+        );
+    }
+
+    #[test]
+    fn reports_changed_for_traceability_index_when_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_knowledge_todo_add_task(dir.path());
+        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases_dir = dir.path().join("generated/testcases");
+        fs::create_dir_all(&testcases_dir).unwrap();
+        for testcase in &testcases {
+            fs::write(
+                testcases_dir.join(format!("{}.yml", testcase.file_stem())),
+                serialize_testcase(testcase),
+            )
+            .unwrap();
+        }
+        fs::write(
+            dir.path().join("generated/traceability-index.json"),
+            "{\"testcases\":[]}",
+        )
+        .unwrap();
+
+        let diffs = diff_generated_testcases(dir.path()).unwrap();
+
+        assert_eq!(
+            diffs,
+            vec![DiffEntry {
+                file_name: "traceability-index.json".to_string(),
+                kind: DiffKind::Changed,
             }]
         );
     }

@@ -1,8 +1,15 @@
+pub mod axes;
+pub mod backfill;
+pub mod changes;
 pub mod cli;
 pub mod generate;
+pub mod git;
+pub mod id_cache;
 pub mod init;
 pub mod interactive;
 pub mod knowledge;
 pub mod knowledge_apply;
 pub mod knowledge_draft;
+pub mod knowledge_edit;
+pub mod traceability;
 pub mod verify;

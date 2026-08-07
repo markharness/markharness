@@ -25,6 +25,8 @@ pub struct FeatureDraft {
     pub axis: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub forked_from: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -87,6 +89,7 @@ pub enum ValidationErrorCode {
     RedundantPrefix,
     ConflictingExistingValue,
     ParentNotFound,
+    UnknownForkedFrom,
 }
 
 impl ValidationErrorCode {
@@ -99,6 +102,7 @@ impl ValidationErrorCode {
             ValidationErrorCode::RedundantPrefix => "redundant_prefix",
             ValidationErrorCode::ConflictingExistingValue => "conflicting_existing_value",
             ValidationErrorCode::ParentNotFound => "parent_not_found",
+            ValidationErrorCode::UnknownForkedFrom => "unknown_forked_from",
         }
     }
 }
@@ -135,6 +139,34 @@ pub fn load_axis_registry(root: &Path) -> HashSet<String> {
 
 pub struct ValidateOptions {
     pub strip_redundant_prefix: bool,
+}
+
+/// Searches every `knowledge/<requirement>/<feature>/feature.yml` for one
+/// whose `id` matches `feature_id`. Feature ids are unique across the whole
+/// tree even though they are nested under a requirement directory, so a
+/// `forked_from` reference cannot be resolved by path alone.
+fn feature_id_exists(knowledge_root: &Path, feature_id: &str) -> bool {
+    let Ok(requirement_entries) = fs::read_dir(knowledge_root) else {
+        return false;
+    };
+    for requirement_entry in requirement_entries.filter_map(|e| e.ok()) {
+        let requirement_dir = requirement_entry.path();
+        if !requirement_dir.is_dir() {
+            continue;
+        }
+        let Ok(feature_entries) = fs::read_dir(&requirement_dir) else {
+            continue;
+        };
+        for feature_entry in feature_entries.filter_map(|e| e.ok()) {
+            let feature_dir = feature_entry.path();
+            if feature_dir.join("feature.yml").is_file()
+                && feature_dir.file_name().and_then(|n| n.to_str()) == Some(feature_id)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Determines which directory a condition should be read from / written to,
@@ -386,6 +418,18 @@ pub fn validate_draft(
     let condition_dir = behavior_dir.join(&effective_condition_id);
     let condition_path = condition_dir.join("condition.yml");
     let condition_exists = condition_path.is_file();
+
+    if let Some(forked_from) = &draft.feature.forked_from
+        && !feature_id_exists(&knowledge_root, forked_from)
+    {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::UnknownForkedFrom,
+            path: "feature.forked_from".to_string(),
+            value: Some(forked_from.clone()),
+            message: format!("forked_from feature \"{forked_from}\" does not exist"),
+            suggestion: None,
+        });
+    }
 
     push_axis_checks(
         &mut errors,
@@ -918,6 +962,50 @@ expected:
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::ParentNotFound
                     && e.path == "feature.requirement")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_unknown_forked_from_when_referenced_feature_missing() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.feature.forked_from = Some("player-jump".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        let err = errors
+            .iter()
+            .find(|e| e.code == ValidationErrorCode::UnknownForkedFrom)
+            .expect("expected an unknown_forked_from error");
+        assert_eq!(err.path, "feature.forked_from");
+        assert_eq!(err.value, Some("player-jump".to_string()));
+    }
+
+    #[test]
+    fn validate_draft_allows_forked_from_when_referenced_feature_exists() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        fs::create_dir_all(dir.path().join("knowledge/controls/player-jump")).unwrap();
+        fs::write(
+            dir.path().join("knowledge/controls/requirement.yml"),
+            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join("knowledge/controls/player-jump/feature.yml"),
+            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n",
+        )
+        .unwrap();
+        let mut draft = full_new_draft();
+        draft.feature.id = "player-double-jump".to_string();
+        draft.feature.forked_from = Some("player-jump".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::UnknownForkedFrom)
         );
     }
 

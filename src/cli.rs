@@ -3,12 +3,19 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::process;
 
+use crate::axes;
+use crate::backfill;
+use crate::changes;
 use crate::generate;
+use crate::id_cache;
 use crate::init;
 use crate::interactive;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions};
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
+use crate::knowledge_edit::{self, EditFlowError};
+use crate::traceability;
 use crate::verify;
 
 #[derive(Parser)]
@@ -33,6 +40,71 @@ pub enum Command {
     Generate,
     /// Verify that generated/testcases/*.yml matches a fresh regeneration from knowledge/ (UC3 CI check)
     Verify,
+    /// List axes/*.yml registry entries
+    #[command(subcommand)]
+    Axes(AxesCommand),
+    /// Manage the id resolution cache under .markharness-cache/
+    #[command(subcommand)]
+    Cache(CacheCommand),
+    /// Compute ChangeEvents between two milestones (UC5)
+    #[command(subcommand)]
+    Changes(ChangesCommand),
+    /// Backfill ChangeEvents across past milestones (UC6)
+    #[command(subcommand)]
+    Backfill(BackfillCommand),
+}
+
+#[derive(Subcommand)]
+pub enum BackfillCommand {
+    /// Process one batch of unbackfilled milestone pairs, most recent first
+    Run {
+        /// Target project directory (a git repository). Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Recompute Feature blob SHAs directly via `git ls-tree` instead of using .markharness-cache/
+        #[arg(long)]
+        no_cache: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ChangesCommand {
+    /// Diff Feature blob SHAs between two milestone git tags and write changes/<to>.yaml
+    Compute {
+        /// The earlier milestone (a git tag)
+        from: String,
+        /// The later milestone (a git tag)
+        to: String,
+        /// Target project directory (a git repository). Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Recompute Feature blob SHAs directly via `git ls-tree` instead of using .markharness-cache/
+        #[arg(long)]
+        no_cache: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CacheCommand {
+    /// Discard .markharness-cache/ (next `changes compute` recomputes lazily)
+    Rebuild {
+        /// Target project directory containing .markharness-cache/. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AxesCommand {
+    /// List all registered axes
+    List {
+        /// Target project directory containing axes/. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -42,6 +114,9 @@ pub enum KnowledgeCommand {
         /// Target project directory containing knowledge/. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
+        /// Open a blank draft chain in $VISUAL/$EDITOR instead of prompting on stdin
+        #[arg(long)]
+        edit: bool,
     },
     /// Validate a draft YAML file without writing anything
     Validate {
@@ -87,15 +162,19 @@ pub fn run(cli: Cli) -> io::Result<()> {
             );
             Ok(())
         }
-        Command::Knowledge(KnowledgeCommand::Add { dir }) => {
+        Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
             let root = match dir {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
-            let stdin = io::stdin();
-            let mut reader = stdin.lock();
-            let mut stdout = io::stdout();
-            interactive::run_add(&root, &mut reader, &mut stdout)
+            if edit {
+                run_knowledge_add_edit(&root)
+            } else {
+                let stdin = io::stdin();
+                let mut reader = stdin.lock();
+                let mut stdout = io::stdout();
+                interactive::run_add(&root, &mut reader, &mut stdout)
+            }
         }
         Command::Knowledge(KnowledgeCommand::Validate {
             draft_file,
@@ -171,9 +250,84 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     generate::serialize_testcase(testcase),
                 )?;
             }
+            let index = traceability::build_index(&testcases);
+            std::fs::write(
+                root.join("generated").join("traceability-index.json"),
+                traceability::serialize_index(&index),
+            )?;
             println!(
                 "generated {} testcase(s) into generated/testcases/",
                 testcases.len()
+            );
+            Ok(())
+        }
+        Command::Axes(AxesCommand::List { dir, json }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let entries = axes::list_axes(&root);
+            if json {
+                println!("{}", axes_to_json(&entries));
+            } else if entries.is_empty() {
+                println!("no axes registered under axes/");
+            } else {
+                for entry in &entries {
+                    match &entry.label {
+                        Some(label) if label != &entry.id => {
+                            println!("{} ({})", entry.id, label)
+                        }
+                        _ => println!("{}", entry.id),
+                    }
+                }
+            }
+            Ok(())
+        }
+        Command::Cache(CacheCommand::Rebuild { dir }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            id_cache::rebuild_cache(&root)?;
+            println!("removed .markharness-cache/ under {}", root.display());
+            Ok(())
+        }
+        Command::Changes(ChangesCommand::Compute {
+            from,
+            to,
+            dir,
+            no_cache,
+        }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let events = changes::compute_changes(&root, &from, &to, !no_cache)?;
+            let changes_dir = root.join("changes");
+            std::fs::create_dir_all(&changes_dir)?;
+            std::fs::write(
+                changes_dir.join(format!("{to}.yaml")),
+                changes::serialize_changes(&events),
+            )?;
+            println!(
+                "computed {} change event(s) into changes/{to}.yaml",
+                events.len()
+            );
+            Ok(())
+        }
+        Command::Backfill(BackfillCommand::Run { dir, no_cache }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let report = backfill::backfill_run(&root, !no_cache)?;
+            for to_milestone in &report.processed {
+                println!("backfilled changes/{to_milestone}.yaml");
+            }
+            println!(
+                "backfill: {} processed, {} already up to date",
+                report.processed.len(),
+                report.skipped.len()
             );
             Ok(())
         }
@@ -194,6 +348,51 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
                 std::process::exit(1);
             }
+        }
+    }
+}
+
+fn run_knowledge_add_edit(root: &std::path::Path) -> io::Result<()> {
+    let Some(editor) = knowledge_edit::resolve_editor_command() else {
+        eprintln!(
+            "error: $VISUAL または $EDITOR が設定されていません。knowledge add --edit を使うにはどちらかを設定してください。"
+        );
+        std::process::exit(2);
+    };
+    let tmp_path = env::temp_dir().join(format!("markharness-knowledge-add-{}.yml", process::id()));
+    let mut stdout = io::stdout();
+
+    let invoke_editor = |path: &std::path::Path| -> io::Result<()> {
+        let mut parts = editor.split_whitespace();
+        let program = parts
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty editor command"))?;
+        let status = process::Command::new(program)
+            .args(parts)
+            .arg(path)
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "editor exited with status {status}"
+            )))
+        }
+    };
+
+    let result = knowledge_edit::run_edit_loop(root, &tmp_path, invoke_editor, &mut stdout);
+    let _ = fs::remove_file(&tmp_path);
+
+    match result {
+        Ok(apply_result) => {
+            for path in &apply_result.written_paths {
+                println!("wrote {}", path.display());
+            }
+            Ok(())
+        }
+        Err(EditFlowError::Io(e)) => {
+            eprintln!("error: {e}");
+            std::process::exit(3);
         }
     }
 }
@@ -286,6 +485,20 @@ fn errors_to_json(errors: &[ValidationError]) -> String {
     format!("{{\"ok\":false,\"errors\":[{}]}}", items.join(","))
 }
 
+fn axes_to_json(entries: &[axes::AxisEntry]) -> String {
+    let items: Vec<String> = entries
+        .iter()
+        .map(|e| {
+            format!(
+                "{{\"id\":\"{}\",\"label\":{}}}",
+                json_escape(&e.id),
+                json_string_or_null(&e.label)
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 fn apply_result_to_json(result: &knowledge_apply::ApplyResult) -> String {
     let paths: Vec<String> = result
         .written_paths
@@ -335,8 +548,9 @@ mod tests {
         ]);
 
         match cli.command {
-            Command::Knowledge(KnowledgeCommand::Add { dir }) => {
-                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")))
+            Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
+                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")));
+                assert!(!edit);
             }
             _ => panic!("expected Knowledge Add command"),
         }
@@ -347,7 +561,20 @@ mod tests {
         let cli = Cli::parse_from(["markharness", "knowledge", "add"]);
 
         match cli.command {
-            Command::Knowledge(KnowledgeCommand::Add { dir }) => assert_eq!(dir, None),
+            Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
+                assert_eq!(dir, None);
+                assert!(!edit);
+            }
+            _ => panic!("expected Knowledge Add command"),
+        }
+    }
+
+    #[test]
+    fn parses_knowledge_add_with_edit_flag() {
+        let cli = Cli::parse_from(["markharness", "knowledge", "add", "--edit"]);
+
+        match cli.command {
+            Command::Knowledge(KnowledgeCommand::Add { edit, .. }) => assert!(edit),
             _ => panic!("expected Knowledge Add command"),
         }
     }
@@ -448,6 +675,125 @@ mod tests {
             }
             _ => panic!("expected Knowledge Apply command"),
         }
+    }
+
+    #[test]
+    fn parses_axes_list_with_all_options() {
+        let cli = Cli::parse_from(["markharness", "axes", "list", "--dir", "sample", "--json"]);
+
+        match cli.command {
+            Command::Axes(AxesCommand::List { dir, json }) => {
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert!(json);
+            }
+            _ => panic!("expected Axes List command"),
+        }
+    }
+
+    #[test]
+    fn axes_list_prints_no_axes_message_when_registry_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let cli = Cli::parse_from([
+            "markharness",
+            "axes",
+            "list",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        run(cli).unwrap();
+    }
+
+    #[test]
+    fn parses_cache_rebuild_with_dir_option() {
+        let cli = Cli::parse_from(["markharness", "cache", "rebuild", "--dir", "sample"]);
+
+        match cli.command {
+            Command::Cache(CacheCommand::Rebuild { dir }) => {
+                assert_eq!(dir, Some(PathBuf::from("sample")))
+            }
+            _ => panic!("expected Cache Rebuild command"),
+        }
+    }
+
+    #[test]
+    fn cache_rebuild_is_a_no_op_when_cache_dir_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let cli = Cli::parse_from([
+            "markharness",
+            "cache",
+            "rebuild",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        run(cli).unwrap();
+    }
+
+    #[test]
+    fn parses_changes_compute_with_all_options() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "changes",
+            "compute",
+            "m1",
+            "m2",
+            "--dir",
+            "sample",
+            "--no-cache",
+        ]);
+
+        match cli.command {
+            Command::Changes(ChangesCommand::Compute {
+                from,
+                to,
+                dir,
+                no_cache,
+            }) => {
+                assert_eq!(from, "m1");
+                assert_eq!(to, "m2");
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert!(no_cache);
+            }
+            _ => panic!("expected Changes Compute command"),
+        }
+    }
+
+    #[test]
+    fn parses_backfill_run_with_all_options() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "backfill",
+            "run",
+            "--dir",
+            "sample",
+            "--no-cache",
+        ]);
+
+        match cli.command {
+            Command::Backfill(BackfillCommand::Run { dir, no_cache }) => {
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert!(no_cache);
+            }
+            _ => panic!("expected Backfill Run command"),
+        }
+    }
+
+    #[test]
+    fn backfill_run_reports_nothing_when_no_milestones_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let cli = Cli::parse_from([
+            "markharness",
+            "backfill",
+            "run",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        run(cli).unwrap();
     }
 
     #[test]
