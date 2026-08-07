@@ -4,18 +4,24 @@ use serde::Deserialize;
 pub struct Feature {
     pub id: String,
     pub axis: Vec<String>,
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Condition {
     pub id: String,
     pub summary: String,
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ExpectedResult {
     pub id: String,
     pub result: String,
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 pub fn parse_feature(yaml: &str) -> Result<Feature, serde_yaml_ng::Error> {
@@ -31,7 +37,11 @@ pub fn parse_expected_result(yaml: &str) -> Result<ExpectedResult, serde_yaml_ng
 }
 
 pub fn serialize_feature(feature: &Feature) -> String {
-    let mut out = format!("id: {}\nkind: feature\naxis:\n", feature.id);
+    let mut out = format!("id: {}\n", feature.id);
+    if let Some(label) = &feature.label {
+        out.push_str(&format!("label: {label}\n"));
+    }
+    out.push_str("kind: feature\naxis:\n");
     for a in &feature.axis {
         out.push_str(&format!("  - {a}\n"));
     }
@@ -39,10 +49,15 @@ pub fn serialize_feature(feature: &Feature) -> String {
 }
 
 pub fn serialize_condition(condition: &Condition) -> String {
-    format!(
-        "id: {}\nkind: condition\nsummary: {}\n",
-        condition.id, condition.summary
-    )
+    let mut out = format!("id: {}\n", condition.id);
+    if let Some(label) = &condition.label {
+        out.push_str(&format!("label: {label}\n"));
+    }
+    out.push_str(&format!(
+        "kind: condition\nsummary: {}\n",
+        condition.summary
+    ));
+    out
 }
 
 pub fn strip_redundant_condition_prefix(feature_id: &str, condition_id: &str) -> Option<String> {
@@ -53,6 +68,50 @@ pub fn strip_redundant_condition_prefix(feature_id: &str, condition_id: &str) ->
         .map(|rest| rest.to_string())
 }
 
+pub fn contains_non_ascii(s: &str) -> bool {
+    !s.is_ascii()
+}
+
+pub fn romanize_label(japanese: &str) -> String {
+    kakasi::convert(japanese).romaji
+}
+
+pub fn normalize_slug_candidate(raw: &str) -> String {
+    let lowered = raw.to_lowercase();
+    let mut out = String::with_capacity(lowered.len());
+    let mut last_was_hyphen = false;
+
+    for c in lowered.chars() {
+        let mapped = if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            Some(c)
+        } else if c.is_whitespace() || c == '-' {
+            Some('-')
+        } else {
+            None
+        };
+
+        match mapped {
+            Some('-') => {
+                if !last_was_hyphen && !out.is_empty() {
+                    out.push('-');
+                }
+                last_was_hyphen = true;
+            }
+            Some(c) => {
+                out.push(c);
+                last_was_hyphen = false;
+            }
+            None => {}
+        }
+    }
+
+    if out.ends_with('-') {
+        out.pop();
+    }
+
+    out
+}
+
 pub fn is_valid_slug(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
@@ -60,10 +119,15 @@ pub fn is_valid_slug(s: &str) -> bool {
 }
 
 pub fn serialize_expected_result(expected: &ExpectedResult) -> String {
-    format!(
-        "id: {}\nkind: expected-result\nresult: {}\n",
-        expected.id, expected.result
-    )
+    let mut out = format!("id: {}\n", expected.id);
+    if let Some(label) = &expected.label {
+        out.push_str(&format!("label: {label}\n"));
+    }
+    out.push_str(&format!(
+        "kind: expected-result\nresult: {}\n",
+        expected.result
+    ));
+    out
 }
 
 #[cfg(test)]
@@ -105,6 +169,7 @@ mod tests {
         let feature = Feature {
             id: "player-jump".to_string(),
             axis: vec!["gameplay".to_string(), "animation".to_string()],
+            label: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -120,6 +185,7 @@ mod tests {
         let condition = Condition {
             id: "jump-ground".to_string(),
             summary: "Jump from the ground and land".to_string(),
+            label: None,
         };
 
         let yaml = serialize_condition(&condition);
@@ -135,6 +201,7 @@ mod tests {
         let expected = ExpectedResult {
             id: "player-jump-ground-001".to_string(),
             result: "lands safely".to_string(),
+            label: None,
         };
 
         let yaml = serialize_expected_result(&expected);
@@ -181,6 +248,93 @@ mod tests {
         assert_eq!(
             strip_redundant_condition_prefix("player-jump", "player-jump-"),
             None
+        );
+    }
+
+    #[test]
+    fn contains_non_ascii_is_false_for_ascii_string() {
+        assert!(!contains_non_ascii("player-jump-001"));
+    }
+
+    #[test]
+    fn contains_non_ascii_is_true_for_string_with_japanese() {
+        assert!(contains_non_ascii("プレイヤーがジャンプする"));
+    }
+
+    #[test]
+    fn romanize_label_converts_japanese_to_romaji() {
+        assert_eq!(
+            romanize_label("プレイヤーがジャンプする"),
+            "pureiyaa ga janpu suru"
+        );
+    }
+
+    #[test]
+    fn normalize_slug_candidate_replaces_spaces_with_hyphens() {
+        assert_eq!(
+            normalize_slug_candidate("pureiyaa ga janpu suru"),
+            "pureiyaa-ga-janpu-suru"
+        );
+    }
+
+    #[test]
+    fn normalize_slug_candidate_lowercases_mixed_case_input() {
+        assert_eq!(
+            normalize_slug_candidate("Pureiyaa GA Janpu"),
+            "pureiyaa-ga-janpu"
+        );
+    }
+
+    #[test]
+    fn normalize_slug_candidate_strips_unsupported_symbols() {
+        assert_eq!(normalize_slug_candidate("Player!! Jump??"), "player-jump");
+    }
+
+    #[test]
+    fn serializes_feature_with_label_when_present() {
+        let feature = Feature {
+            id: "player-jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            label: Some("プレイヤージャンプ".to_string()),
+        };
+
+        let yaml = serialize_feature(&feature);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump\nlabel: プレイヤージャンプ\nkind: feature\naxis:\n  - gameplay\n"
+        );
+    }
+
+    #[test]
+    fn serializes_condition_with_label_when_present() {
+        let condition = Condition {
+            id: "jump-ground".to_string(),
+            summary: "Jump from the ground and land".to_string(),
+            label: Some("地上からジャンプ".to_string()),
+        };
+
+        let yaml = serialize_condition(&condition);
+
+        assert_eq!(
+            yaml,
+            "id: jump-ground\nlabel: 地上からジャンプ\nkind: condition\nsummary: Jump from the ground and land\n"
+        );
+    }
+
+    #[test]
+    fn serializes_expected_result_with_label_when_present() {
+        let expected = ExpectedResult {
+            id: "player-jump-ground-001".to_string(),
+            result: "lands safely".to_string(),
+            label: Some("安全に着地".to_string()),
+        };
+
+        let yaml = serialize_expected_result(&expected);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-ground-001\nlabel: 安全に着地\nkind: expected-result\nresult: lands safely\n"
         );
     }
 }

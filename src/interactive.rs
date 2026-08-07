@@ -3,8 +3,9 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use crate::knowledge::{
-    Condition, ExpectedResult, Feature, is_valid_slug, serialize_condition,
-    serialize_expected_result, serialize_feature, strip_redundant_condition_prefix,
+    Condition, ExpectedResult, Feature, contains_non_ascii, is_valid_slug,
+    normalize_slug_candidate, romanize_label, serialize_condition, serialize_expected_result,
+    serialize_feature, strip_redundant_condition_prefix,
 };
 
 fn list_candidate_ids(dir: &Path, marker_file: &str) -> Vec<String> {
@@ -45,12 +46,12 @@ fn prompt_line<R: BufRead, W: Write>(
     }
 }
 
-fn prompt_slug<R: BufRead, W: Write>(
+fn prompt_id_or_label<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     label: &str,
     candidates: &[String],
-) -> io::Result<String> {
+) -> io::Result<(String, Option<String>)> {
     for (i, id) in candidates.iter().enumerate() {
         writeln!(writer, "  {}) {}", i + 1, id)?;
     }
@@ -60,15 +61,49 @@ fn prompt_slug<R: BufRead, W: Write>(
             && n >= 1
             && n <= candidates.len()
         {
-            return Ok(candidates[n - 1].clone());
+            return Ok((candidates[n - 1].clone(), None));
         }
-        if is_valid_slug(&value) {
-            return Ok(value);
+        if !contains_non_ascii(&value) {
+            if is_valid_slug(&value) {
+                return Ok((value, None));
+            }
+            writeln!(
+                writer,
+                "id は小文字英数字とハイフンのみ使用できます。もう一度入力してください。"
+            )?;
+            continue;
         }
-        writeln!(
+
+        let candidate_slug = normalize_slug_candidate(&romanize_label(&value));
+        write!(
             writer,
-            "id は小文字英数字とハイフンのみ使用できます。もう一度入力してください。"
+            "id候補: {candidate_slug} (Enterで採用、編集する場合は入力): "
         )?;
+        writer.flush()?;
+        let mut edit_line = String::new();
+        reader.read_line(&mut edit_line)?;
+        let edited = edit_line.trim();
+        let final_id = if edited.is_empty() {
+            candidate_slug
+        } else {
+            normalize_slug_candidate(edited)
+        };
+
+        if candidates.iter().any(|c| c == &final_id) {
+            writeln!(
+                writer,
+                "id '{final_id}' は既存の候補と衝突しています。もう一度入力してください。"
+            )?;
+            continue;
+        }
+        if !is_valid_slug(&final_id) {
+            writeln!(
+                writer,
+                "id は小文字英数字とハイフンのみ使用できます。もう一度入力してください。"
+            )?;
+            continue;
+        }
+        return Ok((final_id, Some(value)));
     }
 }
 
@@ -80,13 +115,22 @@ pub fn run_add<R: BufRead, W: Write>(
     let knowledge_root = root.join("knowledge");
 
     let feature_candidates = list_candidate_ids(&knowledge_root, "feature.yaml");
-    let feature_id = prompt_slug(reader, writer, "Feature id: ", &feature_candidates)?;
+    let (feature_id, feature_label) = prompt_id_or_label(
+        reader,
+        writer,
+        "Feature name (e.g. add-todo): ",
+        &feature_candidates,
+    )?;
     let feature_dir = knowledge_root.join(&feature_id);
     let feature_path = feature_dir.join("feature.yaml");
     if feature_path.exists() {
         writeln!(writer, "既存のFeature '{feature_id}' を再利用します。")?;
     } else {
-        let axis_line = prompt_line(reader, writer, "Axis (comma separated): ")?;
+        let axis_line = prompt_line(
+            reader,
+            writer,
+            "Axis (comma separated, e.g. ui, validation): ",
+        )?;
         let axis: Vec<String> = axis_line
             .split(',')
             .map(|s| s.trim().to_string())
@@ -96,12 +140,18 @@ pub fn run_add<R: BufRead, W: Write>(
         let feature = Feature {
             id: feature_id.clone(),
             axis,
+            label: feature_label,
         };
         fs::write(&feature_path, serialize_feature(&feature))?;
     }
 
     let condition_candidates = list_candidate_ids(&feature_dir, "condition.yaml");
-    let raw_condition_id = prompt_slug(reader, writer, "Condition id: ", &condition_candidates)?;
+    let (raw_condition_id, condition_label) = prompt_id_or_label(
+        reader,
+        writer,
+        "Condition name (e.g. empty-title): ",
+        &condition_candidates,
+    )?;
     let condition_id = {
         let raw_path = feature_dir.join(&raw_condition_id).join("condition.yaml");
         if raw_path.exists() {
@@ -123,11 +173,16 @@ pub fn run_add<R: BufRead, W: Write>(
     if condition_path.exists() {
         writeln!(writer, "既存のCondition '{condition_id}' を再利用します。")?;
     } else {
-        let summary = prompt_line(reader, writer, "Summary: ")?;
+        let summary = prompt_line(
+            reader,
+            writer,
+            "Scenario (e.g. Submit the todo form with an empty title): ",
+        )?;
         fs::create_dir_all(&condition_dir)?;
         let condition = Condition {
             id: condition_id.clone(),
             summary,
+            label: condition_label,
         };
         fs::write(&condition_path, serialize_condition(&condition))?;
     }
@@ -140,10 +195,15 @@ pub fn run_add<R: BufRead, W: Write>(
     let seq = existing_count + 1;
     let expected_id = format!("{feature_id}-{condition_id}-{seq:03}");
 
-    let result = prompt_line(reader, writer, "Expected result: ")?;
+    let result = prompt_line(
+        reader,
+        writer,
+        "Expected result (e.g. shows a validation error): ",
+    )?;
     let expected = ExpectedResult {
         id: expected_id,
         result,
+        label: None,
     };
     let expected_path = expected_dir.join(format!("{seq:03}.yaml"));
     fs::write(&expected_path, serialize_expected_result(&expected))?;
@@ -406,6 +466,146 @@ mod tests {
         assert!(!output.contains("重複する接頭辞を除去"));
         assert!(output.contains("既存のCondition 'player-jump-ground' を再利用します。"));
         assert!(legacy_dir.join("expected/001.yaml").exists());
+    }
+
+    #[test]
+    fn prompt_id_or_label_suggests_romanized_slug_and_accepts_on_empty_input() {
+        let input = "プレイヤーがジャンプする\n\n";
+        let mut reader = Cursor::new(input.as_bytes());
+        let mut writer = Vec::new();
+
+        let (id, label) =
+            prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &[]).unwrap();
+
+        assert_eq!(id, "pureiyaa-ga-janpu-suru");
+        assert_eq!(label, Some("プレイヤーがジャンプする".to_string()));
+        let output = String::from_utf8(writer).unwrap();
+        assert!(output.contains("pureiyaa-ga-janpu-suru"));
+    }
+
+    #[test]
+    fn prompt_id_or_label_accepts_edited_candidate() {
+        let input = "プレイヤーがジャンプする\nplayer-jump\n";
+        let mut reader = Cursor::new(input.as_bytes());
+        let mut writer = Vec::new();
+
+        let (id, label) =
+            prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &[]).unwrap();
+
+        assert_eq!(id, "player-jump");
+        assert_eq!(label, Some("プレイヤーがジャンプする".to_string()));
+    }
+
+    #[test]
+    fn prompt_id_or_label_warns_and_reprompts_on_slug_collision() {
+        let candidates = vec!["pureiyaa-ga-janpu-suru".to_string()];
+        let input = "プレイヤーがジャンプする\n\nプレイヤーがジャンプする\nplayer-jump\n";
+        let mut reader = Cursor::new(input.as_bytes());
+        let mut writer = Vec::new();
+
+        let (id, label) =
+            prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &candidates).unwrap();
+
+        assert_eq!(id, "player-jump");
+        assert_eq!(label, Some("プレイヤーがジャンプする".to_string()));
+        let output = String::from_utf8(writer).unwrap();
+        assert!(output.contains("既存の候補と衝突しています"));
+    }
+
+    #[test]
+    fn prompt_id_or_label_returns_none_label_for_direct_ascii_input() {
+        let input = "player-jump\n";
+        let mut reader = Cursor::new(input.as_bytes());
+        let mut writer = Vec::new();
+
+        let (id, label) =
+            prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &[]).unwrap();
+
+        assert_eq!(id, "player-jump");
+        assert_eq!(label, None);
+    }
+
+    #[test]
+    fn creates_new_feature_with_japanese_label_and_saves_it_to_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "プレイヤーがジャンプする\n\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        let feature_path = dir
+            .path()
+            .join("knowledge/pureiyaa-ga-janpu-suru/feature.yaml");
+        assert_eq!(
+            fs::read_to_string(feature_path).unwrap(),
+            "id: pureiyaa-ga-janpu-suru\nlabel: プレイヤーがジャンプする\nkind: feature\naxis:\n  - gameplay\n  - animation\n"
+        );
+    }
+
+    #[test]
+    fn creates_new_condition_with_japanese_label_and_saves_it_to_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "player-jump\ngameplay, animation\n地上からジャンプ\n\nJump from the ground and land\nlands safely\n",
+        );
+
+        let condition_path = dir
+            .path()
+            .join("knowledge/player-jump/chijou-kara-janpu/condition.yaml");
+        assert_eq!(
+            fs::read_to_string(condition_path).unwrap(),
+            "id: chijou-kara-janpu\nlabel: 地上からジャンプ\nkind: condition\nsummary: Jump from the ground and land\n"
+        );
+    }
+
+    #[test]
+    fn prompts_show_human_friendly_labels_with_examples() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        let output = run_with_input_capturing_output(
+            dir.path(),
+            "player-jump\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        assert!(output.contains("Feature name (e.g. add-todo): "));
+        assert!(output.contains("Axis (comma separated, e.g. ui, validation): "));
+        assert!(output.contains("Condition name (e.g. empty-title): "));
+        assert!(output.contains("Scenario (e.g. Submit the todo form with an empty title): "));
+        assert!(output.contains("Expected result (e.g. shows a validation error): "));
+    }
+
+    #[test]
+    fn selecting_existing_feature_by_number_does_not_overwrite_its_label() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+
+        run_with_input(
+            dir.path(),
+            "プレイヤーがジャンプする\n\ngameplay, animation\njump-ground\nJump from the ground and land\nlands safely\n",
+        );
+
+        let feature_path = dir
+            .path()
+            .join("knowledge/pureiyaa-ga-janpu-suru/feature.yaml");
+        let before = fs::read_to_string(&feature_path).unwrap();
+
+        // Select the existing feature by number; a numeric selection always
+        // yields label = None, so this also proves the None doesn't overwrite
+        // the file (the exists() guard skips the write entirely).
+        run_with_input(
+            dir.path(),
+            "1\njump-air\nJump while airborne\nlands on platform\n",
+        );
+
+        let after = fs::read_to_string(&feature_path).unwrap();
+        assert_eq!(before, after);
+        assert!(after.contains("label: プレイヤーがジャンプする"));
     }
 
     #[test]

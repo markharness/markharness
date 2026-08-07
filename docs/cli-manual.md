@@ -63,11 +63,11 @@ markharness knowledge add [--dir <path>]
 
 ```console
 $ markharness knowledge add --dir tmp/todo-sample
-Feature id: player-jump
-Axis (comma separated): gameplay, animation
-Condition id: jump-ground
-Summary: Jump from the ground and land
-Expected result: lands safely
+Feature name (e.g. add-todo): player-jump
+Axis (comma separated, e.g. ui, validation): gameplay, animation
+Condition name (e.g. empty-title): jump-ground
+Scenario (e.g. Submit the todo form with an empty title): Jump from the ground and land
+Expected result (e.g. shows a validation error): lands safely
 ```
 → `tmp/todo-sample/knowledge/player-jump/...` にファイルが作成される。
 
@@ -75,22 +75,34 @@ Expected result: lands safely
 
 **フロー**
 
-1. `Feature id:` — Feature の slug(小文字英数字とハイフンのみ)を入力
+1. `Feature name (e.g. add-todo):` — Feature の slug(小文字英数字とハイフンのみ)、または日本語ラベルを入力
    - `knowledge/` 配下に既存の Feature が1件以上あれば、プロンプトの前に `N) id` 形式で番号付き一覧を表示する。番号を入力すると対応する Feature を選択でき、既存の id をそのまま直接入力しても再利用できる(挙動は変わらない)。候補が0件の場合は一覧を表示しない。
    - 既存の `knowledge/<feature_id>/feature.yaml` があれば再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Axis (comma separated):` で観点をカンマ区切りで入力し、`feature.yaml` を新規作成する
-2. `Condition id:` — Condition の slug を入力
+   - 新規の場合のみ `Axis (comma separated, e.g. ui, validation):` で観点をカンマ区切りで入力し、`feature.yaml` を新規作成する
+2. `Condition name (e.g. empty-title):` — Condition の slug、または日本語ラベルを入力
    - 選択した Feature 配下に既存の Condition が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
    - 新規に作成する Condition id が `{feature_id}-` で始まる場合(Feature id を重複して含めてしまった場合)、その接頭辞を自動的に除去してから作成し、その旨を通知する(例: Feature `player-jump` に Condition id `player-jump-ground` と入力すると `ground` として作成される)。ただし、入力された id そのままのディレクトリが既に存在する場合は除去せずそのまま再利用する(過去に手動で重複した名前のまま作成されたデータを壊さないため)。
    - 既存の `knowledge/<feature_id>/<condition_id>/condition.yaml` があれば(除去後の id で判定し)再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Summary:` で条件の要約を入力し、`condition.yaml` を新規作成する
-3. `Expected result:` — 期待結果のテキストを入力し、`expected/NNN.yaml`(3桁連番、既存ファイル数+1)を作成する
+   - 新規の場合のみ `Scenario (e.g. Submit the todo form with an empty title):` で条件の要約を入力し、`condition.yaml` を新規作成する
+3. `Expected result (e.g. shows a validation error):` — 期待結果のテキストを入力し、`expected/NNN.yaml`(3桁連番、既存ファイル数+1)を作成する
+
+**プロンプト文言について**: 各プロンプトは内部的にはFeature/Conditionの `id`(ディレクトリ名・YAMLの `id` フィールド)を決めるものだが、人間が入力する際に「id」という抽象的な概念に迷わないよう、`Feature name` / `Condition name` のように分かりやすい英語表現と入力例を添えている。内部データモデル(`id`フィールド、通知メッセージ、コード上の変数名)は変更していない。
+
+**日本語ラベル入力(Feature name / Condition name)**
+
+Feature name・Condition name のプロンプトでは、ASCII以外の文字を含む入力(日本語ラベルなど)を渡すと、id直接入力の代わりに以下のローマ字変換フローに切り替わる。ExpectedResult の id は自動連番のため対象外。
+
+1. 入力文字列に非ASCII文字が含まれるかを判定する。
+2. 含まれる場合、[`kakasi`](https://crates.io/crates/kakasi) crate で入力をローマ字に変換し、続けて正規化(小文字化・空白のハイフン化・連続ハイフンの圧縮・先頭/末尾ハイフン除去・許可されない記号の除去)を行った id 候補を1件提示する。
+3. `id候補: <候補> (Enterで採用、編集する場合は入力):`というプロンプトに対して空入力(Enter)のみを送るとその候補をそのまま id として採用する。何か文字列を入力すると、その入力を同じ正規化ルールに通した上で id として採用する(自由編集)。
+4. 正規化後の id が既存候補一覧(番号付き一覧に表示されているもの)と衝突する場合は警告を表示し、Feature id / Condition id の入力からやり直しになる(自動的な既存id流用はしない。既存idの意図的な再利用は番号選択で行う)。
+5. 日本語ラベル入力を経由して新規作成された Feature / Condition には、入力した日本語文字列がそのまま `label:` フィールドとして YAML に保存される。ASCII直接入力の場合や番号選択で既存を再利用した場合は `label` は保存されない(既存ファイルは上書きされない)。
 
 **入力バリデーション**
 
 - id(Feature id / Condition id)は小文字英数字とハイフンのみ許可。不正な場合は再入力を促す。
-- 候補一覧が表示されている場合、1以上・候補件数以下の整数を入力すると対応する候補が選択される。範囲外の整数や非数値は通常のid入力として扱われる。
-- すべてのプロンプトで空入力(trim後に空)は再入力を促す。
+- 候補一覧が表示されている場合、1以上・候補件数以下の整数を入力すると対応する候補が選択される。範囲外の整数や非数値は通常のid入力(またはASCII以外を含む場合は日本語ラベル)として扱われる。
+- すべてのプロンプトで空入力(trim後に空)は再入力を促す。ただし日本語ラベル変換後の id候補提示に対する空入力は「候補をそのまま採用」を意味し、再入力を促す対象ではない。
 
 **生成されるファイル**(例: `player-jump` / `jump-ground` / 1件目)
 
@@ -127,26 +139,26 @@ result: lands safely
 
 ```console
 $ markharness knowledge add
-Feature id: player-jump
-Axis (comma separated): gameplay, animation
-Condition id: jump-ground
-Summary: Jump from the ground and land
-Expected result: lands safely
+Feature name (e.g. add-todo): player-jump
+Axis (comma separated, e.g. ui, validation): gameplay, animation
+Condition name (e.g. empty-title): jump-ground
+Scenario (e.g. Submit the todo form with an empty title): Jump from the ground and land
+Expected result (e.g. shows a validation error): lands safely
 ```
 
 **使用例(既存Featureへの2件目のExpectedResult追加、番号選択)**
 
 ```console
 $ markharness knowledge add
-Feature id:
+Feature name (e.g. add-todo):
   1) player-jump
 1
 既存のFeature 'player-jump' を再利用します。
-Condition id:
+Condition name (e.g. empty-title):
   1) jump-ground
 1
 既存のCondition 'jump-ground' を再利用します。
-Expected result: falls over
+Expected result (e.g. shows a validation error): falls over
 ```
 → `knowledge/player-jump/jump-ground/expected/002.yaml` が作成される。番号の代わりに `player-jump` / `jump-ground` を直接入力しても同じ結果になる。
 
@@ -154,14 +166,14 @@ Expected result: falls over
 
 ```console
 $ markharness knowledge add
-Feature id: player-jump
+Feature name (e.g. add-todo): player-jump
 既存のFeature 'player-jump' を再利用します。
-Condition id:
+Condition name (e.g. empty-title):
   1) jump-ground
 player-jump-ground
 Condition id 'player-jump-ground' から Feature id 'player-jump' と重複する接頭辞を除去し、'ground' として作成します。
-Summary: Jump and land, then stand still
-Expected result: stands still
+Scenario (e.g. Submit the todo form with an empty title): Jump and land, then stand still
+Expected result (e.g. shows a validation error): stands still
 ```
 → `knowledge/player-jump/ground/condition.yaml` と `knowledge/player-jump/ground/expected/001.yaml` が作成される(`player-jump-ground/` ディレクトリは作成されない)。
 
