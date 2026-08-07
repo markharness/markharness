@@ -68,14 +68,16 @@ src/
 └── main.rs           # CLI エントリポイント
 
 knowledge/             # テスト知識(Test Designer が手動記述、UC1 / UC1b)
-└── <feature>/
-    ├── feature.yml
-    └── <behavior>/
-        ├── behavior.yml
-        └── <condition>/
-            ├── condition.yml
-            └── expected/
-                └── 001.yml, 002.yml, ...
+└── <requirement>/
+    ├── requirement.yml
+    └── <feature>/
+        ├── feature.yml       # requirement: <requirement> で親を参照
+        └── <behavior>/
+            ├── behavior.yml
+            └── <condition>/
+                ├── condition.yml
+                └── expected/
+                    └── 001.yml, 002.yml, ...
 
 axes/                  # 横断的観点(Axis)のレジストリ(UC1、§3.1)
 generated/
@@ -92,6 +94,8 @@ tools/                  # 生成・検証スクリプト(UC2 / UC5 / UC6 / UC7)
 
 docs/                  # 設計ドキュメント(論文・運用イメージ・生成アルゴリズム設計)
 ```
+
+> **既存プロジェクトへの注意**: `knowledge/<requirement>/<feature>/...` への階層追加は破壊的変更です。自動移行コマンドは提供していないため、以前の `knowledge/<feature>/...` 構造で作成済みのプロジェクト(例: todo-test, game-test)は、`<feature>/` ディレクトリ群をまるごと任意の `<requirement>/` ディレクトリ配下に手動で移動し、各 `feature.yml` に `requirement: <requirement-id>` を追記してください。
 
 ## Pre-PR チェックリスト
 

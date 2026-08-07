@@ -4,10 +4,13 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::knowledge::{parse_behavior, parse_condition, parse_expected_result, parse_feature};
+use crate::knowledge::{
+    parse_behavior, parse_condition, parse_expected_result, parse_feature, parse_requirement,
+};
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct GeneratedFrom {
+    pub requirement: String,
     pub feature: String,
     pub behavior: String,
     pub condition: String,
@@ -64,59 +67,70 @@ fn find_dirs_with_marker(root: &Path, marker_file: &str) -> io::Result<Vec<PathB
 pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
     let mut testcases = Vec::new();
 
-    for feature_dir in sorted_subdirs(knowledge_root)? {
-        let feature_path = feature_dir.join("feature.yml");
-        if !feature_path.is_file() {
+    for requirement_dir in sorted_subdirs(knowledge_root)? {
+        let requirement_path = requirement_dir.join("requirement.yml");
+        if !requirement_path.is_file() {
             continue;
         }
-        let feature = parse_feature(&fs::read_to_string(&feature_path)?)
+        let requirement = parse_requirement(&fs::read_to_string(&requirement_path)?)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
-            let behavior_path = behavior_dir.join("behavior.yml");
-            let behavior = parse_behavior(&fs::read_to_string(&behavior_path)?)
+        for feature_dir in sorted_subdirs(&requirement_dir)? {
+            let feature_path = feature_dir.join("feature.yml");
+            if !feature_path.is_file() {
+                continue;
+            }
+            let feature = parse_feature(&fs::read_to_string(&feature_path)?)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-            for condition_dir in find_dirs_with_marker(&behavior_dir, "condition.yml")? {
-                let condition_path = condition_dir.join("condition.yml");
-                let condition = parse_condition(&fs::read_to_string(&condition_path)?)
+            for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
+                let behavior_path = behavior_dir.join("behavior.yml");
+                let behavior = parse_behavior(&fs::read_to_string(&behavior_path)?)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-                let expected_dir = condition_dir.join("expected");
-                if !expected_dir.is_dir() {
-                    continue;
-                }
-                let mut expected_paths: Vec<PathBuf> = fs::read_dir(&expected_dir)?
-                    .filter_map(|entry| entry.ok())
-                    .map(|entry| entry.path())
-                    .filter(|path| path.is_file())
-                    .collect();
-                expected_paths.sort();
-                if expected_paths.is_empty() {
-                    continue;
-                }
-
-                let mut expected_results = Vec::new();
-                let mut expected_texts = Vec::new();
-                for expected_path in &expected_paths {
-                    let expected = parse_expected_result(&fs::read_to_string(expected_path)?)
+                for condition_dir in find_dirs_with_marker(&behavior_dir, "condition.yml")? {
+                    let condition_path = condition_dir.join("condition.yml");
+                    let condition = parse_condition(&fs::read_to_string(&condition_path)?)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                    expected_results.push(expected.id);
-                    expected_texts.push(expected.description);
-                }
 
-                testcases.push(TestCase {
-                    case_id: format!("tc-{}-001", condition.id),
-                    generated_from: GeneratedFrom {
-                        feature: feature.id.clone(),
-                        behavior: behavior.id.clone(),
-                        condition: condition.id.clone(),
-                        expected_results,
-                    },
-                    title: condition.description,
-                    steps: vec![behavior.description.clone()],
-                    expected: expected_texts,
-                });
+                    let expected_dir = condition_dir.join("expected");
+                    if !expected_dir.is_dir() {
+                        continue;
+                    }
+                    let mut expected_paths: Vec<PathBuf> = fs::read_dir(&expected_dir)?
+                        .filter_map(|entry| entry.ok())
+                        .map(|entry| entry.path())
+                        .filter(|path| path.is_file())
+                        .collect();
+                    expected_paths.sort();
+                    if expected_paths.is_empty() {
+                        continue;
+                    }
+
+                    let mut expected_results = Vec::new();
+                    let mut expected_texts = Vec::new();
+                    for expected_path in &expected_paths {
+                        let expected =
+                            parse_expected_result(&fs::read_to_string(expected_path)?)
+                                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                        expected_results.push(expected.id);
+                        expected_texts.push(expected.description);
+                    }
+
+                    testcases.push(TestCase {
+                        case_id: format!("tc-{}-001", condition.id),
+                        generated_from: GeneratedFrom {
+                            requirement: requirement.id.clone(),
+                            feature: feature.id.clone(),
+                            behavior: behavior.id.clone(),
+                            condition: condition.id.clone(),
+                            expected_results,
+                        },
+                        title: condition.description,
+                        steps: vec![behavior.description.clone()],
+                        expected: expected_texts,
+                    });
+                }
             }
         }
     }
@@ -134,24 +148,47 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn write_feature(root: &std::path::Path, feature: &str, axis: &[&str]) {
-        let dir = root.join("knowledge").join(feature);
+    fn write_requirement(root: &std::path::Path, requirement: &str, axis: &[&str]) {
+        let dir = root.join("knowledge").join(requirement);
         fs::create_dir_all(&dir).unwrap();
         let axis_line = axis.join(", ");
         fs::write(
-            dir.join("feature.yml"),
-            format!("id: {feature}\nlabel: {feature}\naxis: [{axis_line}]\n"),
+            dir.join("requirement.yml"),
+            format!("id: {requirement}\nlabel: {requirement}\naxis: [{axis_line}]\n"),
         )
         .unwrap();
     }
 
-    fn write_behavior(root: &std::path::Path, feature: &str, behavior: &str, description: &str) {
-        let dir = root.join("knowledge").join(feature).join(behavior);
+    fn write_feature(root: &std::path::Path, requirement: &str, feature: &str, axis: &[&str]) {
+        let dir = root.join("knowledge").join(requirement).join(feature);
+        fs::create_dir_all(&dir).unwrap();
+        let axis_line = axis.join(", ");
+        fs::write(
+            dir.join("feature.yml"),
+            format!(
+                "id: {feature}\nrequirement: {requirement}\nlabel: {feature}\naxis: [{axis_line}]\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_behavior(
+        root: &std::path::Path,
+        requirement: &str,
+        feature: &str,
+        behavior: &str,
+        description: &str,
+    ) {
+        let dir = root
+            .join("knowledge")
+            .join(requirement)
+            .join(feature)
+            .join(behavior);
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("behavior.yml"),
             format!(
-                "id: {behavior}\nfeature: {feature}\naxis: [ui]\ndescription: |\n  {description}\n"
+                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\n"
             ),
         )
         .unwrap();
@@ -159,6 +196,7 @@ mod tests {
 
     fn write_condition(
         root: &std::path::Path,
+        requirement: &str,
         feature: &str,
         behavior: &str,
         condition: &str,
@@ -166,19 +204,24 @@ mod tests {
     ) {
         let dir = root
             .join("knowledge")
+            .join(requirement)
             .join(feature)
             .join(behavior)
             .join(condition);
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("condition.yml"),
-            format!("id: {condition}\nbehavior: {behavior}\ndescription: |\n  {description}\n"),
+            format!(
+                "id: {condition}\nbehavior: {behavior}\nlabel: {condition}\ndescription: |\n  {description}\n"
+            ),
         )
         .unwrap();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_expected(
         root: &std::path::Path,
+        requirement: &str,
         feature: &str,
         behavior: &str,
         condition: &str,
@@ -188,6 +231,7 @@ mod tests {
     ) {
         let dir = root
             .join("knowledge")
+            .join(requirement)
             .join(feature)
             .join(behavior)
             .join(condition)
@@ -214,10 +258,18 @@ mod tests {
     fn generates_single_testcase_aggregating_all_expected_files_under_one_condition() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "todo", &["ui", "data"]);
-        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui", "data"]);
+        write_behavior(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "User adds a task.",
+        );
         write_condition(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
@@ -225,6 +277,7 @@ mod tests {
         );
         write_expected(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
@@ -238,6 +291,7 @@ mod tests {
         assert_eq!(testcases.len(), 1);
         let tc = &testcases[0];
         assert_eq!(tc.case_id, "tc-todo-add-task-empty-input-001");
+        assert_eq!(tc.generated_from.requirement, "req-todo");
         assert_eq!(tc.generated_from.feature, "todo");
         assert_eq!(tc.generated_from.behavior, "todo-add-task");
         assert_eq!(tc.generated_from.condition, "todo-add-task-empty-input");
@@ -254,15 +308,18 @@ mod tests {
     fn aggregates_multiple_expected_files_into_a_single_testcase() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "todo", &["ui"]);
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
         write_behavior(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-complete-task",
             "User checks a task.",
         );
         write_condition(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-complete-task",
             "todo-complete-task-toggle-done",
@@ -270,6 +327,7 @@ mod tests {
         );
         write_expected(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-complete-task",
             "todo-complete-task-toggle-done",
@@ -279,6 +337,7 @@ mod tests {
         );
         write_expected(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-complete-task",
             "todo-complete-task-toggle-done",
@@ -312,10 +371,18 @@ mod tests {
     fn sorts_testcases_by_case_id_across_multiple_features() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "todo", &["ui"]);
-        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "User adds a task.",
+        );
         write_condition(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
@@ -323,6 +390,7 @@ mod tests {
         );
         write_expected(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
@@ -331,10 +399,18 @@ mod tests {
             "Shows a validation error.",
         );
 
-        write_feature(dir.path(), "enemy", &["combat"]);
-        write_behavior(dir.path(), "enemy", "enemy-attack", "Enemy attacks.");
+        write_requirement(dir.path(), "req-enemy", &["combat"]);
+        write_feature(dir.path(), "req-enemy", "enemy", &["combat"]);
+        write_behavior(
+            dir.path(),
+            "req-enemy",
+            "enemy",
+            "enemy-attack",
+            "Enemy attacks.",
+        );
         write_condition(
             dir.path(),
+            "req-enemy",
             "enemy",
             "enemy-attack",
             "enemy-attack-melee-range",
@@ -342,6 +418,7 @@ mod tests {
         );
         write_expected(
             dir.path(),
+            "req-enemy",
             "enemy",
             "enemy-attack",
             "enemy-attack-melee-range",
@@ -361,10 +438,18 @@ mod tests {
     fn produces_no_testcase_for_condition_without_expected_files() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "todo", &["ui"]);
-        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "User adds a task.",
+        );
         write_condition(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
@@ -380,7 +465,8 @@ mod tests {
     fn produces_no_testcase_for_feature_without_behavior() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "todo", &["ui"]);
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
 
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
 
@@ -391,10 +477,18 @@ mod tests {
     fn generate_is_deterministic_across_repeated_runs() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_feature(dir.path(), "todo", &["ui"]);
-        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "User adds a task.",
+        );
         write_condition(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
@@ -402,6 +496,7 @@ mod tests {
         );
         write_expected(
             dir.path(),
+            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
@@ -429,6 +524,7 @@ mod tests {
         let testcase = TestCase {
             case_id: "tc-todo-add-task-empty-input-001".to_string(),
             generated_from: GeneratedFrom {
+                requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
                 behavior: "todo-add-task".to_string(),
                 condition: "todo-add-task-empty-input".to_string(),
@@ -455,6 +551,7 @@ mod tests {
         let testcase = TestCase {
             case_id: "tc-todo-add-task-empty-input-001".to_string(),
             generated_from: GeneratedFrom {
+                requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
                 behavior: "todo-add-task".to_string(),
                 condition: "todo-add-task-empty-input".to_string(),

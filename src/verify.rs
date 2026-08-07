@@ -79,21 +79,26 @@ mod tests {
     use std::fs;
 
     fn write_knowledge_todo_add_task(root: &Path) {
-        let dir = root.join("knowledge/todo/todo-add-task/todo-add-task-empty-input");
+        let dir = root.join("knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            root.join("knowledge/todo/feature.yml"),
-            "id: todo\nlabel: todo\naxis: [ui]\n",
+            root.join("knowledge/req-todo/requirement.yml"),
+            "id: req-todo\nlabel: req-todo\naxis: [ui]\n",
         )
         .unwrap();
         fs::write(
-            root.join("knowledge/todo/todo-add-task/behavior.yml"),
-            "id: todo-add-task\nfeature: todo\naxis: [ui]\ndescription: |\n  User adds a task.\n",
+            root.join("knowledge/req-todo/todo/feature.yml"),
+            "id: todo\nrequirement: req-todo\nlabel: todo\naxis: [ui]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
+            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\n",
         )
         .unwrap();
         fs::write(
             dir.join("condition.yml"),
-            "id: todo-add-task-empty-input\nbehavior: todo-add-task\ndescription: |\n  Title is empty.\n",
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\n",
         )
         .unwrap();
         fs::create_dir_all(dir.join("expected")).unwrap();
