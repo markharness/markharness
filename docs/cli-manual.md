@@ -562,10 +562,20 @@ markharness knowledge add --edit [-d, --dir <path>]
 
 **用途**: `knowledge add`(1.2節)の対話プロンプトの代わりに、空のドラフトYAMLテンプレート(1.3節と同じ形式)を一時ファイルに書き出して `$VISUAL`(未設定なら `$EDITOR`)を起動する。保存してエディタを終了すると `knowledge apply`(1.4節)と同じ検証・書き込みを行い、バリデーションエラーがあればエラー内容を表示したうえで同じファイルを再度エディタで開く(ループ)。`$VISUAL`/`$EDITOR` がいずれも未設定の場合はエラーを表示して終了コード `2` で終了する。
 
+**Windows/`code`コマンドについて**: VS Codeの `code` コマンドは実体が `.cmd`(バッチファイル)であり、Rustの `std::process::Command` は拡張子解決(PATHEXT)を行わないため `EDITOR=code --wait` は `program not found` になる。`cmd /c` 経由で起動するよう `EDITOR="cmd /c code --wait"` のように指定すること。
+
+**axisの自動登録**: `requirement.axis` / `feature.axis` / `behavior.axis` に、`axes/*.yml` へ未登録の値が含まれていた場合、以下の条件をすべて満たす値だけを `axes/<value>.yml`(`id`/`label` とも当該値)として自動的に新規登録し、メッセージを表示する。
+
+- 登録済みaxisとの編集距離(levenshtein距離)が2以下の近似候補が無い(タイポの可能性がある値は自動登録せず、従来通り `unknown_axis` エラーとして残し、`suggested="..."` で近似候補を提示する)
+- `id`として有効な形式(小文字英数字とハイフンのみ)である
+
+1回の検証で複数の未登録axis値がある場合、axisごとに独立して判定する(一部だけ自動登録され、近似候補がある値だけエラーとして残る)。この自動登録は `knowledge add --edit` 限定であり、対話式 `knowledge add`・`knowledge validate`/`apply`(非対話)では従来通り `unknown_axis` エラーのみで停止する。
+
 **使用例**
 
 ```console
-$ EDITOR=vim markharness knowledge add --edit
+$ EDITOR="cmd /c code --wait" markharness knowledge add --edit
+axis 'state' を新規登録しました (axes/state.yml)
 wrote knowledge/controls/player-jump/jump/ground/expected/001.yml
 ```
 

@@ -210,7 +210,10 @@ fn levenshtein(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
-fn nearest_axis_suggestion(value: &str, axis_registry: &HashSet<String>) -> Option<String> {
+pub(crate) fn nearest_axis_suggestion(
+    value: &str,
+    axis_registry: &HashSet<String>,
+) -> Option<String> {
     axis_registry
         .iter()
         .map(|candidate| (candidate, levenshtein(value, candidate)))

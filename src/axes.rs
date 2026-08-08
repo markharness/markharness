@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::fs;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 pub struct AxisEntry {
@@ -26,6 +27,18 @@ pub fn list_axes(root: &Path) -> Vec<AxisEntry> {
         .collect();
     axes.sort_by(|a, b| a.id.cmp(&b.id));
     axes
+}
+
+/// Creates `root/axes/<id>.yml` with `label` defaulted to `id`, mirroring
+/// the default-label-equals-id convention used elsewhere (e.g.
+/// `knowledge_apply::apply_draft`). Creates `axes/` if it does not exist yet.
+/// Used by `knowledge add --edit`'s axis auto-registration.
+pub fn create_axis(root: &Path, id: &str) -> io::Result<PathBuf> {
+    let axes_dir = root.join("axes");
+    fs::create_dir_all(&axes_dir)?;
+    let path = axes_dir.join(format!("{id}.yml"));
+    fs::write(&path, format!("id: {id}\nlabel: {id}\n"))?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -90,5 +103,37 @@ mod tests {
                 label: None,
             }]
         );
+    }
+
+    #[test]
+    fn create_axis_writes_id_and_label_defaulted_to_id() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("axes")).unwrap();
+
+        create_axis(dir.path(), "state").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("axes/state.yml")).unwrap(),
+            "id: state\nlabel: state\n"
+        );
+    }
+
+    #[test]
+    fn create_axis_creates_axes_dir_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        create_axis(dir.path(), "state").unwrap();
+
+        assert!(dir.path().join("axes/state.yml").is_file());
+    }
+
+    #[test]
+    fn create_axis_makes_it_discoverable_by_list_axes() {
+        let dir = tempfile::tempdir().unwrap();
+
+        create_axis(dir.path(), "state").unwrap();
+        let axes = list_axes(dir.path());
+
+        assert!(axes.iter().any(|a| a.id == "state"));
     }
 }
