@@ -30,3 +30,6 @@ temp/
 # OS
 Thumbs.db
 .DS_Store
+
+# Claude Code personal/machine-specific settings (permission approvals etc.)
+.claude/settings.local.json
