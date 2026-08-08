@@ -8,6 +8,7 @@ use std::process;
 use crate::axes;
 use crate::backfill;
 use crate::changes;
+use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
 use crate::generate;
 use crate::id_cache;
 use crate::init;
@@ -15,6 +16,7 @@ use crate::interactive;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions};
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
+use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::traceability;
 use crate::verify;
 
@@ -52,6 +54,71 @@ pub enum Command {
     /// Backfill ChangeEvents across past milestones (UC6)
     #[command(subcommand)]
     Backfill(BackfillCommand),
+    /// Manage executions/<tag>/milestone.yml (UC4 support)
+    #[command(subcommand)]
+    Milestone(MilestoneCommand),
+    /// Record test execution results under executions/<milestone>/results.yml
+    #[command(subcommand)]
+    Execution(ExecutionCommand),
+}
+
+#[derive(Subcommand)]
+pub enum MilestoneCommand {
+    /// Create executions/<tag>/milestone.yml for an existing git tag
+    Init {
+        /// The milestone name, matching an existing `git tag`
+        tag: String,
+        /// Target project directory (a git repository). Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResultArg {
+    Pass,
+    Fail,
+    Skip,
+}
+
+impl From<ResultArg> for ExecutionResult {
+    fn from(value: ResultArg) -> Self {
+        match value {
+            ResultArg::Pass => ExecutionResult::Pass,
+            ResultArg::Fail => ExecutionResult::Fail,
+            ResultArg::Skip => ExecutionResult::Skip,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum ExecutionCommand {
+    /// Append one TestCase execution result to executions/<milestone>/results.yml
+    Record {
+        /// The TestCase's case_id (as generated into generated/testcases/*.yml)
+        case_id: String,
+        /// The milestone this result belongs to, matching an existing executions/<name>/milestone.yml
+        #[arg(long)]
+        milestone: String,
+        /// The outcome of this execution
+        #[arg(long, value_enum)]
+        result: ResultArg,
+        /// Free-text identifier of who or what ran this (a person's name, or e.g. "ci-github-actions")
+        #[arg(long)]
+        executor: String,
+        /// Optional free-text note
+        #[arg(long)]
+        note: Option<String>,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -330,6 +397,90 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 report.skipped.len()
             );
             Ok(())
+        }
+        Command::Milestone(MilestoneCommand::Init { tag, dir, json }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            match milestone::milestone_init(&root, &tag) {
+                Ok(MilestoneInitOutcome::Created) => {
+                    if json {
+                        println!("{{\"ok\":true,\"status\":\"created\"}}");
+                    } else {
+                        println!("initialized executions/{tag}/milestone.yml");
+                    }
+                    Ok(())
+                }
+                Ok(MilestoneInitOutcome::AlreadyInitialized) => {
+                    if json {
+                        println!("{{\"ok\":true,\"status\":\"already_initialized\"}}");
+                    } else {
+                        println!("executions/{tag}/milestone.yml is already initialized");
+                    }
+                    Ok(())
+                }
+                Err(MilestoneInitError::TagNotFound) => {
+                    eprintln!(
+                        "error: git tag '{tag}' not found. Run `git tag {tag}` first, then retry."
+                    );
+                    std::process::exit(2);
+                }
+                Err(MilestoneInitError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+            }
+        }
+        Command::Execution(ExecutionCommand::Record {
+            case_id,
+            milestone,
+            result,
+            executor,
+            note,
+            dir,
+            json,
+        }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let args = RecordArgs {
+                milestone: &milestone,
+                case_id: &case_id,
+                result: ExecutionResult::from(result),
+                executor: &executor,
+                note: note.as_deref(),
+            };
+            match execution::record_execution(&root, &args) {
+                Ok(()) => {
+                    if json {
+                        println!("{{\"ok\":true}}");
+                    } else {
+                        println!(
+                            "recorded {} for {case_id} into executions/{milestone}/results.yml",
+                            args.result.as_str()
+                        );
+                    }
+                    Ok(())
+                }
+                Err(RecordError::MilestoneNotFound) => {
+                    eprintln!(
+                        "error: milestone '{milestone}' not found. Run `markharness milestone init {milestone}` first."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RecordError::CaseNotFound) => {
+                    eprintln!(
+                        "error: case_id '{case_id}' not found in generated/testcases/. Run `markharness generate` first."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RecordError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+            }
         }
         Command::Verify => {
             let root = env::current_dir()?;
@@ -762,6 +913,70 @@ mod tests {
     }
 
     #[test]
+    fn parses_milestone_init_with_all_options() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "milestone",
+            "init",
+            "m1",
+            "--dir",
+            "sample",
+            "--json",
+        ]);
+
+        match cli.command {
+            Command::Milestone(MilestoneCommand::Init { tag, dir, json }) => {
+                assert_eq!(tag, "m1");
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert!(json);
+            }
+            _ => panic!("expected Milestone Init command"),
+        }
+    }
+
+    #[test]
+    fn parses_execution_record_with_all_options() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "execution",
+            "record",
+            "tc-ground-001",
+            "--milestone",
+            "m1",
+            "--result",
+            "pass",
+            "--executor",
+            "yamada",
+            "--note",
+            "looked fine",
+            "--dir",
+            "sample",
+            "--json",
+        ]);
+
+        match cli.command {
+            Command::Execution(ExecutionCommand::Record {
+                case_id,
+                milestone,
+                result,
+                executor,
+                note,
+                dir,
+                json,
+            }) => {
+                assert_eq!(case_id, "tc-ground-001");
+                assert_eq!(milestone, "m1");
+                assert_eq!(result, ResultArg::Pass);
+                assert_eq!(executor, "yamada");
+                assert_eq!(note, Some("looked fine".to_string()));
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert!(json);
+            }
+            _ => panic!("expected Execution Record command"),
+        }
+    }
+
+    #[test]
     fn parses_backfill_run_with_all_options() {
         let cli = Cli::parse_from([
             "markharness",
@@ -794,6 +1009,116 @@ mod tests {
         ]);
 
         run(cli).unwrap();
+    }
+
+    fn run_git_for_test(root: &std::path::Path, args: &[&str]) {
+        let status = process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn init_git_repo_for_test() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        run_git_for_test(dir.path(), &["init", "-q"]);
+        run_git_for_test(dir.path(), &["config", "user.email", "test@example.com"]);
+        run_git_for_test(dir.path(), &["config", "user.name", "Test"]);
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        run_git_for_test(dir.path(), &["add", "-A"]);
+        run_git_for_test(dir.path(), &["commit", "-q", "-m", "init"]);
+        dir
+    }
+
+    #[test]
+    fn milestone_init_writes_milestone_yml_when_tag_exists() {
+        let dir = init_git_repo_for_test();
+        run_git_for_test(dir.path(), &["tag", "m1"]);
+        let cli = Cli::parse_from([
+            "markharness",
+            "milestone",
+            "init",
+            "m1",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        run(cli).unwrap();
+
+        assert!(dir.path().join("executions/m1/milestone.yml").is_file());
+    }
+
+    #[test]
+    fn milestone_init_is_idempotent_on_second_run() {
+        let dir = init_git_repo_for_test();
+        run_git_for_test(dir.path(), &["tag", "m1"]);
+        let cli = Cli::parse_from([
+            "markharness",
+            "milestone",
+            "init",
+            "m1",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+        run(cli).unwrap();
+
+        let cli_again = Cli::parse_from([
+            "markharness",
+            "milestone",
+            "init",
+            "m1",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+        run(cli_again).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("executions/m1/milestone.yml")).unwrap();
+        assert_eq!(content, "id: m1\n");
+    }
+
+    fn write_generated_testcase_for_test(
+        root: &std::path::Path,
+        condition_id: &str,
+        case_id: &str,
+    ) {
+        let dir = root.join("generated/testcases");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(format!("{condition_id}.yml")),
+            format!("case_id: {case_id}\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn execution_record_writes_results_yml_when_milestone_and_case_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
+        fs::write(dir.path().join("executions/m1/milestone.yml"), "id: m1\n").unwrap();
+        write_generated_testcase_for_test(dir.path(), "ground", "tc-ground-001");
+        let cli = Cli::parse_from([
+            "markharness",
+            "execution",
+            "record",
+            "tc-ground-001",
+            "--milestone",
+            "m1",
+            "--result",
+            "pass",
+            "--executor",
+            "yamada",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        run(cli).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("executions/m1/results.yml")).unwrap();
+        assert!(content.contains("case_id: tc-ground-001"));
     }
 
     #[test]

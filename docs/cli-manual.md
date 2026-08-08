@@ -662,6 +662,130 @@ backfill: 1 processed, 2 already up to date
 
 ---
 
+### 1.13 `markharness milestone init` — `executions/<tag>/milestone.yml` の作成(UC4: マイルストーンをタグ付けする、の補助)
+
+```text
+markharness milestone init <tag> [--json] [-d, --dir <path>]
+```
+
+**用途**: 既存の `git tag <tag>` に対応する `executions/<tag>/milestone.yml` を作成する。UC4そのもの(リリースタイミングの意思決定として `git tag` を打つこと)は引き続き人間の判断ポイントであり本コマンドの対象外だが、そのタグを `backfill run`(1.12節)が認識できる形(`executions/<name>/milestone.yml` というディレクトリ名がタグ名と一致すること、[src/backfill.rs:21-22](../src/backfill.rs#L21-L22))に機械的にスキャフォールドする。
+
+**オプション**
+
+| オプション              | 説明                                                                             |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `<tag>`            | (必須)対象の `git tag` 名。そのまま `executions/<tag>/` のディレクトリ名として使う(追加の正規化・バリデーションはしない) |
+| `-d, --dir <path>` | 対象プロジェクトディレクトリ(gitリポジトリのルート)。省略時はカレントディレクトリ                                    |
+| `--json`           | 結果を1行のJSONで出力する。省略時は人間可読なテキストを出力する                                             |
+
+**動作**
+
+- 対象の `tag` が `git tag` として存在しなければ、`git tag <tag>` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する(ファイルは作成しない)。
+- タグが存在し `executions/<tag>/milestone.yml` が未作成の場合、`id: <tag>` のみを内容として書き込む(committer dateなどはgitから都度取得する既存設計を変えないため保存しない、[src/backfill.rs:41-48](../src/backfill.rs#L41-L48))。
+- `executions/<tag>/milestone.yml` が既に存在する場合は中身を変更せず、「既に初期化済み」である旨のメッセージを出して終了コード `0` で終了する(`markharness init` と同じ冪等パターン)。
+
+**終了コード**
+
+| コード | 意味                        |
+| --- | ------------------------- |
+| 0   | 成功(新規作成、または既に初期化済みでの冪等終了) |
+| 2   | 対象の `git tag` が存在しない      |
+| 3   | ファイルシステムエラー               |
+
+**使用例(新規作成)**
+
+```console
+$ git tag 2026-08-release
+$ markharness milestone init 2026-08-release
+initialized executions/2026-08-release/milestone.yml
+```
+
+**使用例(タグ未作成でエラー)**
+
+```console
+$ markharness milestone init 2026-08-release
+error: git tag '2026-08-release' not found. Run `git tag 2026-08-release` first, then retry.
+$ echo $?
+2
+```
+
+**使用例(冪等)**
+
+```console
+$ markharness milestone init 2026-08-release
+executions/2026-08-release/milestone.yml is already initialized
+$ echo $?
+0
+```
+
+**ユースケース対応**: UC4「マイルストーンをタグ付けする」(`docs/product-operation.md` 107行目)の実行結果記録先スキャフォールドを補助する。タグ付け自体の意思決定は引き続き人間が行う。
+
+---
+
+### 1.14 `markharness execution record` — TestCase実行結果の記録(UC4: 実行結果の記録先)
+
+```text
+markharness execution record <case_id> --milestone <name> --result <pass|fail|skip> --executor <name> [--note <text>] [--json] [-d, --dir <path>]
+```
+
+**用途**: `generated/testcases/` 内のいずれかの `TestCase`(`case_id` で識別)について、あるマイルストームでの実行結果1件を `executions/<milestone>/results.yml` に追記する。CIによる自動テスト実行・QAによる手動テストのいずれからも同じインターフェースで呼び出す想定(書き込み先・スキーマは共通)。
+
+**オプション**
+
+| オプション                | 説明                                                                 |
+| -------------------- | ------------------------------------------------------------------ |
+| `<case_id>`          | (必須)対象TestCaseの `case_id`(`generated/testcases/*.yml` のいずれかに含まれる値) |
+| `--milestone <name>` | (必須)記録先のマイルストーム名。対応する `executions/<name>/milestone.yml` が必要        |
+| `--result <value>`   | (必須)`pass` / `fail` / `skip` のいずれか                                 |
+| `--executor <name>`  | (必須)実行者の自由記述(人名、または `ci-github-actions` のようなCI識別子)                 |
+| `--note <text>`      | 任意の自由記述メモ                                                          |
+| `-d, --dir <path>`   | 対象プロジェクトディレクトリ。省略時はカレントディレクトリ                                      |
+| `--json`             | 結果を1行のJSONで出力する。省略時は人間可読なテキストを出力する                                 |
+
+**動作**
+
+- `executions/<milestone>/milestone.yml` が存在しなければ、`markharness milestone init <milestone>` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する。
+- `case_id` が現在の(HEAD時点の)`generated/testcases/*.yml` のいずれにも見つからなければ、`markharness generate` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する。`generated/testcases/` のファイル名は `condition.id` であり `case_id` とは異なる([1.5節](#15-markharness-generate--testcase-の決定的生成uc2-testcaseを決定的生成する))ため、この検証は各ファイルの中身(`case_id` フィールド)を読んで行う。過去マイルストーン時点の内容までは遡らず、常に現在のHEADに対して検証する。
+- 検証を通過すると、`case_id` / `result` / `executor` / `note`(省略時は出力しない)/ `executed_at`(ISO8601, UTC)を1エントリとして `executions/<milestone>/results.yml` に追記する。既存のエントリは変更せず、末尾に追加する(過去の実行履歴・再実行の記録も保持する)。
+- 書き込みは `knowledge apply`(1.4節)と同じ「一時ファイル+リネーム」のアトミック方式(全エントリを読み直してまとめて書く)。
+
+**終了コード**
+
+| コード | 意味                                     |
+| --- | -------------------------------------- |
+| 0   | 成功(エントリを追記)                            |
+| 2   | 指定したマイルストームが未初期化、または `case_id` が見つからない |
+| 3   | ファイルシステムエラー                            |
+
+**使用例**
+
+```console
+$ markharness execution record tc-ground-001 --milestone 2026-08-release --result pass --executor yamada
+recorded pass for tc-ground-001 into executions/2026-08-release/results.yml
+```
+
+`executions/2026-08-release/results.yml`:
+
+```yaml
+- case_id: tc-ground-001
+  result: pass
+  executor: yamada
+  executed_at: 2026-08-08T03:15:00Z
+```
+
+**使用例(未初期化のマイルストームを指定してエラー)**
+
+```console
+$ markharness execution record tc-ground-001 --milestone 2099-01-01 --result pass --executor yamada
+error: milestone '2099-01-01' not found. Run `markharness milestone init 2099-01-01` first.
+$ echo $?
+2
+```
+
+**ユースケース対応**: UC4「マイルストーンをタグ付けする、実行結果の記録先」(`docs/cli-manual.md` の `executions/` ディレクトリ対応表、および `docs/テスト知識管理のGit-nativeモデル_統合版V2.md` §3.1の `TESTEXECUTION`)。結果の集計・レポート表示、CIテストレポート形式からの一括投入(`--from-report`)、過去マイルストーン時点の `generated/testcases/` に対する検証は未実装(将来課題)。
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。

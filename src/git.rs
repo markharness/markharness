@@ -75,6 +75,21 @@ pub fn notes_show(root: &Path, notes_ref: &str, git_ref: &str) -> io::Result<Opt
     }
 }
 
+/// Whether `tag` exists in `root`'s repository. A missing tag is a normal
+/// `false` result, not an error (unlike `run_git`, which treats any non-zero
+/// git exit status as an `io::Error`).
+pub fn tag_exists(root: &Path, tag: &str) -> io::Result<bool> {
+    let ref_name = format!("refs/tags/{tag}");
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--verify", "--quiet", &ref_name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    Ok(status.success())
+}
+
 /// Overwrites (or creates) the git notes entry under `notes_ref` for `git_ref`.
 pub fn notes_add(root: &Path, notes_ref: &str, git_ref: &str, message: &str) -> io::Result<()> {
     run_git(
@@ -195,5 +210,24 @@ mod tests {
         let note = notes_show(dir.path(), "markharness-backfill", "HEAD").unwrap();
 
         assert_eq!(note, Some("done\n".to_string()));
+    }
+
+    #[test]
+    fn tag_exists_returns_true_for_an_existing_tag() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+
+        assert!(tag_exists(dir.path(), "m1").unwrap());
+    }
+
+    #[test]
+    fn tag_exists_returns_false_for_a_missing_tag() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+
+        assert!(!tag_exists(dir.path(), "nope").unwrap());
     }
 }

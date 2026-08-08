@@ -114,3 +114,10 @@ flowchart LR
 
 - UC2(TestCase自動生成)は論文§4.5でツール構成として設計されているが、本文63行目の通り実装・網羅率評価は将来課題であり、本研究の実証実験(第5章)の対象ではない。
 - LLMによる手順書自動生成・文脈供給への応用は付録Aの検討の結果、スコープから完全に除外されている。UC1〜UC8はいずれも決定的な機械的処理または人間の明示的操作であり、LLMベースの非決定的生成は含まない。
+
+## 5. 補足:UC4「実行結果の記録先」の実装(論文本文には明記なし、製品化提案)
+
+UC4の主フロー(`git tag <milestone>` の実行)自体は人間の判断ポイントのまま変わらないが、その後段の「`executions/` へ実行結果を記録する」という機械的作業を補助する2つのコマンドを実装した(`docs/cli-manual.md` 1.13/1.14節)。
+
+- `markharness milestone init <tag>`:既存の `git tag` に対応する `executions/<tag>/milestone.yml` を作成する。タグの存在検証のみ行い、タグ付けの意思決定自体は代行しない。
+- `markharness execution record <case_id> --milestone <name> --result <pass|fail|skip> --executor <name>`:CI・QAいずれの起点でも共通のインターフェースで `executions/<milestone>/results.yml` にTestCase実行結果を追記する。
