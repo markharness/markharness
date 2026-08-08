@@ -14,15 +14,15 @@ markharness init
 
 **用途**: UC1〜UC8を支える物理ディレクトリ構成(論文 §3.5, 244-273行目)のうち、対象リポジトリ上に作成が必要な7ディレクトリを作成し、以降のコマンドが動作できる状態にする。
 
-| ディレクトリ | 対応UC |
-|---|---|
-| `knowledge/` | UC1(知識を記述する)/ UC1b(forked_from を手動記述する) |
-| `axes/` | UC1(横断的観点 Axis のレジストリ、§3.1) |
-| `generated/` | UC2(TestCaseを決定的生成する)/ UC3(生成物をレビュー・マージする) |
-| `executions/` | UC4(マイルストーンをタグ付けする、実行結果の記録先) |
-| `changes/` | UC5(ChangeEventを自動計算する)/ UC6(バックフィルを非同期実行する) |
-| `schema/` | UC7(idキャッシュを破棄・再構築する。フォーマット・正規化ルール定義) |
-| `tools/` | UC2/UC5/UC6/UC7 で使う生成・検証スクリプト置き場 |
+| ディレクトリ  | 対応UC                                                              |
+| ------------- | ------------------------------------------------------------------- |
+| `knowledge/`  | UC1(知識を記述する)/ UC1b(forked_from を手動記述する)               |
+| `axes/`       | UC1(横断的観点 Axis のレジストリ、§3.1)                             |
+| `generated/`  | UC2(TestCaseを決定的生成する)/ UC3(生成物をレビュー・マージする)    |
+| `executions/` | UC4(マイルストーンをタグ付けする、実行結果の記録先)                 |
+| `changes/`    | UC5(ChangeEventを自動計算する)/ UC6(バックフィルを非同期実行する)   |
+| `schema/`     | UC7(idキャッシュを破棄・再構築する。フォーマット・正規化ルール定義) |
+| `tools/`      | UC2/UC5/UC6/UC7 で使う生成・検証スクリプト置き場                    |
 
 UC8(既存ツールからのインポート)は専用ディレクトリを持たず、変換結果を `knowledge/` に書き込む想定のため対象外。
 
@@ -55,8 +55,8 @@ markharness knowledge add [--dir <path>]
 
 **オプション**
 
-| オプション | 説明 |
-|---|---|
+| オプション         | 説明                                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
 | `-d, --dir <path>` | 対象プロジェクトディレクトリ(`knowledge/` の親)を指定する。省略時はカレントディレクトリを対象にする。 |
 
 **使用例(カレントディレクトリ以外を対象にする)**
@@ -74,6 +74,7 @@ Condition name (e.g. empty-title): empty-title
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
 Expected result (e.g. shows a validation error): shows a validation error
 ```
+
 → `tmp/todo-sample/knowledge/task-management/add-todo/...` にファイルが作成される。
 
 **アクター**: Test Designer(`docs/product-operation.md` UC1)
@@ -128,6 +129,7 @@ knowledge/task-management/add-todo/add-task/empty-title/expected/001.yml
 ```
 
 `requirement.yml`:
+
 ```yaml
 id: task-management
 label: task-management
@@ -135,6 +137,7 @@ axis: [workflow]
 ```
 
 `feature.yml`:
+
 ```yaml
 id: add-todo
 requirement: task-management
@@ -143,6 +146,7 @@ axis: [ui, validation]
 ```
 
 `behavior.yml`:
+
 ```yaml
 id: add-task
 feature: add-todo
@@ -153,6 +157,7 @@ description: |
 ```
 
 `condition.yml`:
+
 ```yaml
 id: empty-title
 behavior: add-task
@@ -162,6 +167,7 @@ description: |
 ```
 
 `expected/001.yml`(id は `{condition_id}-{連番3桁}`):
+
 ```yaml
 id: empty-title-001
 condition: empty-title
@@ -207,6 +213,7 @@ Condition name (e.g. empty-title):
 既存のCondition 'empty-title' を再利用します。
 Expected result (e.g. shows a validation error): highlights the title field in red
 ```
+
 → `knowledge/task-management/add-todo/add-task/empty-title/expected/002.yml` が作成される。番号の代わりに `task-management` / `add-todo` / `add-task` / `empty-title` を直接入力しても同じ結果になる。
 
 **使用例(Condition id の重複接頭辞を自動除去)**
@@ -226,6 +233,7 @@ Condition id 'add-task-max-length' から Behavior id 'add-task' と重複する
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with a title longer than 200 characters
 Expected result (e.g. shows a validation error): shows a length validation error
 ```
+
 → `knowledge/task-management/add-todo/add-task/max-length/condition.yml` と `knowledge/task-management/add-todo/add-task/max-length/expected/001.yml` が作成される(`add-task-max-length/` ディレクトリは作成されない)。
 
 **ユースケース対応**: UC1「知識を記述する」(手動記述、`docs/product-operation.md` 103行目)を対話形式で支援する。
@@ -242,20 +250,20 @@ markharness knowledge validate <draft-file> [--json] [-d, --dir <path>]
 
 **オプション**
 
-| オプション | 説明 |
-|---|---|
-| `<draft-file>` | (必須)ドラフトYAMLファイルのパス |
+| オプション         | 説明                                                                          |
+| ------------------ | ----------------------------------------------------------------------------- |
+| `<draft-file>`     | (必須)ドラフトYAMLファイルのパス                                              |
 | `-d, --dir <path>` | 対象プロジェクトディレクトリ(`knowledge/` の親)。省略時はカレントディレクトリ |
-| `--json` | エラー・結果を1行のJSONで出力する。省略時は人間可読なテキストを出力する |
+| `--json`           | エラー・結果を1行のJSONで出力する。省略時は人間可読なテキストを出力する       |
 
 **ドラフトYAMLの形式**(1回の実行で1本のチェーンを検証する。複数チェーンの一括検証は非対応)
 
 ```yaml
 requirement:
-  id: controls          # 必須。ASCII slug
-  label: controls        # 省略可(既存id再利用時は省略可)
-  axis: [gameplay]        # 新規作成時は必須。既存id再利用時は省略可
-  description: null       # 省略可
+  id: controls # 必須。ASCII slug
+  label: controls # 省略可(既存id再利用時は省略可)
+  axis: [gameplay] # 新規作成時は必須。既存id再利用時は省略可
+  description: null # 省略可
 
 feature:
   id: player-jump
@@ -266,7 +274,7 @@ behavior:
   id: jump
   label: jump
   axis: [gameplay]
-  description: Player presses jump.   # Behaviorのみdescriptionが必須(新規作成時)
+  description: Player presses jump. # Behaviorのみdescriptionが必須(新規作成時)
 
 condition:
   id: ground
@@ -282,23 +290,23 @@ expected:
 
 **バリデーションルール(概要。詳細は spec §5)**
 
-| エラーコード | 内容 |
-|---|---|
-| `invalid_slug` | idが小文字英数字とハイフン以外を含む |
-| `missing_axis` | 新規作成のRequirement/Feature/Behaviorで `axis` が空・未指定 |
-| `missing_description` | 新規作成のBehavior/Condition、または各ExpectedResultで `description` が空 |
-| `unknown_axis` | `axes/*.yml` レジストリに登録されていない観点値(近似候補があれば `suggestion` に提示) |
-| `redundant_prefix` | `condition.id` が `{behavior.id}-` で始まる(`knowledge apply` の `--strip-redundant-prefix` 未指定時。1.4節参照) |
-| `conflicting_existing_value` | 既存id再利用時、指定した `label`/`axis`/`description` が既存ファイルの値と不一致 |
-| `parent_not_found` | 既存ファイルに記録された親参照(例: `feature.yml` の `requirement:`)がドラフトのチェーンと矛盾 |
+| エラーコード                 | 内容                                                                                                             |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `invalid_slug`               | idが小文字英数字とハイフン以外を含む                                                                             |
+| `missing_axis`               | 新規作成のRequirement/Feature/Behaviorで `axis` が空・未指定                                                     |
+| `missing_description`        | 新規作成のBehavior/Condition、または各ExpectedResultで `description` が空                                        |
+| `unknown_axis`               | `axes/*.yml` レジストリに登録されていない観点値(近似候補があれば `suggestion` に提示)                            |
+| `redundant_prefix`           | `condition.id` が `{behavior.id}-` で始まる(`knowledge apply` の `--strip-redundant-prefix` 未指定時。1.4節参照) |
+| `conflicting_existing_value` | 既存id再利用時、指定した `label`/`axis`/`description` が既存ファイルの値と不一致                                 |
+| `parent_not_found`           | 既存ファイルに記録された親参照(例: `feature.yml` の `requirement:`)がドラフトのチェーンと矛盾                    |
 
 **終了コード**
 
-| コード | 意味 |
-|---|---|
-| 0 | 成功(エラーなし) |
-| 1 | バリデーションエラーあり(エラー内容はstderr、`--json`指定時はstdoutにJSONで出力) |
-| 2 | 使用方法エラー(ファイル不在・YAMLパース不能) |
+| コード | 意味                                                                             |
+| ------ | -------------------------------------------------------------------------------- |
+| 0      | 成功(エラーなし)                                                                 |
+| 1      | バリデーションエラーあり(エラー内容はstderr、`--json`指定時はstdoutにJSONで出力) |
+| 2      | 使用方法エラー(ファイル不在・YAMLパース不能)                                     |
 
 **使用例(成功・人間可読)**
 
@@ -307,6 +315,7 @@ $ markharness knowledge validate draft.yml --dir tmp/todo-sample
 $ echo $?
 0
 ```
+
 (標準出力・標準エラーとも何も出力しない)
 
 **使用例(成功・`--json`)**
@@ -349,22 +358,22 @@ markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-re
 
 **オプション**
 
-| オプション | 説明 |
-|---|---|
-| `<draft-file>` | (必須)ドラフトYAMLファイルのパス。形式は1.3節と共通 |
-| `-d, --dir <path>` | 1.3節と同様 |
-| `--json` | 1.3節と同様。成功時は書き込んだファイル一覧を出力する(下記参照) |
+| オプション                 | 説明                                                                                                                                                                                                                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<draft-file>`             | (必須)ドラフトYAMLファイルのパス。形式は1.3節と共通                                                                                                                                                                                                                                      |
+| `-d, --dir <path>`         | 1.3節と同様                                                                                                                                                                                                                                                                              |
+| `--json`                   | 1.3節と同様。成功時は書き込んだファイル一覧を出力する(下記参照)                                                                                                                                                                                                                          |
 | `--strip-redundant-prefix` | `condition.id` が `{behavior.id}-` で始まる場合、確認なしで接頭辞を除去したidを採用する。未指定の場合は `redundant_prefix` エラーで停止する(1.3節参照)。除去後idと同名のディレクトリが既に存在する(レガシーデータ)場合は、`knowledge add` と同様に除去せず既存のものをそのまま再利用する |
-| `--dry-run` | `knowledge validate` と同義(検証のみ行い書き込まない)。CI等での用途を想定した別名 |
+| `--dry-run`                | `knowledge validate` と同義(検証のみ行い書き込まない)。CI等での用途を想定した別名                                                                                                                                                                                                        |
 
 **終了コード**
 
-| コード | 意味 |
-|---|---|
-| 0 | 成功(書き込み成功。`--dry-run` 指定時はエラーなし) |
-| 1 | バリデーションエラーあり(1.3節と同じ形式。ファイルは一切書き込まれない) |
-| 2 | 使用方法エラー(ファイル不在・YAMLパース不能) |
-| 3 | ファイルシステムエラー(書き込み失敗など) |
+| コード | 意味                                                                    |
+| ------ | ----------------------------------------------------------------------- |
+| 0      | 成功(書き込み成功。`--dry-run` 指定時はエラーなし)                      |
+| 1      | バリデーションエラーあり(1.3節と同じ形式。ファイルは一切書き込まれない) |
+| 2      | 使用方法エラー(ファイル不在・YAMLパース不能)                            |
+| 3      | ファイルシステムエラー(書き込み失敗など)                                |
 
 **使用例(成功・`--json`)**
 
@@ -374,6 +383,7 @@ $ markharness knowledge apply draft.yml --dir tmp/todo-sample --json
 $ echo $?
 0
 ```
+
 `written` には新規に書き込まれたファイルのみ(既存id再利用でスキップしたファイルは含まない)が、対象ディレクトリ(`--dir`)からの相対パスで列挙される。
 
 **使用例(`--strip-redundant-prefix` でCondition idの重複接頭辞を除去)**
@@ -383,6 +393,7 @@ $ markharness knowledge apply draft.yml --dir tmp/todo-sample --strip-redundant-
 $ echo $?
 0
 ```
+
 `draft.yml` の `condition.id: add-task-max-length`(Behavior id `add-task` と重複)は `max-length` として書き込まれる。`knowledge add`(1.2節)の自動除去と同じ挙動。
 
 **使用例(`--dry-run`)**
@@ -393,6 +404,7 @@ $ markharness knowledge apply draft.yml --dir tmp/todo-sample --dry-run --json
 $ echo $?
 0
 ```
+
 (ファイルは書き込まれない)
 
 **使用例(バリデーションエラーで書き込み拒否)**
@@ -403,9 +415,10 @@ error: missing_description: behavior.description must not be empty (path=behavio
 $ echo $?
 1
 ```
+
 (`knowledge/` 配下には一切ファイルが作成されない)
 
-**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。AIエージェント・将来のGUI実装が知識を確定登録するための共通エントリポイント。人間向けの `$EDITOR` 起動ラッパー(`knowledge add --edit`)は未実装(2章参照)。
+**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。AIエージェント・将来のGUI実装が知識を確定登録するための共通エントリポイント。人間向けの `$EDITOR` 起動ラッパーは `knowledge add --edit`(1.9節)として実装済み。
 
 ---
 
@@ -439,6 +452,7 @@ generated 1 testcase(s) into generated/testcases/
 ```
 
 `generated/testcases/empty-title.yml`:
+
 ```yaml
 case_id: tc-empty-title-001
 generated_from:
@@ -447,15 +461,15 @@ generated_from:
   behavior: add-task
   condition: empty-title
   expected_results:
-  - empty-title-001
+    - empty-title-001
 title: |
   Submit the todo form with an empty title
 steps:
-- |
-  User adds a new task to the list.
+  - |
+    User adds a new task to the list.
 expected:
-- |
-  shows a validation error
+  - |
+    shows a validation error
 ```
 
 `knowledge/` に何も無い場合は `generated/testcases/` が空(0ファイル)になる。
@@ -535,7 +549,7 @@ feature:
   id: player-double-jump
   label: player-double-jump
   axis: [gameplay]
-  forked_from: player-jump   # 概念的な派生元(既存Feature id)。省略可
+  forked_from: player-jump # 概念的な派生元(既存Feature id)。省略可
 ```
 
 ---
@@ -605,7 +619,7 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --
   from_blob: 1a2b3c...
   to_blob: 4d5e6f...
   impacted_testcases:
-  - tc-ground-001
+    - tc-ground-001
 ```
 
 **ユースケース対応**: UC5「ChangeEventを自動計算する」。本モデルの核心的貢献(§3.2〜3.4)の簡易実装。
@@ -642,9 +656,9 @@ backfill: 1 processed, 2 already up to date
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。
 
-| # | ユースケース | 想定コマンド(暫定) | アクター | 概要 |
-|---|---|---|---|---|
-| UC4 | マイルストーンをタグ付けする | 専用コマンドなし(`git tag <milestone>` を直接使用) | Release Manager | リリースタイミングの意思決定そのものであり、人間の判断ポイント(図3)。 |
+| #   | ユースケース                 | 想定コマンド(暫定)                                                  | アクター                | 概要                                                                                      |
+| --- | ---------------------------- | ------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
+| UC4 | マイルストーンをタグ付けする | 専用コマンドなし(`git tag <milestone>` を直接使用)                  | Release Manager         | リリースタイミングの意思決定そのものであり、人間の判断ポイント(図3)。                     |
 | UC8 | 既存ツールからインポートする | `markharness import --from <testrail\|xray\|testlink> <file>`(暫定) | Data Migration Operator | 既存TMSのエクスポートファイルを `knowledge/` 構造に変換する(§4.5)。今回の実装スコープ外。 |
 
 これらは現時点で未着手であり、実装順序は別途チェックリスト(`/plan-checklist`)で管理する。
