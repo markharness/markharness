@@ -40,8 +40,8 @@ pub enum Command {
     Knowledge(KnowledgeCommand),
     /// Deterministically (re)generate generated/testcases/*.yml from knowledge/
     Generate,
-    /// Verify that generated/testcases/*.yml matches a fresh regeneration from knowledge/ (UC3 CI check)
-    Verify,
+    /// Verify generated output against knowledge/, or trace/audit execution results against ChangeEvents
+    Verify(VerifyArgs),
     /// List axes/*.yml registry entries
     #[command(subcommand)]
     Axes(AxesCommand),
@@ -118,6 +118,51 @@ pub enum ExecutionCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(clap::Args)]
+pub struct VerifyArgs {
+    #[command(subcommand)]
+    pub command: Option<VerifySubcommand>,
+}
+
+#[derive(Subcommand)]
+pub enum VerifySubcommand {
+    /// Q1: which ChangeEvent a TestExecution's verified_feature_blobs reflects
+    Trace {
+        /// The TestCase's case_id
+        case_id: String,
+        /// The milestone the execution result was recorded under
+        #[arg(long)]
+        milestone: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Q2: impacted TestCases not yet re-executed against the new blob (pending/stale)
+    Pending {
+        /// The earlier milestone (defaults to the most recent adjacent pair with --to)
+        #[arg(long, requires = "to")]
+        from: Option<String>,
+        /// The later milestone (defaults to the most recent adjacent pair with --from)
+        #[arg(long, requires = "from")]
+        to: Option<String>,
+        /// Target project directory (a git repository). Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+        /// Exit with a non-zero status if any TestCase is pending
+        #[arg(long)]
+        fail_on_pending: bool,
+        /// Recompute Feature blob SHAs directly via `git ls-tree` instead of using .markharness-cache/
+        #[arg(long)]
+        no_cache: bool,
     },
 }
 
@@ -482,7 +527,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Verify => {
+        Command::Verify(VerifyArgs { command: None }) => {
             let root = env::current_dir()?;
             let diffs = verify::diff_generated_testcases(&root)?;
             if diffs.is_empty() {
@@ -498,6 +543,141 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     println!("{label}: generated/testcases/{}", diff.file_name);
                 }
                 std::process::exit(1);
+            }
+        }
+        Command::Verify(VerifyArgs {
+            command:
+                Some(VerifySubcommand::Trace {
+                    case_id,
+                    milestone,
+                    dir,
+                    json,
+                }),
+        }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            match verify::trace(&root, &case_id, &milestone) {
+                Ok(result) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&result)
+                                .expect("TraceResult serialization is infallible")
+                        );
+                    } else {
+                        println!("case_id: {}", result.case_id);
+                        for entry in &result.entries {
+                            println!("feature: {}", entry.feature_id);
+                            println!("executed_at: {}", result.executed_at);
+                            match &entry.reflects_change {
+                                Some(change) => {
+                                    println!("reflects_change: {}", change.event_id);
+                                    println!("  from_milestone: {}", change.from_milestone);
+                                    println!("  to_milestone: {}", change.to_milestone);
+                                    println!("  change_type: (未記録)");
+                                }
+                                None => println!("reflects_change: (不明)"),
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Err(verify::TraceError::NoVerifiedBlobs) => {
+                    eprintln!(
+                        "error: no verified_feature_blobs recorded for case_id '{case_id}' at milestone '{milestone}'."
+                    );
+                    std::process::exit(2);
+                }
+                Err(verify::TraceError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+            }
+        }
+        Command::Verify(VerifyArgs {
+            command:
+                Some(VerifySubcommand::Pending {
+                    from,
+                    to,
+                    dir,
+                    json,
+                    fail_on_pending,
+                    no_cache,
+                }),
+        }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let range = match (&from, &to) {
+                (Some(from), Some(to)) => Some((from.as_str(), to.as_str())),
+                _ => None,
+            };
+            match verify::pending(&root, range, !no_cache) {
+                Ok(report) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&report)
+                                .expect("PendingReport serialization is infallible")
+                        );
+                    } else {
+                        println!("pending (再実行なし):");
+                        if report.pending.is_empty() {
+                            println!("  (なし)");
+                        } else {
+                            for entry in &report.pending {
+                                println!(
+                                    "  - {}  ({} の変更 {} の影響、未実行)",
+                                    entry.case_id, entry.feature_id, entry.event_id
+                                );
+                            }
+                        }
+                        println!();
+                        println!("stale (影響範囲がさらに変更済み):");
+                        if report.stale.is_empty() {
+                            println!("  (なし)");
+                        } else {
+                            for entry in &report.stale {
+                                let current = match &entry.current_event {
+                                    Some(c) => c.event_id.clone(),
+                                    None => "(不明)".to_string(),
+                                };
+                                println!(
+                                    "  - {}  ({} の変更 {} は陳腐化、現在の確認対象は {})",
+                                    entry.case_id,
+                                    entry.feature_id,
+                                    entry.original_event_id,
+                                    current
+                                );
+                            }
+                        }
+                    }
+                    if fail_on_pending && !report.pending.is_empty() {
+                        std::process::exit(1);
+                    }
+                    Ok(())
+                }
+                Err(verify::PendingError::NoMilestonePair) => {
+                    eprintln!(
+                        "error: --from/--to omitted and fewer than two milestones exist to pair."
+                    );
+                    std::process::exit(2);
+                }
+                Err(verify::PendingError::MilestoneNotFound) => {
+                    eprintln!("error: --from/--to milestone not found.");
+                    std::process::exit(2);
+                }
+                Err(verify::PendingError::InvalidRange) => {
+                    eprintln!("error: --to must be strictly newer than --from.");
+                    std::process::exit(2);
+                }
+                Err(verify::PendingError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
             }
         }
     }
@@ -1083,23 +1263,33 @@ mod tests {
         root: &std::path::Path,
         condition_id: &str,
         case_id: &str,
+        feature_id: &str,
     ) {
         let dir = root.join("generated/testcases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{condition_id}.yml")),
-            format!("case_id: {case_id}\n"),
+            format!("case_id: {case_id}\ngenerated_from:\n  feature: {feature_id}\n"),
         )
         .unwrap();
     }
 
     #[test]
     fn execution_record_writes_results_yml_when_milestone_and_case_exist() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = init_git_repo_for_test();
+        fs::create_dir_all(dir.path().join("knowledge/controls/player-jump")).unwrap();
+        fs::write(
+            dir.path()
+                .join("knowledge/controls/player-jump/feature.yml"),
+            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: []\n",
+        )
+        .unwrap();
         fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
         fs::write(dir.path().join("executions/m1/milestone.yml"), "id: m1\n").unwrap();
-        write_generated_testcase_for_test(dir.path(), "ground", "tc-ground-001");
+        run_git_for_test(dir.path(), &["add", "-A"]);
+        run_git_for_test(dir.path(), &["commit", "-q", "-m", "add feature"]);
+        run_git_for_test(dir.path(), &["tag", "m1"]);
+        write_generated_testcase_for_test(dir.path(), "ground", "tc-ground-001", "player-jump");
         let cli = Cli::parse_from([
             "markharness",
             "execution",

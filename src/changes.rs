@@ -1,5 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::io;
 use std::path::Path;
 
@@ -9,7 +10,7 @@ use crate::id_cache::{self, FeatureBlob};
 /// One detected Feature change between two milestones (§3.5 ChangeEvent).
 /// `change_type` is intentionally absent: per docs/cli-manual.md UC5, it is
 /// filled in by a human afterwards, not computed here.
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangeEvent {
     pub event_id: String,
     pub feature_id: String,
@@ -86,6 +87,18 @@ pub fn compute_changes(
 
 pub fn serialize_changes(events: &[ChangeEvent]) -> String {
     serde_yaml_ng::to_string(events).expect("ChangeEvent serialization is infallible")
+}
+
+/// Reads `changes/<milestone>.yaml` (the ChangeEvents whose `to_milestone`
+/// is `milestone`, written by `compute_changes`/`serialize_changes`).
+/// Returns an empty list if the file doesn't exist, rather than an error.
+pub fn read_changes(root: &Path, milestone: &str) -> io::Result<Vec<ChangeEvent>> {
+    let path = root.join("changes").join(format!("{milestone}.yaml"));
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(path)?;
+    serde_yaml_ng::from_str(&content).map_err(io::Error::other)
 }
 
 #[cfg(test)]
@@ -214,6 +227,39 @@ mod tests {
         assert!(events[0].from_blob.is_some());
         assert_eq!(events[0].to_blob, None);
         assert!(events[0].impacted_testcases.is_empty());
+    }
+
+    #[test]
+    fn read_changes_returns_events_written_by_serialize_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        let events = vec![ChangeEvent {
+            event_id: "player-jump--m1--m2".to_string(),
+            feature_id: "player-jump".to_string(),
+            from_milestone: "m1".to_string(),
+            to_milestone: "m2".to_string(),
+            from_blob: Some("aaa".to_string()),
+            to_blob: Some("bbb".to_string()),
+            impacted_testcases: vec!["tc-ground-001".to_string()],
+        }];
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&events),
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert_eq!(read, events);
+    }
+
+    #[test]
+    fn read_changes_returns_empty_when_file_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert!(read.is_empty());
     }
 
     #[test]

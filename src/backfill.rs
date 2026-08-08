@@ -20,7 +20,7 @@ pub struct BackfillReport {
 
 /// Milestone names are `executions/<name>/milestone.yml` directory names,
 /// which UC4 assumes match a `git tag <name>` (docs/cli-manual.md §1.1/UC4).
-fn list_milestone_names(root: &Path) -> io::Result<Vec<String>> {
+pub fn list_milestone_names(root: &Path) -> io::Result<Vec<String>> {
     let executions_dir = root.join("executions");
     let Ok(entries) = fs::read_dir(&executions_dir) else {
         return Ok(Vec::new());
@@ -38,7 +38,7 @@ fn list_milestone_names(root: &Path) -> io::Result<Vec<String>> {
 /// Orders milestone names newest-first by their tag's committer date.
 /// Milestones whose tag cannot be resolved (name/tag mismatch) are dropped
 /// rather than failing the whole run.
-fn order_by_recency(root: &Path, names: Vec<String>) -> Vec<String> {
+pub fn order_by_recency(root: &Path, names: Vec<String>) -> Vec<String> {
     let mut dated: Vec<(String, String)> = names
         .into_iter()
         .filter_map(|name| git::commit_date(root, &name).ok().map(|date| (name, date)))

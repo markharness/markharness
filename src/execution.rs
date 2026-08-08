@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -5,13 +6,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// Only the field record_execution needs from a generated TestCase. The
+use crate::id_cache;
+
+/// Only the fields record_execution needs from a generated TestCase. The
 /// filename under `generated/testcases/` is the condition id, not the
 /// case_id (see `generate::TestCase::file_stem`), so matching case_id
 /// requires reading each file's content rather than a filename lookup.
 #[derive(Deserialize)]
 struct MinimalTestCase {
     case_id: String,
+    generated_from: MinimalGeneratedFrom,
+}
+
+#[derive(Deserialize)]
+struct MinimalGeneratedFrom {
+    feature: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +69,12 @@ pub struct ExecutionEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub executed_at: String,
+    /// Feature id -> blob SHA at `milestone`, for each Feature the TestCase's
+    /// `generated_from.feature` names (§2.1 of the ChangeEvent連動仕様).
+    /// Filled in automatically by `record_execution`; absent on records made
+    /// before this field existed (no retroactive backfill, per §6).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub verified_feature_blobs: BTreeMap<String, String>,
 }
 
 /// Days since the Unix epoch (1970-01-01) to a (year, month, day) civil
@@ -96,12 +111,12 @@ fn iso8601_utc_now() -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
 
-/// Whether any `generated/testcases/*.yml` file has this `case_id` (the
+/// Finds the `generated/testcases/*.yml` file with this `case_id` (the
 /// file's stem is the condition id, so the filename itself can't be used).
-fn case_id_exists(root: &Path, case_id: &str) -> io::Result<bool> {
+fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<MinimalTestCase>> {
     let testcases_dir = root.join("generated").join("testcases");
     let Ok(entries) = fs::read_dir(&testcases_dir) else {
-        return Ok(false);
+        return Ok(None);
     };
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -112,10 +127,25 @@ fn case_id_exists(root: &Path, case_id: &str) -> io::Result<bool> {
         if let Ok(testcase) = serde_yaml_ng::from_str::<MinimalTestCase>(&content)
             && testcase.case_id == case_id
         {
-            return Ok(true);
+            return Ok(Some(testcase));
         }
     }
-    Ok(false)
+    Ok(None)
+}
+
+/// Resolves the blob SHA of `feature_id` at `milestone`, or `None` if the
+/// Feature isn't found at that milestone tag (kept out of the recorded map
+/// rather than failing the whole `execution record`).
+fn verified_feature_blob(
+    root: &Path,
+    milestone: &str,
+    feature_id: &str,
+) -> io::Result<Option<String>> {
+    let blobs = id_cache::resolve_feature_blobs(root, milestone, true)?;
+    Ok(blobs
+        .into_iter()
+        .find(|b| b.id == feature_id)
+        .map(|b| b.blob_sha))
 }
 
 fn read_existing_entries(results_path: &Path) -> io::Result<Vec<ExecutionEntry>> {
@@ -135,8 +165,15 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordErro
         return Err(RecordError::MilestoneNotFound);
     }
 
-    if !case_id_exists(root, args.case_id)? {
+    let Some(testcase) = find_testcase_by_case_id(root, args.case_id)? else {
         return Err(RecordError::CaseNotFound);
+    };
+
+    let mut verified_feature_blobs = BTreeMap::new();
+    if let Some(sha) =
+        verified_feature_blob(root, args.milestone, &testcase.generated_from.feature)?
+    {
+        verified_feature_blobs.insert(testcase.generated_from.feature, sha);
     }
 
     let results_path = root
@@ -150,6 +187,7 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordErro
         executor: args.executor.to_string(),
         note: args.note.map(|n| n.to_string()),
         executed_at: iso8601_utc_now(),
+        verified_feature_blobs,
     });
 
     let content = serde_yaml_ng::to_string(&entries)
@@ -202,22 +240,99 @@ mod tests {
         assert!(matches!(result, Err(RecordError::CaseNotFound)));
     }
 
-    fn write_generated_testcase(root: &Path, condition_id: &str, case_id: &str) {
+    fn run_git(root: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    /// A milestone tag with a `player-jump` Feature committed and tagged,
+    /// matching the `id: m1` written to `executions/m1/milestone.yml` by
+    /// callers (record_execution's blob resolution needs a real git ref).
+    fn init_repo_with_milestone_and_feature(
+        feature_id: &str,
+        milestone: &str,
+    ) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q"]);
+        run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+        run_git(dir.path(), &["config", "user.name", "Test"]);
+        let feature_dir = dir.path().join("knowledge/controls").join(feature_id);
+        fs::create_dir_all(&feature_dir).unwrap();
+        fs::write(
+            feature_dir.join("feature.yml"),
+            format!("id: {feature_id}\nrequirement: controls\nlabel: {feature_id}\naxis: []\n"),
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(format!("executions/{milestone}"))).unwrap();
+        fs::write(
+            dir.path()
+                .join(format!("executions/{milestone}/milestone.yml")),
+            format!("id: {milestone}\n"),
+        )
+        .unwrap();
+        run_git(dir.path(), &["add", "-A"]);
+        run_git(dir.path(), &["commit", "-q", "-m", "init"]);
+        run_git(dir.path(), &["tag", milestone]);
+        dir
+    }
+
+    fn write_generated_testcase_with_feature(
+        root: &Path,
+        condition_id: &str,
+        case_id: &str,
+        feature_id: &str,
+    ) {
         let dir = root.join("generated/testcases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{condition_id}.yml")),
-            format!("case_id: {case_id}\n"),
+            format!("case_id: {case_id}\ngenerated_from:\n  feature: {feature_id}\n"),
         )
         .unwrap();
     }
 
     #[test]
+    fn record_execution_populates_verified_feature_blobs_for_the_testcases_feature() {
+        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
+        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
+        let expected_blobs =
+            crate::id_cache::resolve_feature_blobs(dir.path(), "m1", false).unwrap();
+        let expected_sha = expected_blobs
+            .iter()
+            .find(|b| b.id == "player-jump")
+            .unwrap()
+            .blob_sha
+            .clone();
+
+        record_execution(
+            dir.path(),
+            &RecordArgs {
+                milestone: "m1",
+                case_id: "tc-ground-001",
+                result: ExecutionResult::Pass,
+                executor: "yamada",
+                note: None,
+            },
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(dir.path().join("executions/m1/results.yml")).unwrap();
+        let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
+        assert_eq!(
+            entries[0].verified_feature_blobs.get("player-jump"),
+            Some(&expected_sha)
+        );
+    }
+
+    #[test]
     fn record_execution_creates_results_yml_with_one_entry() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
-        fs::write(dir.path().join("executions/m1/milestone.yml"), "id: m1\n").unwrap();
-        write_generated_testcase(dir.path(), "ground", "tc-ground-001");
+        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
+        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
 
         let args = RecordArgs {
             milestone: "m1",
@@ -236,11 +351,9 @@ mod tests {
 
     #[test]
     fn record_execution_appends_to_existing_results_yml_keeping_prior_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
-        fs::write(dir.path().join("executions/m1/milestone.yml"), "id: m1\n").unwrap();
-        write_generated_testcase(dir.path(), "ground", "tc-ground-001");
-        write_generated_testcase(dir.path(), "air", "tc-air-001");
+        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
+        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
+        write_generated_testcase_with_feature(dir.path(), "air", "tc-air-001", "player-jump");
 
         record_execution(
             dir.path(),
