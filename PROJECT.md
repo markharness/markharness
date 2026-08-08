@@ -63,6 +63,8 @@ markharness は Git リポジトリ自身(ワーキングツリー・blob SHA・
 
 `markharness init` は以下7ディレクトリ(論文 §3.5、UC1〜UC8の前提)を、存在しないものだけ作成する(既存ディレクトリ・ファイルはそのまま)。UC8(既存ツールからのインポート)は専用ディレクトリを持たず `knowledge/` に書き込む。
 
+あわせて `.gitignore` に `.markharness-cache/`(id解決キャッシュ、§3.3、非コミット)を追記する。既存の `.gitignore` がある場合は内容を保持したまま不足分のみ追記し、既に含まれていれば何もしない。
+
 ```text
 src/
 └── main.rs           # CLI エントリポイント

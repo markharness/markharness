@@ -16,6 +16,10 @@ const SUBDIRS: [&str; 7] = [
     "tools",
 ];
 
+/// `markharness init` が管理する .gitignore エントリ。
+/// .markharness-cache/ は id解決キャッシュ(§3.3)で非コミット・毎プロジェクト再構築のため対象。
+const GITIGNORE_ENTRIES: [&str; 1] = [".markharness-cache/"];
+
 pub fn run_init(root: &Path) -> io::Result<()> {
     for name in SUBDIRS {
         let dir = root.join(name);
@@ -23,7 +27,37 @@ pub fn run_init(root: &Path) -> io::Result<()> {
             fs::create_dir_all(&dir)?;
         }
     }
+    ensure_gitignore(root)?;
     Ok(())
+}
+
+fn ensure_gitignore(root: &Path) -> io::Result<()> {
+    let path = root.join(".gitignore");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+
+    let missing: Vec<&str> = GITIGNORE_ENTRIES
+        .into_iter()
+        .filter(|entry| !existing.lines().any(|line| line == *entry))
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let mut updated = existing.clone();
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    if !updated.is_empty() {
+        updated.push('\n');
+    }
+    updated.push_str("# markharness init\n");
+    for entry in missing {
+        updated.push_str(entry);
+        updated.push('\n');
+    }
+
+    fs::write(&path, updated)
 }
 
 #[cfg(test)]
@@ -67,5 +101,43 @@ mod tests {
         for name in SUBDIRS {
             assert!(dir.path().join(name).is_dir());
         }
+    }
+
+    #[test]
+    fn creates_gitignore_with_cache_entry_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".markharness-cache/"));
+    }
+
+    #[test]
+    fn appends_missing_entry_to_existing_gitignore_without_removing_content() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "node_modules/\n").unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains("node_modules/"));
+        assert!(content.contains(".markharness-cache/"));
+    }
+
+    #[test]
+    fn does_not_duplicate_entry_when_already_present() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join(".gitignore"),
+            "# markharness init\n.markharness-cache/\n",
+        )
+        .unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        let occurrences = content.matches(".markharness-cache/").count();
+        assert_eq!(occurrences, 1);
     }
 }
