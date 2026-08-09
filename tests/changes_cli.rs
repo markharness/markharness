@@ -120,3 +120,58 @@ fn changes_annotate_exits_three_when_event_id_does_not_exist() {
         "unexpected stderr: {stderr}"
     );
 }
+
+#[test]
+fn changes_compute_records_both_parent_tree_shas_when_to_milestone_is_a_true_divergence_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(output.status.success());
+    run_git(dir.path(), &["init", "-q", "-b", "main"]);
+    run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+    run_git(dir.path(), &["config", "user.name", "Test"]);
+
+    write_feature(dir.path(), "base");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "base"]);
+    run_git(dir.path(), &["tag", "m1"]);
+    run_git(dir.path(), &["branch", "feature"]);
+
+    write_feature(dir.path(), "changed-on-main");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "on main"]);
+
+    run_git(dir.path(), &["checkout", "-q", "feature"]);
+    write_feature(dir.path(), "changed-on-feature");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "on feature"]);
+
+    run_git(dir.path(), &["checkout", "-q", "main"]);
+    run_git(
+        dir.path(),
+        &[
+            "merge", "-q", "-m", "merge", "-X", "ours", "--no-ff", "feature",
+        ],
+    );
+    run_git(dir.path(), &["tag", "m2"]);
+
+    let output = run(&[
+        "changes",
+        "compute",
+        "m1",
+        "m2",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--no-cache",
+    ]);
+    assert!(
+        output.status.success(),
+        "changes compute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    assert!(
+        yaml.contains("from_tree_shas:"),
+        "expected from_tree_shas in: {yaml}"
+    );
+}

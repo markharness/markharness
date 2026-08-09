@@ -369,6 +369,53 @@ mod tests {
         assert_eq!(versions[0].id, "player-jump");
     }
 
+    /// §3.3 破棄条件2: `canonicalization_rule_version`(正規化ルール自体の
+    /// 改訂)が不一致の場合も、`tool_version`と同様に静かに再計算される
+    /// ことを個別に検証する(この定数は本テスト作成時点でまだ"1"から
+    /// 改訂されたことがなく、実際の改訂運用は未検証のままである旨を
+    /// 論文§3.3・Future Workに明記している)。
+    #[test]
+    fn stale_canonicalization_rule_version_is_silently_recomputed_instead_of_trusted() {
+        let dir = init_repo_with_feature("player-jump", "controls");
+        resolve_feature_versions(dir.path(), "m1", true).unwrap();
+
+        let cache_path = dir.path().join(".markharness-cache").join("m1.json");
+        let mut cache_file: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&cache_path).unwrap()).unwrap();
+        cache_file["key"]["canonicalization_rule_version"] = serde_json::json!("0");
+        cache_file["entries"] = serde_json::json!([
+            {"id": "bogus", "path": "bogus", "tree_sha": "bogus"}
+        ]);
+        fs::write(&cache_path, serde_json::to_string(&cache_file).unwrap()).unwrap();
+
+        let versions = resolve_feature_versions(dir.path(), "m1", true).unwrap();
+
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].id, "player-jump");
+    }
+
+    /// §3.3 破棄条件3: `id_index_schema_version`(id-indexのフォーマット
+    /// 自体の改訂)が不一致の場合も同様に検証する。
+    #[test]
+    fn stale_id_index_schema_version_is_silently_recomputed_instead_of_trusted() {
+        let dir = init_repo_with_feature("player-jump", "controls");
+        resolve_feature_versions(dir.path(), "m1", true).unwrap();
+
+        let cache_path = dir.path().join(".markharness-cache").join("m1.json");
+        let mut cache_file: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&cache_path).unwrap()).unwrap();
+        cache_file["key"]["id_index_schema_version"] = serde_json::json!("0");
+        cache_file["entries"] = serde_json::json!([
+            {"id": "bogus", "path": "bogus", "tree_sha": "bogus"}
+        ]);
+        fs::write(&cache_path, serde_json::to_string(&cache_file).unwrap()).unwrap();
+
+        let versions = resolve_feature_versions(dir.path(), "m1", true).unwrap();
+
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].id, "player-jump");
+    }
+
     #[test]
     fn rebuild_cache_removes_the_cache_directory() {
         let dir = init_repo_with_feature("player-jump", "controls");

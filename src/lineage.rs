@@ -32,7 +32,11 @@ pub struct FeatureLineage {
     pub kind: LineageKind,
 }
 
-fn classify(base: Option<&String>, p1: Option<&String>, p2: Option<&String>) -> LineageKind {
+pub(crate) fn classify(
+    base: Option<&String>,
+    p1: Option<&String>,
+    p2: Option<&String>,
+) -> LineageKind {
     if p1 == p2 {
         LineageKind::SingleParent
     } else if p1 == base || p2 == base {

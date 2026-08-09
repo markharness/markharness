@@ -5,7 +5,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::generate;
+use crate::git;
 use crate::id_cache::{self, FeatureVersion};
+use crate::lineage::{self, LineageKind};
 
 /// The kind of change a human attaches to a `ChangeEvent` after the fact
 /// (§3.5): a specification change, a bug fix, a refactor (behavior
@@ -34,6 +36,58 @@ pub struct ChangeEvent {
     pub impacted_testcases: Vec<String>,
     #[serde(default)]
     pub change_type: Option<ChangeType>,
+    /// The two parent tree SHAs `[tree(P1), tree(P2)]` (§3.2) when
+    /// `to_milestone`'s commit is itself a two-parent merge commit *and*
+    /// this Feature is a true divergence (both parents changed it
+    /// differently from their `git merge-base`). Empty otherwise, including
+    /// the ordinary linear case covered by `from_tree_sha`/`to_tree_sha`.
+    /// Scope-limited: only detects divergence at a merge commit sitting
+    /// directly at the `to_milestone` tag, not one buried further back in
+    /// the milestone interval (§3.6).
+    #[serde(default)]
+    pub from_tree_shas: Vec<String>,
+}
+
+/// For each Feature id, `[tree(P1), tree(P2)]` when `to_milestone`'s commit
+/// is a two-parent merge commit and the Feature is a true divergence per
+/// `lineage::classify` (§3.2). Returns an empty map when `to_milestone`
+/// isn't itself a merge commit, so `compute_changes`'s ordinary
+/// milestone-boundary comparison is unaffected in that (common) case.
+fn true_divergence_parent_tree_shas(
+    root: &Path,
+    to_milestone: &str,
+    use_cache: bool,
+) -> io::Result<BTreeMap<String, [String; 2]>> {
+    let parents = git::parents(root, to_milestone)?;
+    let [p1, p2] = parents.as_slice() else {
+        return Ok(BTreeMap::new());
+    };
+    let base = git::merge_base(root, p1, p2)?;
+
+    let base_versions = tree_sha_map(id_cache::resolve_feature_versions(root, &base, use_cache)?);
+    let p1_versions = tree_sha_map(id_cache::resolve_feature_versions(root, p1, use_cache)?);
+    let p2_versions = tree_sha_map(id_cache::resolve_feature_versions(root, p2, use_cache)?);
+
+    let all_ids: BTreeSet<&String> = p1_versions.keys().chain(p2_versions.keys()).collect();
+
+    let mut result = BTreeMap::new();
+    for feature_id in all_ids {
+        let base_sha = base_versions.get(feature_id);
+        let p1_sha = p1_versions.get(feature_id);
+        let p2_sha = p2_versions.get(feature_id);
+        // `TrueDivergence` can also occur when one branch deleted the
+        // Feature and the other changed it (`p1_sha`/`p2_sha` not both
+        // `Some`): there are no two tree SHAs to record in that case, so
+        // fall back to the ordinary `from_tree_sha`/`to_tree_sha`
+        // representation instead of populating `from_tree_shas`.
+        if let (Some(p1_sha), Some(p2_sha)) = (p1_sha, p2_sha)
+            && lineage::classify(base_sha, Some(p1_sha), Some(p2_sha))
+                == LineageKind::TrueDivergence
+        {
+            result.insert(feature_id.clone(), [p1_sha.clone(), p2_sha.clone()]);
+        }
+    }
+    Ok(result)
 }
 
 fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
@@ -79,6 +133,7 @@ pub fn compute_changes(
         use_cache,
     )?);
     let impacted = impacted_testcases_by_feature(root)?;
+    let true_divergences = true_divergence_parent_tree_shas(root, to_milestone, use_cache)?;
 
     let all_ids: BTreeSet<&String> = from_versions.keys().chain(to_versions.keys()).collect();
 
@@ -89,6 +144,10 @@ pub fn compute_changes(
         if from_tree_sha == to_tree_sha {
             continue;
         }
+        let from_tree_shas = true_divergences
+            .get(feature_id)
+            .map(|[p1, p2]| vec![p1.clone(), p2.clone()])
+            .unwrap_or_default();
         events.push(ChangeEvent {
             event_id: format!("{feature_id}--{from_milestone}--{to_milestone}"),
             feature_id: feature_id.clone(),
@@ -98,6 +157,7 @@ pub fn compute_changes(
             to_tree_sha,
             impacted_testcases: impacted.get(feature_id).cloned().unwrap_or_default(),
             change_type: None,
+            from_tree_shas,
         });
     }
 
@@ -342,6 +402,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: Some(ChangeType::SpecChange),
+            from_tree_shas: Vec::new(),
         }];
 
         let yaml = serialize_changes(&events);
@@ -378,6 +439,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
+            from_tree_shas: Vec::new(),
         }];
 
         let yaml = serialize_changes(&events);
@@ -399,6 +461,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
+            from_tree_shas: Vec::new(),
         }];
         fs::write(
             dir.path().join("changes/m2.yaml"),
@@ -430,6 +493,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
+            from_tree_shas: Vec::new(),
         }
     }
 
@@ -491,6 +555,106 @@ mod tests {
 
         let events = read_changes(dir.path(), "m3").unwrap();
         assert_eq!(events[0].change_type, Some(ChangeType::Other));
+    }
+
+    #[test]
+    fn records_both_parent_tree_shas_when_to_milestone_is_a_true_divergence_merge_commit() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "base");
+        commit_and_tag(dir.path(), "base", "m1");
+        run_git(dir.path(), &["branch", "feature"]);
+
+        write_full_chain(dir.path(), "changed-on-main");
+        commit_and_tag(dir.path(), "on main", "main-tip");
+
+        run_git(dir.path(), &["checkout", "-q", "feature"]);
+        write_full_chain(dir.path(), "changed-on-feature");
+        commit_and_tag(dir.path(), "on feature", "feature-tip");
+
+        run_git(dir.path(), &["checkout", "-q", "main"]);
+        run_git(
+            dir.path(),
+            &[
+                "merge", "-q", "-m", "merge", "-X", "ours", "--no-ff", "feature",
+            ],
+        );
+        run_git(dir.path(), &["tag", "m2"]);
+
+        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+
+        let event = events
+            .iter()
+            .find(|e| e.feature_id == "player-jump")
+            .unwrap();
+        assert_eq!(event.from_tree_shas.len(), 2);
+        assert_ne!(event.from_tree_shas[0], event.from_tree_shas[1]);
+    }
+
+    /// Regression: `lineage::classify` returns `TrueDivergence` not only when
+    /// both parents changed a Feature differently, but also when one branch
+    /// *deleted* the Feature and the other changed it (base=Some, one
+    /// parent=None, other parent=Some(!=base) — neither equals the other nor
+    /// the base). `true_divergence_parent_tree_shas` must not assume both
+    /// parent tree SHAs are `Some` in that case.
+    #[test]
+    fn does_not_panic_when_true_divergence_involves_a_feature_deleted_on_one_branch() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "base");
+        commit_and_tag(dir.path(), "base", "m1");
+        run_git(dir.path(), &["branch", "feature"]);
+
+        run_git(dir.path(), &["rm", "-rq", "knowledge/controls/player-jump"]);
+        commit_and_tag(dir.path(), "delete on main", "main-tip");
+
+        run_git(dir.path(), &["checkout", "-q", "feature"]);
+        write_full_chain(dir.path(), "changed-on-feature");
+        commit_and_tag(dir.path(), "change on feature", "feature-tip");
+
+        run_git(dir.path(), &["checkout", "-q", "main"]);
+        // A modify/delete conflict isn't auto-resolved by `-X ours`/`-X
+        // theirs`; resolve it manually by keeping the feature branch's
+        // (modified, surviving) version, matching a maintainer resolving a
+        // real conflict in favor of the change rather than the deletion.
+        let merge_status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["merge", "--no-ff", "-q", "-m", "merge", "feature"])
+            .status()
+            .unwrap();
+        assert!(!merge_status.success(), "expected a merge conflict");
+        run_git(
+            dir.path(),
+            &[
+                "checkout",
+                "feature",
+                "--",
+                "knowledge/controls/player-jump",
+            ],
+        );
+        run_git(dir.path(), &["add", "-A"]);
+        run_git(dir.path(), &["commit", "-q", "--no-edit"]);
+        run_git(dir.path(), &["tag", "m2"]);
+
+        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+
+        let event = events
+            .iter()
+            .find(|e| e.feature_id == "player-jump")
+            .unwrap();
+        assert!(event.from_tree_shas.is_empty());
+    }
+
+    #[test]
+    fn leaves_from_tree_shas_empty_when_to_milestone_is_not_a_merge_commit() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+        write_full_chain(dir.path(), "v2");
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+
+        assert!(events[0].from_tree_shas.is_empty());
     }
 
     #[test]
