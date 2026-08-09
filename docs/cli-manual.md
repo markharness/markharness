@@ -620,8 +620,9 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --
 - `impacted_testcases` は現在の(HEAD時点の)`knowledge/` から `generate`(1.5節)と同じ生成グラフを構築し、変更されたFeatureに由来する `TestCase.case_id` を列挙したもの(§3.2(A)の構造的生成グラフ。版履歴は使わない)。
 - `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.15節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.10節)。
+- `to-milestone` タグが指すコミット自体が2親のマージコミットである場合に限り、`git merge-base` を用いて1.16節の`lineage`判定ロジックを内部で実行する。対象Featureが`true_divergence`(真の分岐)と判定されると、`from_tree_shas` フィールドに両親のtree SHA `[P1, P2]` を記録する(§3.2)。それ以外(通常の線形履歴、または`to-milestone`が直接マージコミットでない場合)は空配列のまま。
 
-**出力例**(`changes/m2.yaml`)
+**出力例**(`changes/m2.yaml`、線形履歴の場合)
 
 ```yaml
 - event_id: player-jump--m1--m2
@@ -633,6 +634,24 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --
   impacted_testcases:
     - tc-ground-001
   change_type: null
+  from_tree_shas: []
+```
+
+**出力例**(`to-milestone`が直接マージコミットで、真の分岐が検出された場合)
+
+```yaml
+- event_id: player-jump--m1--m2
+  feature_id: player-jump
+  from_milestone: m1
+  to_milestone: m2
+  from_tree_sha: 1a2b3c...
+  to_tree_sha: 7c8d9e...
+  impacted_testcases:
+    - tc-ground-001
+  change_type: null
+  from_tree_shas:
+    - 2b3c4d...
+    - 5e6f7a...
 ```
 
 **ユースケース対応**: UC5「ChangeEventを自動計算する」。本モデルの核心的貢献(§3.2〜3.4)の簡易実装。
@@ -819,7 +838,7 @@ set change_type on player-jump--m1--m2
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
 ```
 
-**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.11節)のマイルストーン境界の主系譜とは独立しており、`changes/*.yaml` への書き込みは行わない。
+**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.11節)は、`to-milestone`タグが指すコミットが直接マージコミットである場合に限り、本コマンドと同じ判定ロジックを内部で呼び出して`from_tree_shas`に反映する。それ以外の任意の位置でのマージ(タグがマージコミットを直接指さない一般的なケース)については、本コマンドを独立に実行して確認する必要がある。いずれの場合も本コマンド自体は `changes/*.yaml` への書き込みを行わない(読み取り専用の監査コマンド)。
 
 **動作**
 

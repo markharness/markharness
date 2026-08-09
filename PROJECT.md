@@ -18,6 +18,7 @@
 - マイルストーンタグ間の `ChangeEvent`(`derived_from`)自動計算 — blob SHA 比較 + `git merge-base`(UC5、核心的貢献)
 - 大規模既存リポジトリ向けの非同期・優先度付きバックフィル(`git notes` で進捗管理、UC6)
 - id 解決キャッシュの破棄・再構築(UC7)、既存 TMS(TestRail / Xray 等)からのインポート(UC8)
+- `ChangeEvent` と実行結果(`TestExecution`)の自動突合(`markharness verify trace` / `verify pending`)、未再検証テストの pending/stale 判定と CI ゲート連携(`--fail-on-pending`)
 
 ## 技術スタック <!-- CUSTOMIZE -->
 
