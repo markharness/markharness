@@ -588,7 +588,7 @@ wrote knowledge/controls/player-jump/jump/ground/expected/001.yml
 markharness cache rebuild [-d, --dir <path>]
 ```
 
-**用途**: `.markharness-cache/`(1.11節の `changes compute` が使う、Featureのid→blob SHA解決結果の非コミットキャッシュ)を丸ごと削除する。即時の再計算は行わない(次回 `changes compute` 実行時に遅延計算される)。キャッシュディレクトリが存在しない場合もエラーにならない(冪等)。
+**用途**: `.markharness-cache/`(1.11節の `changes compute` が使う、Featureのid→tree SHA解決結果の非コミットキャッシュ。内容アドレス方式のキーで格納されており、`knowledge/`の内容やツールのバージョンが変われば読み込み時に自動的に再計算されるため、通常は明示的な`rebuild`は不要)を丸ごと削除する。即時の再計算は行わない(次回 `changes compute` 実行時に遅延計算される)。キャッシュディレクトリが存在しない場合もエラーにならない(冪等)。
 
 **使用例**
 

@@ -71,7 +71,7 @@ executed_at: 2026-08-08T16:38:52Z
 reflects_change: todo-edit--test1--test2
   from_milestone: test1
   to_milestone: test2
-  change_type: (未記録)
+  change_type: (未記録、markharness changes annotate で事後入力すれば表示される)
 ```
 
 ### 3.2 Q2：変更があったのに未実行のTestCaseはどれか
@@ -152,8 +152,8 @@ markharness本体のCLIサブコマンドとして以下2コマンドを実装�
 ## 6. 導入・移行方針
 
 - **遡及適用はしない**：既存の`results.yml`（test1〜test3）は`verified_feature_tree_shas`を持たないため、本仕様導入前の実行記録はQ1／Q2の判定対象外（「不明」扱い）とする。統合版V2第4章のバックフィル方針と同様、id_indexキャッシュから当時のtree SHAを機械的に補完することは理論上可能だが、当面はスコープ外とし、Future Workとする。
-- **`change_type`未実装との関係**：本仕様のQ1出力例に`change_type: (未記録)`とあるように、ChangeEventに`change_type`（統合版V2第3.5節、人間が入力する想定）が無い現状でも、本仕様のQ1／Q2判定自体はtree SHA比較のみで完結し、`change_type`の有無に依存しない。`change_type`が将来実装されれば、`verify pending`の出力に変更種別（仕様変更／バグ修正）でのフィルタ・グルーピングを追加できる。
-- **スキーマ**：`schema/`（現状空）に`verified_feature_tree_shas`をTESTEXECUTIONスキーマの任意フィールドとして追加する。必須化はしない（人間が直接resultsファイルを編集する運用を妨げないため、CLIから記録した場合のみ自動付与される）。
+- **`change_type`との関係**：`ChangeEvent.change_type`（統合版V2第3.5節）は`markharness changes annotate`により事後入力できるようになった。本仕様のQ1／Q2判定自体はtree SHA比較のみで完結し、`change_type`の有無には依存しない。`verify pending`の出力に変更種別（仕様変更／バグ修正等）でのフィルタ・グルーピングを追加することは未実装で、引き続き将来課題である。
+- **スキーマ**：`schema/`（`markharness init`が既定のJSON Schema一式を配置し、`markharness validate`で検証する）には、現状`TESTEXECUTION`(`executions/*/results.yml`)用のスキーマファイルが含まれていない。`verified_feature_tree_shas`を含む`results.yml`のスキーマ定義・`markharness validate`対象への追加は未実装で、将来課題のままとする。
 
 ---
 

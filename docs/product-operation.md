@@ -32,7 +32,7 @@ sequenceDiagram
     RM->>KN: マイルストーンタグを付与(人間の判断ポイント)
     RM->>CI: タグpushを通知
 
-    CI->>CH: 直近マイルストーン間のblob SHA比較でderived_fromを計算(§3.2-3.4, 核心的貢献)
+    CI->>CH: 直近マイルストーン間のFeatureディレクトリtree SHA比較でderived_fromを計算(§3.2-3.4, 核心的貢献)
     CI->>NOTES: 「このマイルストーンの系譜計算は完了」を記録(§4.3)
 
     par 非同期バックグラウンド
@@ -105,7 +105,7 @@ flowchart LR
 | UC2  | TestCaseを決定的生成する       | CI Bot                  | PR作成・push                            | `feature.yaml`/`condition.yaml` が存在 | Feature+Conditionの組を機械的に走査し `generated/testcases.yaml` を再生成                                          | 生成物が最新の知識と一致する状態になる                 | 自動(人間介入なし)。ただし既存ファイルとの差分検証結果は人間へ提示(§4.5, 316行目) |
 | UC3  | 生成物をレビュー・マージする   | Reviewer                | UC2完了・差分検出                       | CIが差分を検出                         | 差分内容を確認し、意図した変更か判断してマージ                                                                     | `generated/testcases.yaml` が確定しmainへ統合          | **人間の判断ポイント**:意図しない変更の混入を防ぐ最終ゲート                       |
 | UC4  | マイルストーンをタグ付けする   | Release Manager         | リリース判断                            | mainブランチが安定                     | `git tag <milestone>` を実行                                                                                       | マイルストーン境界が確定する                           | **人間の判断ポイント**:リリースタイミングの意思決定そのもの(図3)                  |
-| UC5  | ChangeEventを自動計算する      | CI Bot                  | タグpush                                | 直前マイルストーンのタグが存在         | 2マイルストーン間でid解決経由の各idのblob SHAを比較し `derived_from` を算出、`changes/<milestone>.yaml` に書き込み | 版履歴(ChangeEvent)が生成される                        | 自動(核心的貢献、§3.2-3.4)                                                        |
+| UC5  | ChangeEventを自動計算する      | CI Bot                  | タグpush                                | 直前マイルストーンのタグが存在         | 2マイルストーン間でid解決経由の各idのFeatureディレクトリtree SHAを比較し `derived_from` を算出、`changes/<milestone>.yaml` に書き込み | 版履歴(ChangeEvent)が生成される                        | 自動(核心的貢献、§3.2-3.4)。`change_type`は書き込まれず、後述の補足6で人間が事後入力する                                                        |
 | UC6  | バックフィルを非同期実行する   | Backfill Worker         | UC5完了、または未処理区間への問い合わせ | `git notes` に未完了区間が存在         | 直近マイルストーンから優先的に過去の系譜を計算し、完了ごとに `git notes` へ記録                                    | 過去マイルストーンの `changes/*.yaml` が段階的に埋まる | 自動。ただし処理優先度の調整は運用者が設定可能(製品化提案、論文本文には明記なし)  |
 | UC7  | idキャッシュを破棄・再構築する | Test Designer / CI Bot  | キャッシュ不整合の疑い                  | id解決キャッシュが存在                 | `--no-cache` オプションまたは `rebuild` コマンドを実行                                                             | キャッシュが再構築される                               | **明示的な手動破棄**(フェイルセーフ、199行目)                                     |
 | UC8  | 既存ツールからインポートする   | Data Migration Operator | 既存TestRail/Xray/TestLink資産の移行    | エクスポートファイルが用意されている   | インポータを実行し本フォーマット(`knowledge/`構造)に変換                                                           | 既存資産が `knowledge/` 配下に反映される               | **手動トリガー**(移行作業そのものは人間が実行、§4.5)                              |
@@ -121,3 +121,11 @@ UC4の主フロー(`git tag <milestone>` の実行)自体は人間の判断ポ�
 
 - `markharness milestone init <tag>`:既存の `git tag` に対応する `executions/<tag>/milestone.yml` を作成する。タグの存在検証のみ行い、タグ付けの意思決定自体は代行しない。
 - `markharness execution record <case_id> --milestone <name> --result <pass|fail|skip> --executor <name>`:CI・QAいずれの起点でも共通のインターフェースで `executions/<milestone>/results.yml` にTestCase実行結果を追記する。
+
+## 6. 補足:UC5「ChangeEventを自動計算する」に付随する3コマンド(製品化提案、論文本文には明記なし)
+
+UC5の主フロー(`markharness changes compute`)自体は変わらないが、論文§3.2・§3.5が「人間が事後に入力する」「監査用の副次機能」と位置づけていた部分を補助する3つのコマンドを実装した(`docs/cli-manual.md` 1.15〜1.17節)。
+
+- `markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other>`:`changes compute` が空欄のまま生成した `change_type`(§3.5)を、人間が事後に設定する。`changes/` 配下を `event_id` で横断検索するため、対象のマイルストーン区間ファイルを事前に知る必要はない。
+- `markharness changes lineage --commit <merge-commit-sha>`:指定したマージコミットの2親と `git merge-base` によるマージベースを比較し、Feature idごとに線形/真の分岐/1親相当を判定する監査専用コマンド(§3.2)。`changes compute` の主系譜(`changes/*.yaml`)には書き込まない。
+- `markharness validate`:`knowledge/`・`axes/` を `schema/*.schema.json`(`markharness init` が既定一式を配置)で構造検証し、axisタグの登録有無・`forked_from` の参照先存在をあわせてチェックする(§3.5の「axes/*.ymlに定義されていない値をfront matterで使えないようスキーマバリデーションで縛る」の実装)。
