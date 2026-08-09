@@ -1,6 +1,6 @@
 # 仕様書: `markharness knowledge validate` / `apply` — 非対話ナレッジ登録コマンド
 
-Status: Draft
+Status: Implemented(`src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/cli.rs`)。本仕様に対する実装時の追加・変更点は各節末の「実装時の追記」を参照。
 Created: 2026-08-08
 関連ドキュメント: `docs/testcase-generation-design.md`, `docs/product-operation.md`, `src/interactive.rs`, `src/knowledge.rs`, `src/cli.rs`
 
@@ -131,6 +131,9 @@ expected:
 | 7 | condition.id | Behavior idとの重複接頭辞(`{behavior_id}-`)を持つ場合、`--strip-redundant-prefix` 未指定なら停止(§7) | `redundant_prefix` |
 | 8 | 既存id再利用時 | 提供された `axis`/`description`/`label` が既存ファイルの値と一致しない場合(§10.2) | `conflicting_existing_value` |
 | 9 | requirement/feature/behavior/condition | 親参照(例: feature.requirement)が実在すること。ドラフト内で新規作成する場合はドラフト自身の値と整合していること | `parent_not_found` |
+| 10 | feature.forked_from | 値が指定されている場合、`knowledge/`配下のいずれかのFeatureの`id`と一致すること(実装時追加。論文§3.1の`forked_from`、本仕様の初版では未記載) | `unknown_forked_from` |
+
+**実装時の追記**：ルール#10(`unknown_forked_from`)は本仕様の初版になかったが、`feature.forked_from`フィールド(`knowledge.rs`)の実装にあわせて`knowledge_draft.rs::feature_id_exists`で追加された。Feature idは`requirement`配下にネストしていてもリポジトリ全体で一意である前提のため、`knowledge/`配下を`requirement`階層をまたいで全探索する。
 
 ## 6. エラー出力フォーマット
 
@@ -180,7 +183,7 @@ error: redundant_prefix: condition.id "jump-ground" starts with behavior.id "jum
 `axes/<id>.yml`(`id`/`label`/`description`)を起動時に読み込み、`requirement.axis`/`feature.axis`/`behavior.axis` の各値が登録済みidと完全一致することを要求する。
 
 - 未登録axisは `unknown_axis` エラーで停止する(警告に留めない。エージェント駆動では「気づかず通過」の方が「axisレジストリを更新すべき」と気づける方より害が大きいため)。
-- 参考用に `markharness axes list [--json]` コマンドを別途追加することを推奨する(本仕様のスコープ外だが、エージェントが事前にaxis一覧を取得する手段として必要になる。実装チケットを別途起票すること)。
+- `markharness axes list [--json]` コマンドを実装済み(`docs/cli-manual.md` 1.7節)。エージェントはこれで事前にaxis一覧を取得できる。
 
 ## 9. 内部アーキテクチャ
 
@@ -282,8 +285,8 @@ loop:
 - `--json` 出力のスキーマ検証(新規)
 - CLI統合テスト: `markharness knowledge validate`/`apply` の終了コードとstdout/stderrの検証(`cli.rs`に追加)
 
-## 12. オープン事項(実装前に決定が必要)
+## 12. オープン事項(実装前に決定が必要) — 実装により解決済み
 
-1. `expected` を配列にする現仕様と、既存の対話CLIが1回の実行で1件しかExpectedResultを作らない点との差異を許容するか(→本仕様は許容する前提。連番採番ロジックの流用で対応可能)。
-2. `axes list` コマンドの追加を本チケットに含めるか、別チケットにするか(→本仕様では別チケット推奨、§8参照)。
-3. `conflicting_existing_value` の比較粒度(label/axis/descriptionの完全一致を要求するか、一部フィールド省略時は「未指定」として無視するか)。ドラフトスキーマ上 `axis`/`description` は既存reuse時省略可としているため、**省略されたフィールドは比較対象から除外し、指定されたフィールドのみ既存値と突合する**方針を仮採用する(要レビュー)。
+1. `expected` を配列にする現仕様と、既存の対話CLIが1回の実行で1件しかExpectedResultを作らない点との差異を許容するか。→ **解決**：許容する前提のまま実装(`knowledge_apply.rs`、`existing_expected_count`から連番を継続採番)。
+2. `axes list` コマンドの追加を本チケットに含めるか、別チケットにするか。→ **解決**：`markharness axes list`として実装済み(§8参照)。
+3. `conflicting_existing_value` の比較粒度(label/axis/descriptionの完全一致を要求するか、一部フィールド省略時は「未指定」として無視するか)。→ **解決**：仮採用方針の通り実装。`knowledge_draft.rs`の`push_conflicting_value`/`push_conflicting_axis`は`draft`側の該当フィールドが`Some`の場合のみ既存値と突合し、`None`(省略)の場合は比較自体を行わない。

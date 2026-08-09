@@ -10,14 +10,14 @@ sequenceDiagram
     participant KN as knowledge/**
     actor RM as Release Manager
     participant CI as CI Bot
-    participant GEN as generated/testcases.yaml
+    participant GEN as generated/testcases/*.yml
     participant CH as changes/milestone.yaml
     participant BF as Backfill Worker
     participant NOTES as git notes
 
-    TD->>KN: feature.yaml を記述
-    TD->>KN: condition.yaml を記述
-    TD->>KN: expected/*.yaml を記述
+    TD->>KN: feature.yml を記述
+    TD->>KN: condition.yml を記述
+    TD->>KN: expected/*.yml を記述
     TD->>KN: forked_from を手動記述(概念的派生がある場合のみ、§3.1)
     TD->>CI: PRを作成
 
@@ -46,8 +46,8 @@ sequenceDiagram
 
 **作成順序の要点**
 
-1. `knowledge/**/feature.yaml` → `condition.yaml` → `expected/*.yaml`(Test Designerが手動記述)
-2. `generated/testcases.yaml`(CIが決定的に生成し、既存ファイルとの一致を検証)
+1. `knowledge/**/feature.yml` → `condition.yml` → `expected/*.yml`(Test Designerが手動記述)
+2. `generated/testcases/*.yml`(CIが決定的に生成し、既存ファイルとの一致を検証)
 3. マイルストーンタグ(Release Managerが人間の判断で付与)
 4. `changes/<milestone>.yaml`(CIが `derived_from` を自動計算)
 5. `git notes` への進捗記録 → バックフィルによる過去マイルストーンの遅延埋め戻し(非同期・自動)
@@ -100,10 +100,10 @@ flowchart LR
 
 | #    | ユースケース                   | アクター                | トリガー                                | 事前条件                               | 主フロー                                                                                                           | 事後条件                                               | 人間の関与                                                                        |
 | ---- | ------------------------------ | ----------------------- | --------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| UC1  | 知識を記述する                 | Test Designer           | 新機能・新条件の追加                    | なし                                   | `feature.yaml`/`condition.yaml`/`expected/*.yaml` を作成しコミット                                                 | `knowledge/` 配下が更新される                          | **手動記述**(§3.1, 108行目)                                                       |
+| UC1  | 知識を記述する                 | Test Designer           | 新機能・新条件の追加                    | なし                                   | `feature.yml`/`condition.yml`/`expected/*.yml` を作成しコミット                                                 | `knowledge/` 配下が更新される                          | **手動記述**(§3.1, 108行目)                                                       |
 | UC1b | forked_from を手動記述する     | Test Designer           | 別Featureからの概念的派生が発生         | 派生元Featureが存在                    | `forked_from` フィールドに派生元idを記述                                                                           | Git履歴に現れないドメイン知識が明示化される            | **必須の手動記述**(Git履歴からは自動導出不可、153行目)                            |
-| UC2  | TestCaseを決定的生成する       | CI Bot                  | PR作成・push                            | `feature.yaml`/`condition.yaml` が存在 | Feature+Conditionの組を機械的に走査し `generated/testcases.yaml` を再生成                                          | 生成物が最新の知識と一致する状態になる                 | 自動(人間介入なし)。ただし既存ファイルとの差分検証結果は人間へ提示(§4.5, 316行目) |
-| UC3  | 生成物をレビュー・マージする   | Reviewer                | UC2完了・差分検出                       | CIが差分を検出                         | 差分内容を確認し、意図した変更か判断してマージ                                                                     | `generated/testcases.yaml` が確定しmainへ統合          | **人間の判断ポイント**:意図しない変更の混入を防ぐ最終ゲート                       |
+| UC2  | TestCaseを決定的生成する       | CI Bot                  | PR作成・push                            | `feature.yml`/`condition.yml` が存在 | Feature+Conditionの組を機械的に走査し `generated/testcases/*.yml` を再生成                                          | 生成物が最新の知識と一致する状態になる                 | 自動(人間介入なし)。ただし既存ファイルとの差分検証結果は人間へ提示(§4.5, 316行目) |
+| UC3  | 生成物をレビュー・マージする   | Reviewer                | UC2完了・差分検出                       | CIが差分を検出                         | 差分内容を確認し、意図した変更か判断してマージ                                                                     | `generated/testcases/*.yml` が確定しmainへ統合          | **人間の判断ポイント**:意図しない変更の混入を防ぐ最終ゲート                       |
 | UC4  | マイルストーンをタグ付けする   | Release Manager         | リリース判断                            | mainブランチが安定                     | `git tag <milestone>` を実行                                                                                       | マイルストーン境界が確定する                           | **人間の判断ポイント**:リリースタイミングの意思決定そのもの(図3)                  |
 | UC5  | ChangeEventを自動計算する      | CI Bot                  | タグpush                                | 直前マイルストーンのタグが存在         | 2マイルストーン間でid解決経由の各idのFeatureディレクトリtree SHAを比較し `derived_from` を算出、`changes/<milestone>.yaml` に書き込み | 版履歴(ChangeEvent)が生成される                        | 自動(核心的貢献、§3.2-3.4)。`change_type`は書き込まれず、後述の補足6で人間が事後入力する                                                        |
 | UC6  | バックフィルを非同期実行する   | Backfill Worker         | UC5完了、または未処理区間への問い合わせ | `git notes` に未完了区間が存在         | 直近マイルストーンから優先的に過去の系譜を計算し、完了ごとに `git notes` へ記録                                    | 過去マイルストーンの `changes/*.yaml` が段階的に埋まる | 自動。ただし処理優先度の調整は運用者が設定可能(製品化提案、論文本文には明記なし)  |
