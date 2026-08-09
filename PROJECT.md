@@ -10,7 +10,7 @@
 | 項目 | 値 |
 |------|----|
 | プロダクト名 | markharness |
-| 概要 | Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI。`knowledge/` に YAML で手動記述されたテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git blob SHA 比較によって版履歴(`derived_from` / `ChangeEvent`)をブランチ運用非依存で自動計算する。設計の元になった研究は `docs/テスト知識管理のGit-nativeモデル_統合版V2.md`、製品化した運用イメージは `docs/product-operation.md`、TestCase 生成アルゴリズムの詳細設計は `docs/testcase-generation-design.md` を参照。 |
+| 概要 | Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI。`knowledge/` に YAML で手動記述されたテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git blob SHA 比較によって版履歴(`derived_from` / `ChangeEvent`)をブランチ運用非依存で自動計算する。設計の元になった研究は `docs/テスト知識管理のGit-nativeモデル_統合版.md`、製品化した運用イメージは `docs/product-operation.md`、TestCase 生成アルゴリズムの詳細設計は `docs/testcase-generation-design.md` を参照。 |
 | 主要機能 | 右の一覧を参照 |
 
 - `knowledge/**/{feature,condition,expected/*}.yaml` へのテスト知識の手動記述(UC1)

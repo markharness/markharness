@@ -1,10 +1,10 @@
 # ChangeEvent連動：実行状態追跡（Verification Status Tracking）仕様書
 
 **Status**: Implemented(`markharness verify trace` / `markharness verify pending`)
-**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版V2.md](./テスト知識管理のGit-nativeモデル_統合版V2.md)（以下「統合版V2」）、[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)
+**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](./テスト知識管理のGit-nativeモデル_統合版.md)（以下「統合版」）、[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)
 **対象読者**：`markharness`（またはその後継ツール）の実装者
 
-**位置づけ**：本資料は統合版V2第3.5節・図4が構想する「ChangeEventを起点とした影響TestCase特定→再確認」のうち、**実行結果側との連動**を具体化するための追加仕様である。統合版V2はChangeEventの自動生成とimpacted_testcasesの特定までを核心的貢献としており、「その後、実際に再実行されたか」を自動判定する仕組みは第7章（Future Work）相当の未確定領域だった。本資料はこの領域を仕様化する。
+**位置づけ**：本資料は統合版第3.5節・図4が構想する「ChangeEventを起点とした影響TestCase特定→再確認」のうち、**実行結果側との連動**を具体化するための追加仕様である。統合版はChangeEventの自動生成とimpacted_testcasesの特定までを核心的貢献としており、「その後、実際に再実行されたか」を自動判定する仕組みは第7章（Future Work）相当の未確定領域だった。本資料はこの領域を仕様化する。
 
 ---
 
@@ -23,7 +23,7 @@
 
 ### 2.1 TESTEXECUTIONへのフィールド追加
 
-統合版V2のER図（第3.1節）における`TESTEXECUTION`に、以下を追加する。
+統合版のER図（第3.1節）における`TESTEXECUTION`に、以下を追加する。
 
 ```yaml
 # executions/<milestone>/results.yml の1レコード
@@ -36,7 +36,7 @@ verified_feature_tree_shas:        # 追加フィールド
 ```
 
 - `verified_feature_tree_shas`：そのTestCaseの`generated_from`（第2.2節参照）に列挙されるFeatureそれぞれについて、**実行時点のマイルストーンでのFeatureディレクトリ全体のtree SHA**（feature.yml自身だけでなく、配下のBehavior/Condition/ExpectedResultを含むディレクトリ全体のGitツリーオブジェクトSHA）を記録する。feature.yml単体のblob SHAではない点に注意（第7章参照：単体blobだとCondition/ExpectedResultの変更を検知できない）。
-- 記録タイミングは実行結果の登録時。値は`id_index`キャッシュ（統合版V2第3.3節）から、対象マイルストーンにおける該当FeatureディレクトリのtreeオブジェクトSHAを引いて機械的に埋める。人間が手入力する項目ではない。
+- 記録タイミングは実行結果の登録時。値は`id_index`キャッシュ（統合版第3.3節）から、対象マイルストーンにおける該当FeatureディレクトリのtreeオブジェクトSHAを引いて機械的に埋める。人間が手入力する項目ではない。
 - 複数Featureにまたがる複合TestCase（将来的にBehaviorが複数Featureを跨ぐ場合）にも対応できるよう、単一値ではなくマップ形式とする。
 
 ### 2.2 TESTCASEの`generated_from`は既存のまま利用
@@ -47,7 +47,7 @@ verified_feature_tree_shas:        # 追加フィールド
 
 ChangeEvent（`changes/*.yaml`）自体に「再確認済みフラグ」を持たせる設計は採らない。理由：
 
-- ChangeEventはマイルストーン境界の差分という**不変の事実記録**であり、後から書き換える対象にすべきではない（統合版V2第3.4節の設計思想と整合）。
+- ChangeEventはマイルストーン境界の差分という**不変の事実記録**であり、後から書き換える対象にすべきではない（統合版第3.4節の設計思想と整合）。
 - 「再確認済みか」はChangeEventとTestExecutionという2つの独立した事実系列を**都度計算**すれば導出できる派生情報であり、どちらかのソースに書き戻す必要がない。
 
 ---
@@ -153,8 +153,8 @@ markharness本体のCLIサブコマンドとして以下2コマンドを実装�
 
 ## 6. 導入・移行方針
 
-- **遡及適用はしない**：既存の`results.yml`（test1〜test3）は`verified_feature_tree_shas`を持たないため、本仕様導入前の実行記録はQ1／Q2の判定対象外（「不明」扱い）とする。統合版V2第4章のバックフィル方針と同様、id_indexキャッシュから当時のtree SHAを機械的に補完することは理論上可能だが、当面はスコープ外とし、Future Workとする。
-- **`change_type`との関係**：`ChangeEvent.change_type`（統合版V2第3.5節）は`markharness changes annotate`により事後入力できるようになった。本仕様のQ1／Q2判定自体はtree SHA比較のみで完結し、`change_type`の有無には依存しない。`verify pending`の出力に変更種別（仕様変更／バグ修正等）でのフィルタ・グルーピングを追加することは未実装で、引き続き将来課題である。
+- **遡及適用はしない**：既存の`results.yml`（test1〜test3）は`verified_feature_tree_shas`を持たないため、本仕様導入前の実行記録はQ1／Q2の判定対象外（「不明」扱い）とする。統合版第4章のバックフィル方針と同様、id_indexキャッシュから当時のtree SHAを機械的に補完することは理論上可能だが、当面はスコープ外とし、Future Workとする。
+- **`change_type`との関係**：`ChangeEvent.change_type`（統合版第3.5節）は`markharness changes annotate`により事後入力できるようになった。本仕様のQ1／Q2判定自体はtree SHA比較のみで完結し、`change_type`の有無には依存しない。`verify pending`の出力に変更種別（仕様変更／バグ修正等）でのフィルタ・グルーピングを追加することは未実装で、引き続き将来課題である。
 - **スキーマ**：`schema/`（`markharness init`が既定のJSON Schema一式を配置し、`markharness validate`で検証する）には、現状`TESTEXECUTION`(`executions/*/results.yml`)用のスキーマファイルが含まれていない。`verified_feature_tree_shas`を含む`results.yml`のスキーマ定義・`markharness validate`対象への追加は未実装で、将来課題のままとする。
 
 ---

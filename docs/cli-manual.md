@@ -785,7 +785,7 @@ $ echo $?
 2
 ```
 
-**ユースケース対応**: UC4「マイルストーンをタグ付けする、実行結果の記録先」(`docs/cli-manual.md` の `executions/` ディレクトリ対応表、および `docs/テスト知識管理のGit-nativeモデル_統合版V2.md` §3.1の `TESTEXECUTION`)。結果の集計・レポート表示、CIテストレポート形式からの一括投入(`--from-report`)、過去マイルストーン時点の `generated/testcases/` に対する検証は未実装(将来課題)。
+**ユースケース対応**: UC4「マイルストーンをタグ付けする、実行結果の記録先」(`docs/cli-manual.md` の `executions/` ディレクトリ対応表、および `docs/テスト知識管理のGit-nativeモデル_統合版.md` §3.1の `TESTEXECUTION`)。結果の集計・レポート表示、CIテストレポート形式からの一括投入(`--from-report`)、過去マイルストーン時点の `generated/testcases/` に対する検証は未実装(将来課題)。
 
 ---
 

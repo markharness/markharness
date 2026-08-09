@@ -4,7 +4,7 @@
 
 ## 読む順序の目安
 
-1. **[テスト知識管理のGit-nativeモデル_統合版V2.md](./テスト知識管理のGit-nativeモデル_統合版V2.md)** — 本プロジェクト全体の土台となる研究設計(論文ドラフト)。他の全資料はこれを前提にする。
+1. **[テスト知識管理のGit-nativeモデル_統合版.md](./テスト知識管理のGit-nativeモデル_統合版.md)** — 本プロジェクト全体の土台となる研究設計(論文ドラフト)。他の全資料はこれを前提にする。
 2. **[product-operation.md](./product-operation.md)** — 論文の設計を製品運用イメージ(UC1〜UC8、アクター、ファイル作成順序)に落とし込んだもの。
 3. **[cli-manual.md](./cli-manual.md)** — 実装済み/未実装のCLIコマンド一覧。ユースケースとの対応は2.のUC番号を参照する。
 4. 個別コマンドの詳細設計(cli-manualから参照される):
@@ -28,10 +28,10 @@
 
 ## 資料の鮮度について
 
-- **統合版V2**は本文中に「注(実装状況について)」「§3.6 実装状況まとめ」を持ち、CLI実装との既知の相違を追記済み。ただし本文が触れる相違点調査資料へのリンクは**`gap-analysis-mm-folder.md`のみ**であり、`gap-analysis-mh-sample-test-case.md`(`mh-sample-test-case`側の調査)は未参照。
+- **統合版**は本文中に「注(実装状況について)」「§3.6 実装状況まとめ」を持ち、CLI実装との既知の相違を追記済み。ただし本文が触れる相違点調査資料へのリンクは**`gap-analysis-mm-folder.md`のみ**であり、`gap-analysis-mh-sample-test-case.md`(`mh-sample-test-case`側の調査)は未参照。
 - `gap-analysis-mm-folder.md`は本文各節に「追記(markharness側の修正について)」を継ぎ足す形で更新されており、指摘時点と現在の実装状態を区別して読む必要がある。
 - `cli-manual.md`・`knowledge-apply-cli-spec.md`・`testcase-generation-design.md`は「Status: Implemented」等のステータス行と「実装時の追記/変更」節を持ち、初期案と実装の差分を本文内で自己完結して管理している。
 
 ## ファイル名の命名規則
 
-論文(`テスト知識管理のGit-nativeモデル_統合版V2.md`)を除く全ドキュメントは英語kebab-case(`foo-bar.md`)で統一している。論文のみ、参照箇所が多く影響範囲が大きいため従来の日本語ファイル名を維持している。
+論文(`テスト知識管理のGit-nativeモデル_統合版.md`)を除く全ドキュメントは英語kebab-case(`foo-bar.md`)で統一している。論文のみ、参照箇所が多く影響範囲が大きいため従来の日本語ファイル名を維持している。
