@@ -16,8 +16,10 @@ use crate::interactive;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions};
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
+use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::traceability;
+use crate::validate;
 use crate::verify;
 
 #[derive(Parser)]
@@ -60,6 +62,15 @@ pub enum Command {
     /// Record test execution results under executions/<milestone>/results.yml
     #[command(subcommand)]
     Execution(ExecutionCommand),
+    /// Validate knowledge/ and axes/ against schema/*.schema.json plus axis/forked_from cross-references (§3.5/§3.6)
+    Validate {
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -179,6 +190,25 @@ pub enum BackfillCommand {
     },
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeTypeArg {
+    SpecChange,
+    BugFix,
+    Refactor,
+    Other,
+}
+
+impl From<ChangeTypeArg> for changes::ChangeType {
+    fn from(value: ChangeTypeArg) -> Self {
+        match value {
+            ChangeTypeArg::SpecChange => changes::ChangeType::SpecChange,
+            ChangeTypeArg::BugFix => changes::ChangeType::BugFix,
+            ChangeTypeArg::Refactor => changes::ChangeType::Refactor,
+            ChangeTypeArg::Other => changes::ChangeType::Other,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum ChangesCommand {
     /// Diff Feature blob SHAs between two milestone git tags and write changes/<to>.yaml
@@ -193,6 +223,29 @@ pub enum ChangesCommand {
         /// Recompute Feature blob SHAs directly via `git ls-tree` instead of using .markharness-cache/
         #[arg(long)]
         no_cache: bool,
+    },
+    /// Set change_type on an existing ChangeEvent under changes/ (§3.5, filled in by a human after compute)
+    Annotate {
+        /// The ChangeEvent's event_id (as written by `changes compute`)
+        event_id: String,
+        /// The kind of change this event represents
+        #[arg(long, value_enum)]
+        r#type: ChangeTypeArg,
+        /// Target project directory (a git repository). Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+    /// Audit-only: reconstruct per-Feature lineage across a merge commit's two parents via git merge-base (§3.2, secondary; does not write changes/*.yaml)
+    Lineage {
+        /// The merge commit to inspect (must have exactly two parents)
+        #[arg(long)]
+        commit: String,
+        /// Target project directory (a git repository). Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -427,6 +480,58 @@ pub fn run(cli: Cli) -> io::Result<()> {
             );
             Ok(())
         }
+        Command::Changes(ChangesCommand::Annotate {
+            event_id,
+            r#type,
+            dir,
+        }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            match changes::annotate_change_type(&root, &event_id, r#type.into()) {
+                Ok(()) => {
+                    println!("set change_type on {event_id}");
+                    Ok(())
+                }
+                Err(changes::AnnotateError::NotFound) => {
+                    eprintln!(
+                        "error: no ChangeEvent with event_id '{event_id}' found under changes/"
+                    );
+                    process::exit(3);
+                }
+                Err(changes::AnnotateError::Io(e)) => Err(e),
+            }
+        }
+        Command::Changes(ChangesCommand::Lineage { commit, dir, json }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            match lineage::compute_lineage(&root, &commit) {
+                Ok(entries) => {
+                    if json {
+                        println!("{}", lineage_to_json(&entries));
+                    } else if entries.is_empty() {
+                        println!("no Features found at {commit} or its parents");
+                    } else {
+                        for entry in &entries {
+                            let kind = match entry.kind {
+                                lineage::LineageKind::Linear => "linear",
+                                lineage::LineageKind::TrueDivergence => "true_divergence",
+                                lineage::LineageKind::SingleParent => "single_parent",
+                            };
+                            println!("{}: {kind}", entry.feature_id);
+                        }
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    process::exit(2);
+                }
+            }
+        }
         Command::Backfill(BackfillCommand::Run { dir, no_cache }) => {
             let root = match dir {
                 Some(dir) => dir,
@@ -525,6 +630,30 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }
+            }
+        }
+        Command::Validate { dir, json } => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let issues = validate::validate_all(&root)?;
+            if issues.is_empty() {
+                if json {
+                    println!("{{\"ok\":true}}");
+                } else {
+                    println!("knowledge/ and axes/ are valid");
+                }
+                Ok(())
+            } else {
+                if json {
+                    println!("{}", validation_issues_to_json(&issues));
+                } else {
+                    for issue in &issues {
+                        println!("{issue}");
+                    }
+                }
+                std::process::exit(1);
             }
         }
         Command::Verify(VerifyArgs { command: None }) => {
@@ -814,6 +943,41 @@ fn validation_error_to_json(e: &ValidationError) -> String {
 fn errors_to_json(errors: &[ValidationError]) -> String {
     let items: Vec<String> = errors.iter().map(validation_error_to_json).collect();
     format!("{{\"ok\":false,\"errors\":[{}]}}", items.join(","))
+}
+
+fn lineage_to_json(entries: &[lineage::FeatureLineage]) -> String {
+    let items: Vec<String> = entries
+        .iter()
+        .map(|e| {
+            let kind = match e.kind {
+                lineage::LineageKind::Linear => "linear",
+                lineage::LineageKind::TrueDivergence => "true_divergence",
+                lineage::LineageKind::SingleParent => "single_parent",
+            };
+            format!(
+                "{{\"feature_id\":\"{}\",\"base_tree_sha\":{},\"parent1_tree_sha\":{},\"parent2_tree_sha\":{},\"kind\":\"{kind}\"}}",
+                json_escape(&e.feature_id),
+                json_string_or_null(&e.base_tree_sha),
+                json_string_or_null(&e.parent1_tree_sha),
+                json_string_or_null(&e.parent2_tree_sha),
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+fn validation_issues_to_json(issues: &[validate::ValidationIssue]) -> String {
+    let items: Vec<String> = issues
+        .iter()
+        .map(|i| {
+            format!(
+                "{{\"path\":\"{}\",\"message\":\"{}\"}}",
+                json_escape(&i.path),
+                json_escape(&i.message)
+            )
+        })
+        .collect();
+    format!("{{\"ok\":false,\"issues\":[{}]}}", items.join(","))
 }
 
 fn axes_to_json(entries: &[axes::AxisEntry]) -> String {

@@ -1,0 +1,122 @@
+use std::path::Path;
+use std::process::{Command, Output};
+
+fn bin() -> &'static str {
+    env!("CARGO_BIN_EXE_markharness")
+}
+
+fn run(args: &[&str]) -> Output {
+    Command::new(bin())
+        .args(args)
+        .output()
+        .expect("failed to run markharness binary")
+}
+
+fn run_git(root: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?} failed");
+}
+
+fn write_feature(root: &Path, label: &str) {
+    let dir = root.join("knowledge/controls/player-jump");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        root.join("knowledge/controls/requirement.yml"),
+        "id: controls\nlabel: controls\naxis: [gameplay]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("feature.yml"),
+        format!("id: player-jump\nrequirement: controls\nlabel: {label}\naxis: [gameplay]\n"),
+    )
+    .unwrap();
+}
+
+fn init_project_with_two_milestones() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(output.status.success());
+    run_git(dir.path(), &["init", "-q"]);
+    run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+    run_git(dir.path(), &["config", "user.name", "Test"]);
+
+    write_feature(dir.path(), "v1");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "v1"]);
+    run_git(dir.path(), &["tag", "m1"]);
+
+    write_feature(dir.path(), "v2");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "v2"]);
+    run_git(dir.path(), &["tag", "m2"]);
+
+    let output = run(&[
+        "changes",
+        "compute",
+        "m1",
+        "m2",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--no-cache",
+    ]);
+    assert!(
+        output.status.success(),
+        "changes compute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    dir
+}
+
+#[test]
+fn changes_annotate_sets_change_type_on_the_matching_event() {
+    let dir = init_project_with_two_milestones();
+
+    let output = run(&[
+        "changes",
+        "annotate",
+        "player-jump--m1--m2",
+        "--type",
+        "spec-change",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "changes annotate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    assert!(
+        yaml.contains("change_type: spec_change"),
+        "expected change_type in: {yaml}"
+    );
+}
+
+#[test]
+fn changes_annotate_exits_three_when_event_id_does_not_exist() {
+    let dir = init_project_with_two_milestones();
+
+    let output = run(&[
+        "changes",
+        "annotate",
+        "no-such-event",
+        "--type",
+        "bug-fix",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no-such-event"),
+        "unexpected stderr: {stderr}"
+    );
+}

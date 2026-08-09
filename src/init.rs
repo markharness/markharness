@@ -27,6 +27,21 @@ pub fn run_init(root: &Path) -> io::Result<()> {
         }
     }
     ensure_gitignore(root)?;
+    ensure_default_schemas(root)?;
+    Ok(())
+}
+
+/// Populates `schema/` with the default JSON Schema files (§3.5/§3.6) used
+/// by `markharness validate`, without overwriting a file a project has
+/// already customized.
+fn ensure_default_schemas(root: &Path) -> io::Result<()> {
+    let schema_dir = root.join("schema");
+    for (name, content) in crate::schema::DEFAULT_SCHEMA_FILES {
+        let path = schema_dir.join(name);
+        if !path.exists() {
+            fs::write(path, content)?;
+        }
+    }
     Ok(())
 }
 
@@ -122,6 +137,38 @@ mod tests {
         let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert!(content.contains("node_modules/"));
         assert!(content.contains(".markharness-cache/"));
+    }
+
+    #[test]
+    fn populates_schema_dir_with_default_schema_files() {
+        let dir = tempfile::tempdir().unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        for (name, _) in crate::schema::DEFAULT_SCHEMA_FILES {
+            assert!(
+                dir.path().join("schema").join(name).is_file(),
+                "{name} should be created under schema/"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_overwrite_a_customized_schema_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("schema")).unwrap();
+        fs::write(
+            dir.path().join("schema/feature.schema.json"),
+            "custom content",
+        )
+        .unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("schema/feature.schema.json")).unwrap(),
+            "custom content"
+        );
     }
 
     #[test]

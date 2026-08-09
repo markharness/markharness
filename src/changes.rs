@@ -2,14 +2,27 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::generate;
 use crate::id_cache::{self, FeatureVersion};
 
+/// The kind of change a human attaches to a `ChangeEvent` after the fact
+/// (§3.5): a specification change, a bug fix, a refactor (behavior
+/// unchanged), or anything not covered by those three.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeType {
+    SpecChange,
+    BugFix,
+    Refactor,
+    Other,
+}
+
 /// One detected Feature change between two milestones (§3.5 ChangeEvent).
-/// `change_type` is intentionally absent: per docs/cli-manual.md UC5, it is
-/// filled in by a human afterwards, not computed here.
+/// `change_type` is computed as `None` here and filled in afterwards by a
+/// human via `markharness changes annotate` (per docs/cli-manual.md UC5, it
+/// is not computed from the diff itself).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangeEvent {
     pub event_id: String,
@@ -19,6 +32,8 @@ pub struct ChangeEvent {
     pub from_tree_sha: Option<String>,
     pub to_tree_sha: Option<String>,
     pub impacted_testcases: Vec<String>,
+    #[serde(default)]
+    pub change_type: Option<ChangeType>,
 }
 
 fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
@@ -82,6 +97,7 @@ pub fn compute_changes(
             from_tree_sha,
             to_tree_sha,
             impacted_testcases: impacted.get(feature_id).cloned().unwrap_or_default(),
+            change_type: None,
         });
     }
 
@@ -102,6 +118,54 @@ pub fn read_changes(root: &Path, milestone: &str) -> io::Result<Vec<ChangeEvent>
     }
     let content = fs::read_to_string(path)?;
     serde_yaml_ng::from_str(&content).map_err(io::Error::other)
+}
+
+/// Why `markharness changes annotate <event_id> --type <value>` failed to
+/// set a `change_type`.
+#[derive(Debug)]
+pub enum AnnotateError {
+    /// No event with this `event_id` exists under `changes/`.
+    NotFound,
+    Io(io::Error),
+}
+
+impl From<io::Error> for AnnotateError {
+    fn from(e: io::Error) -> Self {
+        AnnotateError::Io(e)
+    }
+}
+
+/// Sets `change_type` on the `ChangeEvent` identified by `event_id`,
+/// searching every `changes/*.yaml` file (event ids are unique but a
+/// caller need not know which milestone interval an event belongs to), and
+/// rewrites that file in place (§3.5: `change_type` is filled in by a human
+/// after `compute_changes`, not computed).
+pub fn annotate_change_type(
+    root: &Path,
+    event_id: &str,
+    change_type: ChangeType,
+) -> Result<(), AnnotateError> {
+    let changes_dir = root.join("changes");
+    let mut entries: Vec<PathBuf> = fs::read_dir(&changes_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "yaml"))
+        .collect();
+    entries.sort();
+
+    for path in entries {
+        let content = fs::read_to_string(&path)?;
+        let mut events: Vec<ChangeEvent> =
+            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let Some(event) = events.iter_mut().find(|e| e.event_id == event_id) else {
+            continue;
+        };
+        event.change_type = Some(change_type);
+        fs::write(&path, serialize_changes(&events))?;
+        return Ok(());
+    }
+
+    Err(AnnotateError::NotFound)
 }
 
 #[cfg(test)]
@@ -255,6 +319,55 @@ mod tests {
     }
 
     #[test]
+    fn compute_changes_leaves_change_type_as_none() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+        write_full_chain(dir.path(), "v2");
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+
+        assert_eq!(events[0].change_type, None);
+    }
+
+    #[test]
+    fn change_type_serializes_as_snake_case() {
+        let events = vec![ChangeEvent {
+            event_id: "player-jump--m1--m2".to_string(),
+            feature_id: "player-jump".to_string(),
+            from_milestone: "m1".to_string(),
+            to_milestone: "m2".to_string(),
+            from_tree_sha: Some("aaa".to_string()),
+            to_tree_sha: Some("bbb".to_string()),
+            impacted_testcases: vec!["tc-ground-001".to_string()],
+            change_type: Some(ChangeType::SpecChange),
+        }];
+
+        let yaml = serialize_changes(&events);
+
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(parsed[0]["change_type"].as_str(), Some("spec_change"));
+    }
+
+    /// `changes/*.yaml` files written before `change_type` existed have no
+    /// such key; reading them must not fail (`#[serde(default)]`).
+    #[test]
+    fn read_changes_defaults_change_type_to_none_for_files_written_before_the_field_existed() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n",
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert_eq!(read[0].change_type, None);
+    }
+
+    #[test]
     fn serialize_changes_produces_valid_yaml() {
         let events = vec![ChangeEvent {
             event_id: "player-jump--m1--m2".to_string(),
@@ -264,6 +377,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
+            change_type: None,
         }];
 
         let yaml = serialize_changes(&events);
@@ -284,6 +398,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
+            change_type: None,
         }];
         fs::write(
             dir.path().join("changes/m2.yaml"),
@@ -303,5 +418,93 @@ mod tests {
         let read = read_changes(dir.path(), "m2").unwrap();
 
         assert!(read.is_empty());
+    }
+
+    fn sample_event(event_id: &str) -> ChangeEvent {
+        ChangeEvent {
+            event_id: event_id.to_string(),
+            feature_id: "player-jump".to_string(),
+            from_milestone: "m1".to_string(),
+            to_milestone: "m2".to_string(),
+            from_tree_sha: Some("aaa".to_string()),
+            to_tree_sha: Some("bbb".to_string()),
+            impacted_testcases: vec!["tc-ground-001".to_string()],
+            change_type: None,
+        }
+    }
+
+    #[test]
+    fn annotate_change_type_sets_the_field_on_the_matching_event() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&[sample_event("player-jump--m1--m2")]),
+        )
+        .unwrap();
+
+        annotate_change_type(dir.path(), "player-jump--m1--m2", ChangeType::BugFix).unwrap();
+
+        let events = read_changes(dir.path(), "m2").unwrap();
+        assert_eq!(events[0].change_type, Some(ChangeType::BugFix));
+    }
+
+    #[test]
+    fn annotate_change_type_preserves_other_events_in_the_same_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&[
+                sample_event("player-jump--m1--m2"),
+                sample_event("other-feature--m1--m2"),
+            ]),
+        )
+        .unwrap();
+
+        annotate_change_type(dir.path(), "player-jump--m1--m2", ChangeType::Refactor).unwrap();
+
+        let events = read_changes(dir.path(), "m2").unwrap();
+        let untouched = events
+            .iter()
+            .find(|e| e.event_id == "other-feature--m1--m2")
+            .unwrap();
+        assert_eq!(untouched.change_type, None);
+    }
+
+    #[test]
+    fn annotate_change_type_searches_across_multiple_changes_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&[sample_event("player-jump--m1--m2")]),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("changes/m3.yaml"),
+            serialize_changes(&[sample_event("player-jump--m2--m3")]),
+        )
+        .unwrap();
+
+        annotate_change_type(dir.path(), "player-jump--m2--m3", ChangeType::Other).unwrap();
+
+        let events = read_changes(dir.path(), "m3").unwrap();
+        assert_eq!(events[0].change_type, Some(ChangeType::Other));
+    }
+
+    #[test]
+    fn annotate_change_type_errors_when_event_id_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&[sample_event("player-jump--m1--m2")]),
+        )
+        .unwrap();
+
+        let result = annotate_change_type(dir.path(), "no-such-event", ChangeType::Other);
+
+        assert!(matches!(result, Err(AnnotateError::NotFound)));
     }
 }

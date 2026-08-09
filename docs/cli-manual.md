@@ -607,7 +607,7 @@ removed .markharness-cache/ under /path/to/project
 markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --dir <path>]
 ```
 
-**用途**: 2つのマイルストーン(git tag名をそのまま使用。マイルストーン境界の判定はタグ名一致のみで、`executions/*/milestone.yml` との対応は呼び出し側の責務)間で、`knowledge/` 配下の各Featureのblob SHAを `git ls-tree -r <tag> -- knowledge` で比較し、変化したFeatureごとに `ChangeEvent` を算出して `changes/<to-milestone>.yaml` に書き込む。id解決は簡易版(論文§3.3の本格的な非コミットキャッシュ設計ではなく、`knowledge/` のディレクトリ名がそのままFeature idであるという前提での直接走査)。
+**用途**: 2つのマイルストーン(git tag名をそのまま使用。マイルストーン境界の判定はタグ名一致のみで、`executions/*/milestone.yml` との対応は呼び出し側の責務)間で、`knowledge/` 配下の各Featureディレクトリのtree SHAを `git ls-tree -r <tag> -- knowledge` で比較し、変化したFeatureごとに `ChangeEvent` を算出して `changes/<to-milestone>.yaml` に書き込む。Feature idは各`feature.yml`の`id:`フィールド(`git show`で読む)を正準ソースとし、ディレクトリ名とは独立に追跡する(論文§3.3)。
 
 **アクター**: CI Bot(UC5)
 
@@ -615,8 +615,8 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --
 
 - Feature単位で `from_blob`/`to_blob` を比較し、一致すれば何もしない。片方にのみ存在すれば追加/削除、両方に存在し値が異なれば変更として `ChangeEvent` を1件生成する。
 - `impacted_testcases` は現在の(HEAD時点の)`knowledge/` から `generate`(1.5節)と同じ生成グラフを構築し、変更されたFeatureに由来する `TestCase.case_id` を列挙したもの(§3.2(A)の構造的生成グラフ。版履歴は使わない)。
-- `change_type`(仕様変更/バグ修正等)は出力に含まない。人間が `changes/<to-milestone>.yaml` を編集して追記する運用(§3.5)。
-- `--no-cache` を指定しない場合、Feature blob解決結果を `.markharness-cache/` に読み書きする(1.10節)。
+- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.15節)で事後入力する運用(§3.5)。
+- `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.10節)。
 
 **出力例**(`changes/m2.yaml`)
 
@@ -625,10 +625,11 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --
   feature_id: player-jump
   from_milestone: m1
   to_milestone: m2
-  from_blob: 1a2b3c...
-  to_blob: 4d5e6f...
+  from_tree_sha: 1a2b3c...
+  to_tree_sha: 4d5e6f...
   impacted_testcases:
     - tc-ground-001
+  change_type: null
 ```
 
 **ユースケース対応**: UC5「ChangeEventを自動計算する」。本モデルの核心的貢献(§3.2〜3.4)の簡易実装。
@@ -782,6 +783,80 @@ $ echo $?
 ```
 
 **ユースケース対応**: UC4「マイルストーンをタグ付けする、実行結果の記録先」(`docs/cli-manual.md` の `executions/` ディレクトリ対応表、および `docs/テスト知識管理のGit-nativeモデル_統合版V2.md` §3.1の `TESTEXECUTION`)。結果の集計・レポート表示、CIテストレポート形式からの一括投入(`--from-report`)、過去マイルストーン時点の `generated/testcases/` に対する検証は未実装(将来課題)。
+
+---
+
+### 1.15 `markharness changes annotate` — change_typeの事後入力(§3.5)
+
+```text
+markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other> [-d, --dir <path>]
+```
+
+**用途**: `changes compute`(1.11節)が算出した `ChangeEvent` の `change_type` を、人間が事後に設定する。`changes/` 配下の全 `*.yaml` ファイルを `event_id` で横断検索するため、呼び出し側はどのマイルストーン区間のファイルに含まれるかを事前に知る必要がない。
+
+**動作**
+
+- 一致する `event_id` を持つ最初のファイルを書き換え、同じファイル内の他の `ChangeEvent` は変更しない。
+- 該当する `event_id` がどの `changes/*.yaml` にも見つからない場合、終了コード `3` でエラーメッセージを出す。
+
+**使用例**
+
+```console
+$ markharness changes annotate player-jump--m1--m2 --type spec-change
+set change_type on player-jump--m1--m2
+```
+
+**ユースケース対応**: UC5「ChangeEventを自動計算する」の一部(§3.5、`change_type`は計算ではなく人間の事後入力とする設計意図に対応)。
+
+---
+
+### 1.16 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
+
+```text
+markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
+```
+
+**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.11節)のマイルストーン境界の主系譜とは独立しており、`changes/*.yaml` への書き込みは行わない。
+
+**動作**
+
+- `<merge-commit-sha>` が2親を持たない(マージコミットでない)場合、終了コード `2` でエラーになる。
+- 判定結果は人間可読なテキスト(`<feature_id>: <kind>`)または `--json` でのJSON配列として出力する。
+
+**使用例**
+
+```console
+$ markharness changes lineage --commit a1b2c3d
+player-jump: linear
+```
+
+**ユースケース対応**: §3.2の「詳細系譜ツール(監査用、副次機能)」の実装。RQ1の評価対象(主系譜)には含まれない(§1.3の注記)。
+
+---
+
+### 1.17 `markharness validate` — knowledge/・axes/ の構造検証(§3.5/§3.6)
+
+```text
+markharness validate [--json] [-d, --dir <path>]
+```
+
+**用途**: `knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `axes/*.yml` を、対応する `schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか。
+
+**動作**
+
+- 問題が1件もなければ終了コード `0`。人間可読モードでは `knowledge/ and axes/ are valid`、`--json` では `{"ok":true}` を出力する。
+- 問題があれば、ファイルごとのメッセージを列挙して終了コード `1` で終了する。
+
+**使用例**
+
+```console
+$ markharness validate
+knowledge/controls/player-jump/feature.yml: axis 'not-registered' is not registered under axes/
+$ echo $?
+1
+```
+
+**ユースケース対応**: §3.5の「`axes/*.yml`に定義されていない値をfront matterで使えないようスキーマバリデーションで縛る」制約の実装。
 
 ---
 

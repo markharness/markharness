@@ -75,6 +75,53 @@ pub fn ls_tree_recursive(
     Ok(entries)
 }
 
+/// The git tree object SHA of `path_in_repo` (e.g. `"knowledge"`) as it
+/// existed at `git_ref`, via `git rev-parse`. Returns `None` if the path did
+/// not exist at that ref (rather than an error), so callers can fold a
+/// missing `knowledge/` into a stable cache key (§3.3 cache_key's
+/// `tree_sha(knowledge/ 配下のGitツリーオブジェクトSHA)` component).
+pub fn tree_sha(root: &Path, git_ref: &str, path_in_repo: &str) -> io::Result<Option<String>> {
+    let rev = format!("{git_ref}:{path_in_repo}");
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--verify", "--quiet", &rev])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()?;
+    if !status.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&status.stdout).trim().to_string(),
+    ))
+}
+
+/// Reads a blob's content at `path_in_repo` as it existed at `git_ref`, via
+/// `git show <ref>:<path>`. Used to resolve a Feature's id from its
+/// `feature.yml` content (the `id:` field) rather than its directory name
+/// (§3.3 path-independent id resolution), since `ls_tree_recursive` only
+/// gives paths and SHAs, not blob content.
+pub fn show_blob(root: &Path, git_ref: &str, path_in_repo: &str) -> io::Result<String> {
+    run_git(root, &["show", &format!("{git_ref}:{path_in_repo}")])
+}
+
+/// The parent commit SHAs of `commit`, in order (empty for a root commit,
+/// one for a normal commit, two for a merge commit), via `git log --format=%P`.
+/// Used by the §3.2 merge-base lineage audit to find a merge commit's P1/P2.
+pub fn parents(root: &Path, commit: &str) -> io::Result<Vec<String>> {
+    let raw = run_git(root, &["log", "-1", "--format=%P", commit])?;
+    Ok(raw.split_whitespace().map(|s| s.to_string()).collect())
+}
+
+/// The best common ancestor commit of `a` and `b`, via `git merge-base`.
+/// Used by the §3.2 merge-base lineage audit to find the merge base B a
+/// merge commit's two parents diverged from.
+pub fn merge_base(root: &Path, a: &str, b: &str) -> io::Result<String> {
+    let raw = run_git(root, &["merge-base", a, b])?;
+    Ok(raw.trim().to_string())
+}
+
 /// The committer date (ISO 8601) of the commit `git_ref` points at, used to
 /// order milestones by recency (§4.2).
 pub fn commit_date(root: &Path, git_ref: &str) -> io::Result<String> {
@@ -124,7 +171,7 @@ mod tests {
 
     fn init_repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        run_git(dir.path(), &["init", "-q"]).unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]).unwrap();
         run_git(dir.path(), &["config", "user.email", "test@example.com"]).unwrap();
         run_git(dir.path(), &["config", "user.name", "Test"]).unwrap();
         dir
@@ -223,6 +270,123 @@ mod tests {
         };
 
         assert_ne!(blob_at(&at_m1), blob_at(&at_m2));
+    }
+
+    #[test]
+    fn tree_sha_returns_the_tree_object_sha_for_an_existing_path_at_ref() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path().join("knowledge/req/feat/feature.yml"),
+            "id: feat\n",
+        )
+        .unwrap();
+        commit_all(dir.path(), "add feature");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+
+        let sha = tree_sha(dir.path(), "m1", "knowledge").unwrap();
+
+        assert_eq!(sha.map(|s| s.len()), Some(40));
+    }
+
+    #[test]
+    fn tree_sha_returns_none_when_path_absent_at_ref() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+
+        let sha = tree_sha(dir.path(), "m1", "knowledge").unwrap();
+
+        assert_eq!(sha, None);
+    }
+
+    #[test]
+    fn show_blob_returns_content_of_file_at_ref() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path().join("knowledge/req/feat/feature.yml"),
+            "id: feat\nlabel: v1\n",
+        )
+        .unwrap();
+        commit_all(dir.path(), "add feature");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+
+        let content = show_blob(dir.path(), "m1", "knowledge/req/feat/feature.yml").unwrap();
+
+        assert_eq!(content, "id: feat\nlabel: v1\n");
+    }
+
+    #[test]
+    fn parents_returns_empty_for_a_root_commit() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+
+        let parents = parents(dir.path(), "HEAD").unwrap();
+
+        assert!(parents.is_empty());
+    }
+
+    #[test]
+    fn parents_returns_one_sha_for_a_normal_commit() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "first");
+        fs::write(dir.path().join("README.md"), "world\n").unwrap();
+        commit_all(dir.path(), "second");
+
+        let parents = parents(dir.path(), "HEAD").unwrap();
+
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].len(), 40);
+    }
+
+    #[test]
+    fn parents_returns_two_shas_for_a_merge_commit() {
+        let dir = init_repo();
+        fs::write(dir.path().join("base.txt"), "base\n").unwrap();
+        commit_all(dir.path(), "base");
+        run_git(dir.path(), &["branch", "feature"]).unwrap();
+
+        fs::write(dir.path().join("main.txt"), "main\n").unwrap();
+        commit_all(dir.path(), "on main");
+
+        run_git(dir.path(), &["checkout", "-q", "feature"]).unwrap();
+        fs::write(dir.path().join("feature.txt"), "feature\n").unwrap();
+        commit_all(dir.path(), "on feature");
+
+        run_git(dir.path(), &["checkout", "-q", "main"]).unwrap();
+        run_git(
+            dir.path(),
+            &["merge", "--no-ff", "-q", "-m", "merge feature", "feature"],
+        )
+        .unwrap();
+
+        let parents = parents(dir.path(), "HEAD").unwrap();
+
+        assert_eq!(parents.len(), 2);
+    }
+
+    #[test]
+    fn merge_base_finds_the_common_ancestor_of_two_diverged_branches() {
+        let dir = init_repo();
+        fs::write(dir.path().join("base.txt"), "base\n").unwrap();
+        commit_all(dir.path(), "base");
+        let base_sha = run_git(dir.path(), &["rev-parse", "HEAD"]).unwrap();
+        run_git(dir.path(), &["branch", "feature"]).unwrap();
+
+        fs::write(dir.path().join("main.txt"), "main\n").unwrap();
+        commit_all(dir.path(), "on main");
+
+        run_git(dir.path(), &["checkout", "-q", "feature"]).unwrap();
+        fs::write(dir.path().join("feature.txt"), "feature\n").unwrap();
+        commit_all(dir.path(), "on feature");
+
+        let base = merge_base(dir.path(), "main", "feature").unwrap();
+
+        assert_eq!(base, base_sha.trim());
     }
 
     #[test]

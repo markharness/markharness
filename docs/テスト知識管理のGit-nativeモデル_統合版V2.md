@@ -177,7 +177,7 @@ flowchart LR
 
 この機構(祖先探索を伴う詳細な系譜再構築)は、監査用途の副次機能として提供し、研究評価で使う主系譜は次節のマイルストーン境界方式を用いる。
 
-**実装状況**：CLI実装(`markharness changes compute`)は、上記の`git merge-base`による祖先探索・2親分岐の記録をまだ実装していない。現状は指定した2つのマイルストーンタグ(`from_milestone`/`to_milestone`)間で各Featureのtree SHAを直接比較するのみで、マージコミットの2親を遡って真の分岐を検出する処理はない。このため、ブランチ分岐を経て一方の系譜だけが失われるようなケースを本モデルが原理通りに区別できるかは未検証であり、`git merge-base`を用いた祖先探索の実装は今後の課題である(第3.6節、第7章)。
+**実装状況**：`markharness changes compute`(マイルストーン境界の主系譜)自体は、上記の`git merge-base`による祖先探索・2親分岐の記録を行わない。指定した2つのマイルストーンタグ(`from_milestone`/`to_milestone`)間で各Featureのtree SHAを直接比較するのみで、これは設計上の意図的な選択である(第3.4節、RQ1の評価対象はマイルストーン境界の線形比較)。一方、本節で述べた`git merge-base`による祖先探索・2親分岐の判定自体は、監査用途の副次機能として`markharness changes lineage --commit <merge-sha>`に実装済みである(`src/lineage.rs`)。指定したマージコミットの2親(P1・P2)と`git merge-base`によるマージベース(B)のtree SHAを比較し、各Featureごとに「線形(linear)」「真の分岐(true_divergence)」「1親相当(single_parent)」を判定して出力する。ただし`changes/*.yaml`への書き込みは行わず、`changes compute`の主系譜とは連携しない(第3.6節)。したがって、ブランチ分岐を経て一方の系譜だけが失われるようなケースを`lineage`コマンドで検出すること自体は可能になったが、その判定結果を永続的な`derived_from`(2親)として`ChangeEvent`側に自動反映する統合は今後の課題のままである(第7章)。
 
 ### 3.3 id解決：非コミットキャッシュとキャッシュキー・破棄条件
 
@@ -209,7 +209,7 @@ cache_key = hash(
 
 読み込み時は格納されているキーが現在の状態と完全に一致するかを検証し、不一致なら静かに再計算する。これにより異なるCIランナー間でキャッシュを共有しても、古い/破損したキャッシュを誤って信頼するリスクを避ける。
 
-**実装状況**：CLI実装の`.markharness-cache/<ref>.json`は、上記の内容アドレス方式キャッシュキー(`tree_sha` + `canonicalization_rule_version` + `id_index_schema_version` + `tool_version`の合成)を実装しておらず、`id / path / tree_sha`のみを持つ単純な対応表を`git ref`ごとに1ファイル保存する簡易版である。したがって読み込み時の自動破棄(インバリデーション)は行われず、キャッシュは`markharness cache rebuild`によるディレクトリ全削除でのみ更新される。また、id自体も「idはパスに依存しない」という設計方針とは異なり、現状は**Featureディレクトリ名がそのままidである**という前提(id = ディレクトリ名)に基づいており、ディレクトリ名の変更(リネーム)を独立したid解決層で追跡する機構はまだない。本節で述べたキャッシュキー構造とインバリデーション条件は目標設計であり、実装への反映は今後の課題とする(第3.6節)。
+**実装状況**：CLI実装の`.markharness-cache/<ref>.json`は、本節で述べた内容アドレス方式キャッシュキー(`tree_sha(knowledge/)` + `canonicalization_rule_version` + `id_index_schema_version` + `tool_version`の合成)を実装している(`src/id_cache.rs`の`CacheKey`/`compute_cache_key`)。読み込み時に格納されているキーを再計算した現在のキーと比較し、不一致なら静かに再計算・上書きする。`tree_sha`は`git rev-parse <ref>:knowledge`で取得し、`tool_version`はビルド時のcrateバージョン(`CARGO_PKG_VERSION`)を用いる。ただし`canonicalization_rule_version`・`id_index_schema_version`は現状固定値"1"で、これらのバージョンを実際に上げる正規化ルール改訂・フォーマット改訂はまだ発生していない。作業ツリーの未コミット変更を`git hash-object`で仮想的にキーへ含める処理、およびCI共有ストレージ側のTTL安全網は未実装(そもそもCLI単体の責務外)である。また、id自体も「idはパスに依存しない」という設計方針に沿って改修され、現状は**feature.ymlの`id:`フィールドを正準ソースとする**(id_cache.rsがディレクトリ名ではなくfeature.ymlの内容を`git show`で読んでidを決定する)。これにより、Featureディレクトリをリネームしても`id:`フィールドが変わらなければ同一Featureとして追跡できる(最小限のリネーム追跡)。同一idを持つ複数のFeatureディレクトリが存在する場合はエラーとして検出する。ただし、id⇔pathの汎用的な独立インデックス層(パス変更を伴わない任意のid変更の追跡等)までは実装しておらず、目標設計の完全な実現ではない(第3.6節)。
 
 ### 3.4 マイルストーン境界での系譜確定
 
@@ -234,7 +234,7 @@ flowchart TB
 
 `ChangeEvent`は、マイルストーン境界で`derived_from`の差分が検出されたFeatureについて自動生成する。変更種別(`change_type`：仕様変更／バグ修正等)のみ、人間がコミットメッセージまたはPRテンプレートで入力する。
 
-**実装状況**：CLI実装の`ChangeEvent`構造体(`event_id` / `feature_id` / `from_milestone` / `to_milestone` / `from_tree_sha` / `to_tree_sha` / `impacted_testcases`)には`change_type`フィールドがまだ存在しない。自動計算されるのはFeatureの変更検知と影響TestCase特定までであり、変更種別を人間が入力・保持する仕組み(コミットメッセージ/PRテンプレートとの連携)は未実装で、今後の課題である(第3.6節)。
+**実装状況**：CLI実装の`ChangeEvent`構造体は`change_type: Option<ChangeType>`フィールドを持つ(`event_id` / `feature_id` / `from_milestone` / `to_milestone` / `from_tree_sha` / `to_tree_sha` / `impacted_testcases` / `change_type`)。`ChangeType`は`SpecChange` / `BugFix` / `Refactor` / `Other`の固定enum(snake_caseでシリアライズ)であり、コミットメッセージ・PRテンプレートからの自動抽出ではなく、`markharness changes compute`実行後に人間が`markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other>`を実行して`changes/*.yaml`を書き換える方式で入力する(設計意図通り、計算では埋めない)。`annotate`はevent_idを`changes/`配下の全ファイルから横断的に検索するため、呼び出し側がどのマイルストーン区間のファイルかを事前に知る必要はない。
 
 **図4：変更影響の伝播（Change propagation）**
 
@@ -281,7 +281,7 @@ repo/
 │       └── results.yml
 ├── changes/                     # ChangeEventログ(マイルストーン境界で自動生成)
 │   └── 2026-08-release.yaml     # 1マイルストーン区間=1ファイル、複数ChangeEventを配列で保持(実装)
-└── schema/                      # フォーマット定義(JSON Schema、正規化ルールを含む予定。実装は未着手、空ディレクトリ)
+└── schema/                      # フォーマット定義(JSON Schema。`markharness init`が既定スキーマ一式を配置、実装済み)
 
 # 注：id解決キャッシュは非コミット化し、.gitignore対象とする(第3.3節)。実装上の配置は
 # リポジトリ直下の .markharness-cache/ (旧 generated/id-index.json という案からの変更)。
@@ -291,7 +291,7 @@ repo/
 
 - `REQUIREMENT`をディレクトリ直下の`requirement.yml`として明示ファイル化し、`FEATURE`はその配下に置く(第3.1節)。
 - `changes/`は「1イベント1ファイル」ではなく「1マイルストーン区間1ファイル、複数`ChangeEvent`を配列で保持」する形式(拡張子は`.yaml`)。
-- `schema/`はディレクトリとして作成されるが、JSON Schemaの実体・スキーマバリデーションはまだ実装されていない(第3.6節)。`axes/*.yml`に定義されていない値をfront matterで弾く、という制約は現状CIで検証できない。
+- `schema/`は`markharness init`実行時に既定のJSON Schemaファイル一式(`requirement.schema.json` / `feature.schema.json` / `behavior.schema.json` / `condition.schema.json` / `expected_result.schema.json` / `axis.schema.json`)で初期化される(既存ファイルは上書きしないため、プロジェクトごとにスキーマをカスタマイズできる)。`markharness validate`が`knowledge/`・`axes/`配下の全YAMLをこれらのスキーマで構造検証し、加えてJSON Schema単体では表現しにくい相互参照制約(`axis`タグが`axes/*.yml`に登録されているか、`forked_from`が実在するFeature idを指しているか)をRust側のクロスリファレンスチェックとして実装している(第3.6節)。
 
 `feature.yml`のfront matter例(実装に合わせた形)：
 
@@ -303,20 +303,20 @@ axis: [gameplay, animation]
 forked_from: null # 概念的な派生元がある場合のみ手動記述(例：other-feature)
 ```
 
-`axis`の命名規則が揺れると横断ビューが破綻するため、`axes/*.yml`に定義されていない値をfront matterで使えないようスキーマバリデーションで縛る。正規化ルール(どのフィールドをハッシュ計算対象とするか)はスキーマで厳密に固定し、この境界の妥当性は今後の検証課題とする。
+`axis`の命名規則が揺れると横断ビューが破綻するため、`axes/*.yml`に定義されていない値をfront matterで使えないよう、`markharness validate`がスキーマバリデーション＋クロスリファレンスチェックで縛る(実装済み、本節末尾参照)。正規化ルール(どのフィールドをハッシュ計算対象とするか)をスキーマ自体に明文化して固定するかどうかは今後の検証課題とする。
 
 ### 3.6 実装状況まとめ
 
-第3章で述べたモデルのうち、CLI実装(`markharness`)で確認できる対応状況を以下にまとめる。詳細な突き合わせは別紙[設計書との相違点_調査資料.md](./設計書との相違点_調査資料.md)を参照。
+第3章で述べたモデルのうち、CLI実装(`markharness`)で確認できる対応状況を以下にまとめる。詳細な突き合わせは別紙[設計書との相違点_調査資料.md](./設計書との相違点_調査資料.md)を参照(ただし同資料は本節の更新以前の状態を反映したものである点に留意)。
 
 | 分類 | 内容 |
 |---|---|
-| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供 |
-| 設計から簡略化 | tree SHA比較は`from_milestone`/`to_milestone`を直接比較するのみで、`git merge-base`によるマージコミットの祖先探索・2親分岐の記録は未実装(3.2節)。id解決キャッシュはtree_sha等を含む内容アドレス方式のキャッシュキーを持たず、`git ref`単位の単純な対応表を手動`rebuild`でのみ破棄する(3.3節)。id自体も「パス非依存」ではなく「id=ディレクトリ名」という前提に簡略化されている(3.3節) |
-| 未実装 | `schema/`によるJSON Schemaバリデーションの実体、`change_type`フィールド(3.5節)、既存TMS(TestRail/Xray等)からのインポータ(UC8) |
+| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節) |
+| 設計から簡略化 | `markharness changes lineage`(merge-base監査コマンド)の判定結果は`changes/*.yaml`の`derived_from`として永続化されず、`changes compute`の主系譜とは連携しない(3.2節)。id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節) |
+| 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
 
-これらのうち「設計から簡略化」の項目は、RQ1の評価(第5章)が主に必要とする「マイルストーン境界での線形な版履歴追跡」自体には影響しない。一方、`git merge-base`による分岐検出の欠如は、複雑なブランチ運用を行う組織でのケーススタディ(第5.2節)では版履歴の精度に影響しうるため、評価対象プロジェクトの選定時に留意する必要がある(第6章のThreats to Validityに追記)。
+これらのうち「設計から簡略化」の項目は、RQ1の評価(第5章)が主に必要とする「マイルストーン境界での線形な版履歴追跡」自体には影響しない。`git merge-base`による分岐検出自体は監査コマンドとして利用可能になったが、その結果が`changes compute`の主系譜に自動反映されるわけではないため、複雑なブランチ運用を行う組織でのケーススタディ(第5.2節)では、`lineage`コマンドを補助的に併用しない限り版履歴の精度に影響しうる点は変わらず、評価対象プロジェクトの選定時に留意する必要がある(第6章のThreats to Validityに追記)。
 
 ---
 
@@ -344,12 +344,12 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 ### 4.5 ツール構成
 
-- スキーマ定義：JSON Schemaで`knowledge/`配下のYAMLフォーマットを固定(正規化ルールを含む)。**未実装**(`schema/`は空ディレクトリ、第3.6節)。
+- スキーマ定義：JSON Schemaで`knowledge/`配下のYAMLフォーマットを固定。**実装済み**(`schema/*.schema.json`、`markharness init`が既定一式を配置、`markharness validate`が検証。正規化ルール自体のスキーマへの明文化は今後の課題、第3.6節)。
 - 実装上の利便機能：現在のHEADと基準点の差分を、構造的な生成グラフに照らして影響TestCaseを表示するCLIコマンド(版履歴DAGは使わない)。
-- id解決キャッシュ：非コミット、キャッシュキーと破棄条件は第3.3節。**実装は簡略化**(内容アドレス方式のキャッシュキー構造・自動破棄は未実装、手動`rebuild`のみ、第3.3節・第3.6節)。
+- id解決キャッシュ：非コミット、キャッシュキーと破棄条件は第3.3節。**実装済み**(内容アドレス方式のキャッシュキー・読み込み時の自動破棄、第3.3節)。
 - 版履歴計算ツール(核心的貢献)：マイルストーンタグ間でid解決経由の各idのtree SHAを比較し`derived_from`を計算。**実装済み**(`markharness changes compute`)。
 - バックフィルワーカー：第4.1〜4.4節のアーキテクチャに基づく非同期バックグラウンド処理。**実装済み**(`markharness backfill run`、ただし4.2節注記の通り単発呼び出し型)。
-- 詳細系譜ツール(監査用、副次機能)：`git merge-base`を用いたコミット単位の系譜再構築。**未実装**(第3.2節・第3.6節)。
+- 詳細系譜ツール(監査用、副次機能)：`git merge-base`を用いたコミット単位の系譜再構築。**実装済み**(`markharness changes lineage --commit <merge-sha>`。ただし判定結果は`changes/*.yaml`へは永続化されない、第3.2節・第3.6節)。
 - テストケース生成ツール：`Feature + Condition`から`TestCase`を生成し、再生成結果と現在のファイルの一致をCIで検証。**実装済み**(`markharness generate` / `markharness verify`)。
 - 既存ツールからのインポータ：TestRail / Xray / TestLink のエクスポート形式から本フォーマットへの変換器。**未実装**(第3.6節)。
 
@@ -422,7 +422,7 @@ flowchart TB
 - 提案モデルの実装(ツール)が被験者実験の結果に影響する可能性(ツールの使いやすさとモデルそのものの有効性を混同しないよう、UIの簡素化・操作説明の標準化を行う)。
 - id解決キャッシュを非コミット化したことで、CI環境が変わるたびに再計算コストが発生する可能性(ビルドキャッシュの永続化戦略に依存)。
 - バックフィルアーキテクチャ(第4章)の性能は、実際の大規模リポジトリでの検証(ケーススタディ)がまだない。新規構築するデータセットでは移行コストが顕在化しない可能性があり、実際の導入コストを過小評価するリスクがある。
-- 現行実装は`git merge-base`による祖先探索・マージコミットの2親分岐検出(第3.2節)を行わず、指定した2マイルストーン間のtree SHA比較のみで`derived_from`を導出する(第3.6節)。頻繁なブランチ分岐・複雑なマージ戦略を持つ組織をケーススタディ対象とする場合、この簡略化が版履歴の精度(特に真の分岐の見落とし)に影響する可能性があり、評価結果の解釈時に留保が必要。
+- `changes compute`(RQ1評価が用いる主系譜)は`git merge-base`による祖先探索・マージコミットの2親分岐検出を行わず、指定した2マイルストーン間のtree SHA比較のみで`derived_from`を導出する(第3.6節)。`git merge-base`による分岐検出自体は監査用の`markharness changes lineage`として実装済みだが、その判定結果は主系譜に自動反映されない(第3.2節)。頻繁なブランチ分岐・複雑なマージ戦略を持つ組織をケーススタディ対象とする場合、この非連携が版履歴の精度(特に真の分岐の見落とし)に影響する可能性があり、評価結果の解釈時に留保が必要。
 
 ---
 
@@ -430,9 +430,10 @@ flowchart TB
 
 - 実装上の利便機能(構造的生成グラフに基づくリアルタイム照会、第3.2節(A))の開発者体験・生産性への効果の検証。
 - バックフィルアーキテクチャ(第4章)を実際の大規模リポジトリに適用した場合の性能実測。
-- id解決キャッシュのキー設計(第3.3節)・co-changeノイズ除去基準(第5.4節)を、実装・データ収集を通じて検証・調整すること自体を今後の実証課題とする。
-- `git merge-base`による祖先探索・マージコミットの2親分岐検出の実装(第3.2節・第3.6節、現状は2マイルストーン間の直接比較のみ)。
-- `schema/`によるJSON Schemaバリデーションの実装、`change_type`フィールドの追加、既存TMS(TestRail/Xray等)からのインポータの実装(いずれも第3.6節で未実装と整理した項目)。
+- id解決キャッシュのキー設計(第3.3節)・co-changeノイズ除去基準(第5.4節)を、実装・データ収集を通じて検証・調整すること自体を今後の実証課題とする(`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用を経た検証がまだない)。
+- `markharness changes lineage`(監査用のmerge-base祖先探索・2親分岐検出、第3.2節)の判定結果を、`changes compute`が導出する主系譜の`derived_from`に自動反映する統合の実装(現状は独立したコマンドで、`changes/*.yaml`へは書き込まれない)。
+- id⇔pathの汎用的な独立インデックス層の実装(パスを変えないid変更の追跡等、第3.3節で現状は「id=feature.ymlのid:フィールド」への統一に留まると整理した項目)。
+- 既存TMS(TestRail/Xray等)からのインポータの実装(第3.6節で未実装と整理した項目)。
 - LLMによる文脈供給・Markdown手順書の自動生成・更新への応用可能性(検討経緯・不採用理由は付録A参照。本研究の評価対象外)。
 - 構造からのテストケース自動生成の網羅率評価、Git粒度分割によるレビュー性向上の検証(検討まとめ第4章の案2・3)。
 - 他ドメイン・他組織での追試による一般化可能性の検証。

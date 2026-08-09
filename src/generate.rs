@@ -48,7 +48,7 @@ impl TestCase {
     }
 }
 
-fn sorted_subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
+pub(crate) fn sorted_subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -63,7 +63,7 @@ fn sorted_subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
 
 /// Recursively searches `root` for directories directly containing `marker_file`,
 /// stopping the search along a branch as soon as a match is found.
-fn find_dirs_with_marker(root: &Path, marker_file: &str) -> io::Result<Vec<PathBuf>> {
+pub(crate) fn find_dirs_with_marker(root: &Path, marker_file: &str) -> io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
