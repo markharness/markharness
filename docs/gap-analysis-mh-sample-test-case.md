@@ -1,8 +1,10 @@
 # mh-sample-test-case 実行結果と設計書（統合版V2）の相違点
 
-**位置づけ**：本資料は「テスト知識管理のGit-nativeモデル_統合版V2.md」（以下「設計書」）を、TODOアプリを題材にした実際のケーススタディ運用リポジトリ `mh-sample-test-case`（本フォルダ、`markharness` CLIを実際に3マイルストーン分運用した記録）と突き合わせ、確認できた相違点を整理したもの。
+**Status**: Survey(調査時点のスナップショット)
+**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版V2.md](./テスト知識管理のGit-nativeモデル_統合版V2.md)（以下「設計書」）、[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)(`mm`フォルダを対象にした別調査)
+**調査範囲**：本リポジトリ（`mh-sample-test-case`）の追跡対象ファイル・作業ツリー・`git log`
 
-設計書自身が§3.6「実装状況まとめ」で `markharness`（CLI本体、`C:\Users\papa\work\markharness`）のコード実装と設計の相違をすでに整理済みだが、本資料はそれとは別に、**実際にこのCLIを使って運用した結果（本リポジトリのコミット履歴・生成物）が設計書の記述とどう異なるか**を確認する。調査範囲は本リポジトリ（`mh-sample-test-case`）の追跡対象ファイル・作業ツリー・`git log`。
+**位置づけ**：本資料は設計書を、TODOアプリを題材にした実際のケーススタディ運用リポジトリ `mh-sample-test-case`（本フォルダ、`markharness` CLIを実際に3マイルストーン分運用した記録）と突き合わせ、確認できた相違点を整理したもの。設計書自身が§3.6「実装状況まとめ」で `markharness`（CLI本体、`C:\Users\papa\work\markharness`）のコード実装と設計の相違をすでに整理済みだが、本資料はそれとは別に、**実際にこのCLIを使って運用した結果（本リポジトリのコミット履歴・生成物）が設計書の記述とどう異なるか**を確認する。
 
 ---
 
@@ -49,7 +51,7 @@ diff --git a/knowledge/todo-simple/todo-add/todo-add-from-form/todo-add-valid-ti
 
 これは`generated_from.feature`（TestCaseの生成元Feature）ごとに、実行時点でのFeatureディレクトリのtree SHAを記録するもので、`markharness verify trace <case_id> --milestone <m>`（その実行がどのChangeEventを反映しているか）・`markharness verify pending`（未再検証のTestCaseを機械的に検出）というQ1/Q2判定を可能にする。設計書第3.5節・図4が述べる「変更影響の伝播」→「再確認が必要なTestCase集合」は、設計書内では静的な生成グラフ止まりで説明されているが、実際のCLIはさらに一歩進んで**実行結果側からも変更の反映状況を機械的に追跡できる機能を持ち、本リポジトリはそれを最初の実行(`test1`)から一貫して使っている**。
 
-この機能とその設計意図は、設計書と同じ`markharness`リポジトリ内の別紙「`ChangeEvent連動_実行状態追跡仕様.md`」にのみ記載されており、統合版V2本文（本フォルダ`docs/`にあるファイル）には章立ても言及もない。設計書を単体で読む限りこの機能の存在は分からず、**「論文の完成度」と「CLIの実際の機能」に乖離がある**点は特筆に値する。
+この機能とその設計意図は、設計書と同じ`markharness`リポジトリ内の別紙「[`change-event-verification-tracking-spec.md`](./change-event-verification-tracking-spec.md)」にのみ記載されており、統合版V2本文（本フォルダ`docs/`にあるファイル）には章立ても言及もない。設計書を単体で読む限りこの機能の存在は分からず、**「論文の完成度」と「CLIの実際の機能」に乖離がある**点は特筆に値する。
 
 同様に、`generate`が同時生成する`generated/traceability-index.json`（Requirement→Feature→Behavior→Condition→TestCaseの索引、`axis`はRequirement/Feature/Behaviorの3階層をunionしたもの）も設計書第3.5節のディレクトリ構造図に登場しない生成物であり、本リポジトリには実在し`markharness verify`の差分検証対象にもなっている。
 
@@ -83,7 +85,7 @@ CLI側（`markharness`）には実装済みだが、本リポジトリの実際�
 
 ## 6. TestCaseファイル命名（旧MM資料の指摘との相違）
 
-参考として、`markharness`リポジトリの旧調査資料（`設計書との相違点_調査資料.md`、対象は本リポジトリとは別の`c:\Users\papa\work\mm`フォルダ）は「ファイル名と`case_id`が対応していない」問題を指摘していたが、本リポジトリの`generated/testcases/*.yml`ではファイル名（例：`todo-add-valid-title.yml`）と`case_id`（`tc-todo-add-valid-title-001`）が`tc-`接頭辞と`-001`連番を除いて一致しており、体系的に対応が取れている。この点は旧資料からの改善として確認できる。
+参考として、`markharness`リポジトリの旧調査資料（[`gap-analysis-mm-folder.md`](./gap-analysis-mm-folder.md)、対象は本リポジトリとは別の`c:\Users\papa\work\mm`フォルダ）は「ファイル名と`case_id`が対応していない」問題を指摘していたが、本リポジトリの`generated/testcases/*.yml`ではファイル名（例：`todo-add-valid-title.yml`）と`case_id`（`tc-todo-add-valid-title-001`）が`tc-`接頭辞と`-001`連番を除いて一致しており、体系的に対応が取れている。この点は旧資料からの改善として確認できる。
 
 ---
 

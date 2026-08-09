@@ -1,8 +1,10 @@
 # MMフォルダ実装と設計書（統合版V2）の相違点
 
-**位置づけ**：本資料は「テスト知識管理のGit-nativeモデル_統合版V2.md」（以下「設計書」）と、現行のMMフォルダ実装（TODOアプリを題材にしたケーススタディ運用）を突き合わせ、確認できた相違点を整理したもの。設計書の各章番号に対応させて記載する。「ChangeEvent連動・実行状態追跡」に関する相違点への対応方針は別紙「ChangeEvent連動_実行状態追跡仕様.md」にまとめたため、本資料では概要のみ再掲し詳細はそちらを参照する。
+**Status**: Survey(調査時点のスナップショット。ただし各節末に「追記(markharness側の修正について)」を継ぎ足し、後日の実装状況を反映)
+**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版V2.md](./テスト知識管理のGit-nativeモデル_統合版V2.md)（以下「設計書」）、[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)
+**調査範囲**：`c:\Users\papa\work\mm`配下（本資料および上記仕様書自体は対象外）
 
-調査範囲：`c:\Users\papa\work\mm`配下（本資料および上記仕様書自体は対象外）。
+**位置づけ**：本資料は設計書と、現行のMMフォルダ実装（TODOアプリを題材にしたケーススタディ運用）を突き合わせ、確認できた相違点を整理したもの。設計書の各章番号に対応させて記載する。「ChangeEvent連動・実行状態追跡」に関する相違点への対応方針は別紙「[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)」にまとめたため、本資料では概要のみ再掲し詳細はそちらを参照する。本資料の調査対象は`mm`フォルダであり、`mh-sample-test-case`リポジトリを対象にした調査は別紙「[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)」を参照。
 
 ---
 
@@ -75,7 +77,7 @@ axis: [ui, state]
 - `generated/testcases/*.yml`はrequirement/feature/behavior/condition/expected_resultsへの`generated_from`参照を持ち、knowledge/とは分離管理されている点は設計書と一致。
   - ただし**ファイル名と内部の`case_id`が対応していない**（例：ファイル名`todo-add-valid-title.yml`、中身`case_id: tc-todo-add-valid-title-001`）。設計書例はファイル名とcase識別子がほぼ一致する命名だった。
 - `executions/<milestone>/milestone.yml`は`id: test1`のような1行のみで、日付・説明等のメタ情報を持たない。設計書はマイルストーンのメタ情報保持を明示していないため矛盾ではないが、最小限の実装にとどまっている。
-- `results.yml`は`case_id / result / executor / executed_at`のみを保持し、実行時点でのFeature版情報を持たない。この点への対応は別紙「ChangeEvent連動_実行状態追跡仕様.md」で仕様化した。
+- `results.yml`は`case_id / result / executor / executed_at`のみを保持し、実行時点でのFeature版情報を持たない。この点への対応は別紙「[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)」で仕様化した。
 - マイルストーンはGitタグ（`test1`/`test2`/`test3`）と対応づけて運用されている。設計書はGitタグとの対応関係を明示していないが、矛盾はない。
 
 ---
@@ -102,7 +104,7 @@ axis: [ui, state]
 
 ## 8. ChangeEvent連動・実行状態追跡（設計書第3.5節・図4）
 
-「変更があったのに未実行のテストはどれか」「この結果はどの変更の後の実行か」を自動で答える機能が、現行実装には存在しない（`results.yml`と`changes/*.yaml`を人間が目視で突き合わせている）。この相違点への対応は仕様化済み。詳細は別紙「[ChangeEvent連動_実行状態追跡仕様.md](./ChangeEvent連動_実行状態追跡仕様.md)」を参照。
+「変更があったのに未実行のテストはどれか」「この結果はどの変更の後の実行か」を自動で答える機能が、現行実装には存在しない（`results.yml`と`changes/*.yaml`を人間が目視で突き合わせている）。この相違点への対応は仕様化済み。詳細は別紙「[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)」を参照。
 
 **追記（markharness側の修正について）**：本資料が観測した`.markharness-cache/*.json`の`id / path / blob_sha`という構造（第7節）は、当時のmarkharness実装が**Featureの変更検知をfeature.yml単体ファイルのblob SHAでのみ判定していた**ことによるものだった。この実装では、Condition・Behavior・ExpectedResultを追加・変更してもfeature.yml自体が不変であれば変更が検知されない不具合があった。markharness側は`id_cache::resolve_feature_versions`（旧`resolve_feature_blobs`）をFeatureディレクトリ全体のtree SHA比較に変更し修正済み（`blob_sha`→`tree_sha`、`FeatureBlob`→`FeatureVersion`等、関連する命名も刷新）。本資料が調査したMMリポジトリ側のデータ自体は当時のスナップショットとして書き換えていない。
 
@@ -119,4 +121,4 @@ axis: [ui, state]
 
 MMフォルダは、設計書のうち「版履歴DAG」「TestCase派生」「ChangeEvent自動化」という中核部分の実現可能性を検証する目的では機能しているが、査読論文としての貢献として掲げられている「人間介在部分の明確化」「フォーマット保証」「変更影響の再確認漏れ検知」は、まだ実装・検証の途上にある。
 
-**追記（本資料の総括表とmarkharness現行実装との対応について）**：上表「未実装」欄のうち`change_type`入力・`schema/`によるバリデーション実体は、markharness側では第4節・第6節の追記の通り実装済み（それぞれ`markharness changes annotate`、`markharness validate`）。「ChangeEventと実行結果の自動突合」も別紙「ChangeEvent連動_実行状態追跡仕様.md」に基づき`markharness verify trace`/`markharness verify pending`として実装済み。`forked_from`運用（人間が実際に使うかどうかの運用面の検証）・`tools/`のリポジトリ内コミットは、MM側の運用課題であり markharness 自体のコード実装の話ではないため未解消のまま。また、本資料には無い項目として、markharness側は`git merge-base`による祖先探索・マージコミットの2親分岐判定を`markharness changes lineage --commit <sha>`という監査専用コマンドで実装した（設計書§3.2）。ただしこの判定結果は`changes/*.yaml`の主系譜へは自動反映されない。詳細はmarkharness側の`docs/テスト知識管理のGit-nativeモデル_統合版V2.md`§3.6を参照。
+**追記（本資料の総括表とmarkharness現行実装との対応について）**：上表「未実装」欄のうち`change_type`入力・`schema/`によるバリデーション実体は、markharness側では第4節・第6節の追記の通り実装済み（それぞれ`markharness changes annotate`、`markharness validate`）。「ChangeEventと実行結果の自動突合」も別紙「[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)」に基づき`markharness verify trace`/`markharness verify pending`として実装済み。`forked_from`運用（人間が実際に使うかどうかの運用面の検証）・`tools/`のリポジトリ内コミットは、MM側の運用課題であり markharness 自体のコード実装の話ではないため未解消のまま。また、本資料には無い項目として、markharness側は`git merge-base`による祖先探索・マージコミットの2親分岐判定を`markharness changes lineage --commit <sha>`という監査専用コマンドで実装した（設計書§3.2）。ただしこの判定結果は`changes/*.yaml`の主系譜へは自動反映されない。詳細はmarkharness側の`docs/テスト知識管理のGit-nativeモデル_統合版V2.md`§3.6を参照。
