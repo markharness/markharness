@@ -12,7 +12,7 @@
 markharness init
 ```
 
-**用途**: UC1〜UC8を支える物理ディレクトリ構成(論文 §3.5, 244-273行目)のうち、対象リポジトリ上に作成が必要な7ディレクトリを作成し、以降のコマンドが動作できる状態にする。
+**用途**: UC1〜UC8を支える物理ディレクトリ構成(論文 §3.5, 244-273行目)のうち、対象リポジトリ上に作成が必要な6ディレクトリを作成し、以降のコマンドが動作できる状態にする。
 
 | ディレクトリ  | 対応UC                                                              |
 | ------------- | ------------------------------------------------------------------- |
@@ -22,7 +22,6 @@ markharness init
 | `executions/` | UC4(マイルストーンをタグ付けする、実行結果の記録先)                 |
 | `changes/`    | UC5(ChangeEventを自動計算する)/ UC6(バックフィルを非同期実行する)   |
 | `schema/`     | UC7(idキャッシュを破棄・再構築する。フォーマット・正規化ルール定義) |
-| `tools/`      | UC2/UC5/UC6/UC7 で使う生成・検証スクリプト置き場                    |
 
 UC8(既存ツールからのインポート)は専用ディレクトリを持たず、変換結果を `knowledge/` に書き込む想定のため対象外。
 
@@ -35,10 +34,10 @@ UC8(既存ツールからのインポート)は専用ディレクトリを持た
 
 ```console
 $ markharness init
-initialized knowledge/, axes/, generated/, executions/, changes/, schema/, tools/ under /path/to/project
+initialized knowledge/, axes/, generated/, executions/, changes/, schema/ under /path/to/project
 
 $ markharness init
-initialized knowledge/, axes/, generated/, executions/, changes/, schema/, tools/ under /path/to/project
+initialized knowledge/, axes/, generated/, executions/, changes/, schema/ under /path/to/project
 ```
 
 **ユースケース対応**: どのUCにも明示的には現れないが、UC1〜UC8の全ユースケースを開始する前提条件を満たすための補助コマンド。

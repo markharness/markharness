@@ -92,7 +92,6 @@ changes/
 └── <milestone>.yaml   # マイルストーン間の derived_from(ChangeEvent、UC5 / UC6)
 
 schema/                 # フォーマット・正規化ルール定義(UC7)
-tools/                  # 生成・検証スクリプト(UC2 / UC5 / UC6 / UC7)
 
 docs/                  # 設計ドキュメント(論文・運用イメージ・生成アルゴリズム設計)
 ```

@@ -269,7 +269,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             };
             init::run_init(&root)?;
             println!(
-                "initialized knowledge/, axes/, generated/, executions/, changes/, schema/, tools/ under {}",
+                "initialized knowledge/, axes/, generated/, executions/, changes/, schema/ under {}",
                 root.display()
             );
             Ok(())
@@ -1325,6 +1325,6 @@ mod tests {
         assert!(target.join("executions").is_dir());
         assert!(target.join("changes").is_dir());
         assert!(target.join("schema").is_dir());
-        assert!(target.join("tools").is_dir());
+        assert!(!target.join("tools").exists());
     }
 }

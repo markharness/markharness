@@ -4,16 +4,15 @@ use std::path::Path;
 
 /// UC1〜UC8を支える物理ディレクトリ構成(論文 §3.5)。
 /// knowledge=UC1/UC1b, axes=UC1, generated=UC2/UC3, executions=UC4,
-/// changes=UC5/UC6, schema=UC7, tools=UC2/UC5/UC6/UC7。
+/// changes=UC5/UC6, schema=UC7。
 /// UC8(既存ツールからのインポート)は専用ディレクトリを持たず knowledge/ に書き込む。
-const SUBDIRS: [&str; 7] = [
+const SUBDIRS: [&str; 6] = [
     "knowledge",
     "axes",
     "generated",
     "executions",
     "changes",
     "schema",
-    "tools",
 ];
 
 /// `markharness init` が管理する .gitignore エントリ。

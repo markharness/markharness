@@ -266,8 +266,7 @@ repo/
 │       └── results.yml
 ├── changes/                     # ChangeEventログ(マイルストーン境界で自動生成)
 │   └── 2026-07-15_jump-height-adjusted.yml
-├── schema/                      # フォーマット定義(JSON Schema、正規化ルールを含む)
-└── tools/                       # 生成・検証スクリプト(id解決・系譜計算・バックフィル)
+└── schema/                      # フォーマット定義(JSON Schema、正規化ルールを含む)
 
 # 注：id解決キャッシュ(旧 generated/id-index.json)は非コミット化し、.gitignore対象とする(第3.3節)。
 ```
