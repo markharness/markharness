@@ -5,7 +5,7 @@ use std::io;
 use std::path::Path;
 
 use crate::generate;
-use crate::id_cache::{self, FeatureBlob};
+use crate::id_cache::{self, FeatureVersion};
 
 /// One detected Feature change between two milestones (§3.5 ChangeEvent).
 /// `change_type` is intentionally absent: per docs/cli-manual.md UC5, it is
@@ -16,13 +16,13 @@ pub struct ChangeEvent {
     pub feature_id: String,
     pub from_milestone: String,
     pub to_milestone: String,
-    pub from_blob: Option<String>,
-    pub to_blob: Option<String>,
+    pub from_tree_sha: Option<String>,
+    pub to_tree_sha: Option<String>,
     pub impacted_testcases: Vec<String>,
 }
 
-fn blob_map(blobs: Vec<FeatureBlob>) -> BTreeMap<String, String> {
-    blobs.into_iter().map(|b| (b.id, b.blob_sha)).collect()
+fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
+    versions.into_iter().map(|v| (v.id, v.tree_sha)).collect()
 }
 
 /// Maps each Feature id to the `case_id`s of testcases generated from it,
@@ -42,33 +42,36 @@ fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec
 }
 
 /// Computes `derived_from`-style change events between `from_milestone` and
-/// `to_milestone` (two git tags) by comparing each Feature's blob SHA at
-/// each tag (§3.2〜3.4 の簡易版; マイルストーン=引数のtag名をそのまま使用)。
+/// `to_milestone` (two git tags) by comparing each Feature's directory tree
+/// SHA at each tag (§3.2〜3.4 の簡易版; マイルストーン=引数のtag名をそのまま
+/// 使用)。Using the whole directory's tree SHA rather than just
+/// `feature.yml`'s blob SHA means Condition/Behavior/ExpectedResult changes
+/// are detected even when `feature.yml` itself is untouched.
 pub fn compute_changes(
     root: &Path,
     from_milestone: &str,
     to_milestone: &str,
     use_cache: bool,
 ) -> io::Result<Vec<ChangeEvent>> {
-    let from_blobs = blob_map(id_cache::resolve_feature_blobs(
+    let from_versions = tree_sha_map(id_cache::resolve_feature_versions(
         root,
         from_milestone,
         use_cache,
     )?);
-    let to_blobs = blob_map(id_cache::resolve_feature_blobs(
+    let to_versions = tree_sha_map(id_cache::resolve_feature_versions(
         root,
         to_milestone,
         use_cache,
     )?);
     let impacted = impacted_testcases_by_feature(root)?;
 
-    let all_ids: BTreeSet<&String> = from_blobs.keys().chain(to_blobs.keys()).collect();
+    let all_ids: BTreeSet<&String> = from_versions.keys().chain(to_versions.keys()).collect();
 
     let mut events = Vec::new();
     for feature_id in all_ids {
-        let from_blob = from_blobs.get(feature_id).cloned();
-        let to_blob = to_blobs.get(feature_id).cloned();
-        if from_blob == to_blob {
+        let from_tree_sha = from_versions.get(feature_id).cloned();
+        let to_tree_sha = to_versions.get(feature_id).cloned();
+        if from_tree_sha == to_tree_sha {
             continue;
         }
         events.push(ChangeEvent {
@@ -76,8 +79,8 @@ pub fn compute_changes(
             feature_id: feature_id.clone(),
             from_milestone: from_milestone.to_string(),
             to_milestone: to_milestone.to_string(),
-            from_blob,
-            to_blob,
+            from_tree_sha,
+            to_tree_sha,
             impacted_testcases: impacted.get(feature_id).cloned().unwrap_or_default(),
         });
     }
@@ -175,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_changed_event_with_impacted_testcases_when_feature_blob_differs() {
+    fn reports_changed_event_with_impacted_testcases_when_feature_tree_sha_differs() {
         let dir = init_repo();
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "v1", "m1");
@@ -189,10 +192,32 @@ mod tests {
         let event = &events[0];
         assert_eq!(event.feature_id, "player-jump");
         assert_eq!(event.event_id, "player-jump--m1--m2");
-        assert!(event.from_blob.is_some());
-        assert!(event.to_blob.is_some());
-        assert_ne!(event.from_blob, event.to_blob);
+        assert!(event.from_tree_sha.is_some());
+        assert!(event.to_tree_sha.is_some());
+        assert_ne!(event.from_tree_sha, event.to_tree_sha);
         assert_eq!(event.impacted_testcases, vec!["tc-ground-001".to_string()]);
+    }
+
+    #[test]
+    fn reports_changed_event_when_only_a_condition_file_changes_and_feature_yml_is_untouched() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        // Only the Condition's description changes; feature.yml is
+        // byte-for-byte identical between m1 and m2.
+        fs::write(
+            dir.path()
+                .join("knowledge/controls/player-jump/jump/ground/condition.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from a moving platform.\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "condition change", "m2");
+
+        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].feature_id, "player-jump");
     }
 
     #[test]
@@ -208,8 +233,8 @@ mod tests {
         let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].from_blob, None);
-        assert!(events[0].to_blob.is_some());
+        assert_eq!(events[0].from_tree_sha, None);
+        assert!(events[0].to_tree_sha.is_some());
     }
 
     #[test]
@@ -224,9 +249,27 @@ mod tests {
         let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
 
         assert_eq!(events.len(), 1);
-        assert!(events[0].from_blob.is_some());
-        assert_eq!(events[0].to_blob, None);
+        assert!(events[0].from_tree_sha.is_some());
+        assert_eq!(events[0].to_tree_sha, None);
         assert!(events[0].impacted_testcases.is_empty());
+    }
+
+    #[test]
+    fn serialize_changes_produces_valid_yaml() {
+        let events = vec![ChangeEvent {
+            event_id: "player-jump--m1--m2".to_string(),
+            feature_id: "player-jump".to_string(),
+            from_milestone: "m1".to_string(),
+            to_milestone: "m2".to_string(),
+            from_tree_sha: Some("aaa".to_string()),
+            to_tree_sha: Some("bbb".to_string()),
+            impacted_testcases: vec!["tc-ground-001".to_string()],
+        }];
+
+        let yaml = serialize_changes(&events);
+
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(parsed[0]["feature_id"].as_str(), Some("player-jump"));
     }
 
     #[test]
@@ -238,8 +281,8 @@ mod tests {
             feature_id: "player-jump".to_string(),
             from_milestone: "m1".to_string(),
             to_milestone: "m2".to_string(),
-            from_blob: Some("aaa".to_string()),
-            to_blob: Some("bbb".to_string()),
+            from_tree_sha: Some("aaa".to_string()),
+            to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
         }];
         fs::write(
@@ -260,23 +303,5 @@ mod tests {
         let read = read_changes(dir.path(), "m2").unwrap();
 
         assert!(read.is_empty());
-    }
-
-    #[test]
-    fn serialize_changes_produces_valid_yaml() {
-        let events = vec![ChangeEvent {
-            event_id: "player-jump--m1--m2".to_string(),
-            feature_id: "player-jump".to_string(),
-            from_milestone: "m1".to_string(),
-            to_milestone: "m2".to_string(),
-            from_blob: Some("aaa".to_string()),
-            to_blob: Some("bbb".to_string()),
-            impacted_testcases: vec!["tc-ground-001".to_string()],
-        }];
-
-        let yaml = serialize_changes(&events);
-
-        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(parsed[0]["feature_id"].as_str(), Some("player-jump"));
     }
 }

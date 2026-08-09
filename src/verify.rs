@@ -94,7 +94,7 @@ pub fn diff_generated_testcases(root: &Path) -> io::Result<Vec<DiffEntry>> {
     Ok(diffs)
 }
 
-/// Which ChangeEvent a `verified_feature_blobs` entry reflects (§3.1 Q1).
+/// Which ChangeEvent a `verified_feature_tree_shas` entry reflects (§3.1 Q1).
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct ReflectedChange {
     pub event_id: String,
@@ -103,11 +103,11 @@ pub struct ReflectedChange {
 }
 
 /// One Feature's trace result within a TestExecution (a TestCase can span
-/// more than one Feature per §2.1's map-shaped `verified_feature_blobs`).
+/// more than one Feature per §2.1's map-shaped `verified_feature_tree_shas`).
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct TraceEntry {
     pub feature_id: String,
-    /// `None` when no ChangeEvent with a matching `to_blob` exists in
+    /// `None` when no ChangeEvent with a matching `to_tree_sha` exists in
     /// `changes/` (e.g. `changes compute`/`backfill` hasn't been run for the
     /// milestone pair where this blob last changed).
     pub reflects_change: Option<ReflectedChange>,
@@ -124,7 +124,7 @@ pub struct TraceResult {
 #[derive(Debug)]
 pub enum TraceError {
     /// No `results.yml` record for this `case_id` at this milestone, or the
-    /// record predates `verified_feature_blobs` (no retroactive backfill,
+    /// record predates `verified_feature_tree_shas` (no retroactive backfill,
     /// per §6) and so has nothing to trace.
     NoVerifiedBlobs,
     Io(io::Error),
@@ -167,25 +167,25 @@ fn read_all_changes(root: &Path) -> io::Result<Vec<crate::changes::ChangeEvent>>
     Ok(all)
 }
 
-/// Q1 (§3.1): for each Feature a TestExecution's `verified_feature_blobs`
-/// names, finds the ChangeEvent whose `to_blob` matches the recorded blob
-/// SHA — i.e. which change this execution result reflects.
+/// Q1 (§3.1): for each Feature a TestExecution's `verified_feature_tree_shas`
+/// names, finds the ChangeEvent whose `to_tree_sha` matches the recorded
+/// tree SHA — i.e. which change this execution result reflects.
 pub fn trace(root: &Path, case_id: &str, milestone: &str) -> Result<TraceResult, TraceError> {
     let entries = read_results(root, milestone)?;
     let Some(entry) = entries.iter().rev().find(|e| e.case_id == case_id) else {
         return Err(TraceError::NoVerifiedBlobs);
     };
-    if entry.verified_feature_blobs.is_empty() {
+    if entry.verified_feature_tree_shas.is_empty() {
         return Err(TraceError::NoVerifiedBlobs);
     }
 
     let all_changes = read_all_changes(root)?;
 
     let mut trace_entries = Vec::new();
-    for (feature_id, blob_sha) in &entry.verified_feature_blobs {
+    for (feature_id, tree_sha) in &entry.verified_feature_tree_shas {
         let reflects_change = all_changes
             .iter()
-            .find(|e| &e.feature_id == feature_id && e.to_blob.as_deref() == Some(blob_sha))
+            .find(|e| &e.feature_id == feature_id && e.to_tree_sha.as_deref() == Some(tree_sha))
             .map(|e| ReflectedChange {
                 event_id: e.event_id.clone(),
                 from_milestone: e.from_milestone.clone(),
@@ -204,7 +204,7 @@ pub fn trace(root: &Path, case_id: &str, milestone: &str) -> Result<TraceResult,
 }
 
 /// One impacted TestCase not yet re-executed against the ChangeEvent's
-/// `to_blob` (§3.2/§3.3 pending: the target hasn't moved since the change).
+/// `to_tree_sha` (§3.2/§3.3 pending: the target hasn't moved since the change).
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct PendingEntry {
     pub case_id: String,
@@ -310,26 +310,27 @@ pub fn pending(
             continue;
         }
 
-        let current_blob = match current_milestone {
-            Some(m) => id_cache::resolve_feature_blobs(root, m, use_cache)?
+        let current_tree_sha = match current_milestone {
+            Some(m) => id_cache::resolve_feature_versions(root, m, use_cache)?
                 .into_iter()
-                .find(|b| b.id == event.feature_id)
-                .map(|b| b.blob_sha),
+                .find(|v| v.id == event.feature_id)
+                .map(|v| v.tree_sha),
             None => None,
         };
 
-        if current_blob == event.to_blob {
+        if current_tree_sha == event.to_tree_sha {
             report.pending.push(PendingEntry {
                 case_id,
                 feature_id: event.feature_id,
                 event_id: event.event_id,
             });
         } else {
-            let current_event = current_blob.as_ref().and_then(|current_blob| {
+            let current_event = current_tree_sha.as_ref().and_then(|current_tree_sha| {
                 all_changes
                     .iter()
                     .find(|e| {
-                        e.feature_id == event.feature_id && e.to_blob.as_ref() == Some(current_blob)
+                        e.feature_id == event.feature_id
+                            && e.to_tree_sha.as_ref() == Some(current_tree_sha)
                     })
                     .map(|e| ReflectedChange {
                         event_id: e.event_id.clone(),
@@ -361,7 +362,7 @@ fn was_reexecuted(
         let entries = read_results(root, milestone)?;
         if entries.iter().any(|e| {
             e.case_id == case_id
-                && e.verified_feature_blobs.get(&event.feature_id) == event.to_blob.as_ref()
+                && e.verified_feature_tree_shas.get(&event.feature_id) == event.to_tree_sha.as_ref()
         }) {
             return Ok(true);
         }
@@ -634,7 +635,7 @@ mod tests {
     /// Sets up a repo with two milestone tags (`test1`, `test2`) where
     /// `todo-edit`'s Feature blob changed between them, and writes
     /// `changes/test2.yaml` recording that change with `tc-edit-existing-todo-001`
-    /// as impacted. Returns the `to_blob` SHA actually produced.
+    /// as impacted. Returns the `to_tree_sha` SHA actually produced.
     fn init_repo_with_pending_change() -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q"]);
@@ -647,27 +648,27 @@ mod tests {
         write_feature(dir.path(), "v2");
         commit_and_tag_milestone(dir.path(), "test2", 2);
 
-        let to_blob = crate::id_cache::resolve_feature_blobs(dir.path(), "test2", false)
+        let to_tree_sha = crate::id_cache::resolve_feature_versions(dir.path(), "test2", false)
             .unwrap()
             .into_iter()
-            .find(|b| b.id == "todo-edit")
+            .find(|v| v.id == "todo-edit")
             .unwrap()
-            .blob_sha;
+            .tree_sha;
 
         write_changes(
             dir.path(),
             "test2",
             &format!(
-                "- event_id: todo-edit--test1--test2\n  feature_id: todo-edit\n  from_milestone: test1\n  to_milestone: test2\n  from_blob: null\n  to_blob: {to_blob}\n  impacted_testcases:\n  - tc-edit-existing-todo-001\n"
+                "- event_id: todo-edit--test1--test2\n  feature_id: todo-edit\n  from_milestone: test1\n  to_milestone: test2\n  from_tree_sha: null\n  to_tree_sha: {to_tree_sha}\n  impacted_testcases:\n  - tc-edit-existing-todo-001\n"
             ),
         );
 
-        (dir, to_blob)
+        (dir, to_tree_sha)
     }
 
     #[test]
     fn pending_reports_impacted_testcase_not_yet_reexecuted() {
-        let (dir, to_blob) = init_repo_with_pending_change();
+        let (dir, to_tree_sha) = init_repo_with_pending_change();
 
         let report = pending(dir.path(), None, false).unwrap();
 
@@ -680,17 +681,17 @@ mod tests {
             }]
         );
         assert!(report.stale.is_empty());
-        let _ = to_blob;
+        let _ = to_tree_sha;
     }
 
     #[test]
     fn pending_does_not_report_testcase_already_reexecuted_against_the_new_blob() {
-        let (dir, to_blob) = init_repo_with_pending_change();
+        let (dir, to_tree_sha) = init_repo_with_pending_change();
         write_results(
             dir.path(),
             "test2",
             &format!(
-                "- case_id: tc-edit-existing-todo-001\n  result: pass\n  executor: soreiyu52\n  executed_at: 2026-08-08T16:38:52Z\n  verified_feature_blobs:\n    todo-edit: {to_blob}\n"
+                "- case_id: tc-edit-existing-todo-001\n  result: pass\n  executor: soreiyu52\n  executed_at: 2026-08-08T16:38:52Z\n  verified_feature_tree_shas:\n    todo-edit: {to_tree_sha}\n"
             ),
         );
 
@@ -721,20 +722,20 @@ mod tests {
 
     #[test]
     fn pending_reports_stale_when_feature_changed_again_after_the_original_change() {
-        let (dir, blob2) = init_repo_with_pending_change();
+        let (dir, tree_sha2) = init_repo_with_pending_change();
         write_feature(dir.path(), "v3");
         commit_and_tag_milestone(dir.path(), "test3", 3);
-        let blob3 = crate::id_cache::resolve_feature_blobs(dir.path(), "test3", false)
+        let tree_sha3 = crate::id_cache::resolve_feature_versions(dir.path(), "test3", false)
             .unwrap()
             .into_iter()
-            .find(|b| b.id == "todo-edit")
+            .find(|v| v.id == "todo-edit")
             .unwrap()
-            .blob_sha;
+            .tree_sha;
         write_changes(
             dir.path(),
             "test3",
             &format!(
-                "- event_id: todo-edit--test2--test3\n  feature_id: todo-edit\n  from_milestone: test2\n  to_milestone: test3\n  from_blob: {blob2}\n  to_blob: {blob3}\n  impacted_testcases: []\n"
+                "- event_id: todo-edit--test2--test3\n  feature_id: todo-edit\n  from_milestone: test2\n  to_milestone: test3\n  from_tree_sha: {tree_sha2}\n  to_tree_sha: {tree_sha3}\n  impacted_testcases: []\n"
             ),
         );
 
@@ -762,12 +763,12 @@ mod tests {
         write_results(
             dir.path(),
             "test2",
-            "- case_id: tc-edit-existing-todo-001\n  result: pass\n  executor: soreiyu52\n  executed_at: 2026-08-08T16:38:52Z\n  verified_feature_blobs:\n    todo-edit: bbb\n",
+            "- case_id: tc-edit-existing-todo-001\n  result: pass\n  executor: soreiyu52\n  executed_at: 2026-08-08T16:38:52Z\n  verified_feature_tree_shas:\n    todo-edit: bbb\n",
         );
         write_changes(
             dir.path(),
             "test2",
-            "- event_id: todo-edit--test1--test2\n  feature_id: todo-edit\n  from_milestone: test1\n  to_milestone: test2\n  from_blob: aaa\n  to_blob: bbb\n  impacted_testcases:\n  - tc-edit-existing-todo-001\n",
+            "- event_id: todo-edit--test1--test2\n  feature_id: todo-edit\n  from_milestone: test1\n  to_milestone: test2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases:\n  - tc-edit-existing-todo-001\n",
         );
 
         let result = trace(dir.path(), "tc-edit-existing-todo-001", "test2").unwrap();
@@ -802,7 +803,7 @@ mod tests {
         write_results(
             dir.path(),
             "test2",
-            "- case_id: tc-edit-existing-todo-001\n  result: pass\n  executor: soreiyu52\n  executed_at: 2026-08-08T16:38:52Z\n  verified_feature_blobs:\n    todo-edit: bbb\n",
+            "- case_id: tc-edit-existing-todo-001\n  result: pass\n  executor: soreiyu52\n  executed_at: 2026-08-08T16:38:52Z\n  verified_feature_tree_shas:\n    todo-edit: bbb\n",
         );
 
         let result = trace(dir.path(), "tc-edit-existing-todo-001", "test2").unwrap();

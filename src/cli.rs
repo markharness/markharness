@@ -129,7 +129,7 @@ pub struct VerifyArgs {
 
 #[derive(Subcommand)]
 pub enum VerifySubcommand {
-    /// Q1: which ChangeEvent a TestExecution's verified_feature_blobs reflects
+    /// Q1: which ChangeEvent a TestExecution's verified_feature_tree_shas reflects
     Trace {
         /// The TestCase's case_id
         case_id: String,
@@ -586,7 +586,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
                 Err(verify::TraceError::NoVerifiedBlobs) => {
                     eprintln!(
-                        "error: no verified_feature_blobs recorded for case_id '{case_id}' at milestone '{milestone}'."
+                        "error: no verified_feature_tree_shas recorded for case_id '{case_id}' at milestone '{milestone}'."
                     );
                     std::process::exit(2);
                 }

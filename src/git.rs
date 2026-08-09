@@ -2,12 +2,21 @@ use std::io;
 use std::path::Path;
 use std::process::Command;
 
-/// One entry from `git ls-tree -r`: a blob's path (relative to the repo
-/// root) and its content-addressed SHA.
+/// Whether a `TreeEntry` is a file (blob) or a directory (tree) object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectKind {
+    Blob,
+    Tree,
+}
+
+/// One entry from `git ls-tree -r -t`: an object's path (relative to the
+/// repo root), its content-addressed SHA, and whether it's a file or a
+/// directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeEntry {
     pub path: String,
-    pub blob_sha: String,
+    pub sha: String,
+    pub kind: ObjectKind,
 }
 
 fn run_git(root: &Path, args: &[&str]) -> io::Result<String> {
@@ -26,16 +35,20 @@ fn run_git(root: &Path, args: &[&str]) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Recursively lists blobs under `path_in_repo` (e.g. `"knowledge"`) as they
-/// existed at `git_ref` (a tag or other revision), via `git ls-tree -r`.
-/// Simplified id resolution (§3.3 の非コミットキャッシュではなく、毎回の直接走査):
-/// callers derive an id from `TreeEntry::path` themselves.
+/// Recursively lists blobs *and* directories (tree objects) under
+/// `path_in_repo` (e.g. `"knowledge"`) as they existed at `git_ref` (a tag or
+/// other revision), via `git ls-tree -r -t`. Simplified id resolution (§3.3
+/// の非コミットキャッシュではなく、毎回の直接走査): callers derive an id
+/// from `TreeEntry::path` themselves. Including tree entries lets callers
+/// look up a directory's own content-addressed SHA (e.g. a Feature's whole
+/// subtree) in the same single `git` invocation, rather than one process per
+/// directory.
 pub fn ls_tree_recursive(
     root: &Path,
     git_ref: &str,
     path_in_repo: &str,
 ) -> io::Result<Vec<TreeEntry>> {
-    let raw = run_git(root, &["ls-tree", "-r", git_ref, "--", path_in_repo])?;
+    let raw = run_git(root, &["ls-tree", "-r", "-t", git_ref, "--", path_in_repo])?;
     let mut entries = Vec::new();
     for line in raw.lines() {
         // format: "<mode> <type> <sha>\t<path>"
@@ -46,13 +59,16 @@ pub fn ls_tree_recursive(
         let _mode = fields.next();
         let obj_type = fields.next();
         let sha = fields.next();
-        if obj_type != Some("blob") {
-            continue;
-        }
+        let kind = match obj_type {
+            Some("blob") => ObjectKind::Blob,
+            Some("tree") => ObjectKind::Tree,
+            _ => continue,
+        };
         if let Some(sha) = sha {
             entries.push(TreeEntry {
                 path: path.to_string(),
-                blob_sha: sha.to_string(),
+                sha: sha.to_string(),
+                kind,
             });
         }
     }
@@ -132,10 +148,35 @@ mod tests {
         run_git(dir.path(), &["tag", "m1"]).unwrap();
 
         let entries = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
+        let blobs: Vec<_> = entries
+            .iter()
+            .filter(|e| e.kind == ObjectKind::Blob)
+            .collect();
 
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].path, "knowledge/req/feat/feature.yml");
-        assert_eq!(entries[0].blob_sha.len(), 40);
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(blobs[0].path, "knowledge/req/feat/feature.yml");
+        assert_eq!(blobs[0].sha.len(), 40);
+    }
+
+    #[test]
+    fn ls_tree_recursive_also_lists_tree_entries_for_directories() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path().join("knowledge/req/feat/feature.yml"),
+            "id: feat\n",
+        )
+        .unwrap();
+        commit_all(dir.path(), "add feature");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+
+        let entries = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
+        let feat_dir = entries
+            .iter()
+            .find(|e| e.kind == ObjectKind::Tree && e.path == "knowledge/req/feat")
+            .expect("expected a tree entry for knowledge/req/feat");
+
+        assert_eq!(feat_dir.sha.len(), 40);
     }
 
     #[test]
@@ -151,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn blob_sha_changes_when_file_content_changes_across_tags() {
+    fn blob_entry_sha_changes_when_file_content_changes_across_tags() {
         let dir = init_repo();
         fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
         fs::write(
@@ -172,8 +213,16 @@ mod tests {
 
         let at_m1 = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
         let at_m2 = ls_tree_recursive(dir.path(), "m2", "knowledge").unwrap();
+        let blob_at = |entries: &[TreeEntry]| {
+            entries
+                .iter()
+                .find(|e| e.kind == ObjectKind::Blob)
+                .unwrap()
+                .sha
+                .clone()
+        };
 
-        assert_ne!(at_m1[0].blob_sha, at_m2[0].blob_sha);
+        assert_ne!(blob_at(&at_m1), blob_at(&at_m2));
     }
 
     #[test]

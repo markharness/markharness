@@ -69,12 +69,13 @@ pub struct ExecutionEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub executed_at: String,
-    /// Feature id -> blob SHA at `milestone`, for each Feature the TestCase's
-    /// `generated_from.feature` names (§2.1 of the ChangeEvent連動仕様).
-    /// Filled in automatically by `record_execution`; absent on records made
-    /// before this field existed (no retroactive backfill, per §6).
+    /// Feature id -> directory tree SHA at `milestone`, for each Feature the
+    /// TestCase's `generated_from.feature` names (§2.1 of the ChangeEvent連動
+    /// 仕様). Filled in automatically by `record_execution`; absent on
+    /// records made before this field existed (no retroactive backfill, per
+    /// §6).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub verified_feature_blobs: BTreeMap<String, String>,
+    pub verified_feature_tree_shas: BTreeMap<String, String>,
 }
 
 /// Days since the Unix epoch (1970-01-01) to a (year, month, day) civil
@@ -133,19 +134,19 @@ fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<Min
     Ok(None)
 }
 
-/// Resolves the blob SHA of `feature_id` at `milestone`, or `None` if the
-/// Feature isn't found at that milestone tag (kept out of the recorded map
-/// rather than failing the whole `execution record`).
-fn verified_feature_blob(
+/// Resolves the directory tree SHA of `feature_id` at `milestone`, or `None`
+/// if the Feature isn't found at that milestone tag (kept out of the
+/// recorded map rather than failing the whole `execution record`).
+fn verified_feature_tree_sha(
     root: &Path,
     milestone: &str,
     feature_id: &str,
 ) -> io::Result<Option<String>> {
-    let blobs = id_cache::resolve_feature_blobs(root, milestone, true)?;
-    Ok(blobs
+    let versions = id_cache::resolve_feature_versions(root, milestone, true)?;
+    Ok(versions
         .into_iter()
-        .find(|b| b.id == feature_id)
-        .map(|b| b.blob_sha))
+        .find(|v| v.id == feature_id)
+        .map(|v| v.tree_sha))
 }
 
 fn read_existing_entries(results_path: &Path) -> io::Result<Vec<ExecutionEntry>> {
@@ -169,11 +170,11 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordErro
         return Err(RecordError::CaseNotFound);
     };
 
-    let mut verified_feature_blobs = BTreeMap::new();
+    let mut verified_feature_tree_shas = BTreeMap::new();
     if let Some(sha) =
-        verified_feature_blob(root, args.milestone, &testcase.generated_from.feature)?
+        verified_feature_tree_sha(root, args.milestone, &testcase.generated_from.feature)?
     {
-        verified_feature_blobs.insert(testcase.generated_from.feature, sha);
+        verified_feature_tree_shas.insert(testcase.generated_from.feature, sha);
     }
 
     let results_path = root
@@ -187,7 +188,7 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordErro
         executor: args.executor.to_string(),
         note: args.note.map(|n| n.to_string()),
         executed_at: iso8601_utc_now(),
-        verified_feature_blobs,
+        verified_feature_tree_shas,
     });
 
     let content = serde_yaml_ng::to_string(&entries)
@@ -297,16 +298,16 @@ mod tests {
     }
 
     #[test]
-    fn record_execution_populates_verified_feature_blobs_for_the_testcases_feature() {
+    fn record_execution_populates_verified_feature_tree_shas_for_the_testcases_feature() {
         let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
         write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
-        let expected_blobs =
-            crate::id_cache::resolve_feature_blobs(dir.path(), "m1", false).unwrap();
-        let expected_sha = expected_blobs
+        let expected_versions =
+            crate::id_cache::resolve_feature_versions(dir.path(), "m1", false).unwrap();
+        let expected_sha = expected_versions
             .iter()
-            .find(|b| b.id == "player-jump")
+            .find(|v| v.id == "player-jump")
             .unwrap()
-            .blob_sha
+            .tree_sha
             .clone();
 
         record_execution(
@@ -324,7 +325,7 @@ mod tests {
         let content = fs::read_to_string(dir.path().join("executions/m1/results.yml")).unwrap();
         let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
         assert_eq!(
-            entries[0].verified_feature_blobs.get("player-jump"),
+            entries[0].verified_feature_tree_shas.get("player-jump"),
             Some(&expected_sha)
         );
     }
