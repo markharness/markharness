@@ -66,3 +66,15 @@ pub struct TrueDivergence {
 
 `cargo test`(230+件、全パス)・`cargo clippy --all-targets -- -D warnings`(警告0件)・`cargo fmt --check`を確認済み。複数マージ対応・ドキュメント整合ともに完了。
 
+## 第三者レビュー(2026-08-11、コードレビューのみ・Rustツールチェイン未導入のサンドボックスのため`cargo`は未実行)
+
+`src/changes.rs`・`tests/changes_cli.rs`・`schema/*.json`・`src/knowledge.rs`・論文本文を通読して確認した結果:
+
+- `TrueDivergence`構造体・`find_merge_commits_in_interval`(`--reverse`で古い順)・`compute_changes`の複数マージ集約ループはFollow-upの確定設計通りに実装されている。2マージが同一区間にあるケースを再現する専用テスト(`changes_compute_records_a_true_divergence_entry_for_each_merge_when_the_interval_contains_two_merges`)もあり、`merge_commit:`が2件出力されることを確認している。
+- `related_events`(項目7)・`Requirement.source`/`related_issues`(項目8)・`ExpectedResult.generated_by`/`verified_by`(項目9)は、いずれも縮小版として合意した設計(priority/status・confidence_score・model・prompt_versionを含めない)通りに実装されている。`generated_by`省略=「不明」という意味論もdocコメント・JSON Schemaの`description`双方に明記されている。
+- 論文§8 Conclusionに、今回の一般化より前の制約(「`lineage`の判定結果が主系譜に自動反映されない」「主系譜統合が実装課題として残っている」)を指したままの記述が2箇所残っていた。§3.2・§3.6は更新済みだったが§8がFollow-upの更新対象リストに入っていなかったための漏れ。実態に合わせて修正し、Changelogに追記した(本チェックリスト作成者ではなく第三者レビューでの発見)。
+- 副次的に、§3.7の「`changes/<from>-<to>.yaml`」という誤ったファイル名例(§3.5の実際の命名規則`changes/<to_milestone>.yaml`と食い違う、今回の変更以前からの既存の誤り)も発見したため合わせて修正した。
+- 軽微な指摘(未修正、対応不要と判断すれば見送りで良い)：`markharness changes annotate`の`--type`が必須引数のため、`related_events`だけを追記したい場合でも`--type`の再指定を強制される。`related_events`は`change_type`と独立した加算的フィールドという設計意図(コード内docコメント)と、CLIの必須引数制約がやや噛み合っていない。
+
+このサンドボックスにRustツールチェインが無く`cargo test`等を再実行できなかったため、上記はコードリーディングによる検証である点に留意。
+

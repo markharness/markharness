@@ -238,7 +238,7 @@ flowchart TB
 
 `ChangeEvent`は、マイルストーン境界で`derived_from`の差分が検出されたFeatureについて自動生成する。変更種別(`change_type`：仕様変更／バグ修正等)のみ、人間がコミットメッセージまたはPRテンプレートで入力する。
 
-**実装状況**：CLI実装の`ChangeEvent`構造体は`change_type: Option<ChangeType>`フィールドを持つ(`event_id` / `feature_id` / `from_milestone` / `to_milestone` / `from_tree_sha` / `to_tree_sha` / `impacted_testcases` / `change_type`)。`ChangeType`は`SpecChange` / `BugFix` / `Refactor` / `Other`の固定enum(snake_caseでシリアライズ)であり、コミットメッセージ・PRテンプレートからの自動抽出ではなく、`markharness changes compute`実行後に人間が`markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other>`を実行して`changes/*.yaml`を書き換える方式で入力する(設計意図通り、計算では埋めない)。`annotate`はevent_idを`changes/`配下の全ファイルから横断的に検索するため、呼び出し側がどのマイルストーン区間のファイルかを事前に知る必要はない。
+**実装状況**：CLI実装の`ChangeEvent`構造体は`change_type: Option<ChangeType>`フィールドを持つ(`event_id` / `feature_id` / `from_milestone` / `to_milestone` / `from_tree_sha` / `to_tree_sha` / `impacted_testcases` / `change_type` / `true_divergences` / `related_events`。後2者の詳細は本節末尾・第3.2節を参照)。`ChangeType`は`SpecChange` / `BugFix` / `Refactor` / `Other`の固定enum(snake_caseでシリアライズ)であり、コミットメッセージ・PRテンプレートからの自動抽出ではなく、`markharness changes compute`実行後に人間が`markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other>`を実行して`changes/*.yaml`を書き換える方式で入力する(設計意図通り、計算では埋めない)。`annotate`はevent_idを`changes/`配下の全ファイルから横断的に検索するため、呼び出し側がどのマイルストーン区間のファイルかを事前に知る必要はない。
 
 **related_events(2026-08追記、製品化提案)**：`ChangeEvent`は`related_events: Vec<String>`(他の`event_id`の配列、`#[serde(default)]`で加算的)も持つ。複数のFeatureにまたがる変更が実は同じ論理変更の一部だった、という関連付けを人間が事後的に記録できるフィールドで、`markharness changes annotate <event_id> --related <他のevent_id>...`(複数指定可)で追記する。`ChangeEvent`がFeature単位・自動計算という原子性を保つ(§3.2)ための設計上の選択であり、複合ChangeEventのような自動計算ロジック自体の変更は行わない。
 
@@ -329,7 +329,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 第3.5節・図4は`ChangeEvent`から影響`TESTCASE`集合を特定するところまでを扱うが、「その後、実際に再実行されたか」を自動判定する仕組みは当初、第7章(Future Work)相当の未確定領域だった。CLI実装ではこれを`markharness verify trace` / `markharness verify pending`として実装済みであり、本節でその設計を要約する(詳細仕様は別紙[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)を参照)。
 
-**解決する問い**：現行実装では`executions/<milestone>/results.yml`(`case_id` / `result` / `executor` / `executed_at`)と、`changes/<from>-<to>.yaml`の`impacted_testcases`との突き合わせを人間が目視で行っていた。以下の2つの問いを自動化する。
+**解決する問い**：現行実装では`executions/<milestone>/results.yml`(`case_id` / `result` / `executor` / `executed_at`)と、`changes/<to_milestone>.yaml`(第3.5節の通り、ファイル名は区間の`to_milestone`のみ)の`impacted_testcases`との突き合わせを人間が目視で行っていた。以下の2つの問いを自動化する。
 
 - **Q1(遡及)**：あるTestExecutionの結果は、Featureのどの変更を反映した状態に対する実行か。
 - **Q2(前方)**：ChangeEventで`impacted_testcases`に挙がったTestCaseのうち、まだ再実行されていないものはどれか。
@@ -471,11 +471,11 @@ flowchart TB
 
 本研究は、Gitのコンテンツアドレス(tree SHA)・非コミットのid解決キャッシュ・コミットグラフの祖先探索(`git merge-base`)を組み合わせ、ブランチ運用に依存せずマイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。既存TMS・素朴なGit運用のいずれも、複数世代にわたるテスト知識の派生関係を第一級のクエリ対象として扱わない(第2章・第2.4節)という構造的な欠落に対し、本モデルはGit自身のオブジェクトモデルを土台にした版履歴DAGで応える設計提案である。
 
-この設計は`markharness`(Rust実装、本リポジトリ)としてリファレンス実装され、`changes compute`によるマイルストーン境界の版履歴自動計算、`changes lineage`による`git merge-base`ベースの分岐監査、`verify trace`/`verify pending`による実行結果との自動突合(第3.7節)を含む中核機能が動作することを確認した。第3.6節にまとめた通り、設計から意図的に簡略化した箇所(`lineage`の判定結果が主系譜に自動反映されない等)と、未実装のまま残した箇所(既存TMSからのインポータ)がある。
+この設計は`markharness`(Rust実装、本リポジトリ)としてリファレンス実装され、`changes compute`によるマイルストーン境界の版履歴自動計算(区間内の任意の位置で発生した全マージへの`lineage`統合を含む、第3.2節「統合(2026-08追記)」)、`changes lineage`による`git merge-base`ベースの分岐監査、`verify trace`/`verify pending`による実行結果との自動突合(第3.7節)を含む中核機能が動作することを確認した。第3.6節にまとめた通り、設計から意図的に簡略化した箇所(id解決キャッシュのバージョン改訂運用が未検証等)と、未実装のまま残した箇所(既存TMSからのインポータ)がある。
 
 **本研究の現時点での性質**：本ドラフトは、RQ1(「明示的な版履歴を持つモデルは、複数世代にわたる変更影響識別タスクにおいて既存の複合運用より正答率・所要時間を改善するか」)を検証する**設計提案とリファレンス実装のレポート**であり、第5章に計画した被験者実験による実証的評価は本ドラフト時点では未実施である。したがって、RQ1に対する肯定的な結論を本ドラフトでは主張しない。第3章で述べたモデル構造(版履歴の第一級化)が、既存運用にはない情報(過去世代からの派生関係)をテスターに提供しうるという設計上の期待は成り立つが、これが実際の正答率・所要時間の改善に結びつくかどうかは、第5章の評価計画に沿った被験者実験を経て初めて判断できる。
 
-**Future Workとしての実証**：RQ1の被験者実験による検証は、本研究の直接の続編として位置づける(第7章)。第5章の評価計画(タスク層別化・正解データ構築・対照群の統合)は実験開始前の事前登録内容として確定させてあり、次段階はこの計画に沿った実験の実施と結果の報告である。あわせて、`changes lineage`の主系譜統合(第3.2節・第3.6節)、id解決キャッシュのバージョン改訂運用の実証(第3.3節)、大規模リポジトリでのバックフィル性能実測(第4章)も、モデル自体の評価とは独立に取り組むべき実装課題として残っている。
+**Future Workとしての実証**：RQ1の被験者実験による検証は、本研究の直接の続編として位置づける(第7章)。第5章の評価計画(タスク層別化・正解データ構築・対照群の統合)は実験開始前の事前登録内容として確定させてあり、次段階はこの計画に沿った実験の実施と結果の報告である。あわせて、id解決キャッシュのバージョン改訂運用の実証(第3.3節)、大規模リポジトリでのバックフィル性能実測(第4章)も、モデル自体の評価とは独立に取り組むべき実装課題として残っている(`changes lineage`の主系譜統合は第3.2節「統合(2026-08追記)」の通り実装済みのため、本項からは除外した)。
 
 ---
 
@@ -539,6 +539,7 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない(詳細は`CLAUDE.md`の運用ルールを参照)。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
 
+- **2026-08-11(2)**：レビューで発覚した記述の食い違いを修正。§8 Conclusionに残っていた「`lineage`の判定結果が主系譜に自動反映されない」「`changes lineage`の主系譜統合...が実装課題として残っている」という2箇所の記述(§3.2「統合(2026-08追記)」で既に解消済みの制約を指したまま更新されていなかった)を実態に合わせて修正。§3.5のChangeEventフィールド列挙に`true_divergences`/`related_events`を追加。§3.7の`changes/<from>-<to>.yaml`という誤った命名例を実装通りの`changes/<to_milestone>.yaml`に修正(§3.5の命名規則と整合させた、今回の一連の変更とは無関係の既存の誤り)。
 - **2026-08-11**：改善プロンプト項目2(`changes compute`のlineage統合をマイルストーン区間内の全マージへ一般化、`true_divergences`フィールドへ改名)・項目3(分岐・マージ検証シナリオの実地検証、§8関連)・項目7(`ChangeEvent.related_events`追加)・項目8(`Requirement.source`/`related_issues`追加)・項目9(`ExpectedResult.generated_by`/`verified_by`追加)を反映。§3.2・§3.5・§3.6・§6・§7を更新。
 - **2026-08-10**：RQ1未実証への対応(論文の位置づけを「設計提案＋リファレンス実装のレポート」に修正、第8章Conclusion整備)、`verify trace`/`verify pending`を新設§3.7として反映、`changes lineage`の部分統合(`to_milestone`が直接マージコミットの場合のみ)を反映、ファイル名を`統合版V2.md`から`統合版.md`へ正式化(内容変更なし)、未実装だった5項目(idパス非依存化・キャッシュキー内容アドレス化・`change_type`・schema検証・merge-base系譜監査)の実装を反映。
 - **2026-08-09**：論文を当時のmarkharness実装の状態に合わせて修正。
