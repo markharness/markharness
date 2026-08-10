@@ -11,6 +11,7 @@
 - **TDD** — `src/` 配下のコードは Red-Green-Refactor で開発する。テストなしのプロダクションコードは書かない。詳細: [tdd-workflow](./.github/instructions/tdd-workflow.instructions.md)
 - **シークレット保護** — 認証情報はワークスペース外(PROJECT.md 定義のディレクトリ)に保存。値の表示・読み込み・ハードコード禁止。詳細: [security](./.github/instructions/security.instructions.md)
 - **破壊的コマンドの事前確認・事後復旧** — `git reset --hard` / `rm -rf` だけでなく `tauri init --force` のような他ツールの force 上書き系コマンドも含め、実行前に必ずユーザーに確認し、実行後に問題が起きた場合は reflog 等で復旧を試みる。詳細: [destructive-command-safety](./.github/instructions/destructive-command-safety.instructions.md)
+- **論文(`docs/テスト知識管理のGit-nativeモデル_統合版.md`)の変更履歴運用** — 記述内容に実質的な変更(追加・修正・削除)を加えたら、末尾の「変更履歴(Changelog)」セクションに追記する。参照リンクの張り替え・表記統一など内容に実質的な変更を伴わない編集では追記しない。同様の理由で、内容に実質的な変更がない場合はファイル名・見出しへのバージョン番号(V2等)の付与も行わない(過去に`統合版V2.md`というファイル名運用があったが、実質的な差分がないまま番号だけが積み上がる問題があったため廃止した)。
 
 ## 標準コマンド
 
