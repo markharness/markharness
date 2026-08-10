@@ -7,6 +7,10 @@ pub struct Requirement {
     pub axis: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub related_issues: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -206,6 +210,8 @@ mod tests {
             label: "account-management".to_string(),
             axis: vec!["security".to_string()],
             description: None,
+            source: None,
+            related_issues: Vec::new(),
         };
 
         let yaml = serialize_requirement(&requirement);
@@ -223,6 +229,8 @@ mod tests {
             label: "アカウント管理".to_string(),
             axis: vec!["security".to_string()],
             description: Some("Account related requirements.".to_string()),
+            source: None,
+            related_issues: Vec::new(),
         };
 
         let yaml = serialize_requirement(&requirement);

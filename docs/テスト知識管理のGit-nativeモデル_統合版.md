@@ -111,7 +111,7 @@ TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン
   - `derived_from`：同一Featureの版履歴。Gitのtree SHAと祖先探索から、マイルストーン境界で導出する(3.2〜3.4節、本モデルの核心)。
   - `forked_from`：異なるFeature間の概念的派生(例：double-jumpがground-jumpの仕様を土台に設計された、という設計上の依存関係)。Git履歴には現れないドメイン知識であり、手動記述が必須。実装では`feature.yml`のfront matterの任意フィールドとして提供済み(第3.6節)。
 
-**実装注記**：CLI実装は`REQUIREMENT`を`requirement.yml`として明示ファイル化し、`knowledge/<requirement>/<feature>/...`という階層でFeatureをその直下に置く(第3.5節のディレクトリ構造も参照)。`feature.yml`は親を`requirement: <requirement_id>`で参照する。
+**実装注記**：CLI実装は`REQUIREMENT`を`requirement.yml`として明示ファイル化し、`knowledge/<requirement>/<feature>/...`という階層でFeatureをその直下に置く(第3.5節のディレクトリ構造も参照)。`feature.yml`は親を`requirement: <requirement_id>`で参照する。`requirement.yml`は`source`(要件の出所、任意)・`related_issues`(外部issueトラッカーへの参照配列、任意)も持てる(製品化提案、論文本文には明記なし)。両フィールドとも人間が手動で記入する参照情報であり、これを読んで検証・生成を行うロジックは実装していない。
 
 #### ER図(Mermaid)
 
@@ -317,7 +317,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 | 分類 | 内容 |
 |---|---|
-| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
+| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
 | 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録には遡及適用せず、`executions/*/results.yml`用のJSON Schemaも未整備(3.7節) |
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |

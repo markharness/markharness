@@ -84,6 +84,8 @@ pub fn apply_draft(
                 .unwrap_or_else(|| draft.requirement.id.clone()),
             axis: draft.requirement.axis.clone().unwrap_or_default(),
             description: draft.requirement.description.clone(),
+            source: None,
+            related_issues: Vec::new(),
         };
         pending.push((
             requirement_path,

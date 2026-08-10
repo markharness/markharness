@@ -155,6 +155,8 @@ pub fn run_add<R: BufRead, W: Write>(
             label: requirement_label,
             axis,
             description: None,
+            source: None,
+            related_issues: Vec::new(),
         };
         fs::write(&requirement_path, serialize_requirement(&requirement))?;
     }

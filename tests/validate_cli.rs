@@ -66,6 +66,45 @@ fn validate_exits_zero_and_reports_ok_for_a_valid_tree() {
 }
 
 #[test]
+fn validate_accepts_a_requirement_with_source_and_related_issues() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init_output.status.success());
+    write_valid_tree(dir.path());
+    std::fs::write(
+        dir.path().join("knowledge/controls/requirement.yml"),
+        "id: controls\nlabel: controls\naxis: [gameplay]\nsource: PRD-42\nrelated_issues: [JIRA-123, JIRA-456]\n",
+    )
+    .unwrap();
+
+    let output = run(&["validate", "--dir", dir.path().to_str().unwrap()]);
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn validate_rejects_a_requirement_with_a_non_string_related_issues_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init_output.status.success());
+    write_valid_tree(dir.path());
+    std::fs::write(
+        dir.path().join("knowledge/controls/requirement.yml"),
+        "id: controls\nlabel: controls\naxis: [gameplay]\nrelated_issues: [123]\n",
+    )
+    .unwrap();
+
+    let output = run(&["validate", "--dir", dir.path().to_str().unwrap()]);
+
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
 fn validate_exits_one_and_lists_issues_for_an_invalid_feature() {
     let dir = tempfile::tempdir().unwrap();
     let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);

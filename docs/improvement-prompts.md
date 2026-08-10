@@ -181,6 +181,8 @@ TDDで以下を実装してください:
 
 ## 8. 【優先度: 低】Requirementに source / related_issues(任意)を追加
 
+**状況(2026-08時点)**：完了。`schema/requirement.schema.json`に`source`(string)・`related_issues`(array of string)を`additionalProperties: false`を維持したまま追加し、`src/knowledge.rs`の`Requirement`構造体にも対応するフィールドを追加した(`markharness knowledge add`の対話フローへの入力ステップ追加は見送り、必要なら手動でYAMLに追記する運用)。論文§3.1・§3.6に製品化提案として追記した。
+
 ```
 docs/review-data-model-improvement-proposals.md の5.4節を踏まえた対応です。
 
