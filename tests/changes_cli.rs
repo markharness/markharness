@@ -122,6 +122,73 @@ fn changes_annotate_exits_three_when_event_id_does_not_exist() {
 }
 
 #[test]
+fn changes_annotate_related_sets_related_events_on_the_matching_event() {
+    let dir = init_project_with_two_milestones();
+
+    write_feature(dir.path(), "v3");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "v3"]);
+    run_git(dir.path(), &["tag", "m3"]);
+    let output = run(&[
+        "changes",
+        "compute",
+        "m2",
+        "m3",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--no-cache",
+    ]);
+    assert!(output.status.success());
+
+    let output = run(&[
+        "changes",
+        "annotate",
+        "player-jump--m2--m3",
+        "--type",
+        "spec-change",
+        "--related",
+        "player-jump--m1--m2",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "changes annotate --related failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yaml = std::fs::read_to_string(dir.path().join("changes/m3.yaml")).unwrap();
+    assert!(
+        yaml.contains("related_events:\n  - player-jump--m1--m2"),
+        "expected related_events in: {yaml}"
+    );
+}
+
+#[test]
+fn changes_annotate_related_exits_three_when_a_related_event_id_does_not_exist() {
+    let dir = init_project_with_two_milestones();
+
+    let output = run(&[
+        "changes",
+        "annotate",
+        "player-jump--m1--m2",
+        "--type",
+        "spec-change",
+        "--related",
+        "no-such-event",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no-such-event"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
 fn changes_compute_records_both_parent_tree_shas_when_to_milestone_is_a_true_divergence_merge() {
     let dir = tempfile::tempdir().unwrap();
     let output = run(&["init", "--dir", dir.path().to_str().unwrap()]);

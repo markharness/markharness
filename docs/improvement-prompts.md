@@ -148,6 +148,8 @@ docs/テスト知識管理のGit-nativeモデル_統合版.md のV1とV2（mh-sa
 
 ## 7. 【優先度: 中】ChangeEventに related_events(任意・人手記入)を追加
 
+**状況(2026-08時点)**：完了。`ChangeEvent`に`related_events: Vec<String>`(`#[serde(default)]`)を追加し、`markharness changes annotate --related <event_id>`(複数指定可)で追記できるようにした(`src/changes.rs`・`src/cli.rs`)。存在しない`event_id`を指定した場合は`AnnotateError::NotFound`(該当id付き)でエラーになる。論文§3.5に製品化提案として追記した。
+
 ```
 docs/review-data-model-improvement-proposals.md の5.3節を踏まえた対応です。
 

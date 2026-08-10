@@ -45,6 +45,13 @@ pub struct ChangeEvent {
     /// `from_tree_sha`/`to_tree_sha`.
     #[serde(default)]
     pub true_divergences: Vec<TrueDivergence>,
+    /// `event_id`s of other `ChangeEvent`s that a human has recorded as
+    /// part of the same logical change (§3.5). Purely additive and
+    /// human-populated via `markharness changes annotate --related`;
+    /// doesn't affect the per-Feature automatic computation in
+    /// `compute_changes`.
+    #[serde(default)]
+    pub related_events: Vec<String>,
 }
 
 /// A single true-divergence merge recorded against a `ChangeEvent`: the
@@ -222,6 +229,7 @@ pub fn compute_changes(
             impacted_testcases: impacted.get(feature_id).cloned().unwrap_or_default(),
             change_type: None,
             true_divergences,
+            related_events: Vec::new(),
         });
     }
 
@@ -244,12 +252,14 @@ pub fn read_changes(root: &Path, milestone: &str) -> io::Result<Vec<ChangeEvent>
     serde_yaml_ng::from_str(&content).map_err(io::Error::other)
 }
 
-/// Why `markharness changes annotate <event_id> --type <value>` failed to
-/// set a `change_type`.
+/// Why `markharness changes annotate` failed to set a `change_type` or
+/// `related_events`.
 #[derive(Debug)]
 pub enum AnnotateError {
-    /// No event with this `event_id` exists under `changes/`.
-    NotFound,
+    /// No event with this `event_id` exists under `changes/`. Carries the
+    /// offending id: for `annotate_related_events` this may be either the
+    /// target `event_id` or one of the `--related` ids.
+    NotFound(String),
     Io(io::Error),
 }
 
@@ -289,7 +299,58 @@ pub fn annotate_change_type(
         return Ok(());
     }
 
-    Err(AnnotateError::NotFound)
+    Err(AnnotateError::NotFound(event_id.to_string()))
+}
+
+/// Appends `related_ids` to `related_events` on the `ChangeEvent`
+/// identified by `event_id` (§3.5: purely additive, human-recorded
+/// cross-references between ChangeEvents; doesn't affect the automatic
+/// per-Feature computation). Searches every `changes/*.yaml` file like
+/// `annotate_change_type`. Every id in `related_ids` must itself exist as
+/// an `event_id` somewhere under `changes/`, checked up front so a partial
+/// write never happens because of a typo'd `--related` id.
+pub fn annotate_related_events(
+    root: &Path,
+    event_id: &str,
+    related_ids: &[String],
+) -> Result<(), AnnotateError> {
+    let changes_dir = root.join("changes");
+    let mut entries: Vec<PathBuf> = fs::read_dir(&changes_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "yaml"))
+        .collect();
+    entries.sort();
+
+    let mut files = Vec::new();
+    let mut known_ids: BTreeSet<String> = BTreeSet::new();
+    for path in entries {
+        let content = fs::read_to_string(&path)?;
+        let events: Vec<ChangeEvent> =
+            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        known_ids.extend(events.iter().map(|e| e.event_id.clone()));
+        files.push((path, events));
+    }
+
+    if !known_ids.contains(event_id) {
+        return Err(AnnotateError::NotFound(event_id.to_string()));
+    }
+    for related_id in related_ids {
+        if !known_ids.contains(related_id) {
+            return Err(AnnotateError::NotFound(related_id.clone()));
+        }
+    }
+
+    for (path, mut events) in files {
+        let Some(event) = events.iter_mut().find(|e| e.event_id == event_id) else {
+            continue;
+        };
+        event.related_events.extend(related_ids.iter().cloned());
+        fs::write(&path, serialize_changes(&events))?;
+        return Ok(());
+    }
+
+    unreachable!("event_id was found in known_ids above, so it must be in some file's events")
 }
 
 #[cfg(test)]
@@ -467,6 +528,7 @@ mod tests {
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: Some(ChangeType::SpecChange),
             true_divergences: Vec::new(),
+            related_events: Vec::new(),
         }];
 
         let yaml = serialize_changes(&events);
@@ -504,6 +566,7 @@ mod tests {
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
             true_divergences: Vec::new(),
+            related_events: Vec::new(),
         }];
 
         let yaml = serialize_changes(&events);
@@ -526,6 +589,7 @@ mod tests {
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
             true_divergences: Vec::new(),
+            related_events: Vec::new(),
         }];
         fs::write(
             dir.path().join("changes/m2.yaml"),
@@ -558,6 +622,7 @@ mod tests {
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
             true_divergences: Vec::new(),
+            related_events: Vec::new(),
         }
     }
 
@@ -734,6 +799,110 @@ mod tests {
 
         let result = annotate_change_type(dir.path(), "no-such-event", ChangeType::Other);
 
-        assert!(matches!(result, Err(AnnotateError::NotFound)));
+        assert!(matches!(result, Err(AnnotateError::NotFound(id)) if id == "no-such-event"));
+    }
+
+    #[test]
+    fn related_events_defaults_to_empty_and_round_trips_through_yaml() {
+        let mut event = sample_event("player-jump--m1--m2");
+        assert!(event.related_events.is_empty());
+        event.related_events = vec!["other-feature--m1--m2".to_string()];
+
+        let yaml = serialize_changes(&[event]);
+        let parsed: Vec<ChangeEvent> = serde_yaml_ng::from_str(&yaml).unwrap();
+
+        assert_eq!(
+            parsed[0].related_events,
+            vec!["other-feature--m1--m2".to_string()]
+        );
+    }
+
+    /// `changes/*.yaml` files written before `related_events` existed have
+    /// no such key; reading them must not fail (`#[serde(default)]`).
+    #[test]
+    fn read_changes_defaults_related_events_to_empty_for_files_written_before_the_field_existed() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n",
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert!(read[0].related_events.is_empty());
+    }
+
+    #[test]
+    fn annotate_related_events_appends_ids_on_the_matching_event() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&[
+                sample_event("player-jump--m1--m2"),
+                sample_event("other-feature--m1--m2"),
+            ]),
+        )
+        .unwrap();
+
+        annotate_related_events(
+            dir.path(),
+            "player-jump--m1--m2",
+            &["other-feature--m1--m2".to_string()],
+        )
+        .unwrap();
+
+        let events = read_changes(dir.path(), "m2").unwrap();
+        let annotated = events
+            .iter()
+            .find(|e| e.event_id == "player-jump--m1--m2")
+            .unwrap();
+        assert_eq!(
+            annotated.related_events,
+            vec!["other-feature--m1--m2".to_string()]
+        );
+        let untouched = events
+            .iter()
+            .find(|e| e.event_id == "other-feature--m1--m2")
+            .unwrap();
+        assert!(untouched.related_events.is_empty());
+    }
+
+    #[test]
+    fn annotate_related_events_errors_when_the_target_event_id_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&[sample_event("player-jump--m1--m2")]),
+        )
+        .unwrap();
+
+        let result = annotate_related_events(dir.path(), "no-such-event", &[]);
+
+        assert!(matches!(result, Err(AnnotateError::NotFound(id)) if id == "no-such-event"));
+    }
+
+    #[test]
+    fn annotate_related_events_errors_when_a_related_event_id_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::write(
+            dir.path().join("changes/m2.yaml"),
+            serialize_changes(&[sample_event("player-jump--m1--m2")]),
+        )
+        .unwrap();
+
+        let result = annotate_related_events(
+            dir.path(),
+            "player-jump--m1--m2",
+            &["no-such-event".to_string()],
+        );
+
+        assert!(matches!(result, Err(AnnotateError::NotFound(id)) if id == "no-such-event"));
+        let events = read_changes(dir.path(), "m2").unwrap();
+        assert!(events[0].related_events.is_empty());
     }
 }

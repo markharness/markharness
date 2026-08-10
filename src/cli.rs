@@ -231,6 +231,9 @@ pub enum ChangesCommand {
         /// The kind of change this event represents
         #[arg(long, value_enum)]
         r#type: ChangeTypeArg,
+        /// event_id(s) of other ChangeEvents to record as related (§3.5, repeatable)
+        #[arg(long)]
+        related: Vec<String>,
         /// Target project directory (a git repository). Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -483,6 +486,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
         Command::Changes(ChangesCommand::Annotate {
             event_id,
             r#type,
+            related,
             dir,
         }) => {
             let root = match dir {
@@ -490,14 +494,23 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 None => env::current_dir()?,
             };
             match changes::annotate_change_type(&root, &event_id, r#type.into()) {
+                Ok(()) => println!("set change_type on {event_id}"),
+                Err(changes::AnnotateError::NotFound(id)) => {
+                    eprintln!("error: no ChangeEvent with event_id '{id}' found under changes/");
+                    process::exit(3);
+                }
+                Err(changes::AnnotateError::Io(e)) => return Err(e),
+            }
+            if related.is_empty() {
+                return Ok(());
+            }
+            match changes::annotate_related_events(&root, &event_id, &related) {
                 Ok(()) => {
-                    println!("set change_type on {event_id}");
+                    println!("set related_events on {event_id}");
                     Ok(())
                 }
-                Err(changes::AnnotateError::NotFound) => {
-                    eprintln!(
-                        "error: no ChangeEvent with event_id '{event_id}' found under changes/"
-                    );
+                Err(changes::AnnotateError::NotFound(id)) => {
+                    eprintln!("error: no ChangeEvent with event_id '{id}' found under changes/");
                     process::exit(3);
                 }
                 Err(changes::AnnotateError::Io(e)) => Err(e),

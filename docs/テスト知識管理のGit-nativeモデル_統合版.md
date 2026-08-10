@@ -240,6 +240,8 @@ flowchart TB
 
 **実装状況**：CLI実装の`ChangeEvent`構造体は`change_type: Option<ChangeType>`フィールドを持つ(`event_id` / `feature_id` / `from_milestone` / `to_milestone` / `from_tree_sha` / `to_tree_sha` / `impacted_testcases` / `change_type`)。`ChangeType`は`SpecChange` / `BugFix` / `Refactor` / `Other`の固定enum(snake_caseでシリアライズ)であり、コミットメッセージ・PRテンプレートからの自動抽出ではなく、`markharness changes compute`実行後に人間が`markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other>`を実行して`changes/*.yaml`を書き換える方式で入力する(設計意図通り、計算では埋めない)。`annotate`はevent_idを`changes/`配下の全ファイルから横断的に検索するため、呼び出し側がどのマイルストーン区間のファイルかを事前に知る必要はない。
 
+**related_events(2026-08追記、製品化提案)**：`ChangeEvent`は`related_events: Vec<String>`(他の`event_id`の配列、`#[serde(default)]`で加算的)も持つ。複数のFeatureにまたがる変更が実は同じ論理変更の一部だった、という関連付けを人間が事後的に記録できるフィールドで、`markharness changes annotate <event_id> --related <他のevent_id>...`(複数指定可)で追記する。`ChangeEvent`がFeature単位・自動計算という原子性を保つ(§3.2)ための設計上の選択であり、複合ChangeEventのような自動計算ロジック自体の変更は行わない。
+
 **図4：変更影響の伝播（Change propagation）**
 
 ```mermaid
@@ -315,7 +317,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 | 分類 | 内容 |
 |---|---|
-| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
+| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
 | 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録には遡及適用せず、`executions/*/results.yml`用のJSON Schemaも未整備(3.7節) |
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
