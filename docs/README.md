@@ -14,6 +14,8 @@
 5. 実装と設計書の乖離を後から検証した調査資料(いずれも参考資料・監査ログの位置づけ):
    - **[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)** — 調査対象: `c:\Users\papa\work\mm`(TODOアプリのケーススタディ運用リポジトリ、旧称)。
    - **[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)** — 調査対象: `mh-sample-test-case`(同ケーススタディの後継リポジトリ)。
+   - **[review-data-model-improvement-proposals.md](./review-data-model-improvement-proposals.md)** — 外部の「データモデル分析レポート」が提案した改善案5件を実装・論文と照合した妥当性レビュー。論文側の修正要否も併せて確認済み(結論：修正不要)。
+6. **[improvement-prompts.md](./improvement-prompts.md)** — 過去のレビュー(ツール評価・論文評価・上記のデータモデルレビュー)から起こした、AIエージェント向けの実行プロンプト集。項目1〜6は旧ツール/論文レビュー由来、項目7〜9はデータモデルレビュー由来(却下した3件は末尾の却下ログに記録)。各項目冒頭に完了/未確認の状況注記がある(旧`.claude/improvement-prompts.md`から移動・統合済み)。
 
 ## 「相違点調査資料」2本の関係について(注意)
 
