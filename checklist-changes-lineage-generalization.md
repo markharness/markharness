@@ -91,3 +91,22 @@ pub struct TrueDivergence {
 
 論文§3.5の`related_events`節は元々`--related`単独の実行例を示しており、修正後の実装と整合している(コード側の制約が後から緩和され、ドキュメントの記述に追いついた形)。
 
+## Follow-up(低優先度、未着手): annotateの--type/--related書き込みをアトミックにする
+
+現状、`--type`と`--related`を同時指定した場合`--type`が先に書き込まれるため、`--related`のidが不正だと`change_type`だけ書き込まれた状態でexit code 3になる(`docs/cli-manual.md` 1.15節に明記済みの既知の挙動)。
+
+**この項目を追記する判断の経緯**：「exit code 3で失敗させ、ユーザーに`--related`の誤りを気づかせる」という意図自体は妥当だが、それは書き込み前に検証して失敗させても同様に達成できる。むしろ「コマンドが失敗したのに一部のファイルは書き換わっている」状態は、CIログを流し見する運用などで気づきにくく、`changes/*.yaml`はGit管理下のファイルであるため、失敗したはずの実行による差分が誤ってコミットされるリスクがある。加えて、`annotate_related_events`自身は既に「タイプミスによる部分書き込みを防ぐため書き込み前に全idを検証する」という設計を採用しており(コード内docコメント参照)、`--type`/`--related`の組み合わせだけがこの原則から外れているのは一貫性の観点で座りが悪い。「気づかせる」ことと「アトミックにする」ことはトレードオフではなく両立する。
+
+### Steps
+
+- [x] 失敗するテストを追加する: `--type <valid>` と `--related <存在しないid>` を同時指定した場合、`change_type`が書き込まれずに終了コード3で失敗することを検証する(`tests/changes_cli.rs::changes_annotate_does_not_write_change_type_when_related_event_id_does_not_exist`)
+- [x] `src/cli.rs`のディスパッチ順序を変更する: `--related`が指定されている場合は、`annotate_related_events`が内部で行っている存在チェック相当の検証を`annotate_change_type`の呼び出しより先に行い、検証に失敗したら`annotate_change_type`を呼ばずに終了コード3で終わる。両方の検証を通過して初めてどちらも書き込む
+- [x] 検証ロジックの重複を避けるため、`annotate_related_events`内の「全related_idsが`changes/*.yaml`に存在するか」チェック部分を`validate_annotate_ids`関数として切り出し、事前検証と実際の書き込みの両方から使い回せるようにする(`src/changes.rs`)。ついでに`changes_dir`を読む処理も`changes_yaml_paths`ヘルパーに切り出し、`annotate_change_type`にも適用した(重複コード削減)
+- [x] `docs/cli-manual.md` 1.15節の「`--type`が先に適用され部分適用がありうる」という記述を、アトミックになった旨に修正する
+- [x] `cargo test`(245件)・`cargo clippy --all-targets -- -D warnings`・`cargo fmt --check` を通す
+
+### Notes
+
+- 優先度は低い(現状の挙動は`docs/cli-manual.md`に明記済みで、実害があるという報告は無い)。着手は任意判断でよい。
+- CLI側のエラー処理(`NotFound`→exit code 3、`Io`→伝播)が3箇所に重複していたため、`handle_annotate_error`ヘルパーに切り出して統一した(`src/cli.rs`)。
+

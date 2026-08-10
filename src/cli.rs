@@ -316,6 +316,21 @@ pub enum KnowledgeCommand {
     },
 }
 
+/// Shared error handling for `changes annotate`'s two writers
+/// (`annotate_change_type` / `annotate_related_events`) and its
+/// pre-validation (`validate_annotate_ids`): a missing `event_id` (target
+/// or `--related`) exits 3 with a message naming the offending id, an I/O
+/// error propagates to `main`'s top-level error handling.
+fn handle_annotate_error(e: changes::AnnotateError) -> io::Result<()> {
+    match e {
+        changes::AnnotateError::NotFound(id) => {
+            eprintln!("error: no ChangeEvent with event_id '{id}' found under changes/");
+            process::exit(3);
+        }
+        changes::AnnotateError::Io(e) => Err(e),
+    }
+}
+
 pub fn run(cli: Cli) -> io::Result<()> {
     match cli.command {
         Command::Init { dir } => {
@@ -493,16 +508,18 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
+            // Validate up front (before any write) so a typo'd `--related`
+            // id can't leave `change_type` written while `related_events`
+            // isn't: the whole command either writes everything or nothing.
+            if !related.is_empty()
+                && let Err(e) = changes::validate_annotate_ids(&root, &event_id, &related)
+            {
+                return handle_annotate_error(e);
+            }
             if let Some(r#type) = r#type {
                 match changes::annotate_change_type(&root, &event_id, r#type.into()) {
                     Ok(()) => println!("set change_type on {event_id}"),
-                    Err(changes::AnnotateError::NotFound(id)) => {
-                        eprintln!(
-                            "error: no ChangeEvent with event_id '{id}' found under changes/"
-                        );
-                        process::exit(3);
-                    }
-                    Err(changes::AnnotateError::Io(e)) => return Err(e),
+                    Err(e) => return handle_annotate_error(e),
                 }
             }
             if related.is_empty() {
@@ -513,11 +530,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     println!("set related_events on {event_id}");
                     Ok(())
                 }
-                Err(changes::AnnotateError::NotFound(id)) => {
-                    eprintln!("error: no ChangeEvent with event_id '{id}' found under changes/");
-                    process::exit(3);
-                }
-                Err(changes::AnnotateError::Io(e)) => Err(e),
+                Err(e) => handle_annotate_error(e),
             }
         }
         Command::Changes(ChangesCommand::Lineage { commit, dir, json }) => {

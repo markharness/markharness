@@ -279,15 +279,7 @@ pub fn annotate_change_type(
     event_id: &str,
     change_type: ChangeType,
 ) -> Result<(), AnnotateError> {
-    let changes_dir = root.join("changes");
-    let mut entries: Vec<PathBuf> = fs::read_dir(&changes_dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "yaml"))
-        .collect();
-    entries.sort();
-
-    for path in entries {
+    for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
         let mut events: Vec<ChangeEvent> =
             serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
@@ -302,18 +294,7 @@ pub fn annotate_change_type(
     Err(AnnotateError::NotFound(event_id.to_string()))
 }
 
-/// Appends `related_ids` to `related_events` on the `ChangeEvent`
-/// identified by `event_id` (§3.5: purely additive, human-recorded
-/// cross-references between ChangeEvents; doesn't affect the automatic
-/// per-Feature computation). Searches every `changes/*.yaml` file like
-/// `annotate_change_type`. Every id in `related_ids` must itself exist as
-/// an `event_id` somewhere under `changes/`, checked up front so a partial
-/// write never happens because of a typo'd `--related` id.
-pub fn annotate_related_events(
-    root: &Path,
-    event_id: &str,
-    related_ids: &[String],
-) -> Result<(), AnnotateError> {
+fn changes_yaml_paths(root: &Path) -> io::Result<Vec<PathBuf>> {
     let changes_dir = root.join("changes");
     let mut entries: Vec<PathBuf> = fs::read_dir(&changes_dir)?
         .filter_map(|entry| entry.ok())
@@ -321,15 +302,28 @@ pub fn annotate_related_events(
         .filter(|path| path.extension().is_some_and(|ext| ext == "yaml"))
         .collect();
     entries.sort();
+    Ok(entries)
+}
 
-    let mut files = Vec::new();
+/// Checks that `event_id` and every id in `related_ids` exist as an
+/// `event_id` somewhere under `changes/*.yaml`, without writing anything.
+/// Shared by `annotate_related_events` (which re-checks right before it
+/// writes) and by callers that want to validate a `--related` id *before*
+/// running an unrelated write (e.g. `changes annotate --type ... --related
+/// ...`, so a typo'd `--related` id can't leave `change_type` written while
+/// `related_events` isn't — see `markharness changes annotate`'s CLI
+/// dispatch).
+pub fn validate_annotate_ids(
+    root: &Path,
+    event_id: &str,
+    related_ids: &[String],
+) -> Result<(), AnnotateError> {
     let mut known_ids: BTreeSet<String> = BTreeSet::new();
-    for path in entries {
+    for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
         let events: Vec<ChangeEvent> =
             serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
-        known_ids.extend(events.iter().map(|e| e.event_id.clone()));
-        files.push((path, events));
+        known_ids.extend(events.into_iter().map(|e| e.event_id));
     }
 
     if !known_ids.contains(event_id) {
@@ -340,8 +334,28 @@ pub fn annotate_related_events(
             return Err(AnnotateError::NotFound(related_id.clone()));
         }
     }
+    Ok(())
+}
 
-    for (path, mut events) in files {
+/// Appends `related_ids` to `related_events` on the `ChangeEvent`
+/// identified by `event_id` (§3.5: purely additive, human-recorded
+/// cross-references between ChangeEvents; doesn't affect the automatic
+/// per-Feature computation). Searches every `changes/*.yaml` file like
+/// `annotate_change_type`. Every id in `related_ids` must itself exist as
+/// an `event_id` somewhere under `changes/` (`validate_annotate_ids`),
+/// checked up front so a partial write never happens because of a typo'd
+/// `--related` id.
+pub fn annotate_related_events(
+    root: &Path,
+    event_id: &str,
+    related_ids: &[String],
+) -> Result<(), AnnotateError> {
+    validate_annotate_ids(root, event_id, related_ids)?;
+
+    for path in changes_yaml_paths(root)? {
+        let content = fs::read_to_string(&path)?;
+        let mut events: Vec<ChangeEvent> =
+            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
         let Some(event) = events.iter_mut().find(|e| e.event_id == event_id) else {
             continue;
         };
@@ -350,7 +364,7 @@ pub fn annotate_related_events(
         return Ok(());
     }
 
-    unreachable!("event_id was found in known_ids above, so it must be in some file's events")
+    unreachable!("event_id was validated above, so it must be in some file's events")
 }
 
 #[cfg(test)]

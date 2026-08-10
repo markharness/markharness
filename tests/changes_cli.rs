@@ -249,6 +249,30 @@ fn changes_annotate_related_exits_three_when_a_related_event_id_does_not_exist()
 }
 
 #[test]
+fn changes_annotate_does_not_write_change_type_when_related_event_id_does_not_exist() {
+    let dir = init_project_with_two_milestones();
+
+    let output = run(&[
+        "changes",
+        "annotate",
+        "player-jump--m1--m2",
+        "--type",
+        "spec-change",
+        "--related",
+        "no-such-event",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(3));
+    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    assert!(
+        !yaml.contains("change_type: spec_change"),
+        "change_type should not have been written on failure: {yaml}"
+    );
+}
+
+#[test]
 fn changes_compute_records_both_parent_tree_shas_when_to_milestone_is_a_true_divergence_merge() {
     let dir = tempfile::tempdir().unwrap();
     let output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
