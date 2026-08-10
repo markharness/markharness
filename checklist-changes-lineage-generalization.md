@@ -78,3 +78,16 @@ pub struct TrueDivergence {
 
 このサンドボックスにRustツールチェインが無く`cargo test`等を再実行できなかったため、上記はコードリーディングによる検証である点に留意。
 
+## 第三者レビュー指摘の対応(2026-08-11)
+
+`--type`必須引数の指摘に対応した。TDDで以下を実施:
+
+- [x] 失敗するテストを追加する: `--type`を指定せず`--related`のみで`changes annotate`を実行して成功すること(`change_type`は変更されないこと)を検証(`tests/changes_cli.rs`)
+- [x] 失敗するテストを追加する: `--type`・`--related`のいずれも指定しない場合はコマンドが失敗すること(`tests/changes_cli.rs`)
+- [x] `src/cli.rs`の`Annotate`バリアントで`r#type`を`Option<ChangeTypeArg>`に変更し、`required_unless_present = "related"`(clap)で「`--type`・`--related`の少なくとも一方が必須」を強制する
+- [x] ディスパッチ側で`r#type`が`Some`の場合のみ`annotate_change_type`を呼ぶように変更
+- [x] `docs/cli-manual.md` 1.15節を`--type`/`--related`いずれか一方でよい旨・両方指定時の適用順序(`--type`が先、部分適用がありうる)に更新
+- [x] `cargo test`(244件)・`cargo clippy --all-targets -- -D warnings`・`cargo fmt --check`を通す
+
+論文§3.5の`related_events`節は元々`--related`単独の実行例を示しており、修正後の実装と整合している(コード側の制約が後から緩和され、ドキュメントの記述に追いついた形)。
+

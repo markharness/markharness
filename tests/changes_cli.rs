@@ -165,6 +165,66 @@ fn changes_annotate_related_sets_related_events_on_the_matching_event() {
 }
 
 #[test]
+fn changes_annotate_related_sets_related_events_without_requiring_type() {
+    let dir = init_project_with_two_milestones();
+
+    write_feature(dir.path(), "v3");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "v3"]);
+    run_git(dir.path(), &["tag", "m3"]);
+    let output = run(&[
+        "changes",
+        "compute",
+        "m2",
+        "m3",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--no-cache",
+    ]);
+    assert!(output.status.success());
+
+    let output = run(&[
+        "changes",
+        "annotate",
+        "player-jump--m2--m3",
+        "--related",
+        "player-jump--m1--m2",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "changes annotate --related (no --type) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yaml = std::fs::read_to_string(dir.path().join("changes/m3.yaml")).unwrap();
+    assert!(
+        yaml.contains("related_events:\n  - player-jump--m1--m2"),
+        "expected related_events in: {yaml}"
+    );
+    assert!(
+        !yaml.contains("change_type: spec_change"),
+        "change_type should not have been touched: {yaml}"
+    );
+}
+
+#[test]
+fn changes_annotate_requires_type_or_related() {
+    let dir = init_project_with_two_milestones();
+
+    let output = run(&[
+        "changes",
+        "annotate",
+        "player-jump--m1--m2",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+}
+
+#[test]
 fn changes_annotate_related_exits_three_when_a_related_event_id_does_not_exist() {
     let dir = init_project_with_two_milestones();
 

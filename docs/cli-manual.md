@@ -810,27 +810,33 @@ $ echo $?
 
 ---
 
-### 1.15 `markharness changes annotate` — change_typeの事後入力(§3.5)
+### 1.15 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
 
 ```text
-markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other> [-d, --dir <path>]
+markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
 ```
 
-**用途**: `changes compute`(1.11節)が算出した `ChangeEvent` の `change_type` を、人間が事後に設定する。`changes/` 配下の全 `*.yaml` ファイルを `event_id` で横断検索するため、呼び出し側はどのマイルストーン区間のファイルに含まれるかを事前に知る必要がない。
+**用途**: `changes compute`(1.11節)が算出した `ChangeEvent` の `change_type` と `related_events` を、人間が事後に設定する。`changes/` 配下の全 `*.yaml` ファイルを `event_id` で横断検索するため、呼び出し側はどのマイルストーン区間のファイルに含まれるかを事前に知る必要がない。
 
 **動作**
 
-- 一致する `event_id` を持つ最初のファイルを書き換え、同じファイル内の他の `ChangeEvent` は変更しない。
-- 該当する `event_id` がどの `changes/*.yaml` にも見つからない場合、終了コード `3` でエラーメッセージを出す。
+- `--type` と `--related` は互いに独立した加算的フィールドであり、どちらか一方だけを指定してもよい(両方省略した場合はエラー、少なくとも一方の指定が必須)。
+- `--type` を指定すると、一致する `event_id` を持つ最初のファイルの `change_type` を書き換える。同じファイル内の他の `ChangeEvent` は変更しない。
+- `--related <event_id>` は複数回指定でき、それらを対象イベントの `related_events` に追記する(既存の値は保持、上書きではなく追加)。`--related` に指定した `event_id` が `changes/*.yaml` のどこにも存在しない場合も、対象イベントと同様に終了コード `3` でエラーになる。
+- `--type` と `--related` を両方指定した場合、`--type` の適用が先に行われる。`--type` の適用に成功した後で `--related` の対象idが見つからずエラーになった場合、`change_type` の変更は既に書き込まれている(2つの操作は独立しており、まとめて取り消されるわけではない)。
+- 対象の `event_id` がどの `changes/*.yaml` にも見つからない場合、終了コード `3` でエラーメッセージを出す。
 
 **使用例**
 
 ```console
 $ markharness changes annotate player-jump--m1--m2 --type spec-change
 set change_type on player-jump--m1--m2
+
+$ markharness changes annotate player-jump--m2--m3 --related player-jump--m1--m2
+set related_events on player-jump--m2--m3
 ```
 
-**ユースケース対応**: UC5「ChangeEventを自動計算する」の一部(§3.5、`change_type`は計算ではなく人間の事後入力とする設計意図に対応)。
+**ユースケース対応**: UC5「ChangeEventを自動計算する」の一部(§3.5、`change_type`/`related_events`はいずれも計算ではなく人間の事後入力とする設計意図に対応)。
 
 ---
 

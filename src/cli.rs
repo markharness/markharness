@@ -224,13 +224,13 @@ pub enum ChangesCommand {
         #[arg(long)]
         no_cache: bool,
     },
-    /// Set change_type on an existing ChangeEvent under changes/ (§3.5, filled in by a human after compute)
+    /// Set change_type and/or related_events on an existing ChangeEvent under changes/ (§3.5, filled in by a human after compute)
     Annotate {
         /// The ChangeEvent's event_id (as written by `changes compute`)
         event_id: String,
-        /// The kind of change this event represents
-        #[arg(long, value_enum)]
-        r#type: ChangeTypeArg,
+        /// The kind of change this event represents. Required unless --related is given (the two fields are independently additive)
+        #[arg(long, value_enum, required_unless_present = "related")]
+        r#type: Option<ChangeTypeArg>,
         /// event_id(s) of other ChangeEvents to record as related (§3.5, repeatable)
         #[arg(long)]
         related: Vec<String>,
@@ -493,13 +493,17 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
-            match changes::annotate_change_type(&root, &event_id, r#type.into()) {
-                Ok(()) => println!("set change_type on {event_id}"),
-                Err(changes::AnnotateError::NotFound(id)) => {
-                    eprintln!("error: no ChangeEvent with event_id '{id}' found under changes/");
-                    process::exit(3);
+            if let Some(r#type) = r#type {
+                match changes::annotate_change_type(&root, &event_id, r#type.into()) {
+                    Ok(()) => println!("set change_type on {event_id}"),
+                    Err(changes::AnnotateError::NotFound(id)) => {
+                        eprintln!(
+                            "error: no ChangeEvent with event_id '{id}' found under changes/"
+                        );
+                        process::exit(3);
+                    }
+                    Err(changes::AnnotateError::Io(e)) => return Err(e),
                 }
-                Err(changes::AnnotateError::Io(e)) => return Err(e),
             }
             if related.is_empty() {
                 return Ok(());
