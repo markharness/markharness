@@ -181,7 +181,7 @@ flowchart LR
 
 **実装状況**：`markharness changes compute`(マイルストーン境界の主系譜)は、指定した2つのマイルストーンタグ(`from_milestone`/`to_milestone`)間で各Featureのtree SHAを直接比較する処理を基本としており、これは設計上の意図的な選択である(第3.4節、RQ1の評価対象はマイルストーン境界の線形比較)。本節で述べた`git merge-base`による祖先探索・2親分岐の判定自体は、監査用途の副次機能として`markharness changes lineage --commit <merge-sha>`に独立実装されている(`src/lineage.rs`)。指定したマージコミットの2親(P1・P2)と`git merge-base`によるマージベース(B)のtree SHAを比較し、各Featureごとに「線形(linear)」「真の分岐(true_divergence)」「1親相当(single_parent)」を判定して出力する。
 
-**部分統合(2026-08追記)**：`changes compute`は、`to_milestone`タグが指すコミット自体が2親のマージコミットである場合に限り、上記の`lineage`判定ロジックを内部で呼び出すよう修正した。当該Featureが`true_divergence`と判定された場合、`ChangeEvent`に新設した`from_tree_shas: [tree(P1), tree(P2)]`フィールドへ両親のtree SHAを記録する(既存の`from_tree_sha`単一値フィールドは後方互換のため維持し、線形履歴の表現として引き続き用いる)。この統合は加算的な変更であり、`changes/*.yaml`の既存レコード(`from_tree_shas`を持たない)は`#[serde(default)]`によりそのまま読み込める。ただし統合範囲は限定的で、`to_milestone`タグが直接マージコミットを指す場合のみ検出できる。`to_milestone`とマージコミットの間に他のコミットが挟まる一般的なケース(マイルストーン区間内の任意の位置でのマージ)は本統合の対象外であり、そのようなケースでは引き続き`lineage`コマンドを別途実行して確認する必要がある(第3.6節・第6章)。
+**統合(2026-08追記)**：`changes compute`は、`from_milestone..to_milestone`の区間全体を`git rev-list --ancestry-path`で走査し、区間内に存在する全ての2親マージコミットそれぞれについて上記の`lineage`判定ロジックを内部で呼び出す。当該Featureがいずれかのマージで`true_divergence`と判定された場合、`ChangeEvent`に新設した`true_divergences: Vec<TrueDivergence>`フィールド(`TrueDivergence`は監査用の`merge_commit`と`parent_tree_shas: [tree(P1), tree(P2)]`を持つ)へ、区間内で発生した順(古い順)に記録する。同一Featureが区間内で複数回真の分岐を起こした場合も、マージごとに1エントリずつ蓄積されるため取りこぼさない。この統合は加算的な変更であり、`changes/*.yaml`の既存レコード(`true_divergences`を持たない)は`#[serde(default)]`によりそのまま読み込める。当初は`to_milestone`タグが直接マージコミットを指す場合のみの部分統合だったが、区間内の任意の位置でのマージを検出できるよう一般化した。
 
 ### 3.3 id解決：非コミットキャッシュとキャッシュキー・破棄条件
 
@@ -315,12 +315,12 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 | 分類 | 内容 |
 |---|---|
-| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、`to_milestone`が直接マージコミットの場合の`lineage`判定と`changes compute`の部分統合(`from_tree_shas`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
-| 設計から簡略化 | `markharness changes lineage`(merge-base監査コマンド)と`changes compute`の統合は、`to_milestone`タグが直接マージコミットを指す場合に限られる。マイルストーン区間内の任意の位置でのマージ(タグがマージコミットを直接指さない一般的なケース)は自動反映の対象外であり、`lineage`コマンドを別途実行して確認する必要が残る(3.2節)。id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録には遡及適用せず、`executions/*/results.yml`用のJSON Schemaも未整備(3.7節) |
+| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
+| 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録には遡及適用せず、`executions/*/results.yml`用のJSON Schemaも未整備(3.7節) |
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
 
-これらのうち「設計から簡略化」の項目は、RQ1の評価(第5章)が主に必要とする「マイルストーン境界での線形な版履歴追跡」自体には影響しない。`git merge-base`による分岐検出自体は監査コマンドとして利用可能になったが、その結果が`changes compute`の主系譜に自動反映されるわけではないため、複雑なブランチ運用を行う組織でのケーススタディ(第5.2節)では、`lineage`コマンドを補助的に併用しない限り版履歴の精度に影響しうる点は変わらず、評価対象プロジェクトの選定時に留意する必要がある(第6章のThreats to Validityに追記)。
+これらのうち「設計から簡略化」の項目は、RQ1の評価(第5章)が主に必要とする「マイルストーン境界での線形な版履歴追跡」自体には影響しない。`git merge-base`による分岐検出は、マイルストーン区間内の任意の位置で発生した全マージについて`changes compute`の主系譜へ自動反映されるようになったため、複雑なブランチ運用を行う組織でのケーススタディ(第5.2節)でも`lineage`コマンドの補助的併用なしに版履歴の精度を確保できる。
 
 ### 3.7 変更検知に基づく再検証トラッキング
 
@@ -447,7 +447,6 @@ flowchart TB
 - 提案モデルの実装(ツール)が被験者実験の結果に影響する可能性(ツールの使いやすさとモデルそのものの有効性を混同しないよう、UIの簡素化・操作説明の標準化を行う)。
 - id解決キャッシュを非コミット化したことで、CI環境が変わるたびに再計算コストが発生する可能性(ビルドキャッシュの永続化戦略に依存)。
 - バックフィルアーキテクチャ(第4章)の性能は、実際の大規模リポジトリでの検証(ケーススタディ)がまだない。新規構築するデータセットでは移行コストが顕在化しない可能性があり、実際の導入コストを過小評価するリスクがある。
-- `changes compute`(RQ1評価が用いる主系譜)の`git merge-base`統合は、`to_milestone`タグが直接マージコミットを指す場合に限られる(第3.2節・第3.6節)。マイルストーン区間内の任意の位置でのマージ(タグがマージコミットを直接指さない一般的なケース)は自動反映の対象外であり、`markharness changes lineage`を別途実行しない限り真の分岐が見落とされうる。頻繁なブランチ分岐・複雑なマージ戦略を持つ組織をケーススタディ対象とする場合、この部分統合の限界が版履歴の精度に影響する可能性があり、評価結果の解釈時に留保が必要。
 
 ---
 
@@ -456,7 +455,6 @@ flowchart TB
 - 実装上の利便機能(構造的生成グラフに基づくリアルタイム照会、第3.2節(A))の開発者体験・生産性への効果の検証。
 - バックフィルアーキテクチャ(第4章)を実際の大規模リポジトリに適用した場合の性能実測。
 - id解決キャッシュのキー設計(第3.3節)・co-changeノイズ除去基準(第5.4節)を、実装・データ収集を通じて検証・調整すること自体を今後の実証課題とする(`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用を経た検証がまだない)。
-- `markharness changes lineage`(監査用のmerge-base祖先探索・2親分岐検出、第3.2節)の判定結果を`changes compute`の主系譜に自動反映する統合は、`to_milestone`タグが直接マージコミットを指す場合のみ実装済み(`from_tree_shas`フィールド)。マイルストーン区間内の任意の位置でのマージへの一般化は今後の課題として残る。
 - id⇔pathの汎用的な独立インデックス層の実装(パスを変えないid変更の追跡等、第3.3節で現状は「id=feature.ymlのid:フィールド」への統一に留まると整理した項目)。
 - 既存TMS(TestRail/Xray等)からのインポータの実装(第3.6節で未実装と整理した項目)。
 - LLMによる文脈供給・Markdown手順書の自動生成・更新への応用可能性(検討経緯・不採用理由は付録A参照。本研究の評価対象外)。

@@ -46,7 +46,7 @@
 
 ## 2. 【優先度: 高】changes lineage の判定結果を主系譜に統合
 
-**状況(2026-08時点)**：部分完了。論文§3.2「部分統合(2026-08追記)」の通り、`to_milestone`タグが直接マージコミットを指す場合に限り`changes compute`が`lineage`判定を内部で呼び出し、`ChangeEvent.from_tree_shas`に2親を記録するようになった(`src/changes.rs`)。ただし「マイルストーン区間内の任意の位置でのマージ」への一般化は未対応のまま(論文§3.6・§7 Future Work)。以下のプロンプトのうち、残っているのはこの一般化部分のみ。
+**状況(2026-08時点)**：完了。`changes compute` はマイルストーン区間内に存在する**全て**の2親マージコミットを探索し、真の分岐と判定されたものを `ChangeEvent.true_divergences: Vec<TrueDivergence>`(`merge_commit` + `parent_tree_shas`)に古い順で記録するように実装済み (`src/changes.rs`)。当初は区間内で最初(≒最新、`git rev-list`のデフォルト順)に見つかった1件のみを見る暫定実装だったが、レビューで発覚したため一般化した(`checklist-changes-lineage-generalization.md`)。既存の `changes lineage --commit` との役割分担は維持しつつ、主系譜への統合は実現した。
 
 ```
 src/changes.rs の `changes compute`（マイルストーン境界の線形比較で derived_from を導出する処理）と、

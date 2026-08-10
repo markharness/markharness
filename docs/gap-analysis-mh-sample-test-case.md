@@ -108,6 +108,8 @@ CLI側（`markharness`）には実装済みだが、本リポジトリの実際�
 
 improvement-prompts.md項目3への対応として、本リポジトリに分岐・マージを含む新しいケーススタディシナリオを追加検証した。4章で述べた「線形履歴のみで`lineage`の真の分岐ケースが発生していない」という制約を解消する目的で行った。既存の`test1`〜`test3`のデータ・コミット・タグは一切変更していない。
 
+> **注記(2026-08-11)**：本節の実行結果は`markharness changes compute`実行当時(2026-08-10)の出力をそのまま記録したものであり、書き換えていない。その後の一般化作業で`ChangeEvent.from_tree_shas: Vec<String>`は`true_divergences: Vec<TrueDivergence>`(`merge_commit` + `parent_tree_shas`)に改名された(`checklist-changes-lineage-generalization.md`)。本節に登場する`from_tree_shas`はこの改名前のフィールド名である。
+
 ### 8.1 実施手順
 
 1. `main`(タグ`test3`が指すコミットまでの状態)から作業ブランチ`markharness-lineage-scenario-feature`を作成した。
@@ -158,7 +160,7 @@ todo-edit: single_parent
 ### 8.4 想定と異なった点・留意事項
 
 - `from_tree_sha`(単一値)には`test3`時点のtree SHAがそのまま記録され、`from_tree_shas`(2親)と共存する形になった。設計書はこの2つのフィールドの併存について「線形履歴の表現として`from_tree_sha`を維持する」とのみ記しており、実際に両方が同時に埋まったレコードを見るのは今回が初めてである。値として矛盾はしていない(`from_tree_sha`は主系譜の単純な2点比較結果、`from_tree_shas`はマージコミット固有の2親情報)が、`verify trace`/`verify pending`(§3.7)のようにこのレコードを消費する将来のツールが両フィールドをどう使い分けるかは、本シナリオでは検証しておらず今後の課題として残る。
-- 本シナリオはあくまで「`to_milestone`タグが直接マージコミットを指す」最も単純なケースであり、改善プロンプト項目2で明記した統合範囲の限界(マイルストーン区間内の任意の位置でのマージには非対応)は未検証のまま残っている。
+- 本シナリオはあくまで「`to_milestone`タグが直接マージコミットを指す」最も単純なケースであり、改善プロンプト項目2で明記した統合範囲の限界(マイルストーン区間内の任意の位置でのマージには非対応)は未検証のまま残っている。**追記(2026-08-11)**：この限界はその後`markharness`側の一般化(区間内の全マージを走査、`checklist-changes-lineage-generalization.md`)で解消された。ただし本シナリオ(test4)自体は単純ケースのままであり、「区間内に複数マージがある」ケースでの`mh-sample-test-case`側での再検証はまだ行っていない。
 
 ### 8.5 リポジトリへの影響
 

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::generate;
 use crate::git;
@@ -36,29 +37,37 @@ pub struct ChangeEvent {
     pub impacted_testcases: Vec<String>,
     #[serde(default)]
     pub change_type: Option<ChangeType>,
-    /// The two parent tree SHAs `[tree(P1), tree(P2)]` (§3.2) when
-    /// `to_milestone`'s commit is itself a two-parent merge commit *and*
-    /// this Feature is a true divergence (both parents changed it
-    /// differently from their `git merge-base`). Empty otherwise, including
-    /// the ordinary linear case covered by `from_tree_sha`/`to_tree_sha`.
-    /// Scope-limited: only detects divergence at a merge commit sitting
-    /// directly at the `to_milestone` tag, not one buried further back in
-    /// the milestone interval (§3.6).
+    /// One entry per two-parent merge commit found in the
+    /// `from_milestone..to_milestone` interval (§3.2) at which this Feature
+    /// is a true divergence (both parents changed it differently from
+    /// their `git merge-base`), oldest merge first. Empty otherwise,
+    /// including the ordinary linear case covered by
+    /// `from_tree_sha`/`to_tree_sha`.
     #[serde(default)]
-    pub from_tree_shas: Vec<String>,
+    pub true_divergences: Vec<TrueDivergence>,
 }
 
-/// For each Feature id, `[tree(P1), tree(P2)]` when `to_milestone`'s commit
-/// is a two-parent merge commit and the Feature is a true divergence per
-/// `lineage::classify` (§3.2). Returns an empty map when `to_milestone`
-/// isn't itself a merge commit, so `compute_changes`'s ordinary
-/// milestone-boundary comparison is unaffected in that (common) case.
+/// A single true-divergence merge recorded against a `ChangeEvent`: the
+/// merge commit itself (auditable via `markharness changes lineage
+/// --commit <merge_commit>` or `git show <merge_commit>`) and the two
+/// parent tree SHAs `[tree(P1), tree(P2)]` that diverged.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrueDivergence {
+    pub merge_commit: String,
+    pub parent_tree_shas: [String; 2],
+}
+
+/// For each Feature id, `[tree(P1), tree(P2)]` when `merge_commit` is a
+/// two-parent merge commit and the Feature is a true divergence per
+/// `lineage::classify` (§3.2). Returns an empty map when `merge_commit`
+/// isn't itself a two-parent commit (defensive; callers only pass merge
+/// commits found by `find_merge_commits_in_interval`).
 fn true_divergence_parent_tree_shas(
     root: &Path,
-    to_milestone: &str,
+    merge_commit: &str,
     use_cache: bool,
 ) -> io::Result<BTreeMap<String, [String; 2]>> {
-    let parents = git::parents(root, to_milestone)?;
+    let parents = git::parents(root, merge_commit)?;
     let [p1, p2] = parents.as_slice() else {
         return Ok(BTreeMap::new());
     };
@@ -79,7 +88,7 @@ fn true_divergence_parent_tree_shas(
         // Feature and the other changed it (`p1_sha`/`p2_sha` not both
         // `Some`): there are no two tree SHAs to record in that case, so
         // fall back to the ordinary `from_tree_sha`/`to_tree_sha`
-        // representation instead of populating `from_tree_shas`.
+        // representation instead of populating `true_divergences`.
         if let (Some(p1_sha), Some(p2_sha)) = (p1_sha, p2_sha)
             && lineage::classify(base_sha, Some(p1_sha), Some(p2_sha))
                 == LineageKind::TrueDivergence
@@ -88,6 +97,48 @@ fn true_divergence_parent_tree_shas(
         }
     }
     Ok(result)
+}
+
+/// All two-parent merge commits in the `from_milestone..to_milestone`
+/// interval, oldest first (`--reverse`, matching `generate.rs`'s
+/// deterministic-ordering convention: `git rev-list` without it yields
+/// newest-first).
+fn find_merge_commits_in_interval(
+    root: &Path,
+    from_milestone: &str,
+    to_milestone: &str,
+) -> io::Result<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "rev-list",
+            "--parents",
+            "--ancestry-path",
+            "--reverse",
+            &format!("{from_milestone}..{to_milestone}"),
+        ])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "git rev-list failed for {from_milestone}..{to_milestone}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    let mut merge_commits = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut parts = line.split_whitespace();
+        let Some(commit) = parts.next() else {
+            continue;
+        };
+        let parent_count = parts.count();
+        if parent_count == 2 {
+            merge_commits.push(commit.to_string());
+        }
+    }
+
+    Ok(merge_commits)
 }
 
 fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
@@ -133,7 +184,20 @@ pub fn compute_changes(
         use_cache,
     )?);
     let impacted = impacted_testcases_by_feature(root)?;
-    let true_divergences = true_divergence_parent_tree_shas(root, to_milestone, use_cache)?;
+    let merge_commits = find_merge_commits_in_interval(root, from_milestone, to_milestone)?;
+    let mut true_divergences_by_feature: BTreeMap<String, Vec<TrueDivergence>> = BTreeMap::new();
+    for merge_commit in &merge_commits {
+        let divergences = true_divergence_parent_tree_shas(root, merge_commit, use_cache)?;
+        for (feature_id, parent_tree_shas) in divergences {
+            true_divergences_by_feature
+                .entry(feature_id)
+                .or_default()
+                .push(TrueDivergence {
+                    merge_commit: merge_commit.clone(),
+                    parent_tree_shas,
+                });
+        }
+    }
 
     let all_ids: BTreeSet<&String> = from_versions.keys().chain(to_versions.keys()).collect();
 
@@ -144,9 +208,9 @@ pub fn compute_changes(
         if from_tree_sha == to_tree_sha {
             continue;
         }
-        let from_tree_shas = true_divergences
+        let true_divergences = true_divergences_by_feature
             .get(feature_id)
-            .map(|[p1, p2]| vec![p1.clone(), p2.clone()])
+            .cloned()
             .unwrap_or_default();
         events.push(ChangeEvent {
             event_id: format!("{feature_id}--{from_milestone}--{to_milestone}"),
@@ -157,7 +221,7 @@ pub fn compute_changes(
             to_tree_sha,
             impacted_testcases: impacted.get(feature_id).cloned().unwrap_or_default(),
             change_type: None,
-            from_tree_shas,
+            true_divergences,
         });
     }
 
@@ -402,7 +466,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: Some(ChangeType::SpecChange),
-            from_tree_shas: Vec::new(),
+            true_divergences: Vec::new(),
         }];
 
         let yaml = serialize_changes(&events);
@@ -439,7 +503,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
-            from_tree_shas: Vec::new(),
+            true_divergences: Vec::new(),
         }];
 
         let yaml = serialize_changes(&events);
@@ -461,7 +525,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
-            from_tree_shas: Vec::new(),
+            true_divergences: Vec::new(),
         }];
         fs::write(
             dir.path().join("changes/m2.yaml"),
@@ -493,7 +557,7 @@ mod tests {
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
             change_type: None,
-            from_tree_shas: Vec::new(),
+            true_divergences: Vec::new(),
         }
     }
 
@@ -586,8 +650,9 @@ mod tests {
             .iter()
             .find(|e| e.feature_id == "player-jump")
             .unwrap();
-        assert_eq!(event.from_tree_shas.len(), 2);
-        assert_ne!(event.from_tree_shas[0], event.from_tree_shas[1]);
+        assert_eq!(event.true_divergences.len(), 1);
+        let parent_tree_shas = &event.true_divergences[0].parent_tree_shas;
+        assert_ne!(parent_tree_shas[0], parent_tree_shas[1]);
     }
 
     /// Regression: `lineage::classify` returns `TrueDivergence` not only when
@@ -641,11 +706,11 @@ mod tests {
             .iter()
             .find(|e| e.feature_id == "player-jump")
             .unwrap();
-        assert!(event.from_tree_shas.is_empty());
+        assert!(event.true_divergences.is_empty());
     }
 
     #[test]
-    fn leaves_from_tree_shas_empty_when_to_milestone_is_not_a_merge_commit() {
+    fn leaves_true_divergences_empty_when_to_milestone_is_not_a_merge_commit() {
         let dir = init_repo();
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "v1", "m1");
@@ -654,7 +719,7 @@ mod tests {
 
         let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
 
-        assert!(events[0].from_tree_shas.is_empty());
+        assert!(events[0].true_divergences.is_empty());
     }
 
     #[test]
