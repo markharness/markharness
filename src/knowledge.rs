@@ -43,11 +43,35 @@ pub struct Condition {
     pub description: String,
 }
 
+/// How an `ExpectedResult`'s content was produced. Omitting the field
+/// (`Option::None`) means unknown, not `Manual`; a `knowledge/` file
+/// written before this field existed round-trips to `None` via
+/// `#[serde(default)]`, and that must not be read as "written manually".
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedBy {
+    Manual,
+    Llm,
+    AutoCombination,
+}
+
+/// A human review gate on an `ExpectedResult`. Omitting the whole
+/// `verified_by` field means not (yet) reviewed; `human_review` is
+/// required whenever the object is present (no ambiguous partial state).
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct VerifiedBy {
+    pub human_review: bool,
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ExpectedResult {
     pub id: String,
     pub condition: String,
     pub description: String,
+    #[serde(default)]
+    pub generated_by: Option<GeneratedBy>,
+    #[serde(default)]
+    pub verified_by: Option<VerifiedBy>,
 }
 
 pub fn parse_requirement(yaml: &str) -> Result<Requirement, serde_yaml_ng::Error> {
@@ -407,6 +431,8 @@ mod tests {
             id: "player-jump-jump-ground-001".to_string(),
             condition: "player-jump-jump-ground".to_string(),
             description: "Lands safely.".to_string(),
+            generated_by: None,
+            verified_by: None,
         };
 
         let yaml = serialize_expected_result(&expected);

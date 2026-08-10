@@ -298,6 +298,7 @@ repo/
 - `REQUIREMENT`をディレクトリ直下の`requirement.yml`として明示ファイル化し、`FEATURE`はその配下に置く(第3.1節)。
 - `changes/`は「1イベント1ファイル」ではなく「1マイルストーン区間1ファイル、複数`ChangeEvent`を配列で保持」する形式(拡張子は`.yaml`)。
 - `schema/`は`markharness init`実行時に既定のJSON Schemaファイル一式(`requirement.schema.json` / `feature.schema.json` / `behavior.schema.json` / `condition.schema.json` / `expected_result.schema.json` / `axis.schema.json`)で初期化される(既存ファイルは上書きしないため、プロジェクトごとにスキーマをカスタマイズできる)。`markharness validate`が`knowledge/`・`axes/`配下の全YAMLをこれらのスキーマで構造検証し、加えてJSON Schema単体では表現しにくい相互参照制約(`axis`タグが`axes/*.yml`に登録されているか、`forked_from`が実在するFeature idを指しているか)をRust側のクロスリファレンスチェックとして実装している(第3.6節)。
+- `expected_result.schema.json`は`generated_by`(enum: `manual`/`llm`/`auto_combination`、任意)・`verified_by`(`{ human_review: boolean }`、任意)も持てる(製品化提案、論文本文には明記なし)。いずれも省略可能で、`generated_by`の省略は「生成手段が不明」を意味し「手動作成」とは解釈しない。`model`名・`prompt_version`・`confidence_score`のような揮発性の高いメタデータは、「`knowledge/`配下は検証済みの確定知識である」という本スキーマ群の前提と相性が悪いため採用していない。
 
 `feature.yml`のfront matter例(実装に合わせた形)：
 
@@ -317,7 +318,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 | 分類 | 内容 |
 |---|---|
-| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
+| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`expected_result.schema.json`の`generated_by`/`verified_by`フィールド(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
 | 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録には遡及適用せず、`executions/*/results.yml`用のJSON Schemaも未整備(3.7節) |
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
@@ -462,6 +463,7 @@ flowchart TB
 - LLMによる文脈供給・Markdown手順書の自動生成・更新への応用可能性(検討経緯・不採用理由は付録A参照。本研究の評価対象外)。
 - 構造からのテストケース自動生成の網羅率評価、Git粒度分割によるレビュー性向上の検証(検討まとめ第4章の案2・3)。
 - 他ドメイン・他組織での追試による一般化可能性の検証。
+- `generated_by`/`verified_by`(第3.5節)を読む将来のCIゲート(例：`generated_by: llm`かつ`verified_by`未設定の`ExpectedResult`が存在する場合に`markharness verify`が警告する)は未実装。現状は離散的な事実情報を記録するだけで、それを消費するロジックは本研究のスコープ外としている。
 
 ---
 

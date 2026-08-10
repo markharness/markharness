@@ -283,6 +283,8 @@ pub fn run_add<R: BufRead, W: Write>(
         id: expected_id,
         condition: condition_id.clone(),
         description,
+        generated_by: None,
+        verified_by: None,
     };
     let expected_path = expected_dir.join(format!("{seq:03}.yml"));
     fs::write(&expected_path, serialize_expected_result(&expected))?;

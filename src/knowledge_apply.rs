@@ -145,6 +145,8 @@ pub fn apply_draft(
             id: expected_id,
             condition: effective_condition_id.clone(),
             description: expected_draft.description.clone(),
+            generated_by: None,
+            verified_by: None,
         };
         let expected_path = expected_dir.join(format!("{seq:03}.yml"));
         pending.push((

@@ -105,6 +105,65 @@ fn validate_rejects_a_requirement_with_a_non_string_related_issues_item() {
 }
 
 #[test]
+fn validate_accepts_an_expected_result_with_generated_by_and_verified_by() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init_output.status.success());
+    write_valid_tree(dir.path());
+    std::fs::write(
+        dir.path()
+            .join("knowledge/controls/player-jump/jump/ground/expected/001.yml"),
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\ngenerated_by: llm\nverified_by:\n  human_review: true\n",
+    )
+    .unwrap();
+
+    let output = run(&["validate", "--dir", dir.path().to_str().unwrap()]);
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn validate_rejects_an_expected_result_with_an_invalid_generated_by_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init_output.status.success());
+    write_valid_tree(dir.path());
+    std::fs::write(
+        dir.path()
+            .join("knowledge/controls/player-jump/jump/ground/expected/001.yml"),
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\ngenerated_by: made-up\n",
+    )
+    .unwrap();
+
+    let output = run(&["validate", "--dir", dir.path().to_str().unwrap()]);
+
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn validate_rejects_a_verified_by_without_human_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init_output.status.success());
+    write_valid_tree(dir.path());
+    std::fs::write(
+        dir.path()
+            .join("knowledge/controls/player-jump/jump/ground/expected/001.yml"),
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nverified_by: {}\n",
+    )
+    .unwrap();
+
+    let output = run(&["validate", "--dir", dir.path().to_str().unwrap()]);
+
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
 fn validate_exits_one_and_lists_issues_for_an_invalid_feature() {
     let dir = tempfile::tempdir().unwrap();
     let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
