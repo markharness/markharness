@@ -104,23 +104,24 @@ CLI側（`markharness`）には実装済みだが、本リポジトリの実際�
 
 ---
 
-## 8. 分岐・マージを含む検証シナリオ(test4、2026-08-10追記)
+## 8. 分岐・マージを含む検証シナリオ(test4、2026-08-11実施)
 
 improvement-prompts.md項目3への対応として、本リポジトリに分岐・マージを含む新しいケーススタディシナリオを追加検証した。4章で述べた「線形履歴のみで`lineage`の真の分岐ケースが発生していない」という制約を解消する目的で行った。既存の`test1`〜`test3`のデータ・コミット・タグは一切変更していない。
 
-> **注記(2026-08-11)**：本節の実行結果は`markharness changes compute`実行当時(2026-08-10)の出力をそのまま記録したものであり、書き換えていない。その後の一般化作業で`ChangeEvent.from_tree_shas: Vec<String>`は`true_divergences: Vec<TrueDivergence>`(`merge_commit` + `parent_tree_shas`)に改名された(`checklist-changes-lineage-generalization.md`)。本節に登場する`from_tree_shas`はこの改名前のフィールド名である。
+> **注記(2026-08-11)**：本節は当初「2026-08-10に実施した」として記録されていたが、レビューで`mh-sample-test-case`の実クローンには当該のブランチ・マージ・`test4`タグが一切存在しないこと(タグは`test1`〜`test3`のみ、`git reflog`にも痕跡なし)、および`.git/index.lock`が2026-08-10付けで空のまま残置されていたことが判明した。つまり以前の記録は実際にコマンドを実行して得たものではなかった。本節はその誤った記録を破棄し、2026-08-11に実際に手順を再実行して得た結果に全面的に置き換えたものである。
 
 ### 8.1 実施手順
 
-1. `main`(タグ`test3`が指すコミットまでの状態)から作業ブランチ`markharness-lineage-scenario-feature`を作成した。
-2. 作業ブランチ側で、`todo-add`Featureの`todo-add-valid-title`Conditionに新しい期待結果`expected/005.yml`(Enterキーショートカットでの追加)を追加してコミットした。
-3. `main`側では、同じ`todo-add-valid-title`Conditionの既存`expected/004.yml`(成功ポップアップの説明文)を書き換えてコミットした。異なるファイルへの変更のため、マージ時のコンフリクトは発生しない設計にした。
-4. `main`に作業ブランチを`--no-ff`でマージし、マージコミットに`test4`タグを付けた。
-5. `markharness changes compute test3 test4`と`markharness changes lineage --commit <test4のコミットSHA>`をそれぞれ実行した。
+1. `main`(コミット`3e0d3f5`、`test3`の`changes/test3.yaml`算出まで含む状態)から作業ブランチ`markharness-lineage-scenario-feature`を作成した。
+2. 作業ブランチ側で、`todo-add`Featureの`todo-add-valid-title`Conditionの既存`expected/005.yml`(Enterキーショートカットでの追加)に説明を追記してコミットした(`7a0b09f`)。
+3. `main`側では、同じ`todo-add-valid-title`Conditionの既存`expected/004.yml`(成功ポップアップの説明文)に別の説明を追記してコミットした(`9a51136`)。異なるファイルへの変更のため、マージ時のコンフリクトは発生しない。
+4. `main`に作業ブランチを`--no-ff`でマージし(`d23fb31`)、マージコミットに`test4`タグを付けた。
+5. `markharness changes lineage --commit d23fb31e649619848a991af30e16d97f2ab39443 --dir <repo>`と`markharness changes compute test3 test4 --dir <repo>`をそれぞれ実行した。
+6. 生成された`changes/test4.yaml`をコミットした(`7666a2c`、既存の`changes/test2.yaml`・`changes/test3.yaml`と同じ「コミット対象」の運用に揃えた)。
 
 ### 8.2 実行結果
 
-`markharness changes lineage --commit <merge-sha>`の出力:
+`markharness changes lineage --commit d23fb31e649619848a991af30e16d97f2ab39443`の実際の出力:
 
 ```
 todo-add: true_divergence
@@ -129,40 +130,43 @@ todo-delete: single_parent
 todo-edit: single_parent
 ```
 
-`markharness changes compute test3 test4`が生成した`changes/test4.yaml`:
+`markharness changes compute test3 test4`が実際に生成した`changes/test4.yaml`:
 
 ```yaml
 - event_id: todo-add--test3--test4
   feature_id: todo-add
   from_milestone: test3
   to_milestone: test4
-  from_tree_sha: ef424d86ed44f5810063ab8e8b44d2595257c7bf
-  to_tree_sha: 44ad6d3f88ebac3b10eedeee5ed810b81cb92720
+  from_tree_sha: f0f91f81d3f584ff269703b17a9277f114eb282f
+  to_tree_sha: 7215feb4ab30541d9c252c4a30c3d2bd109b8c93
   impacted_testcases:
   - tc-todo-add-valid-title-001
   change_type: null
-  from_tree_shas:
-  - 2f878abf04e222b5b7e553db42bba54b8007179a
-  - f0f91f81d3f584ff269703b17a9277f114eb282f
+  true_divergences:
+  - merge_commit: d23fb31e649619848a991af30e16d97f2ab39443
+    parent_tree_shas:
+    - b9952cccc56380eda14a926241399c96edcff9d9
+    - 378c1834cc23deab8130ea13ca267993a69c41f6
 ```
 
-生成された`.markharness-cache/test4.json`(抜粋、`markharness changes compute`を`--no-cache`なしで再実行して確認):
+生成された`.markharness-cache/test4.json`(抜粋、`.gitignore`対象で非コミット):
 
 ```json
-{"key":{"tree_sha":"027cd6309a4cd5149338833e2ffb3dce3ceb7ddf","canonicalization_rule_version":"1","id_index_schema_version":"1","tool_version":"0.1.0"},"entries":[{"id":"todo-add","path":"knowledge/todo-simple/todo-add","tree_sha":"44ad6d3f88ebac3b10eedeee5ed810b81cb92720"}, ...]}
+{"key":{"tree_sha":"514029850e150758eeecbe8369e1e847c7a92f08","canonicalization_rule_version":"1","id_index_schema_version":"1","tool_version":"0.1.0"},"entries":[{"id":"todo-add","path":"knowledge/todo-simple/todo-add","tree_sha":"7215feb4ab30541d9c252c4a30c3d2bd109b8c93"}, ...]}
 ```
 
 ### 8.3 想定通りだった点
 
 - `todo-add`のみが`true_divergence`と判定され、分岐・マージに関与していない他の3 Feature(`todo-complete`/`todo-delete`/`todo-edit`)はいずれも`single_parent`と判定された。設計書§3.2の場合分けと一致する。
-- `changes/test4.yaml`の`from_tree_shas`に、`lineage`コマンドが個別に報告した`true_divergence`のケースと同じ2つの親tree SHAが記録された。これは本改善サイクル(improvement-prompts.md項目2)で実装した「`to_milestone`が直接マージコミットの場合の`lineage`統合」が、単体テスト(`markharness`リポジトリ側のtempdir上のテスト)だけでなく、実際の複数コミット・複数Featureを持つケーススタディリポジトリでも設計通りに機能することを確認できた初めての実例である。
+- `changes/test4.yaml`の`true_divergences`に、`lineage`コマンドが個別に報告した`true_divergence`のケースと同じ2つの親tree SHA(`parent_tree_shas`)、およびマージコミットSHA(`merge_commit`)が記録された。改善プロンプト項目2で一般化した「区間内の全マージへの`lineage`統合」(`checklist-changes-lineage-generalization.md`)が、単体テスト(`markharness`リポジトリ側のtempdir上のテスト)だけでなく、実際の複数コミット・複数Featureを持つケーススタディリポジトリでも設計通りに機能することを確認できた初めての実例である。
+- マージコミットが`from_milestone..to_milestone`区間の途中ではなく`to_milestone`(=`test4`)タグそのものに位置する、一般化以前から対応していた単純なケースであり、一般化後の実装でも従来通り検出できることが確認できた。
 
 ### 8.4 想定と異なった点・留意事項
 
-- `from_tree_sha`(単一値)には`test3`時点のtree SHAがそのまま記録され、`from_tree_shas`(2親)と共存する形になった。設計書はこの2つのフィールドの併存について「線形履歴の表現として`from_tree_sha`を維持する」とのみ記しており、実際に両方が同時に埋まったレコードを見るのは今回が初めてである。値として矛盾はしていない(`from_tree_sha`は主系譜の単純な2点比較結果、`from_tree_shas`はマージコミット固有の2親情報)が、`verify trace`/`verify pending`(§3.7)のようにこのレコードを消費する将来のツールが両フィールドをどう使い分けるかは、本シナリオでは検証しておらず今後の課題として残る。
-- 本シナリオはあくまで「`to_milestone`タグが直接マージコミットを指す」最も単純なケースであり、改善プロンプト項目2で明記した統合範囲の限界(マイルストーン区間内の任意の位置でのマージには非対応)は未検証のまま残っている。**追記(2026-08-11)**：この限界はその後`markharness`側の一般化(区間内の全マージを走査、`checklist-changes-lineage-generalization.md`)で解消された。ただし本シナリオ(test4)自体は単純ケースのままであり、「区間内に複数マージがある」ケースでの`mh-sample-test-case`側での再検証はまだ行っていない。
+- `from_tree_sha`(単一値)には`test3`時点のtree SHAがそのまま記録され、`true_divergences`(2親情報)と共存する形になった。設計書はこの2つのフィールドの併存について「線形履歴の表現として`from_tree_sha`を維持する」とのみ記しており、実際に両方が同時に埋まったレコードを見るのは今回が初めてである。値として矛盾はしていない(`from_tree_sha`は主系譜の単純な2点比較結果、`true_divergences`はマージコミット固有の2親情報)が、`verify trace`/`verify pending`(§3.7)のようにこのレコードを消費する将来のツールが両フィールドをどう使い分けるかは、本シナリオでは検証しておらず今後の課題として残る。
+- 本シナリオは`from_milestone..to_milestone`区間内にマージが1件のみのケースである。「区間内に複数マージがある」ケース(改善プロンプト項目2の一般化が本来対象とする、マージが`to_milestone`タグの位置ではなく区間の途中にあるケースや、同一Featureが区間内で複数回真の分岐を起こすケース)は、本シナリオでは検証できておらず今後の課題として残る。
 
 ### 8.5 リポジトリへの影響
 
-- 新規ブランチ`markharness-lineage-scenario-feature`、マージコミット、`test4`タグを追加した。いずれもリモートへはpushしていない(ローカルのみ)。
-- 既存の`test1`〜`test3`のコミット・タグ・`changes/test2.yaml`・`changes/test3.yaml`・`executions/`配下は変更していない。新規追加は`changes/test4.yaml`と`.markharness-cache/test4.json`(`.gitignore`対象で非コミット)のみ。
+- 新規ブランチ`markharness-lineage-scenario-feature`、マージコミット(`d23fb31`)、`test4`タグ、`changes/test4.yaml`をコミットした(`7666a2c`)。いずれもリモートへはpushしていない(このリポジトリに`origin`は設定されていない)。
+- 既存の`test1`〜`test3`のコミット・タグ・`changes/test2.yaml`・`changes/test3.yaml`・`executions/`配下は変更していない。
