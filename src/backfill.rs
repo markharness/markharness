@@ -71,7 +71,8 @@ pub fn backfill_run(root: &Path, use_cache: bool) -> io::Result<BackfillReport> 
             continue;
         }
 
-        let events = changes::compute_changes(root, from_milestone, to_milestone, use_cache)?;
+        let events =
+            changes::compute_changes(root, from_milestone, to_milestone, use_cache, false)?;
         let changes_dir = root.join("changes");
         fs::create_dir_all(&changes_dir)?;
         fs::write(

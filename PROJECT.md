@@ -10,14 +10,15 @@
 | 項目 | 値 |
 |------|----|
 | プロダクト名 | markharness |
-| 概要 | Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI。`knowledge/` に YAML で手動記述されたテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git blob SHA 比較によって版履歴(`derived_from` / `ChangeEvent`)をブランチ運用非依存で自動計算する。設計の元になった研究は `docs/テスト知識管理のGit-nativeモデル_統合版.md`、製品化した運用イメージは `docs/product-operation.md`、TestCase 生成アルゴリズムの詳細設計は `docs/testcase-generation-design.md` を参照。 |
+| 概要 | Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI。`knowledge/` に YAML で手動記述されたテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって Feature ごとの版履歴(`derived_from` 関係)を `ChangeEvent` としてブランチ運用非依存で自動計算する(版ノード・辺を持つ永続的なグラフとして保持するわけではない。詳細は `docs/decisions/0001-version-dag-to-changeevent-model.md`)。設計の元になった研究は `docs/テスト知識管理のGit-nativeモデル_統合版.md`、製品化した運用イメージは `docs/product-operation.md`、TestCase 生成アルゴリズムの詳細設計は `docs/testcase-generation-design.md` を参照。 |
 | 主要機能 | 右の一覧を参照 |
 
 - `knowledge/**/{feature,condition,expected/*}.yaml` へのテスト知識の手動記述(UC1)
 - Feature + Behavior + Condition からの `TestCase` 決定的生成(`markharness generate`)と CI 差分検証(`markharness verify`、`generated/testcases/*.yml`、UC2/UC3)
-- マイルストーンタグ間の `ChangeEvent`(`derived_from`)自動計算 — blob SHA 比較 + `git merge-base`(UC5、核心的貢献)
-- 大規模既存リポジトリ向けの非同期・優先度付きバックフィル(`git notes` で進捗管理、UC6)
-- id 解決キャッシュの破棄・再構築(UC7)、既存 TMS(TestRail / Xray 等)からのインポート(UC8)
+- マイルストーンタグ間の `ChangeEvent` 自動計算(Feature ディレクトリの Git tree SHA 比較が主系譜。真の分岐は `git merge-base` 由来の `true_divergences` として追加記録。`derived_from` は自動導出される関係の概念名であり、永続DAGのフィールドではない)(UC5、核心的貢献)
+- 大規模既存リポジトリ向けの優先度付きバックフィル(`markharness backfill run`。呼び出しごとに未処理ペアを1パス処理して終了する設計で、常駐デーモンではなくCI等からの反復呼び出しを前提とする。`git notes` で進捗管理、UC6)
+- id 解決キャッシュの破棄・再構築(UC7)
+- **未実装**：既存 TMS(TestRail / Xray 等)からのインポート(UC8)
 - `ChangeEvent` と実行結果(`TestExecution`)の自動突合(`markharness verify trace` / `verify pending`)、未再検証テストの pending/stale 判定と CI ゲート連携(`--fail-on-pending`)
 
 ## 技術スタック <!-- CUSTOMIZE -->
@@ -90,7 +91,7 @@ generated/
 executions/             # マイルストーンごとの実行結果(UC4)
 
 changes/
-└── <milestone>.yaml   # マイルストーン間の derived_from(ChangeEvent、UC5 / UC6)
+└── <milestone>.yaml   # マイルストーン間の ChangeEvent(derived_from 関係の差分ログ、UC5 / UC6)
 
 schema/                 # フォーマット・正規化ルール定義(UC7)
 

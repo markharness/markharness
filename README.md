@@ -1,70 +1,89 @@
-# AI 開発テンプレート
+# markharness
 
-AI コーディングエージェント（**VS Code Copilot / Claude Code 両対応**）で新しいプロダクトを開発するための汎用テンプレートです。
-チェックリスト駆動・TDD・シークレット保護のワークフローが組み込まれています。
+Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI(Rust実装)です。`knowledge/` に YAML で手動記述したテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって `ChangeEvent`(Featureごとの版履歴の差分ログ)をブランチ運用非依存で自動計算します。
 
-## 使い方
+設計の背景は [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md)、プロダクトとしての詳細は [PROJECT.md](./PROJECT.md) を参照してください。
 
-1. このテンプレートを新しいプロジェクトのルートにコピー
-2. チャットで **`/customize`** を実行し、作りたいプロダクトを伝える
-   例: `/customize 家計簿アプリ用にカスタマイズしてください`
-   → [PROJECT.md](./PROJECT.md) がそのプロダクト用に書き換えられます
-3. **`/setup`** で開発環境を構築（ツールチェック → 外部 API 設定 → プロジェクト初期化）
-4. **`/plan-checklist`** で計画、**`/dev-tdd`** で TDD 実装
+> このリポジトリはもともと汎用AI開発テンプレートから作られています。テンプレート自体の説明(`/customize` 等のスラッシュコマンド)は [docs/template-readme.md](./docs/template-readme.md) に退避してあります。
 
-## 設計
+## 最小チュートリアル
 
-**プロダクト固有の情報はすべて [PROJECT.md](./PROJECT.md) に集約**されています。
-`.github/` 配下のワークフロー定義は PROJECT.md を参照する汎用的な内容なので、プロダクトを変えるときに書き換えるのは原則 PROJECT.md だけです。
+このセクションのコマンドは全て `cargo build --release` 後の `target/release/markharness`(Windowsは `.exe`)を指します。以下、`markharness` と表記します。
 
-```text
-PROJECT.md                     ← 唯一のカスタマイズポイント（プロダクト名・API・スタック・認証情報パス）
-CLAUDE.md                      ← Claude Code 用エントリポイント（PROJECT.md と instructions を参照）
-.github/                       # 実体はすべてここ（Copilot 用 + Claude から参照される共通ファイル）
-├── prompts/                   # スラッシュコマンド
-│   ├── customize.prompt.md    #   /customize      — テンプレートをプロダクト用に構成
-│   ├── plan-checklist.prompt.md #  /plan-checklist — タスクをチェックリスト化して着手
-│   ├── dev-tdd.prompt.md      #   /dev-tdd        — TDD で機能を実装
-│   ├── cleanup.prompt.md      #   /cleanup        — 完了済みチェックリストの整理
-│   └── help.prompt.md         #   /help           — トラブルシューティング
-├── instructions/              # 常時適用されるワークフロー規約
-│   ├── checklist-workflow.instructions.md  # チェックリスト運用ルール
-│   ├── tdd-workflow.instructions.md        # Red-Green-Refactor の規律
-│   └── security.instructions.md            # シークレット保護ルール
-└── skills/
-    ├── setup/                 # /setup — 環境構築（OS 判定 → ツールチェック → API 設定 → 初期化）
-    │   ├── scripts/           #   前提チェック・プロジェクト初期化・Google トークン取得
-    │   └── references/        #   Google OAuth の具体的手順（他 API の雛形にも使える）
-    └── skill-creator/         # 新しいスキルの作成・改善（Copilot 専用）
-.claude/                       # Claude Code 用の薄いラッパー（実体は .github を参照、二重管理なし）
-├── skills/setup/              #   /setup（Phase 0 スキップ等の読み替え付き）
-└── commands/                  #   /customize /plan-checklist /dev-tdd /cleanup /help
+サンプルの知識データ一式は [examples/todo-minimal/](./examples/todo-minimal/) にあります。外部リポジトリへの依存はなく、このリポジトリの中だけで完結します。
+
+```bash
+# 1. 新しいプロジェクト用の空リポジトリを用意する
+mkdir my-todo-project && cd my-todo-project
+git init
+
+# 2. markharness init — knowledge/ / axes/ / generated/ / executions/ / changes/ / schema/ を作成
+markharness init
+
+# 3. 知識登録 — examples/todo-minimal/ の axis レジストリとドラフトYAMLを使う
+cp -r <markharness のクローン先>/examples/todo-minimal/axes .
+markharness knowledge apply <markharness のクローン先>/examples/todo-minimal/draft-v1.yml
+
+# 4. 生成 — knowledge/ から TestCase を決定的に生成する
+markharness generate
+
+# 5. マイルストーン(git tag) — 最初のリリース地点にタグを打つ
+git add -A && git commit -m "add todo-management/add-todo knowledge"
+git tag v1
+markharness milestone init v1
+
+# --- ここで仕様が変わったとする(examples/todo-minimal/draft-v2.yml は
+#     同じ Feature に新しい Condition を1件追加するドラフト) ---
+markharness knowledge apply <markharness のクローン先>/examples/todo-minimal/draft-v2.yml
+markharness generate
+git add -A && git commit -m "add max-length condition"
+git tag v2
+markharness milestone init v2
+
+# 6. changes compute — v1..v2 間の ChangeEvent を自動計算する
+markharness changes compute v1 v2
+cat changes/v2.yaml
+
+# 7. 実行結果を記録してから、未再検証のTestCaseを確認する
+markharness execution record tc-empty-title-001 --milestone v2 --result pass --executor <your-name>
+markharness execution record tc-max-length-001 --milestone v2 --result pass --executor <your-name>
+markharness verify pending --from v1 --to v2
 ```
 
-## エディタ別の使い方
+最後の `verify pending` は、`v1..v2` で影響を受けた2件のTestCase(`tc-empty-title-001` / `tc-max-length-001`)がいずれも `v2` 時点で実行記録済みであることを検出し、`pending`(未再実行)を0件と報告します。両方のステップを省略して直接 `verify pending` を実行すると、逆にこの2件が pending として出力されます(実際に上のコマンド列で手元確認済み)。
 
-- **VS Code Copilot**: そのまま使用。prompts / instructions / skills が自動で認識されます。
-- **Claude Code / Cowork**: [CLAUDE.md](./CLAUDE.md) がエントリポイント。スラッシュコマンドは `.claude/commands/` 経由で同名で使えます。skill-creator のみ移植版ではなく**組み込みの公式版**を使ってください（eval・ベンチマーク機能付き）。
+各コマンドの詳細なオプション・出力形式は [docs/cli-manual.md](./docs/cli-manual.md) を参照してください。
 
-## デフォルトの技術スタック
+## 運用上の制約
 
-TypeScript (Node.js v20+) / Vitest / ESLint + eslint-plugin-security / Prettier。
-`/customize` で変更可能です（詳細は PROJECT.md）。
+- **Gitタグがマイルストーンの前提**：`changes compute` / `backfill run` は `git tag` された地点しかマイルストーンとして扱えません。タグを打たない限りリリース境界を認識できません(UC4のタグ付け自体は人間の判断ポイントであり、`markharness` は代行しません)。
+- **`git notes` は push/fetch で自動同期されません**：バックフィルの進捗記録([第4.3節](./docs/テスト知識管理のGit-nativeモデル_統合版.md))は `refs/notes/markharness-backfill` に保存されますが、これは通常の `git push`/`git fetch` の対象外です。共有リポジトリでチーム運用する場合は、`git push origin refs/notes/*` と対応する fetch 設定(`git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'` 等)を各メンバー・CI環境で追加してください。
+- **既存TMS(TestRail / Xray 等)からの移行は未実装**：UC8(既存ツールからのインポート)は未実装です。移行は手作業で `knowledge/` 配下のYAMLを作成する(または `markharness knowledge apply`/`add` を使う)ことになります。詳細は [PROJECT.md](./PROJECT.md) の主要機能一覧を参照してください。
 
-## 適用範囲とスケールの目安
+## 未対応事項
 
-このテンプレートは**単一スタック・少人数(個人〜小規模チーム)での MVP 開発**に最適化されています。プロダクトの成長に応じた対応の目安:
+[docs/テスト知識管理のGit-nativeモデル_統合版.md §3.6 実装状況まとめ](./docs/テスト知識管理のGit-nativeモデル_統合版.md#36-実装状況まとめ)を参照してください。要点:
 
-| イベント | 対応 | 内容 |
-|---|---|---|
-| チームが増える | 追記で対応可 | CI 定義(テスト・lint・audit の強制)、レビュー規約、ADR を追加。既存の instructions / PROJECT.md 構造はそのまま使える |
-| デプロイを AI に任せる | 追記で対応可 | `security.instructions.md` に本番シークレットの規則(値を扱わずシークレットマネージャ経由で参照)を追記し、デプロイ手順をスキルとして追加 |
-| モノレポ化・複数スタック化 | **再設計が必要** | 「PROJECT.md 1 ファイル = 1 スタック」という中核前提が崩れるため、パッケージ単位での分割等の構造変更が必要 |
+- 既存TMS(TestRail/Xray等)からのインポータ(UC8) — 未実装。
+- id解決キャッシュの `canonicalization_rule_version` / `id_index_schema_version` — 現状固定値で、実際の改訂運用は未検証。
+- id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等) — 未実装。
+- `verify trace` / `verify pending` — 導入前の既存実行記録には遡及適用されない。`executions/*/results.yml` 用のJSON Schemaも未整備。
+- `markharness backfill run` — 常駐デーモンではなく、呼び出しごとに未処理ペアを1パス処理して終了する設計(CI等からの反復呼び出しを前提とする)。
 
-境界線はチーム規模やプロダクトの野心ではなく、**単一スタック前提が守れるかどうか**です。
+## 開発
 
-## セキュリティ方針
+Rust(edition 2024)実装です。ビルド・テスト・Lintの標準コマンドは [PROJECT.md](./PROJECT.md#技術スタック) を参照してください。
 
-認証情報（`credentials.json`, `token.json`）は**ワークスペースの外**（`~/.<app-name>/`）に保存します。
-エディタのコンテキストとして LLM に送信されたり、Git にコミットされることを防ぐためです。
-詳細: [security.instructions.md](./.github/instructions/security.instructions.md)
+```bash
+cargo build
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+```
+
+## ドキュメント一覧
+
+- [PROJECT.md](./PROJECT.md) — プロダクト概要・技術スタック・ディレクトリ構成
+- [docs/README.md](./docs/README.md) — 設計ドキュメント群の索引(論文・製品運用イメージ・CLIマニュアル・個別コマンド仕様)
+- [docs/cli-manual.md](./docs/cli-manual.md) — 実装済み/未実装のCLIコマンド一覧
+- [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md) — 設計の元になった研究(論文ドラフト)

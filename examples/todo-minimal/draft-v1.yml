@@ -1,0 +1,23 @@
+requirement:
+  id: todo-management
+  label: todo-management
+  axis: [workflow]
+
+feature:
+  id: add-todo
+  label: add-todo
+  axis: [ui, validation]
+
+behavior:
+  id: add-task
+  label: add-task
+  axis: [ui]
+  description: User adds a new task to the list.
+
+condition:
+  id: empty-title
+  label: empty-title
+  description: Submit the todo form with an empty title
+
+expected:
+  - description: shows a validation error

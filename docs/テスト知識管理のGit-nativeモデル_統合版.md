@@ -16,7 +16,7 @@
 3. **LLM活用への全面ピボット案(不採用)**：「AI専用知識グラフ」への転換を検討したが、(a)クエリ速度・使いやすさの懸念は対象がLLMになっても解消されない、(b)新規性の主張として弱い、(c)評価方法が根本的に変わり単独では査読耐性が下がる、との理由で不採用(付録A.1)。
 4. **部分ピボットと段階的な設計修正**：人間向けモデルを土台に、LLM角度は将来課題として切り出した上で、研究テーマを「案1：構造表現」単独に絞り込み(検討まとめ第4章)、以降10回以上の技術的指摘を受けて以下を確定させた。
    - 系譜キーを人間の手動整数からGitのコンテンツアドレス(blob SHA)＋祖先探索(`git merge-base`)に変更(第3.2節)。
-   - 開発中のリアルタイム照会と、研究評価対象である永続的な版履歴DAGを、別のグラフ(構造的生成グラフ vs 版履歴DAG)として明確に分離(第3.2節、貢献の範囲を限定)。
+   - 開発中のリアルタイム照会と、研究評価対象であるマイルストーン境界のChangeEventモデル(版履歴)を、別のグラフ(構造的生成グラフ vs ChangeEventモデル)として明確に分離(第3.2節、貢献の範囲を限定)。
    - id解決をコミット対象の単一ファイルからGitの`commit-graph`と同じ設計思想の非コミットキャッシュに変更し、内容アドレス方式のキャッシュキーと破棄条件を明記(第3.3節)。
    - 系譜確定のタイミングをコミット単位からマイルストーン境界単位に変更し、ブランチ戦略(merge/rebase/squash)非依存にした(第3.4節)。
    - 既存の大規模リポジトリへの移行を可能にする、マイルストーン限定・非同期・Git notes・遅延計算によるバックフィルアーキテクチャを本編に組み込んだ(第4章)。
@@ -34,7 +34,7 @@
 
 ### 1.1 動機
 
-ソフトウェア開発における仕様変更は頻繁に発生し、その都度「どのテストケースを再確認すべきか」を判断する必要がある。既存のテスト管理ツール(TestRail・Zephyr Scale・Xray・qTest等)は、要件・機能・テストケース間の静的なトレーサビリティ(現時点のスナップショット)やマイルストーン管理機能を備えるが、いずれも現時点のスナップショット中心の設計であり、複数リリースにまたがる派生関係を第一級のクエリ対象として扱う設計にはなっていない(検討まとめ第1.3章)。素朴なGit運用(Markdown/YAMLでのテストケース管理)も実務に存在するが、実行追跡・変更影響の系統的な追跡機能を欠く。
+ソフトウェア開発における仕様変更は頻繁に発生し、その都度「どのテストケースを再確認すべきか」を判断する必要がある。既存のテスト管理ツール(TestRail・Zephyr Scale・Xray・qTest等)は、要件・機能・テストケース間の静的なトレーサビリティ(現時点のスナップショット)やマイルストーン管理機能を備える。TestRail(Enterprise版)はテストケース単体の履歴比較・復元機能(Test case versioning)を提供するが、これは個々のテストケースの編集履歴に閉じた機能であり、Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、複数Featureをまたぐ再検証追跡を統合したローカル/Git-native運用は提供しない(参考文献参照。本研究の差分は第1.3節)。素朴なGit運用(Markdown/YAMLでのテストケース管理)も実務に存在するが、実行追跡・変更影響の系統的な追跡機能を欠く。
 
 **図1：現状運用から提案モデルへ**
 
@@ -50,17 +50,17 @@ flowchart LR
   subgraph AFTER["提案モデル（実験群）"]
     direction TB
     A1["knowledge/\n(Feature / Condition / ExpectedResult)"]
-    A2["derived_from DAG\n（マイルストーン境界、第3章）"]
+    A2["ChangeEvent\n（derived_from、マイルストーン境界、第3章）"]
     A3["ChangeEvent 自動生成\n→ 影響TestCase特定"]
   end
   BEFORE --> GAP --> AFTER
 ```
 
-現状運用(TestRail/Jira/git検索の組み合わせ)は、いずれも「過去のある変更が今のどのテストに影響するか」という問いに、版間の派生関係を保持していないため原理的に答えられない(第1.3節・第2.4節)。本研究はこの空白を、Git自身のオブジェクトモデルを土台にした版履歴DAGで埋める(第3章)。
+現状運用(TestRail/Jira/git検索の組み合わせ)は、いずれも「過去のある変更が今のどのテストに影響するか」という問いに、複数のFeatureにまたがる派生関係を横断的なクエリ対象として保持していないため原理的に答えられない(TestRailのようにテストケース単体の履歴比較・復元機能を持つ製品はあるが、これは個々のテストケースの編集履歴に閉じており、Featureの変更が波及するテストケース群を横断的に特定する機能ではない。第1.3節・第2.4節)。本研究はこの空白を、Git自身のオブジェクトモデルを土台にしたマイルストーン境界のChangeEventモデルで埋める(第3章)。
 
 ### 1.2 研究課題(RQ)
 
-> RQ1: 明示的な版履歴(derived_from)を持つテスト知識モデルは、対象組織のテスターが実際に使用している現状の運用(TMS・課題管理ツール・git検索等の組み合わせ)と比較して、特に**複数世代にわたる変更影響の識別タスク**において、正答率・所要時間を改善するか。
+> RQ1: マイルストーン境界ごとに`derived_from`関係をChangeEventとして明示的に記録するテスト知識モデルは、対象組織のテスターが実際に使用している現状の運用(TMS・課題管理ツール・git検索等の組み合わせ)と比較して、特に**複数世代にわたる変更影響の識別タスク**において、正答率・所要時間を改善するか。
 
 本研究はRQ1を中心課題とし、単一の研究課題に絞り込む。構造からのテストケース自動生成、Git粒度分割によるレビュー性向上等の関連課題は将来課題とする(第7章)。LLMによる文脈供給・手順書自動生成への応用は、検討の結果、本研究のスコープから完全に除外した(付録A)。
 
@@ -73,7 +73,9 @@ flowchart LR
 3. 既存の大規模リポジトリへの段階的な導入を可能にする、マイルストーン単位の非同期バックフィルアーキテクチャ(第4章)。
 4. 対象組織の実際の現状運用を対照群とし、正解データを当時の成果物から再構成した、実データに基づく評価設計(第5章)。
 
-**注**：開発者が作業ブランチ上で即座に行える差分照会(第3.2節の構造的生成グラフを使う実装上の利便機能)は、版履歴DAGを使わないため本研究の核心的貢献・RQ1の評価対象には含めない(検討経緯は付録A参照)。
+**本研究の差分**：Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、再検証追跡を統合したローカル/Git-native運用である。既存TMS(TestRail等)が提供するテストケース単体の履歴比較・復元機能とは異なり、複数のFeatureにまたがる版履歴を横断的にクエリできる点が本モデルの中心的な差分である(第2.4節)。
+
+**注**：開発者が作業ブランチ上で即座に行える差分照会(第3.2節の構造的生成グラフを使う実装上の利便機能)は、版履歴のChangeEventモデルを使わないため本研究の核心的貢献・RQ1の評価対象には含めない(検討経緯は付録A参照)。
 
 ---
 
@@ -93,7 +95,7 @@ Classification Tree Method(CTM)は、分類木からのテストケース生成�
 
 ### 2.4 既存テスト管理ツール・Git-native運用との比較
 
-TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン機能・トレーサビリティ機能を備えるが、いずれも現時点のスナップショット中心であり、複数世代にわたる派生関係を辿るクエリ機能は一般的に存在しない(TestRailは2026年時点でオンプレミス版の提供を終了しクラウド専用。Xrayは Jira Data Center 経由で自己ホスト可能)。無料・自己ホスト可能な既存選択肢(Kiwi TCMS、TestLink、Klaros Test Management)も同様の制約を持つ。実務では、これら単体のツールではなく、TMS・課題管理ツール(Jira等)・git検索を組み合わせて運用するのが一般的だが、いずれの組み合わせも過去の世代の変更を体系的には辿れない。本研究はこの構造的な欠落を埋める位置づけにあり、評価設計(第5章)はこの実態を反映する。
+TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン機能・トレーサビリティ機能を備える。TestRail(Enterprise版)はテストケース単体の版履歴比較・復元機能(Test case versioning)を提供するが、これは個々のテストケースの編集履歴に閉じており、Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、複数Featureをまたぐ再検証追跡を統合したローカル/Git-native運用は提供しない(参考文献参照)。他の主要製品を含め、複数世代にわたる派生関係を横断的なクエリ対象として扱う機能は一般的に存在しない(TestRailは2026年時点でオンプレミス版の提供を終了しクラウド専用。Xrayは Jira Data Center 経由で自己ホスト可能)。無料・自己ホスト可能な既存選択肢(Kiwi TCMS、TestLink、Klaros Test Management)も同様の制約を持つ。実務では、これら単体のツールではなく、TMS・課題管理ツール(Jira等)・git検索を組み合わせて運用するのが一般的だが、いずれの組み合わせも過去の世代の変更を体系的には辿れない。本研究はこの構造的な欠落を埋める位置づけにあり、評価設計(第5章)はこの実態を反映する。
 
 ---
 
@@ -108,7 +110,7 @@ TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン
 - `TESTEXECUTION` / `MILESTONE`：実行結果とリリース単位の管理。
 - `CHANGEEVENT`：`FEATURE`の変更が`TESTCASE`へ伝播する経路(変更影響分析の対象)。
 - `FEATURE`の自己参照関係(2種類に分離)：
-  - `derived_from`：同一Featureの版履歴。Gitのtree SHAと祖先探索から、マイルストーン境界で導出する(3.2〜3.4節、本モデルの核心)。
+  - `derived_from`：同一Featureが前後のマイルストーンでどう変化したかを表す関係(概念上の名称であり、FEATUREの自己参照エッジとして永続化されるわけではない)。マイルストーン境界ごとに`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として都度導出する(3.2〜3.4節、本モデルの核心)。
   - `forked_from`：異なるFeature間の概念的派生(例：double-jumpがground-jumpの仕様を土台に設計された、という設計上の依存関係)。Git履歴には現れないドメイン知識であり、手動記述が必須。実装では`feature.yml`のfront matterの任意フィールドとして提供済み(第3.6節)。
 
 **実装注記**：CLI実装は`REQUIREMENT`を`requirement.yml`として明示ファイル化し、`knowledge/<requirement>/<feature>/...`という階層でFeatureをその直下に置く(第3.5節のディレクトリ構造も参照)。`feature.yml`は親を`requirement: <requirement_id>`で参照する。`requirement.yml`は`source`(要件の出所、任意)・`related_issues`(外部issueトラッカーへの参照配列、任意)も持てる(製品化提案、論文本文には明記なし)。両フィールドとも人間が手動で記入する参照情報であり、これを読んで検証・生成を行うロジックは実装していない。
@@ -118,7 +120,7 @@ TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン
 ```mermaid
 erDiagram
   REQUIREMENT ||--o{ FEATURE : decomposes
-  FEATURE ||--o{ FEATURE : "derived_from (git tree-hash + ancestor search, milestone-scoped)"
+  FEATURE ||--o{ FEATURE : "derived_from (derived per-milestone from ChangeEvent tree-sha diff; not a persisted DAG edge)"
   FEATURE }o--o{ FEATURE : "forked_from (manual, cross-entity)"
   FEATURE ||--o{ BEHAVIOR : has
   BEHAVIOR ||--o{ CONDITION : has
@@ -147,6 +149,8 @@ erDiagram
 
 `FEATURE`は版番号を人間が手動で管理するフィールド(`version`整数)を持たない。系譜計算に使う識別子は、front matterに書く値ではなく、**Gitのオブジェクトストアが既に保持している識別子**であり、`label`は表示専用(系譜計算には使わない)。
 
+なお、上記ER図の`derived_from`自己参照エッジは概念上のモデルであり、`FEATURE`エンティティ自体が版ノード・辺を持つ永続的なグラフ構造として実装されているわけではない。実際にはマイルストーン境界ごとに`ChangeEvent`のfrom_tree_sha/to_tree_shaを比較することで、この関係を都度導出する(3.2節)。
+
 **実装注記(blob SHA→tree SHAへの変更)**：当初`feature.yml`単体のblob SHAで変更検知する設計だったが、これだと`feature.yml`自体は不変のままConditionやBehavior、ExpectedResultだけが変更された場合に検知漏れが起きる不具合があった。CLI実装はこれを修正し、Featureディレクトリ配下(`feature.yml`＋その下のbehavior/condition/expected一式)を含む**Gitツリーオブジェクトのtree SHA**を比較する方式に変更している(`id_cache::resolve_feature_versions`、旧`resolve_feature_blobs`)。以降、本節の「blob SHA」は特記ない限りこの「Featureディレクトリのtree SHA」を指す。
 
 **図2：Featureの派生関係（derived_from と forked_from）**
@@ -158,23 +162,23 @@ flowchart LR
   F3 -.->|forked_from（手動記述）| F4["player-double-jump\n(概念的な派生、新規Feature)"]
 ```
 
-同一Featureの版が進む`derived_from`はマイルストーン境界でCIが自動導出する(第3.2〜3.4節)のに対し、`player-double-jump`のように別のFeatureとして分岐する`forked_from`は、Git履歴に現れないドメイン知識のため手動記述する(第3.1節)。
+同一Featureの版が進む`derived_from`はマイルストーン境界でCIが自動導出する(第3.2〜3.4節)のに対し、`player-double-jump`のように別のFeatureとして分岐する`forked_from`は、Git履歴に現れないドメイン知識のため手動記述する(第3.1節)。`derived_from`が実装上どう導出されるか(FEATUREの自己参照エッジとして永続化されるわけではない点を含む)は、前掲のER図直後の注記および第3.2節を参照。
 
 ### 3.2 版履歴の導出：2つのグラフと役割分担
 
 本モデルには目的の異なる2種類のグラフが存在し、これを区別することが実装・評価の両面で重要である。
 
-**(A) 構造的な生成グラフ(静的、版に依存しない)**：`FEATURE`/`CONDITION`→`TESTCASE`という`generates`関係。現在のFeature/Conditionからどのテストケースが生成されるかを表す静的な構造であり、版履歴を必要としない。開発者が作業ブランチ上で「今この変更で、どのTestCaseが再生成されるか」を知りたい場合、必要なのはこの生成グラフと、現在の変更内容(HEADと基準点の単純な差分)だけであり、これは実質的に`git diff`をスコープした処理である。**この機能は実装上の利便機能であり、研究上の核心的貢献・RQ1の評価対象には含めない**(既存運用にはこの機能自体が存在しないため実務上の価値はあるが、版履歴DAGを一切使わないため評価軸としては切り分ける)。
+**(A) 構造的な生成グラフ(静的、版に依存しない)**：`FEATURE`/`CONDITION`→`TESTCASE`という`generates`関係。現在のFeature/Conditionからどのテストケースが生成されるかを表す静的な構造であり、版履歴を必要としない。開発者が作業ブランチ上で「今この変更で、どのTestCaseが再生成されるか」を知りたい場合、必要なのはこの生成グラフと、現在の変更内容(HEADと基準点の単純な差分)だけであり、これは実質的に`git diff`をスコープした処理である。**この機能は実装上の利便機能であり、研究上の核心的貢献・RQ1の評価対象には含めない**(既存運用にはこの機能自体が存在しないため実務上の価値はあるが、版履歴のChangeEventモデルを一切使わないため評価軸としては切り分ける)。
 
-**(B) 版履歴DAG(derived_from、マイルストーン境界で確定)**：同一Featureが世代を経てどう変化してきたかを表す、本研究の核心的なモデル。既存TMS・素朴なGit運用のいずれも持たない機能であり、RQ1が検証する対象はこちらに限定する。
+**(B) 版履歴のChangeEventモデル(derived_from、マイルストーン境界で確定)**：同一Featureが前後のマイルストーンでどう変化してきたかを、`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として表す、本研究の核心的なモデル。マイルストーン区間ごとに独立して計算するモデルであり、版ノード・辺を持つ永続的なグラフ構造として保持するわけではない(永続グラフへの拡張は第7章 Future Workを参照)。既存TMS・素朴なGit運用のいずれも持たない機能であり、RQ1が検証する対象はこちらに限定する。
 
-版履歴DAG(B)の導出は以下の通り。
+版履歴のChangeEventモデル(B)の導出は以下の通り。
 
 - **tree SHAが担うこと**：Featureディレクトリ内容の衝突しない識別。内容が異なれば必然的に異なる値になるため、ブランチ分岐時の番号衝突(人間が手動で整数を上げる場合に起こりうる)は起きない。ただし、これだけでは「どのtreeがどのtreeから派生したか」という親子関係は一切わからない。
 - **祖先探索が担うこと**：マージコミットMの親P1・P2から、マージベース(共通祖先)Bを特定するには`git merge-base P1 P2`によるコミットグラフの探索が必要であり、ハッシュの比較だけで済む処理ではない(Gitのcommit-graphファイル・世代番号による最適化により実務上は効率的だが、明示的なグラフアルゴリズムの実行である)。
 - 対象idについて、tree(B)・tree(P1)・tree(P2)・tree(M)を取得し、以下のように場合分けする。
   - tree(P1) == tree(B) かつ tree(P2) != tree(B)：P2側でのみ変更。線形履歴として扱う。
-  - tree(P1) != tree(B) かつ tree(P2) != tree(B) かつ tree(P1) != tree(P2)：両ブランチが独立に変更した真の分岐。`derived_from`は[tree(P1), tree(P2)]の2親として記録する。
+  - tree(P1) != tree(B) かつ tree(P2) != tree(B) かつ tree(P1) != tree(P2)：両ブランチが独立に変更した真の分岐。この関係は2親(P1・P2)を持つ`derived_from`として扱い、実装では`ChangeEvent.true_divergences`に記録する(3.2節実装状況を参照)。
   - tree(P1) == tree(P2)：1親として扱う。
 
 この機構(祖先探索を伴う詳細な系譜再構築)は、監査用途の副次機能として提供し、研究評価で使う主系譜は次節のマイルストーン境界方式を用いる。
@@ -217,22 +221,22 @@ cache_key = hash(
 
 ### 3.4 マイルストーン境界での系譜確定
 
-系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各idについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をid解決経由で比較し、差分があれば`derived_from`を記録する。merge/rebase/squashいずれのブランチ戦略にも依存しない。
+系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各idについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をid解決経由で比較し、差分があれば`derived_from`関係が成立したとみなして`ChangeEvent`を生成する(実装ではfrom_tree_sha/to_tree_shaとして記録、第3.5節)。merge/rebase/squashいずれのブランチ戦略にも依存しない。
 
 **実装状況**：`markharness changes compute`自体は`from_milestone`/`to_milestone`を明示引数として受け取り、その2点間のtree SHA差分を計算する処理であり、「直前のマイルストーン」を自動判定する機能はコマンド自体には無い。「直前のマイルストーンと自動的にペアリングする」という運用は、第4章のバックフィルワーカー(`markharness backfill run`)側が`executions/<milestone>/`をタグの日時順に並べて隣接ペアに適用することで実現しており、この2つは別のレイヤーである。
 
-**図3：Version DAG（ブランチ分岐・マージを含む版履歴）**
+**図3：ChangeEventによる版履歴（ブランチ分岐・マージを含む差分ログ）**
 
 ```mermaid
 flowchart TB
   M1["Milestone n-1\nblob B（共通の基点）"] --> BR1["Branch A で変更\nblob P1"]
   M1 --> BR2["Branch B で変更\nblob P2"]
-  BR1 --> M2["Milestone n\nblob M（マージ後）\nderived_from: [P1, P2]"]
+  BR1 --> M2["Milestone n\nblob M（マージ後）\nChangeEvent: true_divergences=[P1, P2]"]
   BR2 --> M2
   M2 --> M3["Milestone n+1\nblob N"]
 ```
 
-第3.2節の場合分けの通り、両ブランチが独立に同一idを変更していれば`derived_from`は2親(P1・P2)を持つノードとして記録され、片方のみの変更であれば線形履歴として扱われる。マイルストーン境界でのみ確定するため、中間のコミット粒度やマージ戦略には依存しない(第3.4節)。
+第3.2節の場合分けの通り、両ブランチが独立に同一idを変更していれば、その区間の`ChangeEvent`は`true_divergences`として2親(P1・P2)を記録し(`derived_from`関係が2つの祖先を持つ真の分岐であることを表す)、片方のみの変更であれば線形差分として扱われる。この記録はマイルストーン区間ごとに`ChangeEvent`として生成されるものであり、版ノード・辺を持つ永続グラフとして保持されるわけではない(永続グラフへの拡張は第7章 Future Workを参照)。マイルストーン境界でのみ確定するため、中間のコミット粒度やマージ戦略には依存しない(第3.4節)。
 
 ### 3.5 ChangeEventの自動生成とディレクトリ構造
 
@@ -242,21 +246,26 @@ flowchart TB
 
 **related_events(2026-08追記、製品化提案)**：`ChangeEvent`は`related_events: Vec<String>`(他の`event_id`の配列、`#[serde(default)]`で加算的)も持つ。複数のFeatureにまたがる変更が実は同じ論理変更の一部だった、という関連付けを人間が事後的に記録できるフィールドで、`markharness changes annotate <event_id> --related <他のevent_id>...`(複数指定可)で追記する。`ChangeEvent`がFeature単位・自動計算という原子性を保つ(§3.2)ための設計上の選択であり、複合ChangeEventのような自動計算ロジック自体の変更は行わない。
 
-**図4：変更影響の伝播（Change propagation）**
+**候補抽出の粒度**：`impacted_testcases`は、変更が検出されたFeatureに対応する全TestCaseを候補として返す、Feature単位の保守的な候補抽出である(`src/changes.rs`)。Condition/ExpectedResultのうちどの部分が変更されたかに基づいて対象を絞り込む処理は行っていないため、実際には変更の影響を受けていないTestCaseも候補に含まれうる(適合率低下の要因、第5.5節で候補数・適合率・再現率を併記する)。この精密化は第7章 Future Workとする。
+
+**候補抽出の2モード(2026-08追記)**：`impacted_testcases`をどの時点の`knowledge/`から生成するかについて、`markharness changes compute`は2つのモードを持つ。既定は`historical`モードで、`to_milestone`タグが指すGitツリーからTestCaseを生成するため、同じ`from_milestone..to_milestone`区間を後日再計算しても常に同じ結果が得られる(`historical_testcases_by_feature`)。`--current-tree`を指定すると、現在の作業ツリーの`knowledge/`から生成する従来動作になり(`impacted_testcases_by_feature`)、作業ツリーが変化し続ける限り同じ区間の再計算結果も変わりうる。前者は「過去のある区間で実際に何が影響を受けたか」を安定して問い合わせる用途、後者は「今この時点で再確認すべきテストは何か」を問い合わせる用途に対応する。詳細は[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)を参照。
+
+**図4：変更影響の伝播（Change propagation、Feature単位の保守的候補抽出）**
 
 ```mermaid
 flowchart LR
   CE["ChangeEvent\n(Feature X: milestone n-1 → n)"] --> FX["FEATURE X"]
-  FX --> C1["CONDITION A\n(変更された条件)"]
-  FX --> C2["CONDITION B\n(影響なし)"]
+  FX --> C1["CONDITION A"]
+  FX --> C2["CONDITION B"]
   C1 --> TC1["TESTCASE 1"]
   C1 --> TC2["TESTCASE 2"]
-  C2 --> TC3["TESTCASE 3（影響なし）"]
-  TC1 --> R["再確認が必要な\nTestCase集合"]
+  C2 --> TC3["TESTCASE 3"]
+  TC1 --> R["再確認が必要な\nTestCase集合\n（Feature単位の保守的候補、どのConditionが変更されたかでは絞り込まない）"]
   TC2 --> R
+  TC3 --> R
 ```
 
-`ChangeEvent`は`FEATURE`の変化を起点に、構造的な生成グラフ(第3.2節(A)：`CONDITION`→`TESTCASE`)を辿ることで、影響を受ける`TESTCASE`集合を特定する。この特定処理自体は静的な生成関係を使うため版履歴を必要としないが、「そもそも`FEATURE`が過去のどの時点からどう変化したか」を検知するには第3.2〜3.4節の版履歴DAGが必要であり、両者は組み合わさって初めて「複数世代にわたる変更影響の特定」(RQ1)を可能にする。
+`ChangeEvent`は`FEATURE`の変化を起点に、構造的な生成グラフ(第3.2節(A)：`CONDITION`→`TESTCASE`)を辿ることで、影響を受ける`TESTCASE`集合を特定する。この特定処理自体は静的な生成関係を使うため版履歴を必要としないが、「そもそも`FEATURE`が過去のどの時点からどう変化したか」を検知するには第3.2〜3.4節のChangeEventモデル(版履歴)が必要であり、両者は組み合わさって初めて「複数世代にわたる変更影響の特定」(RQ1)を可能にする。
 
 物理ディレクトリ構造は**階層(木)のみを表現し、横断的観点(Axis)はメタデータ＋生成インデックスで表現する**。ファイルシステムは多対多関係を自然に表現できないため、木構造と同じ場所にグラフ構造を無理に押し込まない。
 
@@ -352,7 +361,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 ### 4.1 バックフィル対象の縮小
 
-版履歴DAGはマイルストーン境界でのみ確定する設計(第3.4節)であるため、バックフィルも**過去のマイルストーンタグが付いたコミットのみ**を対象にすればよい。月次〜四半期リリースで数年分でも数十〜数百件程度であり、「数万ファイル×全履歴」ではなく「数万ファイル×過去のリリース数」という扱いやすい規模に縮小される。
+版履歴のChangeEventモデルはマイルストーン境界でのみ確定する設計(第3.4節)であるため、バックフィルも**過去のマイルストーンタグが付いたコミットのみ**を対象にすればよい。月次〜四半期リリースで数年分でも数十〜数百件程度であり、「数万ファイル×全履歴」ではなく「数万ファイル×過去のリリース数」という扱いやすい規模に縮小される。
 
 ### 4.2 非同期バックグラウンド処理
 
@@ -371,7 +380,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 ### 4.5 ツール構成
 
 - スキーマ定義：JSON Schemaで`knowledge/`配下のYAMLフォーマットを固定。**実装済み**(`schema/*.schema.json`、`markharness init`が既定一式を配置、`markharness validate`が検証。正規化ルール自体のスキーマへの明文化は今後の課題、第3.6節)。
-- 実装上の利便機能：現在のHEADと基準点の差分を、構造的な生成グラフに照らして影響TestCaseを表示するCLIコマンド(版履歴DAGは使わない)。
+- 実装上の利便機能：現在のHEADと基準点の差分を、構造的な生成グラフに照らして影響TestCaseを表示するCLIコマンド(版履歴のChangeEventモデルは使わない)。
 - id解決キャッシュ：非コミット、キャッシュキーと破棄条件は第3.3節。**実装済み**(内容アドレス方式のキャッシュキー・読み込み時の自動破棄、第3.3節)。
 - 版履歴計算ツール(核心的貢献)：マイルストーンタグ間でid解決経由の各idのtree SHAを比較し`derived_from`を計算。**実装済み**(`markharness changes compute`)。
 - バックフィルワーカー：第4.1〜4.4節のアーキテクチャに基づく非同期バックグラウンド処理。**実装済み**(`markharness backfill run`、ただし4.2節注記の通り単発呼び出し型)。
@@ -435,7 +444,7 @@ flowchart TB
 
 ### 5.5 タスク・指標・サンプルサイズ
 
-被験者に、対象プロジェクトの実際の過去の変更を提示し、影響を受けるTestCase群を特定させる。主指標は層βの正答率(適合率・再現率)。速度・被験者の主観的自信度(NASA-TLX等)は補助指標。サンプルサイズは統計的検定に耐えるよう群あたり15〜30名を目安とし、被験者の経験年数・対象プロジェクトへの熟知度・現状運用ツールへの習熟度を共変量として記録する。
+被験者に、対象プロジェクトの実際の過去の変更を提示し、影響を受けるTestCase群を特定させる。主指標は層βの正答率(適合率・再現率)。速度・被験者の主観的自信度(NASA-TLX等)は補助指標。サンプルサイズは統計的検定に耐えるよう群あたり15〜30名を目安とし、被験者の経験年数・対象プロジェクトへの熟知度・現状運用ツールへの習熟度を共変量として記録する。実験群のタスクでは、`impacted_testcases`の候補数(第3.5節のFeature単位の保守的候補抽出による母数)も適合率・再現率と併記し、層別化タスクで過大な候補集合が生じた場合にそれが結果から分かるようにする。
 
 ### 5.6 想定される脅威(Threats to Validity)
 
@@ -460,16 +469,18 @@ flowchart TB
 - id解決キャッシュのキー設計(第3.3節)・co-changeノイズ除去基準(第5.4節)を、実装・データ収集を通じて検証・調整すること自体を今後の実証課題とする(`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用を経た検証がまだない)。
 - id⇔pathの汎用的な独立インデックス層の実装(パスを変えないid変更の追跡等、第3.3節で現状は「id=feature.ymlのid:フィールド」への統一に留まると整理した項目)。
 - 既存TMS(TestRail/Xray等)からのインポータの実装(第3.6節で未実装と整理した項目)。
+- Condition/ExpectedResult差分に基づく候補抽出の精密化。現行実装はFeature単位の保守的な候補抽出であり(第3.5節)、Feature内のどのCondition/ExpectedResultが変わったかまでは絞り込まない。これによる適合率低下の実測は第5章の評価計画で確認する。
 - LLMによる文脈供給・Markdown手順書の自動生成・更新への応用可能性(検討経緯・不採用理由は付録A参照。本研究の評価対象外)。
 - 構造からのテストケース自動生成の網羅率評価、Git粒度分割によるレビュー性向上の検証(検討まとめ第4章の案2・3)。
 - 他ドメイン・他組織での追試による一般化可能性の検証。
+- 版ノード・辺を持つ永続的な版履歴グラフ(Version DAG)としてderived_from関係を明示的に保存・クエリ可能にする拡張。現状はマイルストーン区間ごとに`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として都度導出しており、永続グラフ構造としては保持していない(第3.2節)。
 - `generated_by`/`verified_by`(第3.5節)を読む将来のCIゲート(例：`generated_by: llm`かつ`verified_by`未設定の`ExpectedResult`が存在する場合に`markharness verify`が警告する)は未実装。現状は離散的な事実情報を記録するだけで、それを消費するロジックは本研究のスコープ外としている。
 
 ---
 
 ## 8. Conclusion
 
-本研究は、Gitのコンテンツアドレス(tree SHA)・非コミットのid解決キャッシュ・コミットグラフの祖先探索(`git merge-base`)を組み合わせ、ブランチ運用に依存せずマイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。既存TMS・素朴なGit運用のいずれも、複数世代にわたるテスト知識の派生関係を第一級のクエリ対象として扱わない(第2章・第2.4節)という構造的な欠落に対し、本モデルはGit自身のオブジェクトモデルを土台にした版履歴DAGで応える設計提案である。
+本研究は、Gitのコンテンツアドレス(tree SHA)・非コミットのid解決キャッシュ・コミットグラフの祖先探索(`git merge-base`)を組み合わせ、ブランチ運用に依存せずマイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。既存TMS・素朴なGit運用のいずれも、複数世代にわたるテスト知識の派生関係を第一級のクエリ対象として扱わない(第2章・第2.4節)という構造的な欠落に対し、本モデルはGit自身のオブジェクトモデルを土台にしたマイルストーン境界のChangeEventモデルで応える設計提案である。
 
 この設計は`markharness`(Rust実装、本リポジトリ)としてリファレンス実装され、`changes compute`によるマイルストーン境界の版履歴自動計算(区間内の任意の位置で発生した全マージへの`lineage`統合を含む、第3.2節「統合(2026-08追記)」)、`changes lineage`による`git merge-base`ベースの分岐監査、`verify trace`/`verify pending`による実行結果との自動突合(第3.7節)を含む中核機能が動作することを確認した。第3.6節にまとめた通り、設計から意図的に簡略化した箇所(id解決キャッシュのバージョン改訂運用が未検証等)と、未実装のまま残した箇所(既存TMSからのインポータ)がある。
 
@@ -524,6 +535,7 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 - Model management to support systems engineering workflows using ontology-based knowledge graphs. https://arxiv.org/html/2512.09596v1
 - UOOR: Seamless and Traceable Requirements. https://arxiv.org/pdf/2502.18617
 - Trust-Aware Multi-Agent Traceability. https://arxiv.org/pdf/2606.17203
+- TestRail. Test case versioning (Enterprise版のテストケース単体の履歴比較・復元機能、公式サポート記事). https://support.testrail.com/hc/en-us/articles/7768433966996-Test-case-versioning
 - https://qtrl.ai/blog/testrail-vs-zephyr
 - https://qaskills.sh/blog/test-management-tools-comparison-2026
 - https://qaskills.sh/blog/best-test-management-tools-beyond-testrail-2026
@@ -539,6 +551,9 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない(詳細は`CLAUDE.md`の運用ルールを参照)。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
 
+- **2026-08-12(3)**：外部評価レビュー・改善プロンプト項目4に基づき、`markharness changes compute`の`impacted_testcases`計算を、`to_milestone`タグのGitツリーから生成する`historical`モード(デフォルト)と、現在の作業ツリーから生成する`--current-tree`モード(従来動作、オプトイン)に分離。TDDで`historical_testcases_by_feature`(`src/changes.rs`、一時`git worktree`経由)を実装し、`markharness backfill run`も同じデフォルトに変更。§3.5・[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)§2.4に両モードの違いを追記。デフォルトをhistoricalにした理由は[docs/decisions/0002-changes-compute-historical-default.md](./decisions/0002-changes-compute-historical-default.md)を参照。
+- **2026-08-12(2)**：外部評価レビュー・改善プロンプト項目2・3に基づく記述修正(判断を伴わない単純な修正のため決定記録なし)。項目2：TestRail(Enterprise版)のテストケース単体版履歴機能(Test case versioning、公式サポート記事を参照文献に追加)の存在を踏まえ、§1.1・図1解説・§2.4の既存TMSに対する無限定な断定を機能単位の記述に弱め、§1.3に「本研究の差分」の段落を追加。項目3：`impacted_testcases_by_feature`(`src/changes.rs`)がFeature単位の保守的候補抽出であり、Condition/ExpectedResultレベルの絞り込みを行わないことを§3.5に明記し、図4をFeature配下の全TestCaseが候補になるよう描き直し、§7 Future Workに精密化項目を追加、§5.5に候補数の併記を追記。
+- **2026-08-12**：外部評価レビュー(改善プロンプト項目1、方針A)に基づき、「Version DAG」「derived_from DAG」という版ノード・辺を持つ永続グラフの主張を、実装(`from_tree_sha`/`to_tree_sha`比較・`ChangeEvent.true_divergences`)に合わせて「マイルストーン境界のChangeEventモデル」表記に統一。`derived_from`は概念名として残しつつ、FEATUREの自己参照エッジとして永続化されるわけではないことをER図直後・§3.2(B)・図3説明で明記。図3を「Version DAG」から「ChangeEventによる版履歴（差分ログ）」に描き直し。永続的な版履歴グラフへの拡張は却下ではなく§7 Future Workに将来課題として追加。対象は§0・§1.1〜1.3・§3.1〜3.5・§4.1・§4.5・§7・§8。判断理由は[docs/decisions/0001-version-dag-to-changeevent-model.md](./decisions/0001-version-dag-to-changeevent-model.md)を参照。
 - **2026-08-11(2)**：レビューで発覚した記述の食い違いを修正。§8 Conclusionに残っていた「`lineage`の判定結果が主系譜に自動反映されない」「`changes lineage`の主系譜統合...が実装課題として残っている」という2箇所の記述(§3.2「統合(2026-08追記)」で既に解消済みの制約を指したまま更新されていなかった)を実態に合わせて修正。§3.5のChangeEventフィールド列挙に`true_divergences`/`related_events`を追加。§3.7の`changes/<from>-<to>.yaml`という誤った命名例を実装通りの`changes/<to_milestone>.yaml`に修正(§3.5の命名規則と整合させた、今回の一連の変更とは無関係の既存の誤り)。
 - **2026-08-11**：改善プロンプト項目2(`changes compute`のlineage統合をマイルストーン区間内の全マージへ一般化、`true_divergences`フィールドへ改名)・項目3(分岐・マージ検証シナリオの実地検証、§8関連)・項目7(`ChangeEvent.related_events`追加)・項目8(`Requirement.source`/`related_issues`追加)・項目9(`ExpectedResult.generated_by`/`verified_by`追加)を反映。§3.2・§3.5・§3.6・§6・§7を更新。
 - **2026-08-10**：RQ1未実証への対応(論文の位置づけを「設計提案＋リファレンス実装のレポート」に修正、第8章Conclusion整備)、`verify trace`/`verify pending`を新設§3.7として反映、`changes lineage`の部分統合(`to_milestone`が直接マージコミットの場合のみ)を反映、ファイル名を`統合版V2.md`から`統合版.md`へ正式化(内容変更なし)、未実装だった5項目(idパス非依存化・キャッシュキー内容アドレス化・`change_type`・schema検証・merge-base系譜監査)の実装を反映。

@@ -50,6 +50,15 @@ ChangeEvent（`changes/*.yaml`）自体に「再確認済みフラグ」を持�
 - ChangeEventはマイルストーン境界の差分という**不変の事実記録**であり、後から書き換える対象にすべきではない（統合版第3.4節の設計思想と整合）。
 - 「再確認済みか」はChangeEventとTestExecutionという2つの独立した事実系列を**都度計算**すれば導出できる派生情報であり、どちらかのソースに書き戻す必要がない。
 
+### 2.4 impacted_testcasesの再計算モード（`--historical`既定 / `--current-tree`）
+
+`changes compute`が書き出す`ChangeEvent.impacted_testcases`は、2026-08時点で2つのモードを持つ。
+
+- **既定（historical）**：`to_milestone`タグが指す`knowledge/`ツリーからTestCaseを生成する。同じ`from_milestone..to_milestone`区間を後日再計算しても、常に同じ`impacted_testcases`が得られる。
+- **`--current-tree`（従来動作、後方互換のためのオプトイン）**：現在の作業ツリーの`knowledge/`からTestCaseを生成する。作業ツリーが変化し続ける限り、同じ区間を再計算するたびに結果が変わりうる。
+
+本節2.1の`verified_feature_tree_shas`との突合（第3.2節Q2）は、`changes/*.yaml`に書き出された`impacted_testcases`の集合をそのまま`Impacted`として使うため、`--current-tree`で計算した`changes/*.yaml`を後から`--historical`(既定)で再計算し直すと、`Impacted`集合自体が変わりうる点に注意する。再現性が必要な運用（本節が前提とするpending/stale判定）では既定のhistoricalモードを使うこと。
+
 ---
 
 ## 3. 判定アルゴリズム

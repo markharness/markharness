@@ -607,7 +607,7 @@ removed .markharness-cache/ under /path/to/project
 ### 1.11 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
 
 ```text
-markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --dir <path>]
+markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [-d, --dir <path>]
 ```
 
 **用途**: 2つのマイルストーン(git tag名をそのまま使用。マイルストーン境界の判定はタグ名一致のみで、`executions/*/milestone.yml` との対応は呼び出し側の責務)間で、`knowledge/` 配下の各Featureディレクトリのtree SHAを `git ls-tree -r <tag> -- knowledge` で比較し、変化したFeatureごとに `ChangeEvent` を算出して `changes/<to-milestone>.yaml` に書き込む。Feature idは各`feature.yml`の`id:`フィールド(`git show`で読む)を正準ソースとし、ディレクトリ名とは独立に追跡する(論文§3.3)。
@@ -617,7 +617,9 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [-d, --
 **動作**
 
 - Feature単位で `from_blob`/`to_blob` を比較し、一致すれば何もしない。片方にのみ存在すれば追加/削除、両方に存在し値が異なれば変更として `ChangeEvent` を1件生成する。
-- `impacted_testcases` は現在の(HEAD時点の)`knowledge/` から `generate`(1.5節)と同じ生成グラフを構築し、変更されたFeatureに由来する `TestCase.case_id` を列挙したもの(§3.2(A)の構造的生成グラフ。版履歴は使わない)。
+- `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.5節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md) §2.4も参照)。
+  - **既定(`--current-tree`未指定)**：`to-milestone`タグが指す`knowledge/`ツリー(一時`git worktree`に展開)から構築する。同じ区間を後日再計算しても常に同じ結果になる。
+  - **`--current-tree`指定時**：現在の作業ツリーの`knowledge/`から構築する(従来動作)。作業ツリーが変化し続ける限り、同じ区間の再計算結果も変わりうる。
 - `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.15節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.10節)。
 - `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.16節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。

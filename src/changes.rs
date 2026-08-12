@@ -155,9 +155,62 @@ fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
 /// Maps each Feature id to the `case_id`s of testcases generated from it,
 /// using the *current* `knowledge/` working tree as the structural
 /// generation graph (§3.2(A): `CONDITION`→`TESTCASE`, does not need version
-/// history — only the version-history side, `derived_from`, does).
+/// history — only the version-history side, `derived_from`, does). Legacy
+/// behavior, opted into via `compute_changes`'s `use_current_tree`: recomputing
+/// the same past `from_milestone..to_milestone` interval later can yield a
+/// different `impacted_testcases` set as the working tree keeps changing.
 fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec<String>>> {
-    let testcases = generate::generate_testcases(&root.join("knowledge"))?;
+    testcases_by_feature(generate::generate_testcases(&root.join("knowledge"))?)
+}
+
+/// Maps each Feature id to the `case_id`s of testcases generated from it, as
+/// `knowledge/` existed at `milestone` (a git tag), independent of the
+/// current working tree. This is `compute_changes`'s default: recomputing a
+/// past `from_milestone..to_milestone` interval later always yields the same
+/// `impacted_testcases`, because it's derived from `to_milestone`'s
+/// committed tree rather than whatever `knowledge/` looks like right now.
+///
+/// `knowledge/` at `milestone` is materialized into a temporary `git
+/// worktree` (rather than reading each blob individually) so the existing
+/// `generate::generate_testcases` filesystem-walking logic can be reused
+/// unchanged.
+fn historical_testcases_by_feature(
+    root: &Path,
+    milestone: &str,
+) -> io::Result<BTreeMap<String, Vec<String>>> {
+    let tmp = tempfile::tempdir()?;
+    let worktree_path = tmp.path().join("worktree");
+    let add_status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["worktree", "add", "--detach", "-q"])
+        .arg(&worktree_path)
+        .arg(milestone)
+        .status()?;
+    if !add_status.success() {
+        return Err(io::Error::other(format!(
+            "git worktree add failed for milestone {milestone}"
+        )));
+    }
+
+    let testcases = generate::generate_testcases(&worktree_path.join("knowledge"));
+
+    // Best-effort cleanup: an orphaned worktree under a soon-to-be-deleted
+    // temp dir doesn't leak data, but `git worktree remove` keeps `git
+    // worktree list` clean. Not fatal if it fails.
+    let _ = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["worktree", "remove", "--force"])
+        .arg(&worktree_path)
+        .status();
+
+    testcases_by_feature(testcases?)
+}
+
+fn testcases_by_feature(
+    testcases: Vec<generate::TestCase>,
+) -> io::Result<BTreeMap<String, Vec<String>>> {
     let mut by_feature: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for testcase in testcases {
         by_feature
@@ -174,11 +227,18 @@ fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec
 /// 使用)。Using the whole directory's tree SHA rather than just
 /// `feature.yml`'s blob SHA means Condition/Behavior/ExpectedResult changes
 /// are detected even when `feature.yml` itself is untouched.
+///
+/// `impacted_testcases` is derived from `to_milestone`'s tree by default
+/// (`use_current_tree: false`), so recomputing the same past interval later
+/// is deterministic. Pass `use_current_tree: true` to opt into the legacy
+/// behavior of reading the current `knowledge/` working tree instead (see
+/// `impacted_testcases_by_feature` / `historical_testcases_by_feature`).
 pub fn compute_changes(
     root: &Path,
     from_milestone: &str,
     to_milestone: &str,
     use_cache: bool,
+    use_current_tree: bool,
 ) -> io::Result<Vec<ChangeEvent>> {
     let from_versions = tree_sha_map(id_cache::resolve_feature_versions(
         root,
@@ -190,7 +250,11 @@ pub fn compute_changes(
         to_milestone,
         use_cache,
     )?);
-    let impacted = impacted_testcases_by_feature(root)?;
+    let impacted = if use_current_tree {
+        impacted_testcases_by_feature(root)?
+    } else {
+        historical_testcases_by_feature(root, to_milestone)?
+    };
     let merge_commits = find_merge_commits_in_interval(root, from_milestone, to_milestone)?;
     let mut true_divergences_by_feature: BTreeMap<String, Vec<TrueDivergence>> = BTreeMap::new();
     for merge_commit in &merge_commits {
@@ -435,7 +499,7 @@ mod tests {
         commit_and_tag(dir.path(), "v1", "m1");
         run_git(dir.path(), &["tag", "m2"]);
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         assert!(events.is_empty());
     }
@@ -449,7 +513,7 @@ mod tests {
         write_full_chain(dir.path(), "v2");
         commit_and_tag(dir.path(), "v2", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         assert_eq!(events.len(), 1);
         let event = &events[0];
@@ -459,6 +523,80 @@ mod tests {
         assert!(event.to_tree_sha.is_some());
         assert_ne!(event.from_tree_sha, event.to_tree_sha);
         assert_eq!(event.impacted_testcases, vec!["tc-ground-001".to_string()]);
+    }
+
+    #[test]
+    fn impacted_testcases_default_to_the_to_milestone_tree_ignoring_later_working_tree_changes() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+        write_full_chain(dir.path(), "v2");
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        // Simulate a later, uncommitted addition to the working tree made
+        // after m2 was tagged: a second Condition/ExpectedResult under the
+        // same Feature. Recomputing the m1..m2 interval later must not pick
+        // this up under the default (historical) mode.
+        let air = dir.path().join("knowledge/controls/player-jump/jump/air");
+        fs::create_dir_all(&air).unwrap();
+        fs::write(
+            air.join("condition.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(air.join("expected")).unwrap();
+        fs::write(
+            air.join("expected/001.yml"),
+            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\n",
+        )
+        .unwrap();
+
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+
+        let event = events
+            .iter()
+            .find(|e| e.feature_id == "player-jump")
+            .unwrap();
+        assert_eq!(event.impacted_testcases, vec!["tc-ground-001".to_string()]);
+    }
+
+    #[test]
+    fn impacted_testcases_use_the_current_working_tree_when_use_current_tree_is_set() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+        write_full_chain(dir.path(), "v2");
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        // Same later, uncommitted addition as the historical-mode test
+        // above, but this time the opt-in current-tree mode must reflect it
+        // (legacy behavior, preserved for backward compatibility).
+        let air = dir.path().join("knowledge/controls/player-jump/jump/air");
+        fs::create_dir_all(&air).unwrap();
+        fs::write(
+            air.join("condition.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(air.join("expected")).unwrap();
+        fs::write(
+            air.join("expected/001.yml"),
+            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\n",
+        )
+        .unwrap();
+
+        let events = compute_changes(dir.path(), "m1", "m2", false, true).unwrap();
+
+        let event = events
+            .iter()
+            .find(|e| e.feature_id == "player-jump")
+            .unwrap();
+        let mut impacted = event.impacted_testcases.clone();
+        impacted.sort();
+        assert_eq!(
+            impacted,
+            vec!["tc-air-001".to_string(), "tc-ground-001".to_string()]
+        );
     }
 
     #[test]
@@ -477,7 +615,7 @@ mod tests {
         .unwrap();
         commit_and_tag(dir.path(), "condition change", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].feature_id, "player-jump");
@@ -493,7 +631,7 @@ mod tests {
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "add feature", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].from_tree_sha, None);
@@ -509,7 +647,7 @@ mod tests {
         fs::remove_dir_all(dir.path().join("knowledge/controls")).unwrap();
         commit_and_tag(dir.path(), "remove feature", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         assert_eq!(events.len(), 1);
         assert!(events[0].from_tree_sha.is_some());
@@ -525,7 +663,7 @@ mod tests {
         write_full_chain(dir.path(), "v2");
         commit_and_tag(dir.path(), "v2", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         assert_eq!(events[0].change_type, None);
     }
@@ -723,7 +861,7 @@ mod tests {
         );
         run_git(dir.path(), &["tag", "m2"]);
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         let event = events
             .iter()
@@ -779,7 +917,7 @@ mod tests {
         run_git(dir.path(), &["commit", "-q", "--no-edit"]);
         run_git(dir.path(), &["tag", "m2"]);
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         let event = events
             .iter()
@@ -796,7 +934,7 @@ mod tests {
         write_full_chain(dir.path(), "v2");
         commit_and_tag(dir.path(), "v2", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false).unwrap();
+        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
 
         assert!(events[0].true_divergences.is_empty());
     }

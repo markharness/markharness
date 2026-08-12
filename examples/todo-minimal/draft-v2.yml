@@ -1,0 +1,16 @@
+requirement:
+  id: todo-management
+
+feature:
+  id: add-todo
+
+behavior:
+  id: add-task
+
+condition:
+  id: max-length
+  label: max-length
+  description: Submit the todo form with a title longer than 200 characters
+
+expected:
+  - description: shows a length validation error

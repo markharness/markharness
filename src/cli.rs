@@ -223,6 +223,9 @@ pub enum ChangesCommand {
         /// Recompute Feature blob SHAs directly via `git ls-tree` instead of using .markharness-cache/
         #[arg(long)]
         no_cache: bool,
+        /// Derive impacted_testcases from the current knowledge/ working tree instead of the `to` milestone's committed tree (legacy behavior; recomputing the same past interval later can then yield a different result)
+        #[arg(long)]
+        current_tree: bool,
     },
     /// Set change_type and/or related_events on an existing ChangeEvent under changes/ (§3.5, filled in by a human after compute)
     Annotate {
@@ -480,12 +483,13 @@ pub fn run(cli: Cli) -> io::Result<()> {
             to,
             dir,
             no_cache,
+            current_tree,
         }) => {
             let root = match dir {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
-            let events = changes::compute_changes(&root, &from, &to, !no_cache)?;
+            let events = changes::compute_changes(&root, &from, &to, !no_cache, current_tree)?;
             let changes_dir = root.join("changes");
             std::fs::create_dir_all(&changes_dir)?;
             std::fs::write(
@@ -1268,6 +1272,7 @@ mod tests {
             "--dir",
             "sample",
             "--no-cache",
+            "--current-tree",
         ]);
 
         match cli.command {
@@ -1276,11 +1281,13 @@ mod tests {
                 to,
                 dir,
                 no_cache,
+                current_tree,
             }) => {
                 assert_eq!(from, "m1");
                 assert_eq!(to, "m2");
                 assert_eq!(dir, Some(PathBuf::from("sample")));
                 assert!(no_cache);
+                assert!(current_tree);
             }
             _ => panic!("expected Changes Compute command"),
         }
