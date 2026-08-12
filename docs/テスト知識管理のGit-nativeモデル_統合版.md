@@ -95,7 +95,27 @@ Classification Tree Method(CTM)は、分類木からのテストケース生成�
 
 ### 2.4 既存テスト管理ツール・Git-native運用との比較
 
-TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン機能・トレーサビリティ機能を備える。TestRail(Enterprise版)はテストケース単体の版履歴比較・復元機能(Test case versioning)を提供するが、これは個々のテストケースの編集履歴に閉じており、Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、複数Featureをまたぐ再検証追跡を統合したローカル/Git-native運用は提供しない(参考文献参照)。他の主要製品を含め、複数世代にわたる派生関係を横断的なクエリ対象として扱う機能は一般的に存在しない(TestRailは2026年時点でオンプレミス版の提供を終了しクラウド専用。Xrayは Jira Data Center 経由で自己ホスト可能)。無料・自己ホスト可能な既存選択肢(Kiwi TCMS、TestLink、Klaros Test Management)も同様の制約を持つ。実務では、これら単体のツールではなく、TMS・課題管理ツール(Jira等)・git検索を組み合わせて運用するのが一般的だが、いずれの組み合わせも過去の世代の変更を体系的には辿れない。本研究はこの構造的な欠落を埋める位置づけにあり、評価設計(第5章)はこの実態を反映する。
+既存の選択肢は、保存形式・バージョン管理方式の観点から3カテゴリに整理できる。
+
+**(1) 商用TMS・自己ホスト型TMS**：TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン機能・トレーサビリティ機能を備える。TestRail(Enterprise版)はテストケース単体の版履歴比較・復元機能(Test case versioning)を提供するが、これは個々のテストケースの編集履歴に閉じており、Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、複数Featureをまたぐ再検証追跡を統合したローカル/Git-native運用は提供しない(参考文献参照)。他の主要製品を含め、複数世代にわたる派生関係を横断的なクエリ対象として扱う機能は一般的に存在しない(TestRailは2026年時点でオンプレミス版の提供を終了しクラウド専用。Xrayは Jira Data Center 経由で自己ホスト可能)。無料・自己ホスト可能な既存選択肢(Kiwi TCMS、TestLink、Klaros Test Management)も同様の制約を持つ。
+
+**(2) 素朴なGit運用**：Markdown/YAMLでのテストケース管理をGit上でそのまま行う運用も実務に存在する(第1.1節)。バージョンキーはcommitハッシュに依存し体系化されず、版履歴の自動導出・変更影響分析のいずれも持たない。
+
+**(3) 構造化メタデータ＋Git管理型ツール(GTM、tmt/fmf)**：GTM(the Git Test Management System)は"Git-native test management"という本研究と同一のキーワードを標榜し、Markdownでのテストケース管理をGit上で行うツールである。バージョン管理はファイル名末尾へのv1/v2/v3付与とversionフィールドによる手動整数方式(オプション機能)であり、変更履歴はCHANGELOG.mdの手動記述とGitのbranch/PRレビューに依存する。自動的なChangeEvent相当の導出機構は公開ドキュメントの範囲では確認できない(参考文献参照)。tmt/fmf(Red Hat発のOSSテスト実行フレームワーク、fmfをメタデータ形式として採用)は学術・実務双方で認知度が高い。`adjust`属性により製品・ディストリビューション・アーキテクチャ等のコンテキストに応じてテストメタデータを動的修正できるが、これは環境間の空間的バリエーションを扱う機構であり、版履歴・変更履歴・リリース/マイルストーンの概念や変更影響分析に相当する機能はCore仕様の範囲では確認できない(参考文献参照)。いずれも公開ドキュメントで確認した範囲での結論であり、tmtのPlans/Stories/Policy仕様・プラグイン群、GTMのソースコード実装は未検証である。
+
+実務では、これら単体のツールではなく、TMS・課題管理ツール(Jira等)・git検索を組み合わせて運用するのが一般的だが、いずれの組み合わせも過去の世代の変更を体系的には辿れない。本研究はこの構造的な欠落を埋める位置づけにあり、評価設計(第5章)はこの実態を反映する。
+
+**表1：既存選択肢との比較**
+
+| ツール | 保存形式 | バージョンキー方式 | 版履歴の自動導出 | マイルストーン境界の変更影響分析 | 主目的 |
+|---|---|---|---|---|---|
+| TestRail等 商用TMS | DB(非Git) | 内部シーケンス番号 | ケース単体の履歴比較・復元のみ(横断クエリ不可) | なし | テストケース管理(スナップショット中心) |
+| GTM | Markdown(Git管理) | 手動整数(v1/v2/v3、オプション)注1 | なし(Gitコミット履歴＋手動双方向リンクに依存) | なし | Git上でのテスト資産の可読性・相互参照 |
+| tmt/fmf | YAML(Git管理、fmf継承) | 該当なし(バージョンの概念自体を持たない) | なし | なし(`adjust`は環境間の空間的分岐であり時間軸と直交) | 複数環境・CI/CD間の実行移植性 |
+| 素朴なGit運用 | Markdown/YAML(Git管理) | commitハッシュ(体系化されない) | なし | なし | ー |
+| 本研究(markharness) | Markdown/YAML(Git管理) | tree SHA(コンテンツアドレス) | あり(マイルストーン境界で`ChangeEvent`を自動導出) | あり(`derived_from`＋`ChangeEvent`) | 版履歴・変更影響の第一級管理 |
+
+注1：GTMの手動整数方式は、本研究が第3.2節で人間の手動整数管理からGitのコンテンツアドレス方式へ移行した、まさにその不採用対象の方式にあたる。
 
 ---
 
@@ -500,6 +520,8 @@ flowchart TB
 2. 「LLM×知識グラフ×テスト」は既に研究例が多い領域であり、「AI専用」という打ち出し方だけでは新規性の主張として弱い。差別化ポイントは`derived_from`(版履歴)と`ChangeEvent`の影響伝播であり、これはLLMを前提にせずモデルに含まれている。
 3. LLM生成精度評価を本評価に加えると、統計的に信頼できるサンプル数を被験者実験と並行して確保するのが非現実的であり、格下げしてもパイロット的な位置づけでは「なぜ論文に必要か」という弱点を作るだけと判断し、論文本体から完全撤去した。
 
+なお、同一ドメイン(testmanagement.com)で提供されているGTMS(AIエージェント駆動のテストケース生成・意図検証・スクリプト昇格)は、本節で不採用とした「LLM専用知識グラフ」の方向性に近い。"Git Test Management"という共通キーワードで検索上位に現れるため、査読者が関連製品として想起する可能性を踏まえここに記す。
+
 ### A.2 Markdown手順書の保護領域(override)方式とその限界
 
 LLM生成の手順書にテスターが直接手を加えた場合の運用として保護領域方式を検討したが、テキストの上書き事故は防げても、前提条件が大きく変わった際の意味的な陳腐化は防げない。これはテキストマージの限界であり原理的に解決できず、LLM角度がFuture Workとなったため中心設計から外した。
@@ -544,6 +566,12 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 - https://qtrl.ai/blog/testlink-vs-testrail
 - https://www.practitest.com/testrail-alternatives/
 - https://www.practitest.com/resource-center/blog/beyond-hierarchical-structures/
+- The Git Test Management (GTM) System. https://www.testmanagement.com/the-gtm-system/
+- GTMS: Git Test Management System. https://www.testmanagement.com/
+- teemtee/tmt. https://github.com/teemtee/tmt
+- tmt documentation. https://tmt.readthedocs.io/en/stable/
+- tmt Core specification. https://tmt.readthedocs.io/en/stable/spec/core.html
+- tmt Tests specification. https://tmt.readthedocs.io/en/stable/spec/tests.html
 
 ---
 
@@ -551,6 +579,7 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない(詳細は`CLAUDE.md`の運用ルールを参照)。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
 
+- **2026-08-13**：外部評価レビュー・関連研究網羅性指摘(GTM・tmt/fmfの欠落)に対応。§2.4を単一段落の二極対比から、商用TMS・素朴なGit運用・構造化メタデータ＋Git管理型ツール(GTM、tmt/fmf)の三極構成に再構成し、比較表(表1)を追加。GTMの手動整数バージョン方式が第3.2節で不採用とした方式そのものである点を脚注で明記。付録A.1にGTMS(同一ドメインの類似製品)への言及を追記。参考文献にGTM・GTMS・tmt関連の一次情報6件を追加。§1.3・§2.1〜2.3・第5章は指摘の対象外であり変更していない(判断理由は[docs/24節_修正方針.md](./24節_修正方針.md)を参照)。
 - **2026-08-12(4)**：外部評価レビュー・改善プロンプト項目11に基づき、項目1(方針A)でVersion DAGの主張をChangeEventモデルに縮小した結果生じた「単なるgit diff/logラッパーに見える」という懸念に対応。実装(`src/id_cache.rs`)にある(a)パス独立なID解決(`feature.yml`の`id:`フィールドを正準ソースとする)・(b)ディレクトリ単位のtree SHA比較・(c)内容アドレス方式のid解決キャッシュの3点を明示し、パスベースの`git diff`/`git log --follow`との対比を§1.3(核心的貢献)・§1.1・§3.1・§3.3に追記。表現は「理論的コア」ではなく「設計上の中核メカニズム」「アルゴリズム的な核」を採用(既知技術の組み合わせであり形式的な証明・複雑度解析を伴わないため)。選定理由は[docs/decisions/0001-version-dag-to-changeevent-model.md](./decisions/0001-version-dag-to-changeevent-model.md)の追記を参照。
 - **2026-08-12(3)**：外部評価レビュー・改善プロンプト項目4に基づき、`markharness changes compute`の`impacted_testcases`計算を、`to_milestone`タグのGitツリーから生成する`historical`モード(デフォルト)と、現在の作業ツリーから生成する`--current-tree`モード(従来動作、オプトイン)に分離。TDDで`historical_testcases_by_feature`(`src/changes.rs`、一時`git worktree`経由)を実装し、`markharness backfill run`も同じデフォルトに変更。§3.5・[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)§2.4に両モードの違いを追記。デフォルトをhistoricalにした理由は[docs/decisions/0002-changes-compute-historical-default.md](./decisions/0002-changes-compute-historical-default.md)を参照。
 - **2026-08-12(2)**：外部評価レビュー・改善プロンプト項目2・3に基づく記述修正(判断を伴わない単純な修正のため決定記録なし)。項目2：TestRail(Enterprise版)のテストケース単体版履歴機能(Test case versioning、公式サポート記事を参照文献に追加)の存在を踏まえ、§1.1・図1解説・§2.4の既存TMSに対する無限定な断定を機能単位の記述に弱め、§1.3に「本研究の差分」の段落を追加。項目3：`impacted_testcases_by_feature`(`src/changes.rs`)がFeature単位の保守的候補抽出であり、Condition/ExpectedResultレベルの絞り込みを行わないことを§3.5に明記し、図4をFeature配下の全TestCaseが候補になるよう描き直し、§7 Future Workに精密化項目を追加、§5.5に候補数の併記を追記。
