@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://markharness.dev/schema/condition.schema.json",
+  "$id": "https://markharness.com/schema/condition.schema.json",
   "title": "Condition",
   "type": "object",
   "properties": {

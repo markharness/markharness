@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://markharness.dev/schema/feature.schema.json",
+  "$id": "https://markharness.com/schema/feature.schema.json",
   "title": "Feature",
   "type": "object",
   "properties": {

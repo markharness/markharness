@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://markharness.dev/schema/behavior.schema.json",
+  "$id": "https://markharness.com/schema/behavior.schema.json",
   "title": "Behavior",
   "type": "object",
   "properties": {

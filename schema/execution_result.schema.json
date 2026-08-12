@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://markharness.dev/schema/execution_result.schema.json",
+  "$id": "https://markharness.com/schema/execution_result.schema.json",
   "title": "ExecutionResult",
   "description": "executions/<milestone>/results.yml: an append-only array of TestCase execution records (§3.1 TESTEXECUTION).",
   "type": "array",

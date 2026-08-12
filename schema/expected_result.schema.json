@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://markharness.dev/schema/expected_result.schema.json",
+  "$id": "https://markharness.com/schema/expected_result.schema.json",
   "title": "ExpectedResult",
   "type": "object",
   "properties": {
