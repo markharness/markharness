@@ -616,7 +616,7 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 
 **用途**: 2つのマイルストーン(git tag名をそのまま使用。マイルストーン境界の判定はタグ名一致のみで、`executions/*/milestone.yml` との対応は呼び出し側の責務)間で、`knowledge/` 配下の各Featureディレクトリのtree SHAを `git ls-tree -r <tag> -- knowledge` で比較し、変化したFeatureごとに `ChangeEvent` を算出して `changes/<to-milestone>.yaml` に書き込む。Feature idは各`feature.yml`の`id:`フィールドを正準ソースとし、ディレクトリ名とは独立に追跡する(論文§3.3)。
 
-対象プロジェクトディレクトリ(`-d`/`--dir`、`knowledge/` の親)は、gitリポジトリ内の任意のディレクトリでよい(リポジトリ自体のルートである必要はない)。かつては`git show <ref>:<path>`構文の仕様上の制約により、プロジェクトディレクトリがリポジトリのサブディレクトリの場合に本コマンドが失敗する既知の問題があったが、`ls-tree`/`cat-file`ベースの実装に切り替えて解消済み(詳細: [nested-project-dir-git-path-fix-spec.md](./nested-project-dir-git-path-fix-spec.md))。
+対象プロジェクトディレクトリ(`-d`/`--dir`、`knowledge/` の親)は、gitリポジトリ内の任意のディレクトリでよい(リポジトリ自体のルートである必要はない)。かつては`git show <ref>:<path>`構文の仕様上の制約により、プロジェクトディレクトリがリポジトリのサブディレクトリの場合に本コマンドが失敗する既知の問題があったが、`ls-tree`/`cat-file`ベースの実装に切り替えて解消済み(詳細: [decisions/0006](./decisions/0006-nested-project-directory-support.md))。
 
 **アクター**: CI Bot(UC5)
 
@@ -683,7 +683,7 @@ markharness backfill run [--no-cache] [-d, --dir <path>]
 - 各マイルストーン(to側)の処理完了は `git notes --ref=markharness-backfill` に記録され、次回実行時に同じペアは再計算されずスキップされる(§4.3)。
 - `--no-cache` を指定しない場合、`changes compute` と同じ `.markharness-cache/` を共有する。
 
-対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.11節と同じく解消済み([nested-project-dir-git-path-fix-spec.md](./nested-project-dir-git-path-fix-spec.md))。
+対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.11節と同じく解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
 
 **使用例**
 
@@ -783,7 +783,7 @@ markharness execution record <case_id> --milestone <name> --result <pass|fail|sk
 - `case_id` が現在の(HEAD時点の)`generated/testcases/*.yml` のいずれにも見つからなければ、`markharness generate` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する。`generated/testcases/` のファイル名は `condition.id` であり `case_id` とは異なる([1.5節](#15-markharness-generate--testcase-の決定的生成uc2-testcaseを決定的生成する))ため、この検証は各ファイルの中身(`case_id` フィールド)を読んで行う。過去マイルストーン時点の内容までは遡らず、常に現在のHEADに対して検証する。
 - 検証を通過すると、`case_id` / `result` / `executor` / `note`(省略時は出力しない)/ `executed_at`(ISO8601, UTC)を1エントリとして `executions/<milestone>/results.yml` に追記する。既存のエントリは変更せず、末尾に追加する(過去の実行履歴・再実行の記録も保持する)。
 - 書き込みは `knowledge apply`(1.4節)と同じ「一時ファイル+リネーム」のアトミック方式(全エントリを読み直してまとめて書く)。
-- `verified_feature_tree_shas`(1.16節付近参照)の算出は `changes compute` と同じFeature tree SHA解決処理を経由するため、対象プロジェクトディレクトリがgitリポジトリのサブディレクトリの場合の制約は同様に解消済み([nested-project-dir-git-path-fix-spec.md](./nested-project-dir-git-path-fix-spec.md))。
+- `verified_feature_tree_shas`(1.16節付近参照)の算出は `changes compute` と同じFeature tree SHA解決処理を経由するため、対象プロジェクトディレクトリがgitリポジトリのサブディレクトリの場合の制約は同様に解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
 
 **終了コード**
 
