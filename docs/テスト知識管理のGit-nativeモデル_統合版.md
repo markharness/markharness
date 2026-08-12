@@ -109,13 +109,14 @@ Classification Tree Method(CTM)は、分類木からのテストケース生成�
 
 | ツール | 保存形式 | バージョンキー方式 | 版履歴の自動導出 | マイルストーン境界の変更影響分析 | 主目的 |
 |---|---|---|---|---|---|
-| TestRail等 商用TMS | DB(非Git) | 内部シーケンス番号 | ケース単体の履歴比較・復元のみ(横断クエリ不可) | なし | テストケース管理(スナップショット中心) |
-| GTM | Markdown(Git管理) | 手動整数(v1/v2/v3、オプション)注1 | なし(Gitコミット履歴＋手動双方向リンクに依存) | なし | Git上でのテスト資産の可読性・相互参照 |
+| TestRail等 商用TMS | DB(非Git) | 非公開注1 | ケース単体の履歴比較・復元のみ(横断クエリ不可) | なし | テストケース管理(スナップショット中心) |
+| GTM | Markdown(Git管理) | 手動整数(v1/v2/v3、オプション)注2 | なし(Gitコミット履歴＋手動双方向リンクに依存) | なし | Git上でのテスト資産の可読性・相互参照 |
 | tmt/fmf | YAML(Git管理、fmf継承) | 該当なし(バージョンの概念自体を持たない) | なし | なし(`adjust`は環境間の空間的分岐であり時間軸と直交) | 複数環境・CI/CD間の実行移植性 |
 | 素朴なGit運用 | Markdown/YAML(Git管理) | commitハッシュ(体系化されない) | なし | なし | ー |
 | 本研究(markharness) | Markdown/YAML(Git管理) | tree SHA(コンテンツアドレス) | あり(マイルストーン境界で`ChangeEvent`を自動導出) | あり(`derived_from`＋`ChangeEvent`) | 版履歴・変更影響の第一級管理 |
 
-注1：GTMの手動整数方式は、本研究が第3.2節で人間の手動整数管理からGitのコンテンツアドレス方式へ移行した、まさにその不採用対象の方式にあたる。
+注1：TestRail公式サポート記事「Test case versioning」および公式ブログは、バージョン比較・復元機能の存在を述べているが、内部のバージョン識別方式(シーケンス番号か、タイムスタンプかなど)については記述がなく、非公開である(調査日：2026-08-13)。  
+注2：GTMの手動整数方式は、本研究が第3.2節で人間の手動整数管理からGitのコンテンツアドレス方式へ移行した、まさにその不採用対象の方式にあたる。
 
 ---
 
@@ -579,6 +580,7 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない(詳細は`CLAUDE.md`の運用ルールを参照)。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
 
+- **2026-08-13(2)**：表1のTestRail行「バージョンキー方式：内部シーケンス番号」に典拠がなく、公式資料が開示していない内部実装を推測で補完していたとの指摘に対応。TestRail公式サポート記事「Test case versioning」・公式ブログを再確認したが、バージョン比較・復元機能の存在は述べているものの内部のバージョン識別方式には言及がなかったため、「非公開」に修正し脚注で典拠を明記(調査日：2026-08-13)。
 - **2026-08-13**：外部評価レビュー・関連研究網羅性指摘(GTM・tmt/fmfの欠落)に対応。§2.4を単一段落の二極対比から、商用TMS・素朴なGit運用・構造化メタデータ＋Git管理型ツール(GTM、tmt/fmf)の三極構成に再構成し、比較表(表1)を追加。GTMの手動整数バージョン方式が第3.2節で不採用とした方式そのものである点を脚注で明記。付録A.1にGTMS(同一ドメインの類似製品)への言及を追記。参考文献にGTM・GTMS・tmt関連の一次情報6件を追加。§1.3・§2.1〜2.3・第5章は指摘の対象外であり変更していない(判断理由は[docs/decisions/0003-related-work-gtm-tmt.md](./decisions/0003-related-work-gtm-tmt.md)を参照)。
 - **2026-08-12(4)**：外部評価レビュー・改善プロンプト項目11に基づき、項目1(方針A)でVersion DAGの主張をChangeEventモデルに縮小した結果生じた「単なるgit diff/logラッパーに見える」という懸念に対応。実装(`src/id_cache.rs`)にある(a)パス独立なID解決(`feature.yml`の`id:`フィールドを正準ソースとする)・(b)ディレクトリ単位のtree SHA比較・(c)内容アドレス方式のid解決キャッシュの3点を明示し、パスベースの`git diff`/`git log --follow`との対比を§1.3(核心的貢献)・§1.1・§3.1・§3.3に追記。表現は「理論的コア」ではなく「設計上の中核メカニズム」「アルゴリズム的な核」を採用(既知技術の組み合わせであり形式的な証明・複雑度解析を伴わないため)。選定理由は[docs/decisions/0001-version-dag-to-changeevent-model.md](./decisions/0001-version-dag-to-changeevent-model.md)の追記を参照。
 - **2026-08-12(3)**：外部評価レビュー・改善プロンプト項目4に基づき、`markharness changes compute`の`impacted_testcases`計算を、`to_milestone`タグのGitツリーから生成する`historical`モード(デフォルト)と、現在の作業ツリーから生成する`--current-tree`モード(従来動作、オプトイン)に分離。TDDで`historical_testcases_by_feature`(`src/changes.rs`、一時`git worktree`経由)を実装し、`markharness backfill run`も同じデフォルトに変更。§3.5・[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)§2.4に両モードの違いを追記。デフォルトをhistoricalにした理由は[docs/decisions/0002-changes-compute-historical-default.md](./decisions/0002-changes-compute-historical-default.md)を参照。
