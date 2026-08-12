@@ -12,7 +12,7 @@
    - **[testcase-generation-design.md](./testcase-generation-design.md)** — `generate`(TestCase決定的生成)の仕様。
    - **[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md)** — `verify trace`/`verify pending`(実行結果とChangeEventの自動突合)の仕様。
 5. **[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)** — 設計と実装の乖離を、ケーススタディ運用リポジトリ`mh-sample-test-case`の実データ(tree SHAベース検知の実地確認、分岐・マージシナリオの検証を含む)で検証した調査資料。参考資料・監査ログの位置づけ。
-6. **[テスト知識管理のGit-nativeモデル_評価レビュー.md](./テスト知識管理のGit-nativeモデル_評価レビュー.md)** — 論文・ツールに対する外部評価レビュー(2026-08-12)。P0/P1の指摘事項は未対応のものを含み、今後の改訂作業の起点になる現役の資料。
+6. **[テスト知識管理のGit-nativeモデル_評価レビュー.md](./テスト知識管理のGit-nativeモデル_評価レビュー.md)** — 論文・ツールに対する外部評価レビュー(2026-08-13版。2026-08-12の初回レビューへの対応状況を再評価し、1ファイルに一本化したもの)。P0/P1の指摘事項は未対応のものを含み、今後の改訂作業の起点になる現役の資料。
 
 ## 資料の鮮度について
 

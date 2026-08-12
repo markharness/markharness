@@ -4,7 +4,7 @@
 
 `docs/テスト知識管理のGit-nativeモデル_統合版.md`は、`derived_from`を持つ版ノード・辺の永続的なグラフ(Version DAG)を中核貢献として位置付けていた(§1.1図1、§1.2 RQ1、§3.4図3ほか)。
 
-一方、CLI実装(`src/changes.rs`)の`ChangeEvent`構造体に`derived_from`フィールドは存在せず、実際に保存されるのは`from_tree_sha`/`to_tree_sha`(2マイルストーン間の線形差分)と`true_divergences`(2親マージ時の監査情報)のみである。版ノード・辺を持つ独立した永続DAGは実装されていない(`docs/テスト知識管理のGit-nativeモデル_評価レビュー.md`のP0指摘)。
+一方、CLI実装(`src/changes.rs`)の`ChangeEvent`構造体に`derived_from`フィールドは存在せず、実際に保存されるのは`from_tree_sha`/`to_tree_sha`(2マイルストーン間の線形差分)と`true_divergences`(2親マージ時の監査情報)のみである。版ノード・辺を持つ独立した永続DAGは実装されていない(2026-08-12時点の外部評価レビューのP0指摘)。
 
 この不一致を解消する方針として、以下の2案を検討した。
 
