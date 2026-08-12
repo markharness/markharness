@@ -91,7 +91,8 @@ fn feature_dir_from_feature_yml_path(path: &str) -> Option<&str> {
 /// their `feature.yml` blob, then looks up that directory's own tree entry
 /// in the same listing — no per-Feature git subprocess needed for the tree
 /// SHA. The id itself is read from `feature.yml`'s `id:` field (via `git
-/// show`), not the directory name, so that renaming a Feature's directory
+/// cat-file -p`, keyed by the blob SHA the same `ls-tree` listing already
+/// gave us), not the directory name, so that renaming a Feature's directory
 /// while keeping `id:` stable does not change its identity (§3.3
 /// path-independent id resolution). Two Feature directories resolving to the
 /// same id is an error rather than a silently dropped duplicate.
@@ -130,7 +131,7 @@ pub fn resolve_feature_versions(
         else {
             continue;
         };
-        let content = git::show_blob(root, git_ref, &entry.path)?;
+        let content = git::show_blob_by_sha(root, &entry.sha)?;
         let feature = knowledge::parse_feature(&content).map_err(io::Error::other)?;
 
         if let Some(existing) = by_id.get(&feature.id) {
