@@ -602,6 +602,10 @@ removed .markharness-cache/ under /path/to/project
 
 **ユースケース対応**: UC7「idキャッシュを破棄・再構築する」(`docs/product-operation.md`)。id解決の不整合が疑われる場合のフェイルセーフ。
 
+**Featureの`id:`を変更した場合の注意(利用者向け、論文§3.3)**: Feature idは各`feature.yml`の`id:`フィールドを正準ソースとして追跡する。`id:`の値そのものを書き換えると、ツールから見て「元のFeatureが削除され、新しいidのFeatureが追加された」扱いになり、`changes compute`は過去のマイルストーンとの`derived_from`関係を復元できない(版履歴が断絶する)。Featureディレクトリの**リネーム**(パス変更)は`id:`が変わらない限り追跡対象内だが、`id:`自体の変更に対する移行手順(旧id→新idのエイリアス記録等)は本CLIには無く、現状は「`id:`を変更しない」運用を利用者側で徹底する必要がある。検討状況は[decisions/0004](./decisions/0004-feature-id-change-migration.md)を参照。
+
+**キャッシュキーのバージョンフィールドについて**: `.markharness-cache/`のキャッシュキーを構成する`canonicalization_rule_version`/`id_index_schema_version`(論文§3.3)は、実装では現状固定値`"1"`である。これらの値を実際に上げる正規化ルール改訂・id-indexフォーマット改訂はまだ発生していないため、値を上げた場合にキャッシュが正しく破棄されるかは実地検証されていない。
+
 ---
 
 ### 1.11 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
@@ -623,6 +627,7 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 - `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.15節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.10節)。
 - `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.16節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
+- **ブランチ戦略への依存に注意**：`from_tree_sha`/`to_tree_sha`の差分検出そのものはブランチ戦略(merge/squash/rebase/fast-forward)に依存しないが、`true_divergences`はマイルストーン区間内に2親を持つマージコミットが実際に残っていることが前提であり、squash mergeやrebase・fast-forward mergeでは元ブランチの分岐関係がコミットグラフから失われるため検出されない(空配列のまま。論文§3.4表2)。
 
 **出力例**(`changes/m2.yaml`、線形履歴の場合)
 
@@ -848,7 +853,7 @@ set related_events on player-jump--m2--m3
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
 ```
 
-**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.11節)は、`from-milestone..to-milestone`区間内に存在する全ての2親マージコミットについて本コマンドと同じ判定ロジックを内部で呼び出し、結果を`true_divergences`に反映する。個別のマージコミット単体を人手で監査・確認したい場合は、本コマンドを独立に実行する。本コマンド自体は `changes/*.yaml` への書き込みを行わない(読み取り専用の監査コマンド)。
+**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.11節)は、`from-milestone..to-milestone`区間内に存在する全ての2親マージコミットについて本コマンドと同じ判定ロジックを内部で呼び出し、結果を`true_divergences`に反映する。個別のマージコミット単体を人手で監査・確認したい場合は、本コマンドを独立に実行する。本コマンド自体は `changes/*.yaml` への書き込みを行わない(読み取り専用の監査コマンド)。squash mergeやrebase・fast-forward mergeで運用されたリポジトリでは、そもそも対象となる2親マージコミットがコミットグラフ上に存在しないため、本コマンドで監査できる対象自体が無い(論文§3.4表2)。
 
 **動作**
 
@@ -866,13 +871,15 @@ player-jump: linear
 
 ---
 
-### 1.17 `markharness validate` — knowledge/・axes/ の構造検証(§3.5/§3.6)
+### 1.17 `markharness validate` — knowledge/・axes/・executions/ の構造検証(§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
 ```
 
-**用途**: `knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `axes/*.yml` を、対応する `schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか。
+**用途**: `knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `axes/*.yml`、および `executions/<milestone>/results.yml` を、対応する `schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか。
+
+**`executions/*/results.yml`のスキーマ**: `execution_result.schema.json` は `case_id` / `result`(`pass`/`fail`/`skip`) / `executor` / `executed_at` を必須、`note` / `verified_feature_tree_shas` を任意フィールドとする(1.14節)。`verified_feature_tree_shas` は本仕様導入前に書かれた実行記録には存在しないが、任意フィールドとして定義しているため過去の記録もそのままスキーマ検証を通る。この場合、`verify trace`/`verify pending`(change-event-verification-tracking-spec.md §6)は当該レコードを遡及的に補完せず「不明」として扱う。
 
 **動作**
 

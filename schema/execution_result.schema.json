@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.dev/schema/execution_result.schema.json",
+  "title": "ExecutionResult",
+  "description": "executions/<milestone>/results.yml: an append-only array of TestCase execution records (§3.1 TESTEXECUTION).",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "case_id": { "type": "string", "minLength": 1 },
+      "result": { "type": "string", "enum": ["pass", "fail", "skip"] },
+      "executor": { "type": "string", "minLength": 1 },
+      "note": { "type": "string" },
+      "executed_at": { "type": "string", "minLength": 1 },
+      "verified_feature_tree_shas": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "required": ["case_id", "result", "executor", "executed_at"],
+    "additionalProperties": false
+  }
+}

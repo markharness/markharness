@@ -68,9 +68,9 @@ flowchart LR
 
 ### 1.3 貢献
 
-1. **設計上の中核メカニズム**：(a)Featureの識別子をディレクトリパスではなく`feature.yml`の`id:`フィールドから読み取るパス独立なID解決、(b)比較単位を`feature.yml`単体のblob SHAではなくFeatureディレクトリ全体のtree SHAとすることで、Condition/ExpectedResultのみの変更もfeature.yml非経由で検知する仕組み、(c)`knowledge/`のtree SHAと正規化ルール・スキーマ・ツールの各バージョンを合成した内容アドレス方式のid解決キャッシュ(Gitの`commit-graph`補助キャッシュと同じ設計思想)、の3点を、コミットグラフの祖先探索(`git merge-base`)と組み合わせ、ブランチ運用に依存せずマイルストーン境界で版履歴を導出するモデルの設計(第3章)。パスベースの履歴追跡(`git diff`・`git log --follow`等)はディレクトリのリネーム・再配置に弱く、木構造化されたテスト知識の論理的な同一性を保証しないのに対し、本モデルは(a)によってこの制約を回避する。
+1. **設計上の中核メカニズム**：(a)Featureの識別子をディレクトリパスではなく`feature.yml`の`id:`フィールドから読み取るパス独立なID解決、(b)比較単位を`feature.yml`単体のblob SHAではなくFeatureディレクトリ全体のtree SHAとすることで、Condition/ExpectedResultのみの変更もfeature.yml非経由で検知する仕組み、(c)`knowledge/`のtree SHAと正規化ルール・スキーマ・ツールの各バージョンを合成した内容アドレス方式のid解決キャッシュ(Gitの`commit-graph`補助キャッシュと同じ設計思想)、の3点を、コミットグラフの祖先探索(`git merge-base`)と組み合わせ、ブランチ運用に依存せずマイルストーン境界で版履歴を導出するモデルの設計(第3章)。ただし「ブランチ運用に依存しない」のは最終tree差分による主系譜(`changes compute`)に限られ、祖先探索を用いるマージの系譜監査(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とする副次機能であり、squash/rebase運用では機能しない(第3.4節・表2)。パスベースの履歴追跡(`git diff`・`git log --follow`等)はディレクトリのリネーム・再配置に弱く、木構造化されたテスト知識の論理的な同一性を保証しないのに対し、本モデルは(a)によってこの制約を回避する。
 2. 横断的観点(Axis)を物理ディレクトリ構造から独立させ、木構造を保持したまま多対多関係を表現する設計パターン(第3.5節)。
-3. 既存の大規模リポジトリへの段階的な導入を可能にする、マイルストーン単位の非同期バックフィルアーキテクチャ(第4章)。
+3. 既存の大規模リポジトリへの段階的な導入を狙って設計した、マイルストーン単位の非同期バックフィルアーキテクチャ(第4章)。ただしこの設計が実際の大規模リポジトリでも意図通り機能するかは、本ドラフト時点では実データによる検証(ケーススタディ)を経ていない仮説である(第6章Threats to Validity・第7章Future Work参照)。
 4. 対象組織の実際の現状運用を対照群とし、正解データを当時の成果物から再構成した、実データに基づく評価設計(第5章)。
 
 **本研究の差分**：Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、再検証追跡を統合したローカル/Git-native運用である。既存TMS(TestRail等)が提供するテストケース単体の履歴比較・復元機能とは異なり、複数のFeatureにまたがる版履歴を横断的にクエリできる点が本モデルの中心的な差分である(第2.4節)。
@@ -242,7 +242,18 @@ cache_key = hash(
 
 ### 3.4 マイルストーン境界での系譜確定
 
-系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各idについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をid解決経由で比較し、差分があれば`derived_from`関係が成立したとみなして`ChangeEvent`を生成する(実装ではfrom_tree_sha/to_tree_shaとして記録、第3.5節)。merge/rebase/squashいずれのブランチ戦略にも依存しない。
+系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各idについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をid解決経由で比較し、差分があれば`derived_from`関係が成立したとみなして`ChangeEvent`を生成する(実装ではfrom_tree_sha/to_tree_shaとして記録、第3.5節)。
+
+**主系譜(`changes compute`)とマージ監査(`changes lineage`)でブランチ戦略への依存が異なる点に注意**：この最終tree差分によるChangeEvent生成(主系譜)は、2つのマイルストーンタグが指すtree同士を直接比較するだけであり、その間のコミットグラフの形状(merge commitを残すか、squashで潰すか、rebaseで書き換えるか)に一切依存しない。一方、第3.2節で述べた`git merge-base`祖先探索による系譜監査(`changes lineage`、`true_divergences`)は、マイルストーン区間内に2親を持つマージコミットが実際に存在することを前提とする。squash mergeやfast-forward mergeでは元ブランチの分岐履歴がコミットグラフ上から失われるため、そのマイルストーン区間では`true_divergences`は検出されない(空配列のまま)。つまり「ブランチ戦略に依存しない」という主張が成り立つのは主系譜(tree差分によるChangeEvent生成)に限られ、監査用の`true_divergences`はマージコミットの保持を前提とする副次機能である。
+
+**表2：ブランチ戦略ごとの`changes compute`/`changes lineage`の挙動**
+
+| ブランチ戦略 | `changes compute`(主系譜：from_tree_sha/to_tree_sha) | `changes lineage`/`true_divergences`(監査：真の分岐の記録) |
+|---|---|---|
+| merge commit(2親を保持) | 通常どおり差分を検出 | 区間内のマージコミットを`git merge-base`で解析し、真の分岐があれば記録できる |
+| squash merge | 通常どおり差分を検出(squashコミット自体のtreeを比較するため) | 元ブランチの2親関係がコミットグラフから失われ、区間内に2親マージコミットが存在しないため検出できない(記録されない) |
+| rebase(履歴の書き換え) | 通常どおり差分を検出(書き換え後のtreeを比較するため) | rebase後は線形履歴になり2親マージコミットが存在しないため検出できない(記録されない) |
+| fast-forward merge | 通常どおり差分を検出 | 定義上マージコミット自体が作られないため検出対象がない(記録されない) |
 
 **実装状況**：`markharness changes compute`自体は`from_milestone`/`to_milestone`を明示引数として受け取り、その2点間のtree SHA差分を計算する処理であり、「直前のマイルストーン」を自動判定する機能はコマンド自体には無い。「直前のマイルストーンと自動的にペアリングする」という運用は、第4章のバックフィルワーカー(`markharness backfill run`)側が`executions/<milestone>/`をタグの日時順に並べて隣接ペアに適用することで実現しており、この2つは別のレイヤーである。
 
@@ -348,8 +359,8 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 | 分類 | 内容 |
 |---|---|
-| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`expected_result.schema.json`の`generated_by`/`verified_by`フィールド(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーションとaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
-| 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録には遡及適用せず、`executions/*/results.yml`用のJSON Schemaも未整備(3.7節) |
+| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`expected_result.schema.json`の`generated_by`/`verified_by`フィールド(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーション(`executions/*/results.yml`用の`execution_result.schema.json`を含む)とaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
+| 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。Feature `id:`自体を変更した場合の移行手順・エイリアス機構は未実装であり、現状は運用側で`id:`を変更しないことを前提とする(decisions/0004)。`verify trace`/`verify pending`は導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用しない(3.7節) |
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
 
@@ -372,17 +383,17 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 **具体例**：`changes/test2.yaml`に`todo-edit`Featureの`from_tree_sha: null` / `to_tree_sha: 4f2c9a1e...`という`ChangeEvent`があり、`executions/test2/results.yml`の対応レコードが`verified_feature_tree_shas: {todo-edit: 4f2c9a1e...}`を持つ場合、両者の`tree_sha`が一致するため`markharness verify pending --from test1 --to test2`は当該TestCaseを pending 扱いにせず「再検証済み」と判定する。
 
-**実装状況・留意事項**：本仕様導入前の既存実行記録(`verified_feature_tree_shas`を持たないもの)には遡及適用せず、判定対象外(「不明」扱い)とする。この捕捉はFeatureディレクトリ全体のtree SHA比較(第3.1節の`id_cache::resolve_feature_versions`)によって初めて成立しており、feature.yml単体のblob SHAを比較する実装では、Condition/ExpectedResultの変更を見逃すため成立しない。また、Feature自体は変わらずAxisレジストリ(`axes/*.yml`)側だけが変わるケースは追跡対象外であり、`executions/*/results.yml`用のJSON Schema(`markharness validate`対象への追加)も未実装のままである(いずれもFuture Work、第7章)。
+**実装状況・留意事項**：本仕様導入前の既存実行記録(`verified_feature_tree_shas`を持たないもの)には遡及適用せず、判定対象外(「不明」扱い)とする。この捕捉はFeatureディレクトリ全体のtree SHA比較(第3.1節の`id_cache::resolve_feature_versions`)によって初めて成立しており、feature.yml単体のblob SHAを比較する実装では、Condition/ExpectedResultの変更を見逃すため成立しない。また、Feature自体は変わらずAxisレジストリ(`axes/*.yml`)側だけが変わるケースは追跡対象外である(Future Work、第7章)。`executions/*/results.yml`用のJSON Schema(`execution_result.schema.json`)は実装済みで、`markharness validate`の検証対象に含まれる。
 
 ---
 
 ## 4. Implementation：既存リポジトリへの移行アーキテクチャ
 
-既存の大規模リポジトリに本モデルを導入する際、全履歴を遡及的に処理する「バックフィル」のコストが導入障壁になりうる。以下のアーキテクチャで対応する。
+既存の大規模リポジトリに本モデルを導入する際、全履歴を遡及的に処理する「バックフィル」のコストが導入障壁になりうる。以下のアーキテクチャで対応する。**このアーキテクチャ自体は設計上の対応であり、実際の大規模リポジトリでの初回バックフィル時間・ストレージ量等を実測した検証はまだ行っていない**(第6章・第7章)。「大規模リポジトリへの段階的導入が可能」という本節以下の記述は、この設計から論理的に導かれる期待であって実証済みの結果ではない点に注意されたい。
 
 ### 4.1 バックフィル対象の縮小
 
-版履歴のChangeEventモデルはマイルストーン境界でのみ確定する設計(第3.4節)であるため、バックフィルも**過去のマイルストーンタグが付いたコミットのみ**を対象にすればよい。月次〜四半期リリースで数年分でも数十〜数百件程度であり、「数万ファイル×全履歴」ではなく「数万ファイル×過去のリリース数」という扱いやすい規模に縮小される。
+版履歴のChangeEventモデルはマイルストーン境界でのみ確定する設計(第3.4節)であるため、バックフィルも**過去のマイルストーンタグが付いたコミットのみ**を対象にすればよい。月次〜四半期リリースで数年分でも数十〜数百件程度であり、「数万ファイル×全履歴」ではなく「数万ファイル×過去のリリース数」という扱いやすい規模に縮小される、というのが設計上の見立てである(実測による裏付けは前段の通り未実施)。
 
 ### 4.2 非同期バックグラウンド処理
 
@@ -580,6 +591,7 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない(詳細は`CLAUDE.md`の運用ルールを参照)。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
 
+- **2026-08-13(3)**：`テスト知識管理のGit-nativeモデル_評価レビュー_有用性判定と修正指示.md`の修正指示(有用と判定した項目)に対応。(1)「ブランチ戦略に依存しない」の主張を、最終tree差分による主系譜(`changes compute`、ブランチ戦略非依存)とマージの系譜監査(`changes lineage`/`true_divergences`、マージコミットの保持が前提)に分解し、§1.3・§3.4に説明と戦略別の挙動表(表2)を追加。(2)`executions/*/results.yml`用のJSON Schema(`schema/execution_result.schema.json`)を実装し、`markharness validate`の検証対象に追加(`src/schema.rs`・`src/validate.rs`)。既存の`verified_feature_tree_shas`を持たない実行記録は任意フィールドとして扱われるためスキーマ検証を通過し、「不明」扱いの既定方針(change-event-verification-tracking-spec.md §6)と整合させた。(3)Feature `id:`変更時に版履歴が断絶する制約を利用者向け文書(README.md、cli-manual.md)に明記し、移行手順・エイリアス機構を実装しない判断を[docs/decisions/0004-feature-id-change-migration.md](./decisions/0004-feature-id-change-migration.md)に記録。(4)第4章冒頭・§4.1・§1.3貢献3に、バックフィルアーキテクチャの大規模リポジトリでの実効性が実測未検証の仮説であることを明記(第6章・第7章への参照を追加)。§3.6実装状況まとめの表も上記(2)(3)に合わせて更新。
 - **2026-08-13(2)**：表1のTestRail行「バージョンキー方式：内部シーケンス番号」に典拠がなく、公式資料が開示していない内部実装を推測で補完していたとの指摘に対応。TestRail公式サポート記事「Test case versioning」・公式ブログを再確認したが、バージョン比較・復元機能の存在は述べているものの内部のバージョン識別方式には言及がなかったため、「非公開」に修正し脚注で典拠を明記(調査日：2026-08-13)。
 - **2026-08-13**：外部評価レビュー・関連研究網羅性指摘(GTM・tmt/fmfの欠落)に対応。§2.4を単一段落の二極対比から、商用TMS・素朴なGit運用・構造化メタデータ＋Git管理型ツール(GTM、tmt/fmf)の三極構成に再構成し、比較表(表1)を追加。GTMの手動整数バージョン方式が第3.2節で不採用とした方式そのものである点を脚注で明記。付録A.1にGTMS(同一ドメインの類似製品)への言及を追記。参考文献にGTM・GTMS・tmt関連の一次情報6件を追加。§1.3・§2.1〜2.3・第5章は指摘の対象外であり変更していない(判断理由は[docs/decisions/0003-related-work-gtm-tmt.md](./decisions/0003-related-work-gtm-tmt.md)を参照)。
 - **2026-08-12(4)**：外部評価レビュー・改善プロンプト項目11に基づき、項目1(方針A)でVersion DAGの主張をChangeEventモデルに縮小した結果生じた「単なるgit diff/logラッパーに見える」という懸念に対応。実装(`src/id_cache.rs`)にある(a)パス独立なID解決(`feature.yml`の`id:`フィールドを正準ソースとする)・(b)ディレクトリ単位のtree SHA比較・(c)内容アドレス方式のid解決キャッシュの3点を明示し、パスベースの`git diff`/`git log --follow`との対比を§1.3(核心的貢献)・§1.1・§3.1・§3.3に追記。表現は「理論的コア」ではなく「設計上の中核メカニズム」「アルゴリズム的な核」を採用(既知技術の組み合わせであり形式的な証明・複雑度解析を伴わないため)。選定理由は[docs/decisions/0001-version-dag-to-changeevent-model.md](./decisions/0001-version-dag-to-changeevent-model.md)の追記を参照。

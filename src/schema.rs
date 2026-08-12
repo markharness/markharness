@@ -32,6 +32,10 @@ pub const DEFAULT_SCHEMA_FILES: &[(&str, &str)] = &[
         "axis.schema.json",
         include_str!("../schema/axis.schema.json"),
     ),
+    (
+        "execution_result.schema.json",
+        include_str!("../schema/execution_result.schema.json"),
+    ),
 ];
 
 /// Reads and parses `<root>/schema/<file_name>` as a JSON Schema document.

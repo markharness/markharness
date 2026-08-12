@@ -1,6 +1,6 @@
 # markharness
 
-Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI(Rust実装)です。`knowledge/` に YAML で手動記述したテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって `ChangeEvent`(Featureごとの版履歴の差分ログ)をブランチ運用非依存で自動計算します。
+Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI(Rust実装)です。`knowledge/` に YAML で手動記述したテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって `ChangeEvent`(Featureごとの版履歴の差分ログであり、永続的にクエリ可能なグラフとして保持するわけではありません)を自動計算します。この主系譜の算出(`changes compute`)は2つのマイルストーン間のtree差分だけを見るためブランチ運用(merge/squash/rebase)に依存しませんが、マージの分岐そのものを監査する副次機能(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とするため、squash/rebase運用では機能しません(詳細は [docs/cli-manual.md](./docs/cli-manual.md) 1.11/1.16節)。
 
 設計の背景は [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md)、プロダクトとしての詳細は [PROJECT.md](./PROJECT.md) を参照してください。
 
@@ -66,8 +66,9 @@ markharness verify pending --from v1 --to v2
 
 - 既存TMS(TestRail/Xray等)からのインポータ(UC8) — 未実装。
 - id解決キャッシュの `canonicalization_rule_version` / `id_index_schema_version` — 現状固定値で、実際の改訂運用は未検証。
+- `feature.yml` の `id:` フィールドを書き換えると、ディレクトリのリネームとは異なり同一Featureとして追跡できなくなり版履歴が断絶する。移行手順・エイリアス機構は現状なし(検討結果は[decisions/0004](./docs/decisions/0004-feature-id-change-migration.md))。
 - id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等) — 未実装。
-- `verify trace` / `verify pending` — 導入前の既存実行記録には遡及適用されない。`executions/*/results.yml` 用のJSON Schemaも未整備。
+- `verify trace` / `verify pending` — 導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用されない(「不明」扱い)。`executions/*/results.yml` はJSON Schema検証済み(`schema/execution_result.schema.json`)。
 - `markharness backfill run` — 常駐デーモンではなく、呼び出しごとに未処理ペアを1パス処理して終了する設計(CI等からの反復呼び出しを前提とする)。
 
 ## 開発

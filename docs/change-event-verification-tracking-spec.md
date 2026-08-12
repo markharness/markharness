@@ -164,7 +164,7 @@ markharness本体のCLIサブコマンドとして以下2コマンドを実装�
 
 - **遡及適用はしない**：既存の`results.yml`（test1〜test3）は`verified_feature_tree_shas`を持たないため、本仕様導入前の実行記録はQ1／Q2の判定対象外（「不明」扱い）とする。統合版第4章のバックフィル方針と同様、id_indexキャッシュから当時のtree SHAを機械的に補完することは理論上可能だが、当面はスコープ外とし、Future Workとする。
 - **`change_type`との関係**：`ChangeEvent.change_type`（統合版第3.5節）は`markharness changes annotate`により事後入力できるようになった。本仕様のQ1／Q2判定自体はtree SHA比較のみで完結し、`change_type`の有無には依存しない。`verify pending`の出力に変更種別（仕様変更／バグ修正等）でのフィルタ・グルーピングを追加することは未実装で、引き続き将来課題である。
-- **スキーマ**：`schema/`（`markharness init`が既定のJSON Schema一式を配置し、`markharness validate`で検証する）には、現状`TESTEXECUTION`(`executions/*/results.yml`)用のスキーマファイルが含まれていない。`verified_feature_tree_shas`を含む`results.yml`のスキーマ定義・`markharness validate`対象への追加は未実装で、将来課題のままとする。
+- **スキーマ**：`schema/execution_result.schema.json`（`markharness init`が既定一式の一部として配置し、`markharness validate`が`executions/*/results.yml`を検証対象に含める）を実装済み。`case_id`/`result`/`executor`/`executed_at`を必須、`note`/`verified_feature_tree_shas`を任意フィールドとして定義しているため、本仕様導入前（`verified_feature_tree_shas`を持たない）の既存レコードも構造検証は通過し、上記「遡及適用はしない」方針とは矛盾しない（cli-manual.md 1.17節）。
 
 ---
 

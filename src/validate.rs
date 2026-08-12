@@ -91,11 +91,33 @@ fn check_axis_tags(
         .collect()
 }
 
+/// Validates every `executions/<milestone>/results.yml` against
+/// `execution_result.schema.json` (§3.1 TESTEXECUTION, records appended by
+/// `markharness execution record`). Records written before
+/// `verified_feature_tree_shas` existed remain valid since the field is
+/// optional in the schema (change-event-verification-tracking-spec.md §6:
+/// no retroactive backfill, treated as "unknown" by `verify trace`/`verify
+/// pending` rather than rejected here).
+fn validate_executions(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Result<()> {
+    let executions_dir = root.join("executions");
+    if !executions_dir.is_dir() {
+        return Ok(());
+    }
+    for milestone_dir in sorted_subdirs(&executions_dir)? {
+        let results_path = milestone_dir.join("results.yml");
+        if results_path.is_file() {
+            validate_file(root, "execution_result.schema.json", &results_path, issues)?;
+        }
+    }
+    Ok(())
+}
+
 /// Validates every `knowledge/` YAML file against its `schema/*.schema.json`
 /// (§3.5 structural validation) and, for files that pass structurally,
 /// cross-reference rules that JSON Schema alone can't express: `axis` tags
 /// must exist in the `axes/` registry, and `forked_from` must name an
-/// existing Feature id (§3.1). Also validates `axes/*.yml` themselves.
+/// existing Feature id (§3.1). Also validates `axes/*.yml` themselves, and
+/// `executions/*/results.yml` against `execution_result.schema.json`.
 /// Returns every issue found; an empty result means the tree is valid.
 pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
     let mut issues = Vec::new();
@@ -206,6 +228,8 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
             }
         }
     }
+
+    validate_executions(root, &mut issues)?;
 
     Ok(issues)
 }
@@ -325,6 +349,62 @@ mod tests {
         assert!(
             issues.iter().any(|i| i.message.contains("forked_from")),
             "expected a forked_from issue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_a_valid_results_yml_including_verified_feature_tree_shas() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
+        fs::write(
+            dir.path().join("executions/m1/results.yml"),
+            "- case_id: tc-ground-001\n  result: pass\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n  verified_feature_tree_shas:\n    player-jump: 1a2b3c\n",
+        )
+        .unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    #[test]
+    fn accepts_a_pre_existing_results_yml_without_verified_feature_tree_shas() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
+        fs::write(
+            dir.path().join("executions/m1/results.yml"),
+            "- case_id: tc-ground-001\n  result: pass\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n",
+        )
+        .unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    #[test]
+    fn reports_an_invalid_result_value_in_results_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
+        fs::write(
+            dir.path().join("executions/m1/results.yml"),
+            "- case_id: tc-ground-001\n  result: bogus\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n",
+        )
+        .unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.path.contains("results.yml") && i.message.contains("bogus")),
+            "expected a results.yml schema issue, got: {issues:?}"
         );
     }
 
