@@ -1,7 +1,7 @@
 # ChangeEvent連動：実行状態追跡（Verification Status Tracking）仕様書
 
 **Status**: Implemented(`markharness verify trace` / `markharness verify pending`)
-**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](./テスト知識管理のGit-nativeモデル_統合版.md)（以下「統合版」）、[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)
+**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](./テスト知識管理のGit-nativeモデル_統合版.md)（以下「統合版」）、[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)
 **対象読者**：`markharness`（またはその後継ツール）の実装者
 
 **位置づけ**：本資料は統合版第3.5節・図4が構想する「ChangeEventを起点とした影響TestCase特定→再確認」のうち、**実行結果側との連動**を具体化するための追加仕様である。統合版はChangeEventの自動生成とimpacted_testcasesの特定までを核心的貢献としており、「その後、実際に再実行されたか」を自動判定する仕組みは第7章（Future Work）相当の未確定領域だった。本資料はこの領域を仕様化する。

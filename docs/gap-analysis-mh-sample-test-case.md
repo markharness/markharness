@@ -1,7 +1,7 @@
 # mh-sample-test-case 実行結果と設計書（統合版）の相違点
 
 **Status**: Survey(調査時点のスナップショット)
-**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](./テスト知識管理のGit-nativeモデル_統合版.md)（以下「設計書」）、[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)(`mm`フォルダを対象にした別調査)
+**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](./テスト知識管理のGit-nativeモデル_統合版.md)（以下「設計書」）
 **調査範囲**：本リポジトリ（`mh-sample-test-case`）の追跡対象ファイル・作業ツリー・`git log`
 
 **位置づけ**：本資料は設計書を、TODOアプリを題材にした実際のケーススタディ運用リポジトリ `mh-sample-test-case`（本フォルダ、`markharness` CLIを実際に3マイルストーン分運用した記録）と突き合わせ、確認できた相違点を整理したもの。設計書自身が§3.6「実装状況まとめ」で `markharness`（CLI本体、`C:\Users\papa\work\markharness`）のコード実装と設計の相違をすでに整理済みだが、本資料はそれとは別に、**実際にこのCLIを使って運用した結果（本リポジトリのコミット履歴・生成物）が設計書の記述とどう異なるか**を確認する。
@@ -85,7 +85,7 @@ CLI側（`markharness`）には実装済みだが、本リポジトリの実際�
 
 ## 6. TestCaseファイル命名（旧MM資料の指摘との相違）
 
-参考として、`markharness`リポジトリの旧調査資料（[`gap-analysis-mm-folder.md`](./gap-analysis-mm-folder.md)、対象は本リポジトリとは別の`c:\Users\papa\work\mm`フォルダ）は「ファイル名と`case_id`が対応していない」問題を指摘していたが、本リポジトリの`generated/testcases/*.yml`ではファイル名（例：`todo-add-valid-title.yml`）と`case_id`（`tc-todo-add-valid-title-001`）が`tc-`接頭辞と`-001`連番を除いて一致しており、体系的に対応が取れている。この点は旧資料からの改善として確認できる。
+参考として、`markharness`リポジトリの旧調査資料（対象は本リポジトリとは別の`c:\Users\papa\work\mm`フォルダ。当該資料は整理により削除済み）は「ファイル名と`case_id`が対応していない」問題を指摘していたが、本リポジトリの`generated/testcases/*.yml`ではファイル名（例：`todo-add-valid-title.yml`）と`case_id`（`tc-todo-add-valid-title-001`）が`tc-`接頭辞と`-001`連番を除いて一致しており、体系的に対応が取れている。この点は旧資料からの改善として確認できる。
 
 ---
 

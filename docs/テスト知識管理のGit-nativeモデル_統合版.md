@@ -26,7 +26,7 @@
 
 以下、本編。
 
-**注(実装状況について)**：本編は当初の設計を記す。CLI実装(`markharness`、本リポジトリ)は中核アイデア(tree SHAベースの系譜キー・TestCase派生管理・ChangeEventのマイルストーン境界自動生成)を検証する段階にあり、設計の一部は実装時に簡略化・変更されている。主な相違点は各該当節に注記し、§3.6に一覧をまとめた。詳細な突き合わせは別紙[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)を参照。
+**注(実装状況について)**：本編は当初の設計を記す。CLI実装(`markharness`、本リポジトリ)は中核アイデア(tree SHAベースの系譜キー・TestCase派生管理・ChangeEventのマイルストーン境界自動生成)を検証する段階にあり、設計の一部は実装時に簡略化・変更されている。主な相違点は各該当節に注記し、§3.6に一覧をまとめた。詳細な突き合わせは別紙[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)を参照。
 
 ---
 
@@ -314,7 +314,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 ### 3.6 実装状況まとめ
 
-第3章で述べたモデルのうち、CLI実装(`markharness`)で確認できる対応状況を以下にまとめる。詳細な突き合わせは別紙[gap-analysis-mm-folder.md](./gap-analysis-mm-folder.md)を参照(ただし同資料は本節の更新以前の状態を反映したものである点に留意)。
+第3章で述べたモデルのうち、CLI実装(`markharness`)で確認できる対応状況を以下にまとめる。詳細な突き合わせは別紙[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)を参照(ただし同資料は本節の更新以前の状態を反映したものである点に留意)。
 
 | 分類 | 内容 |
 |---|---|
