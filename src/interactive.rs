@@ -607,10 +607,10 @@ mod tests {
         let (id, label) =
             prompt_id_or_label(&mut reader, &mut writer, "Feature id: ", &[]).unwrap();
 
-        assert_eq!(id, "pureiyaa-ga-janpu-suru");
+        assert_eq!(id, "pureiyaagajanpusuru");
         assert_eq!(label, "プレイヤーがジャンプする");
         let output = String::from_utf8(writer).unwrap();
-        assert!(output.contains("pureiyaa-ga-janpu-suru"));
+        assert!(output.contains("pureiyaagajanpusuru"));
     }
 
     #[test]
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn prompt_id_or_label_warns_and_reprompts_on_slug_collision() {
-        let candidates = vec!["pureiyaa-ga-janpu-suru".to_string()];
+        let candidates = vec!["pureiyaagajanpusuru".to_string()];
         let input = "プレイヤーがジャンプする\n\nプレイヤーがジャンプする\nplayer-jump\n";
         let mut reader = Cursor::new(input.as_bytes());
         let mut writer = Vec::new();
@@ -667,10 +667,10 @@ mod tests {
 
         let feature_path = dir
             .path()
-            .join("knowledge/controls/pureiyaa-ga-janpu-suru/feature.yml");
+            .join("knowledge/controls/pureiyaagajanpusuru/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: pureiyaa-ga-janpu-suru\nrequirement: controls\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
+            "id: pureiyaagajanpusuru\nrequirement: controls\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
         );
     }
 
@@ -687,10 +687,10 @@ mod tests {
 
         let behavior_path = dir
             .path()
-            .join("knowledge/controls/player-jump/pureiyaa-ga-janpu-suru/behavior.yml");
+            .join("knowledge/controls/player-jump/pureiyaagajanpusuru/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: pureiyaa-ga-janpu-suru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
+            "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
         );
     }
 
@@ -707,10 +707,10 @@ mod tests {
 
         let condition_path = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/pureiyaa-ga-janpu-suru/condition.yml");
+            .join("knowledge/controls/player-jump/jump/pureiyaagajanpusuru/condition.yml");
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
-            "id: pureiyaa-ga-janpu-suru\nbehavior: jump\nlabel: プレイヤーがジャンプする\ndescription: |\n  Jump animation scenario\n"
+            "id: pureiyaagajanpusuru\nbehavior: jump\nlabel: プレイヤーがジャンプする\ndescription: |\n  Jump animation scenario\n"
         );
     }
 
@@ -726,14 +726,14 @@ mod tests {
 
         let requirement_path = dir
             .path()
-            .join("knowledge/pureiyaa-ga-janpu-suru/requirement.yml");
+            .join("knowledge/pureiyaagajanpusuru/requirement.yml");
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
-            "id: pureiyaa-ga-janpu-suru\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\n"
+            "id: pureiyaagajanpusuru\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\n"
         );
         let feature_path = dir
             .path()
-            .join("knowledge/pureiyaa-ga-janpu-suru/player-jump/feature.yml");
+            .join("knowledge/pureiyaagajanpusuru/player-jump/feature.yml");
         assert!(feature_path.exists());
     }
 
@@ -811,7 +811,7 @@ mod tests {
 
         let feature_path = dir
             .path()
-            .join("knowledge/controls/pureiyaa-ga-janpu-suru/feature.yml");
+            .join("knowledge/controls/pureiyaagajanpusuru/feature.yml");
         let before = fs::read_to_string(&feature_path).unwrap();
 
         run_with_input(

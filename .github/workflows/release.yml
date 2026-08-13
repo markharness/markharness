@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify-tag-matches-version:
+    name: verify tag == Cargo.toml version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          cargo_version="$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          echo "tag=$tag cargo_version=$cargo_version"
+          if [ "$tag" != "$cargo_version" ]; then
+            echo "::error::tag v$tag does not match Cargo.toml version $cargo_version"
+            exit 1
+          fi
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: verify-tag-matches-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=markharness
+          ext=""
+          if [[ "${{ matrix.target }}" == *windows* ]]; then ext=".exe"; fi
+          out="markharness-${{ needs.verify-tag-matches-version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "$out"
+          cp "target/${{ matrix.target }}/release/${bin}${ext}" "$out/"
+          cp LICENSE README.md "$out/"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            7z a "${out}.zip" "$out"
+          else
+            tar czf "${out}.tar.gz" "$out"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: markharness-${{ matrix.target }}
+          path: |
+            markharness-*.zip
+            markharness-*.tar.gz
+
+  release:
+    name: publish GitHub Release
+    needs: [verify-tag-matches-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+      - name: changelog
+        uses: orhun/git-cliff-action@v4
+        id: changelog
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGES.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+          body_path: CHANGES.md

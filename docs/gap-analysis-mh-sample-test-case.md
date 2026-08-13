@@ -51,7 +51,7 @@ diff --git a/knowledge/todo-simple/todo-add/todo-add-from-form/todo-add-valid-ti
 
 これは`generated_from.feature`（TestCaseの生成元Feature）ごとに、実行時点でのFeatureディレクトリのtree SHAを記録するもので、`markharness verify trace <case_id> --milestone <m>`（その実行がどのChangeEventを反映しているか）・`markharness verify pending`（未再検証のTestCaseを機械的に検出）というQ1/Q2判定を可能にする。設計書第3.5節・図4が述べる「変更影響の伝播」→「再確認が必要なTestCase集合」は、設計書内では静的な生成グラフ止まりで説明されているが、実際のCLIはさらに一歩進んで**実行結果側からも変更の反映状況を機械的に追跡できる機能を持ち、本リポジトリはそれを最初の実行(`test1`)から一貫して使っている**。
 
-この機能とその設計意図は、設計書と同じ`markharness`リポジトリ内の別紙「[`change-event-verification-tracking-spec.md`](./change-event-verification-tracking-spec.md)」にのみ記載されており、統合版本文（本フォルダ`docs/`にあるファイル）には章立ても言及もない。設計書を単体で読む限りこの機能の存在は分からず、**「論文の完成度」と「CLIの実際の機能」に乖離がある**点は特筆に値する。
+この機能とその設計意図は、設計書と同じ`markharness`リポジトリ内の別紙「[`change-event-verification-tracking-spec.md`](./design/change-event-verification-tracking-spec.md)」にのみ記載されており、統合版本文（本フォルダ`docs/`にあるファイル）には章立ても言及もない。設計書を単体で読む限りこの機能の存在は分からず、**「論文の完成度」と「CLIの実際の機能」に乖離がある**点は特筆に値する。
 
 同様に、`generate`が同時生成する`generated/traceability-index.json`（Requirement→Feature→Behavior→Condition→TestCaseの索引、`axis`はRequirement/Feature/Behaviorの3階層をunionしたもの）も設計書第3.5節のディレクトリ構造図に登場しない生成物であり、本リポジトリには実在し`markharness verify`の差分検証対象にもなっている。
 

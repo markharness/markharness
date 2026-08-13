@@ -1,7 +1,7 @@
 # テストケース自動生成の実現方法：設計ドキュメント
 
 **Status**: Implemented(`src/generate.rs` / `src/traceability.rs`)。本資料は元々UC2の実現方法を事前検討した設計ドラフトだったが、実装(`src/generate.rs`)は細部で本資料の初期案と異なる形に落ち着いた。本版は実装に合わせて全面的に書き直したものであり、初期案からの差分は各節末の「実装時の変更」に残す。
-**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](./テスト知識管理のGit-nativeモデル_統合版.md)(以下「論文」)、[product-operation.md](./product-operation.md)
+**関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](../テスト知識管理のGit-nativeモデル_統合版.md)(以下「論文」)、[product-operation.md](../product-operation.md)
 
 **位置づけ**：本資料は論文および「プロダクト運用イメージ」(`docs/product-operation.md`)を踏まえ、UC2「TestCaseを決定的生成する」の**具体的な実現方法**を記述したものです。論文本文に明記されている箇所には該当節番号を付し、製品化にあたって補った箇所は「(製品化提案、論文本文には明記なし)」と明記します。
 

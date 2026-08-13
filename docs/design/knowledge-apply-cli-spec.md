@@ -2,7 +2,7 @@
 
 **Status**: Implemented(`src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/cli.rs`)。本仕様に対する実装時の追加・変更点は各節末の「実装時の追記」を参照。
 **Created**: 2026-08-08
-**関連ドキュメント**: [testcase-generation-design.md](./testcase-generation-design.md), [product-operation.md](./product-operation.md), `src/interactive.rs`, `src/knowledge.rs`, `src/cli.rs`
+**関連ドキュメント**: [testcase-generation-design.md](./testcase-generation-design.md), [product-operation.md](../product-operation.md), `src/interactive.rs`, `src/knowledge.rs`, `src/cli.rs`
 
 **位置づけ**：対話型 `markharness knowledge add` の内部ロジック(候補列挙・バリデーション・書き込み)を、TTY非依存の `validate`/`apply` サブコマンドとして切り出すための設計仕様。人間の対話CLI・AIエージェント・将来のGUIバックエンドが共通の実行エンジンとして利用することを想定する。
 

@@ -2,9 +2,7 @@
 
 Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI(Rust実装)です。`knowledge/` に YAML で手動記述したテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって `ChangeEvent`(Featureごとの版履歴の差分ログであり、永続的にクエリ可能なグラフとして保持するわけではありません)を自動計算します。この主系譜の算出(`changes compute`)は2つのマイルストーン間のtree差分だけを見るためブランチ運用(merge/squash/rebase)に依存しませんが、マージの分岐そのものを監査する副次機能(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とするため、squash/rebase運用では機能しません(詳細は [docs/cli-manual.md](./docs/cli-manual.md) 1.11/1.16節)。
 
-設計の背景は [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md)、プロダクトとしての詳細は [PROJECT.md](./PROJECT.md) を参照してください。
-
-> このリポジトリはもともと汎用AI開発テンプレートから作られています。テンプレート自体の説明(`/customize` 等のスラッシュコマンド)は [docs/template-readme.md](./docs/template-readme.md) に退避してあります。
+設計の背景は [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md)、プロダクトとしての詳細は [docs/product-operation.md](./docs/product-operation.md) を参照してください。開発への参加方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
 
 ## 最小チュートリアル
 
@@ -58,7 +56,7 @@ markharness verify pending --from v1 --to v2
 
 - **Gitタグがマイルストーンの前提**：`changes compute` / `backfill run` は `git tag` された地点しかマイルストーンとして扱えません。タグを打たない限りリリース境界を認識できません(UC4のタグ付け自体は人間の判断ポイントであり、`markharness` は代行しません)。
 - **`git notes` は push/fetch で自動同期されません**：バックフィルの進捗記録([第4.3節](./docs/テスト知識管理のGit-nativeモデル_統合版.md))は `refs/notes/markharness-backfill` に保存されますが、これは通常の `git push`/`git fetch` の対象外です。共有リポジトリでチーム運用する場合は、`git push origin refs/notes/*` と対応する fetch 設定(`git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'` 等)を各メンバー・CI環境で追加してください。
-- **既存TMS(TestRail / Xray 等)からの移行は未実装**：UC8(既存ツールからのインポート)は未実装です。移行は手作業で `knowledge/` 配下のYAMLを作成する(または `markharness knowledge apply`/`add` を使う)ことになります。詳細は [PROJECT.md](./PROJECT.md) の主要機能一覧を参照してください。
+- **既存TMS(TestRail / Xray 等)からの移行は未実装**：UC8(既存ツールからのインポート)は未実装です。移行は手作業で `knowledge/` 配下のYAMLを作成する(または `markharness knowledge apply`/`add` を使う)ことになります。詳細は [docs/cli-manual.md](./docs/cli-manual.md#2-未実装今後実装予定のコマンド) の未実装コマンド一覧を参照してください。
 
 ## 未対応事項
 
@@ -73,7 +71,7 @@ markharness verify pending --from v1 --to v2
 
 ## 開発
 
-Rust(edition 2024)実装です。ビルド・テスト・Lintの標準コマンドは [PROJECT.md](./PROJECT.md#技術スタック) を参照してください。
+Rust(edition 2024)実装です。ビルド・テスト・Lint・PR前チェックリストは [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
 
 ```bash
 cargo build
@@ -84,7 +82,8 @@ cargo fmt --check
 
 ## ドキュメント一覧
 
-- [PROJECT.md](./PROJECT.md) — プロダクト概要・技術スタック・ディレクトリ構成
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — ビルド・開発ワークフロー・PR前チェックリスト
+- [docs/product-operation.md](./docs/product-operation.md) — プロダクト概要・ユースケース・ディレクトリ構成
 - [docs/README.md](./docs/README.md) — 設計ドキュメント群の索引(論文・製品運用イメージ・CLIマニュアル・個別コマンド仕様)
 - [docs/cli-manual.md](./docs/cli-manual.md) — 実装済み/未実装のCLIコマンド一覧
 - [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md) — 設計の元になった研究(論文ドラフト)

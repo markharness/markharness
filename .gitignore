@@ -31,5 +31,24 @@ temp/
 Thumbs.db
 .DS_Store
 
-# Claude Code personal/machine-specific settings (permission approvals etc.)
-.claude/settings.local.json
+# AI-agent development-template scaffolding (Claude Code / VS Code Copilot).
+# This is local workflow tooling for building markharness, not part of the
+# released product or something an external contributor needs to read; the
+# substantive rules it carries (build/test commands, license/versioning
+# policy, docs layout) are published instead in README.md, CONTRIBUTING.md,
+# SECURITY.md, and docs/. Keep this block minimal: only ignore whole
+# directories/files that are purely template/agent plumbing, never `docs/`,
+# `.github/workflows/`, `.github/ISSUE_TEMPLATE/`, or `.github/PULL_REQUEST_TEMPLATE.md`,
+# which are real project infrastructure.
+CLAUDE.md
+PROJECT.md
+.claude/
+.github/copilot-instructions.md
+.github/instructions/
+.github/prompts/
+.github/skills/
+
+# In-progress task checklists (checklist-workflow.instructions.md). These are
+# working notes for the current task, not a permanent artifact; archive or
+# delete them when done rather than committing them.
+checklist-*.md

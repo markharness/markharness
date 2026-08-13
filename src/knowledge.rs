@@ -166,7 +166,8 @@ pub fn contains_non_ascii(s: &str) -> bool {
 }
 
 pub fn romanize_label(japanese: &str) -> String {
-    kakasi::convert(japanese).romaji
+    use wana_kana::ConvertJapanese;
+    japanese.to_romaji()
 }
 
 pub fn normalize_slug_candidate(raw: &str) -> String {
@@ -494,9 +495,13 @@ mod tests {
 
     #[test]
     fn romanize_label_converts_japanese_to_romaji() {
+        // wana_kana (MIT) converts kana character-by-character without word
+        // segmentation, so there is no space between words unless the input
+        // already has one. Kanji are not converted (they are dropped later by
+        // normalize_slug_candidate's ASCII filter).
         assert_eq!(
             romanize_label("プレイヤーがジャンプする"),
-            "pureiyaa ga janpu suru"
+            "pureiyaagajanpusuru"
         );
     }
 

@@ -1,9 +1,9 @@
 # markharness CLI マニュアル
 
 **Status**: Implemented(実装済みコマンドは1章)/ Draft(未実装コマンドの暫定案は2章)
-**関連ドキュメント**: [product-operation.md](./product-operation.md)(ユースケース対応)、[testcase-generation-design.md](./testcase-generation-design.md)(`generate`の生成規則)、[knowledge-apply-cli-spec.md](./knowledge-apply-cli-spec.md)(`knowledge validate`/`apply`の詳細設計)
+**関連ドキュメント**: [product-operation.md](./product-operation.md)(ユースケース対応)、[testcase-generation-design.md](./design/testcase-generation-design.md)(`generate`の生成規則)、[knowledge-apply-cli-spec.md](./design/knowledge-apply-cli-spec.md)(`knowledge validate`/`apply`の詳細設計)
 
-**位置づけ**：本資料は `markharness` CLI の使用方法を、**実装済みコマンド**と**未実装(今後実装予定)のコマンド**に分けてまとめたものです。ユースケース(UC1〜UC8)の対応は `docs/product-operation.md` の「3. ユースケース記述」表に基づきます。実装済みコマンドの具体的な生成規則は `docs/testcase-generation-design.md` を参照してください(ただし `generate`/`verify` の現行実装は、同ドキュメント作成後に `feature → behavior → condition → expected` の4階層モデルへ刷新されており、詳細は本マニュアル 1.5/1.6 節を正としてください)。`knowledge validate`/`apply`(非対話・TTY非依存版、1.3/1.4節)の詳細設計は `docs/knowledge-apply-cli-spec.md` を正としてください。
+**位置づけ**：本資料は `markharness` CLI の使用方法を、**実装済みコマンド**と**未実装(今後実装予定)のコマンド**に分けてまとめたものです。ユースケース(UC1〜UC8)の対応は `docs/product-operation.md` の「3. ユースケース記述」表に基づきます。実装済みコマンドの具体的な生成規則は `docs/design/testcase-generation-design.md` を参照してください(ただし `generate`/`verify` の現行実装は、同ドキュメント作成後に `feature → behavior → condition → expected` の4階層モデルへ刷新されており、詳細は本マニュアル 1.5/1.6 節を正としてください)。`knowledge validate`/`apply`(非対話・TTY非依存版、1.3/1.4節)の詳細設計は `docs/design/knowledge-apply-cli-spec.md` を正としてください。
 
 ---
 
@@ -248,7 +248,7 @@ Expected result (e.g. shows a validation error): shows a length validation error
 markharness knowledge validate <draft-file> [--json] [-d, --dir <path>]
 ```
 
-**用途**: `knowledge add`(1.2節)が前提とするTTY上での逐次プロンプトに依存せず、Requirement→Feature→Behavior→Condition→ExpectedResultの1チェーン分を1つのドラフトYAMLファイルとして与え、スキーマ・整合性を検証する。**副作用はなく、ファイルへの書き込みは一切行わない。** Claude Code等のAIエージェントによる非対話呼び出しや、将来のGUI実装からの利用を想定している。詳細な設計意図・バリデーションルール一覧は `docs/knowledge-apply-cli-spec.md` を正とする。
+**用途**: `knowledge add`(1.2節)が前提とするTTY上での逐次プロンプトに依存せず、Requirement→Feature→Behavior→Condition→ExpectedResultの1チェーン分を1つのドラフトYAMLファイルとして与え、スキーマ・整合性を検証する。**副作用はなく、ファイルへの書き込みは一切行わない。** Claude Code等のAIエージェントによる非対話呼び出しや、将来のGUI実装からの利用を想定している。詳細な設計意図・バリデーションルール一覧は `docs/design/knowledge-apply-cli-spec.md` を正とする。
 
 **オプション**
 
@@ -538,7 +538,7 @@ $ markharness axes list --dir tmp/todo-sample --json
 [{"id":"gameplay","label":"Gameplay"},{"id":"ui","label":null}]
 ```
 
-**ユースケース対応**: どのUCにも明示的には現れない補助コマンド(`docs/knowledge-apply-cli-spec.md` §8)。
+**ユースケース対応**: どのUCにも明示的には現れない補助コマンド(`docs/design/knowledge-apply-cli-spec.md` §8)。
 
 ---
 
@@ -623,7 +623,7 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 **動作**
 
 - Feature単位で `from_blob`/`to_blob` を比較し、一致すれば何もしない。片方にのみ存在すれば追加/削除、両方に存在し値が異なれば変更として `ChangeEvent` を1件生成する。
-- `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.5節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./change-event-verification-tracking-spec.md) §2.4も参照)。
+- `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.5節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4も参照)。
   - **既定(`--current-tree`未指定)**：`to-milestone`タグが指す`knowledge/`ツリー(一時`git worktree`に展開)から構築する。同じ区間を後日再計算しても常に同じ結果になる。
   - **`--current-tree`指定時**：現在の作業ツリーの`knowledge/`から構築する(従来動作)。作業ツリーが変化し続ける限り、同じ区間の再計算結果も変わりうる。
 - `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.15節)で事後入力する運用(§3.5)。
@@ -919,7 +919,7 @@ $ echo $?
 
 ## 3. 動作確認・テスト
 
-実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/knowledge_edit.rs` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge validate`/`apply` の終了コード・出力を検証する `tests/knowledge_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`PROJECT.md`)に従い、コミット前に以下を実行すること:
+実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/knowledge_edit.rs` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge validate`/`apply` の終了コード・出力を検証する `tests/knowledge_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`CONTRIBUTING.md`)に従い、コミット前に以下を実行すること:
 
 ```bash
 cargo test

@@ -17,11 +17,11 @@
 
 ## 採用理由(デフォルトをhistoricalにした理由)
 
-- 後方互換(既存の作業ツリー参照動作を維持する)よりも、安全側(同じ問い合わせが常に同じ結果を返す)を優先した。`changes/*.yaml`はマイルストーン境界の**不変の事実記録**として設計されている([change-event-verification-tracking-spec.md](../change-event-verification-tracking-spec.md) §2.3)ため、その一部である`impacted_testcases`が再計算のたびに変わりうる実装は、この設計思想と整合しない。
+- 後方互換(既存の作業ツリー参照動作を維持する)よりも、安全側(同じ問い合わせが常に同じ結果を返す)を優先した。`changes/*.yaml`はマイルストーン境界の**不変の事実記録**として設計されている([change-event-verification-tracking-spec.md](../design/change-event-verification-tracking-spec.md) §2.3)ため、その一部である`impacted_testcases`が再計算のたびに変わりうる実装は、この設計思想と整合しない。
 - 「今この時点で再確認すべきテストは何か」という現在候補抽出のユースケース自体は引き続き必要なため、廃止はせず`--current-tree`として明示的なオプトインに変更した。
 
 ## 影響・将来の再検討条件
 
 - `markharness backfill run`のデフォルト挙動が変わる(既存動作は`--current-tree`相当だったが、historicalに変更)。バックフィル対象は過去のマイルストーン区間の再構成が目的であるため、この変更はユースケースとより整合する。
-- `docs/テスト知識管理のGit-nativeモデル_統合版.md`§3.5、`docs/change-event-verification-tracking-spec.md`§2.4に両モードの説明を追記済み。
+- `docs/テスト知識管理のGit-nativeモデル_統合版.md`§3.5、`docs/design/change-event-verification-tracking-spec.md`§2.4に両モードの説明を追記済み。
 - 将来、`--current-tree`モードの利用実績が乏しいことが分かった場合は、オプション自体の削除を再検討してよい。逆に、CI等での既定運用として`--current-tree`の方が有用だと分かった場合は、デフォルトの再逆転をこの決定の上書きとして記録すること。
