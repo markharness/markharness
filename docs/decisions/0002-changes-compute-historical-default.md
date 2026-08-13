@@ -1,5 +1,9 @@
 # 0002: `changes compute`のimpacted_testcasesはhistoricalモードをデフォルトにする
 
+## ステータス
+
+Accepted
+
 ## 背景
 
 `markharness changes compute`は`from_milestone`/`to_milestone`という過去の2タグを比較するが、`impacted_testcases`(影響を受けるTestCase集合)は常に**現在の作業ツリー**から生成されていた(`impacted_testcases_by_feature`、`src/changes.rs`)。そのため、同じ過去の区間を後日再計算すると、現在のテスト構造の変化に応じて結果が変わり得た(`docs/テスト知識管理のGit-nativeモデル_評価レビュー.md`のP1指摘)。

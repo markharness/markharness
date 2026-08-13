@@ -1,5 +1,9 @@
 # 0003: 関連研究網羅性指摘(GTM・tmt/fmf)への対応方針
 
+## ステータス
+
+Accepted
+
 ## 背景
 
 外部評価レビューで、関連研究(§2.4)にGTM(testmanagement.comの"Git Test Management"ツール)とtmt/fmf(Red Hat発OSSテスト実行フレームワーク)が欠落しているとの指摘を受けた。

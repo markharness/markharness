@@ -1,5 +1,9 @@
 # 0001: Version DAGの主張を「ChangeEventモデル」表記に縮小する(方針A)
 
+## ステータス
+
+Accepted
+
 ## 背景
 
 `docs/テスト知識管理のGit-nativeモデル_統合版.md`は、`derived_from`を持つ版ノード・辺の永続的なグラフ(Version DAG)を中核貢献として位置付けていた(§1.1図1、§1.2 RQ1、§3.4図3ほか)。

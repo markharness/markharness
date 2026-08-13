@@ -2,11 +2,15 @@
 
 ## ステータス
 
-決定済み・一部実行済み。
+Accepted(一部実行済み・第7節は未実行)。
 
-- 第1節(単一リポジトリ化)・第2節(ライセンス是正)・第3節(バージョニング)・第4節(CI新設)・第5節(ドキュメント構成)・第6節(ガバナンスファイル)は、本リポジトリ内でローカルに実行・コミット済み(2026-08-14)。ただし第1節のうち`docs/gap-analysis-mh-sample-test-case.md`の削除は、実際にはREADME.md・論文本体・design/change-event-verification-tracking-spec.mdから監査ログとして現役参照されていたため、削除せず維持する判断に変更した(この文書の記述と実態の乖離)。
+- ADR番号・配置の運用を、`docs/decisions/`単一ディレクトリ+本セクションのようなStatus行によるライフサイクル管理に変更した(旧: 未確定の文書は`docs/internal-notes/`という別ディレクトリへ移す運用だったが、番号空間の分断・パス陳腐化(後述)の原因になっていたため廃止。詳細は[Michael Nygard, "Documenting Architecture Decisions"](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions)およびMADR(https://adr.github.io/madr/)の運用に倣う)。この0007自身も`docs/internal-notes/`から`docs/decisions/`に戻し、この変更の最初の適用例とする。
+
+- 第1節(単一リポジトリ化)・第2節(ライセンス是正)・第3節(バージョニング)・第4節(CI新設)・第5節(ドキュメント構成)・第6節(ガバナンスファイル)は、本リポジトリ内でローカルに実行・コミット済み(2026-08-14)。ただし第1節のうち`docs/gap-analysis-mh-sample-test-case.md`の削除は、実際にはREADME.md・論文本体・design/change-event-verification-tracking-spec.mdから監査ログとして現役参照されていたため、削除せず維持する判断に変更した。第1節・第7節の当該箇所の記述もこれに合わせて修正済み(以前は実態と乖離していた)。
+- 第1節の「`CLAUDE.md`/`PROJECT.md`/`.claude/`等は隠す必然性がなく公開する」という当初方針は、ローカル実行段階でユーザー要望(最低限の公開フットプリント)により転換した。これらのファイルは機密を含まないという判断自体は変わらないが、公開リポジトリの読者にとって一般的な関心が薄いテンプレート運用ファイルである以上、`.gitignore`で追跡除外し非公開のまま手元運用する方針に変更し、実行済み(`git rm --cached`)。実体としてのルール(ビルド/テストコマンド・Pre-PRチェックリスト・ライセンス/バージョニング/docs配置ルール)はCONTRIBUTING.md/README.md/SECURITY.md/docs/product-operation.mdに移植済み。
+- 第4節のリリースパイプラインは設計段階で`cargo-dist`の採用を検討したが、ローカル実行では依存追加を避け、`actions/upload-artifact`等の標準アクションによる手組みのmatrix buildで同等の機能(クロスプラットフォームビルド・チェックサム・CHANGELOG生成)を実装した。対象も`x86_64-pc-windows-gnu`を除く4ターゲット(`x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`)に絞った(GNU toolchainでのWindowsビルドは需要が確認できず、必要になった時点で追加する)。第4節本文もこれに合わせて修正済み。
 - 第7節(既存公開リポジトリ`markharness/markharness`の削除・再作成、`git filter-repo`による履歴書き換え、force push、Pages再設定)は、外部共有状態(スター・フォーク・既存リンク)に影響する不可逆操作のため未着手。実行にはユーザー自身によるGitHub上の最終確認が必要。
-- 第7節が完了した時点で、この文書は`docs/decisions/`配下に要点を転記した簡潔なADRとして書き直し、本ファイルは削除する(0006の前例に倣う)。それまでは実行中のランブックとして`docs/internal-notes/`に置く。
+- 第7節が完了した時点で、本ファイルの本セクション(ステータス)を`Accepted(実行完了)`に更新するのみとする。以前の運用(完了後に`docs/decisions/`へ「転記」して`docs/internal-notes/`の元ファイルを削除する、0006の前例)は、番号・ファイルの同一性を保てず、また実際に`docs/decisions/0005-review-2026-08-13-triage.md`という(移動前提の)パスを本ファイルが参照したまま実態(移動先は`docs/internal-notes/`)と食い違うバグを一度発生させた。単一ディレクトリ+Status行運用に変更した後は、この種の移動起因の陳腐化自体が構造的に起きなくなる。
 
 ## コンテキスト
 
@@ -33,14 +37,14 @@ markharness は現在、以下の状態で公開されている。
 - 公開リポジトリのコミット履歴がキュレーション目的のコミット(`Create CNAME` 等)のみで構成されており、実装の経緯を `git blame` で追跡できない。外部コントリビュータのコード理解を妨げている。
 - 手動同期に起因するドリフトが既に発生している(Cargo.toml と git タグのバージョン不整合)。
 - 公開リポジトリに `tests/` / `examples/` が存在せず、外部コントリビュータが開発リポジトリ側の資産にアクセスできない。PR提出先が実質的に存在しない。
-- `PROJECT.md` / `CLAUDE.md` / `.claude/` 等の内部運用ファイルは、認証情報等の機密を含まないため(確認済み)、公開する実害がない。単に一般ユーザーの関心が薄いだけであり、隠す必然性はない。
+- `PROJECT.md` / `CLAUDE.md` / `.claude/` 等の内部運用ファイルは、認証情報等の機密を含まないため(確認済み)、公開する実害がない。単一リポジトリに統合すること自体を妨げる理由ではないが、実際にどこまで公開するか(追跡対象に含めるか)は別途「ステータス」欄の通り、最低限の公開フットプリント方針により追跡除外に変更した。
 
 運用ルール:
 
 - `main` ブランチで開発を継続する。CIが通らないコミットはマージしない。
-- リリース物(バイナリ・Docsサイトの更新)は `v*` タグのpushを契機にのみ生成する。未成熟な変更が利用者の目に触れるのは「タグを打つ前のmain」のみであり、タグを打った時点のスナップショットは常に安定している。
-- `docs/decisions/` のうち、確定していない作業メモ(例: `0005-review-2026-08-13-triage.md` のような進行中トリアージ)は、確定後に正式なADRとして書き直すか、`docs/decisions/` 以外の場所(例 `docs/internal-notes/`、`.gitignore` 対象)に移す。
-- `docs/template-readme.md`、`docs/gap-analysis-mh-sample-test-case.md` のような、製品と直接関係しない/恒久性のない文書は削除またはアーカイブする。
+- バイナリのリリース物は `v*` タグのpushを契機にのみ生成する(第4節)。ただしPages(`markharness.com`)は現状どおりmainブランチのREADME.mdを都度自動レンダリングする設定を維持するため(第5節)、Docsサイトの更新はタグ契機ではなくmainへのpush毎に即時反映される。両者は生成契機が異なる別物であると明確に区別する。未成熟な変更が利用者の目に触れうるのはこのPages経由のREADME/docsのみであり、バイナリ配布物についてはタグを打った時点のスナップショットが常に安定している。
+- ADRは番号・ディレクトリを`docs/decisions/`単一に固定し、確定していない/一部未実行の文書もここに置く。ライフサイクル(Proposed / Accepted / Rejected / Deprecated / Superseded、および実行途中を表す`Accepted(一部実行済み)`等の項目固有の追記)は各ファイル冒頭の`## ステータス`セクションで表現し、状態が変わってもファイルを別ディレクトリへ移動しない(Michael Nygard「Documenting Architecture Decisions」・MADRの運用に準拠。理由は「番号空間の分断」「移動に伴うリンク陳腐化」を参照)。OSS公開時に非公開としたい個別ファイル(例: 却下判定のみで製品判断に寄与しない作業メモ)は、ディレクトリ分離ではなく第7節の`git filter-repo`でファイル単位に除去する。
+- `docs/template-readme.md` のような、製品と直接関係しない/恒久性のない文書は削除またはアーカイブする。`docs/gap-analysis-mh-sample-test-case.md` は当初この対象に含めていたが、README.md・論文本体・`design/change-event-verification-tracking-spec.md` から監査ログとして現役参照されているため対象外とし、維持する。
 
 ### 2. ライセンス: 依存関係の整合を最優先で是正する
 
@@ -71,10 +75,10 @@ CalVerタグ(`v2026.08.13`)運用をやめ、`Cargo.toml` の `version` フィ�
 **リリースパイプライン(`v*` タグpush契機)**
 
 1. タグ名と `Cargo.toml` の `version` の一致を検証。
-2. `cargo-dist` によるクロスプラットフォームビルド(`x86_64-pc-windows-msvc`、`x86_64-pc-windows-gnu`、`x86_64-unknown-linux-gnu`、`x86_64-apple-darwin`、`aarch64-apple-darwin`)。
-3. チェックサム(SHA256SUMS)・インストーラスクリプト生成。
-4. GitHub Releasesへ添付。Conventional CommitsからのCHANGELOG自動生成(`git-cliff` 等)をリリースノートとして添付。
-5. (任意)`cargo publish` による crates.io 公開。ライブラリとしての利用を想定しない限り必須ではない。
+2. クロスプラットフォームビルド(`x86_64-pc-windows-msvc`、`x86_64-unknown-linux-gnu`、`x86_64-apple-darwin`、`aarch64-apple-darwin`)。当初`cargo-dist`の採用を想定していたが、依存追加を避けるため標準の`actions/upload-artifact`等を使った手組みのmatrix buildで実装した。`x86_64-pc-windows-gnu`は需要が確認できなかったため対象から外した(必要になれば追加する)。
+3. チェックサム(SHA256SUMS)生成。インストーラスクリプトは現時点では生成しない(未実装、必要になれば追加する)。
+4. GitHub Releasesへ添付。Conventional CommitsからのCHANGELOG自動生成(`git-cliff`)をリリースノートとして添付。
+5. (任意)`cargo publish` による crates.io 公開。ライブラリとしての利用を想定しない限り必須ではない。未実装。
 
 ### 5. ドキュメント構成
 
@@ -85,7 +89,7 @@ CalVerタグ(`v2026.08.13`)運用をやめ、`Cargo.toml` の `version` フィ�
 | CLIコマンド全量リファレンス(実装済み/未実装含む) | `docs/cli-manual.md` | 新規公開。未実装項目を明記することで、同一要望のissue重複を防ぐ。 |
 | 運用イメージ | `docs/product-operation.md` | 新規公開。導入判断に必要。 |
 | 実装設計仕様 | `docs/design/`(新設、`testcase-generation-design.md` 等を移動) | 新規公開。コントリビュータ向け。公開前に実装との乖離を確認する。 |
-| 確定した設計決定(ADR) | `docs/decisions/` | 確定済み(0001, 0002, 0003, 0004, 0006)のみ公開。進行中メモは含めない。 |
+| 設計決定の記録(ADR) | `docs/decisions/` | 単一ディレクトリ+`## ステータス`セクションで管理(Nygard/MADR方式)。全ファイルを同一パスに置いたまま、`Status`が`Accepted`のもの(0001, 0002, 0003, 0004, 0005, 0006, 0007)は公開時もそのまま残す。製品判断に寄与しない作業メモ(例: 却下判定のみの外部レビュー対応)を非公開にしたい場合は、ディレクトリを分けず第7節の`git filter-repo`でファイル単位に除去する。 |
 | コミュニティ知見(FAQ・トラブルシューティング) | (作らない。将来必要になれば GitHub Discussions) | Wikiは作成しない。PRレビューを経ない編集は本プロジェクトのTDD/ADR運用と一貫しない。 |
 
 Pages(`markharness.com`)は現状のREADME自動レンダリングを維持し、専用ドキュメントサイト基盤(mdBook等)は導入しない。README/docs間のリンクで十分な段階と判断する。
@@ -117,7 +121,7 @@ Pages(`markharness.com`)は現状のREADME自動レンダリングを維持し�
 削除は最後に行う。以下の順で準備を完了させてから削除・再作成する。
 
 1. **開発リポジトリ内でkakasi問題を是正**(第2節)。この時点でCargo.tomlのライセンス表記と実態が一致する状態にする。
-2. **開発リポジトリの履歴から非公開パスを除去したクリーンな履歴を作る**。`git filter-repo`(BFGではなくfilter-repoを推奨。履歴書き換えの柔軟性が高く、GitHub公式も推奨している)で、`docs/decisions/0005-review-2026-08-13-triage.md`、`docs/gap-analysis-mh-sample-test-case.md`、`docs/template-readme.md`、`.claude/`、`.github/skills/skill-creator/`(Copilot専用の移植版、公開する意味が薄い)等、公開に適さないパスを履歴ごと除去する。これにより、単なる最新スナップショットのコピーではなく、**実際の開発の経緯を保持したまま**公開できる(第1節で述べた「履歴の透明性」というOSSの利点を、フルヒストリーの形で獲得できる)。
+2. **開発リポジトリの履歴から非公開パスを除去したクリーンな履歴を作る**。`git filter-repo`(BFGではなくfilter-repoを推奨。履歴書き換えの柔軟性が高く、GitHub公式も推奨している)で、`docs/template-readme.md`、`CLAUDE.md`、`PROJECT.md`、`.claude/`、`.github/copilot-instructions.md`、`.github/instructions/`、`.github/prompts/`、`.github/skills/`、`checklist-*.md`(最低限の公開フットプリント方針、ステータス欄参照)等、公開に適さないパスを履歴ごと除去する。`docs/gap-analysis-mh-sample-test-case.md`は監査ログとして現役参照されているため除去対象に含めない。`docs/decisions/`配下のADR(0001〜0007)はいずれも`Status: Accepted`であり除去対象に含めない(第5節)。これにより、単なる最新スナップショットのコピーではなく、**実際の開発の経緯を保持したまま**公開できる(第1節で述べた「履歴の透明性」というOSSの利点を、フルヒストリーの形で獲得できる)。
 3. **タグを再構成**。既存のCalVerタグは使わず、SemVerで `v0.1.0` から採番し直す(あるいは、これまでの開発の蓄積を踏まえて `v0.2.0` 等、実態に即したバージョンから開始してもよい)。
 4. **CI/CDをこの時点で組み込む**。新規リポジトリの最初のコミットからPRゲートCIとリリースパイプライン(第4節)が機能する状態にする。「後から追加する」のではなく「最初から備わっている」状態を作れるのは、作り直す場合の明確な利点。
 5. **ガバナンスファイル(第6節)を追加**した状態を初期コミット群に含める。

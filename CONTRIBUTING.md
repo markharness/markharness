@@ -36,8 +36,7 @@ Before adding a new crate, check its license. Only licenses listed in `deny.toml
 
 ## Documentation layout
 
-- `docs/decisions/` — confirmed Architecture Decision Records (ADRs) only.
-- `docs/internal-notes/` — in-progress review/triage notes that are not (yet) a confirmed decision.
+- `docs/decisions/` — Architecture Decision Records (ADRs), one sequential number space, one directory (Michael Nygard's ADR convention / MADR). Each file starts with a `## Status`/`## ステータス` section (Proposed / Accepted / Rejected / Deprecated / Superseded, or a project-specific note like "Accepted, partially executed"). In-progress or not-yet-finalized decisions stay here too — status changes are edits to that section, not moves to another directory.
 - `docs/design/` — implementation-level design docs aimed at contributors.
 - Transient documents (investigation notes, superseded drafts) should be deleted once they've served their purpose rather than left to accumulate.
 

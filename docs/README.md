@@ -12,8 +12,7 @@
    - **[testcase-generation-design.md](./design/testcase-generation-design.md)** — `generate`(TestCase決定的生成)の仕様。
    - **[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md)** — `verify trace`/`verify pending`(実行結果とChangeEventの自動突合)の仕様。
 5. **[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)** — 設計と実装の乖離を、ケーススタディ運用リポジトリ`mh-sample-test-case`の実データ(tree SHAベース検知の実地確認、分岐・マージシナリオの検証を含む)で検証した調査資料。参考資料・監査ログの位置づけ。
-6. **[decisions/](./decisions/)** — 外部評価レビュー対応・設計上のトレードオフなど、「なぜそう決めたか」という判断理由の記録。番号順に読むと経緯を追える。確定・実行完了した決定のみを置く。
-7. **[internal-notes/](./internal-notes/)** — まだ確定していない検討メモ、または決定済みだが一部未実行のランブック。完了した時点で要点を`decisions/`のADRに転記し、本ファイルは削除する運用(`decisions/0006`の前例を参照)。
+6. **[decisions/](./decisions/)** — 外部評価レビュー対応・設計上のトレードオフなど、「なぜそう決めたか」という判断理由の記録。番号順に読むと経緯を追える。単一ディレクトリ・単一の番号連番で管理し、各ファイル冒頭の`## ステータス`セクションでライフサイクル(Proposed/Accepted/Rejected/Deprecated/Superseded、実行途中を表す`Accepted(一部実行済み)`等)を表現する。未確定/一部未実行の文書も別ディレクトリへ移さずここに置く(Michael Nygard「Documenting Architecture Decisions」・MADRの運用に準拠。以前は`docs/internal-notes/`という別ディレクトリに分けていたが、番号空間の分断とパス陳腐化の原因になっていたため廃止し、`decisions/0007`に統合した)。
 
 ## 資料の鮮度について
 
@@ -35,9 +34,9 @@
 
 **2026-08-13**：
 
-- `テスト知識管理のGit-nativeモデル_評価レビュー.md` — 2026-08-13版の外部評価レビュー本体。指摘への対応方針は`テスト知識管理のGit-nativeモデル_評価レビュー_有用性判定と修正指示.md`で判定済み、対応結果は統合版.mdの変更履歴・[internal-notes/0005](./internal-notes/0005-review-2026-08-13-triage.md)に反映済みのため削除。
-- `テスト知識管理のGit-nativeモデル_評価レビュー_有用性判定と修正指示.md` — 上記レビューの有用性判定文書。判定基準・却下理由は[internal-notes/0005](./internal-notes/0005-review-2026-08-13-triage.md)に転記済みのため削除。
-- `improvement-prompts.md` — 2026-08-12レビュー対応の実行プロンプト集。項目1〜6・11は[decisions/0001](./decisions/0001-version-dag-to-changeevent-model.md)・[decisions/0002](./decisions/0002-changes-compute-historical-default.md)・統合版.md変更履歴に反映済み、項目8は[decisions/0003](./decisions/0003-related-work-gtm-tmt.md)で対応済み、項目9・10は[internal-notes/0005](./internal-notes/0005-review-2026-08-13-triage.md)で却下、項目7(インポータ・大規模ケーススタディ)は統合版.md第7章 Future Workに引き継いだため削除。
+- `テスト知識管理のGit-nativeモデル_評価レビュー.md` — 2026-08-13版の外部評価レビュー本体。指摘への対応方針は`テスト知識管理のGit-nativeモデル_評価レビュー_有用性判定と修正指示.md`で判定済み、対応結果は統合版.mdの変更履歴・[decisions/0005](./decisions/0005-review-2026-08-13-triage.md)に反映済みのため削除。
+- `テスト知識管理のGit-nativeモデル_評価レビュー_有用性判定と修正指示.md` — 上記レビューの有用性判定文書。判定基準・却下理由は[decisions/0005](./decisions/0005-review-2026-08-13-triage.md)に転記済みのため削除。
+- `improvement-prompts.md` — 2026-08-12レビュー対応の実行プロンプト集。項目1〜6・11は[decisions/0001](./decisions/0001-version-dag-to-changeevent-model.md)・[decisions/0002](./decisions/0002-changes-compute-historical-default.md)・統合版.md変更履歴に反映済み、項目8は[decisions/0003](./decisions/0003-related-work-gtm-tmt.md)で対応済み、項目9・10は[decisions/0005](./decisions/0005-review-2026-08-13-triage.md)で却下、項目7(インポータ・大規模ケーススタディ)は統合版.md第7章 Future Workに引き継いだため削除。
 
 **2026-08-12**：
 
