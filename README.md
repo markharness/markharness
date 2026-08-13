@@ -1,77 +1,79 @@
 # markharness
 
-Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI(Rust実装)です。`knowledge/` に YAML で手動記述したテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって `ChangeEvent`(Featureごとの版履歴の差分ログであり、永続的にクエリ可能なグラフとして保持するわけではありません)を自動計算します。この主系譜の算出(`changes compute`)は2つのマイルストーン間のtree差分だけを見るためブランチ運用(merge/squash/rebase)に依存しませんが、マージの分岐そのものを監査する副次機能(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とするため、squash/rebase運用では機能しません(詳細は [docs/cli-manual.md](./docs/cli-manual.md) 1.11/1.16節)。
+日本語版 / Japanese version: [README.ja.md](./README.ja.md)
 
-設計の背景は [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md)、プロダクトとしての詳細は [docs/product-operation.md](./docs/product-operation.md) を参照してください。開発への参加方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
+A Git-native management CLI (Rust) for test knowledge (Feature / Condition / ExpectedResult) that uses Git itself as the backend. It deterministically generates `TestCase`s from test knowledge hand-written as YAML under `knowledge/`, and automatically computes `ChangeEvent`s (a diff log of each Feature's version history — not a persistently queryable graph) by comparing Git tree SHAs between milestone tags. This main-lineage computation (`changes compute`) only looks at the tree diff between two milestones, so it does not depend on branching workflow (merge/squash/rebase); however, the secondary feature that audits the branching itself (`changes lineage`, `true_divergences`) assumes merge commits are preserved, so it does not work under a squash/rebase workflow (see [docs/en/cli-manual.md](./docs/en/cli-manual.md) §1.11/1.16 for details).
 
-## 最小チュートリアル
+For the design background, see [docs/en/git-native-model-for-test-knowledge-management.md](./docs/en/git-native-model-for-test-knowledge-management.md); for product details, see [docs/en/product-operation.md](./docs/en/product-operation.md). For how to contribute, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-このセクションのコマンドは全て `cargo build --release` 後の `target/release/markharness`(Windowsは `.exe`)を指します。以下、`markharness` と表記します。
+## Minimal tutorial
 
-サンプルの知識データ一式は [examples/todo-minimal/](./examples/todo-minimal/) にあります。外部リポジトリへの依存はなく、このリポジトリの中だけで完結します。
+All commands in this section refer to `target/release/markharness` (`.exe` on Windows) after `cargo build --release`. It is written as `markharness` below.
+
+A complete set of sample knowledge data is at [examples/todo-minimal/](./examples/todo-minimal/). It has no dependency on any external repository and is fully self-contained within this repository.
 
 ```bash
-# 1. 新しいプロジェクト用の空リポジトリを用意する
+# 1. Prepare an empty repository for a new project
 mkdir my-todo-project && cd my-todo-project
 git init
 
-# 2. markharness init — knowledge/ / axes/ / generated/ / executions/ / changes/ / schema/ を作成
+# 2. markharness init — creates knowledge/ / axes/ / generated/ / executions/ / changes/ / schema/
 markharness init
 
-# 3. 知識登録 — examples/todo-minimal/ の axis レジストリとドラフトYAMLを使う
-cp -r <markharness のクローン先>/examples/todo-minimal/axes .
-markharness knowledge apply <markharness のクローン先>/examples/todo-minimal/draft-v1.yml
+# 3. Register knowledge — use the axis registry and draft YAML from examples/todo-minimal/
+cp -r <path to your markharness clone>/examples/todo-minimal/axes .
+markharness knowledge apply <path to your markharness clone>/examples/todo-minimal/draft-v1.yml
 
-# 4. 生成 — knowledge/ から TestCase を決定的に生成する
+# 4. Generate — deterministically generate TestCase from knowledge/
 markharness generate
 
-# 5. マイルストーン(git tag) — 最初のリリース地点にタグを打つ
+# 5. Milestone (git tag) — tag the first release point
 git add -A && git commit -m "add todo-management/add-todo knowledge"
 git tag v1
 markharness milestone init v1
 
-# --- ここで仕様が変わったとする(examples/todo-minimal/draft-v2.yml は
-#     同じ Feature に新しい Condition を1件追加するドラフト) ---
-markharness knowledge apply <markharness のクローン先>/examples/todo-minimal/draft-v2.yml
+# --- Now suppose the spec changes (examples/todo-minimal/draft-v2.yml is
+#     a draft that adds one new Condition to the same Feature) ---
+markharness knowledge apply <path to your markharness clone>/examples/todo-minimal/draft-v2.yml
 markharness generate
 git add -A && git commit -m "add max-length condition"
 git tag v2
 markharness milestone init v2
 
-# 6. changes compute — v1..v2 間の ChangeEvent を自動計算する
+# 6. changes compute — automatically compute the ChangeEvent between v1..v2
 markharness changes compute v1 v2
 cat changes/v2.yaml
 
-# 7. 実行結果を記録してから、未再検証のTestCaseを確認する
+# 7. Record execution results, then check for TestCases still pending re-verification
 markharness execution record tc-empty-title-001 --milestone v2 --result pass --executor <your-name>
 markharness execution record tc-max-length-001 --milestone v2 --result pass --executor <your-name>
 markharness verify pending --from v1 --to v2
 ```
 
-最後の `verify pending` は、`v1..v2` で影響を受けた2件のTestCase(`tc-empty-title-001` / `tc-max-length-001`)がいずれも `v2` 時点で実行記録済みであることを検出し、`pending`(未再実行)を0件と報告します。両方のステップを省略して直接 `verify pending` を実行すると、逆にこの2件が pending として出力されます(実際に上のコマンド列で手元確認済み)。
+The final `verify pending` detects that both TestCases affected by `v1..v2` (`tc-empty-title-001` / `tc-max-length-001`) already have execution records as of `v2`, and reports 0 `pending` (not-yet-re-executed) items. If you skip both recording steps and run `verify pending` directly, these same two TestCases are instead reported as pending (verified hands-on with the command sequence above).
 
-各コマンドの詳細なオプション・出力形式は [docs/cli-manual.md](./docs/cli-manual.md) を参照してください。
+See [docs/en/cli-manual.md](./docs/en/cli-manual.md) for the detailed options and output format of each command.
 
-## 運用上の制約
+## Operational constraints
 
-- **Gitタグがマイルストーンの前提**：`changes compute` / `backfill run` は `git tag` された地点しかマイルストーンとして扱えません。タグを打たない限りリリース境界を認識できません(UC4のタグ付け自体は人間の判断ポイントであり、`markharness` は代行しません)。
-- **`git notes` は push/fetch で自動同期されません**：バックフィルの進捗記録([第4.3節](./docs/テスト知識管理のGit-nativeモデル_統合版.md))は `refs/notes/markharness-backfill` に保存されますが、これは通常の `git push`/`git fetch` の対象外です。共有リポジトリでチーム運用する場合は、`git push origin refs/notes/*` と対応する fetch 設定(`git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'` 等)を各メンバー・CI環境で追加してください。
-- **既存TMS(TestRail / Xray 等)からの移行は未実装**：UC8(既存ツールからのインポート)は未実装です。移行は手作業で `knowledge/` 配下のYAMLを作成する(または `markharness knowledge apply`/`add` を使う)ことになります。詳細は [docs/cli-manual.md](./docs/cli-manual.md#2-未実装今後実装予定のコマンド) の未実装コマンド一覧を参照してください。
+- **Git tags are a prerequisite for milestones**: `changes compute` / `backfill run` can only treat points that have been `git tag`ged as milestones. Release boundaries cannot be recognized unless a tag is created (the act of tagging itself, per UC4, remains a human decision point that `markharness` does not perform on your behalf).
+- **`git notes` are not automatically synced by push/fetch**: Backfill progress records ([§4.3](./docs/en/git-native-model-for-test-knowledge-management.md)) are stored under `refs/notes/markharness-backfill`, which is outside the scope of ordinary `git push`/`git fetch`. When operating as a team on a shared repository, add `git push origin refs/notes/*` and a corresponding fetch configuration (e.g. `git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'`) for each member and CI environment.
+- **Migration from an existing TMS (TestRail / Xray, etc.) is not implemented**: UC8 (importing from an existing tool) is not implemented. Migration means manually authoring YAML under `knowledge/` (or using `markharness knowledge apply`/`add`). See the list of unimplemented commands in [docs/en/cli-manual.md](./docs/en/cli-manual.md#2-unimplemented-planned-commands) for details.
 
-## 未対応事項
+## Unaddressed items
 
-[docs/テスト知識管理のGit-nativeモデル_統合版.md §3.6 実装状況まとめ](./docs/テスト知識管理のGit-nativeモデル_統合版.md#36-実装状況まとめ)を参照してください。要点:
+See [docs/en/git-native-model-for-test-knowledge-management.md §3.6 Summary of Implementation Status](./docs/en/git-native-model-for-test-knowledge-management.md#36-summary-of-implementation-status). Highlights:
 
-- 既存TMS(TestRail/Xray等)からのインポータ(UC8) — 未実装。
-- id解決キャッシュの `canonicalization_rule_version` / `id_index_schema_version` — 現状固定値で、実際の改訂運用は未検証。
-- `feature.yml` の `id:` フィールドを書き換えると、ディレクトリのリネームとは異なり同一Featureとして追跡できなくなり版履歴が断絶する。移行手順・エイリアス機構は現状なし(検討結果は[decisions/0004](./docs/decisions/0004-feature-id-change-migration.md))。
-- id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等) — 未実装。
-- `verify trace` / `verify pending` — 導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用されない(「不明」扱い)。`executions/*/results.yml` はJSON Schema検証済み(`schema/execution_result.schema.json`)。
-- `markharness backfill run` — 常駐デーモンではなく、呼び出しごとに未処理ペアを1パス処理して終了する設計(CI等からの反復呼び出しを前提とする)。
+- An importer from an existing TMS (TestRail/Xray, etc.) (UC8) — not implemented.
+- The id-resolution cache's `canonicalization_rule_version` / `id_index_schema_version` — currently fixed values; an actual revision workflow is unverified.
+- Rewriting the `id:` field in `feature.yml` breaks tracking as the same Feature (unlike a directory rename), severing version history. There is currently no migration procedure or alias mechanism (see [decisions/0004](./docs/en/decisions/0004-feature-id-change-migration.md) for the discussion).
+- A general-purpose, independent id↔path index layer (e.g. tracking an id change that doesn't change the path) — not implemented.
+- `verify trace` / `verify pending` are not applied retroactively to existing execution records predating their introduction (those without `verified_feature_tree_shas`) — treated as "unknown". `executions/*/results.yml` is JSON-Schema-validated (`schema/execution_result.schema.json`).
+- `markharness backfill run` — not a resident daemon; designed to process one pass of unprocessed pairs per invocation and then exit (intended to be invoked repeatedly, e.g. from CI).
 
-## 開発
+## Development
 
-Rust(edition 2024)実装です。ビルド・テスト・Lint・PR前チェックリストは [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
+Implemented in Rust (edition 2024). See [CONTRIBUTING.md](./CONTRIBUTING.md) for the build/test/lint process and the pre-PR checklist.
 
 ```bash
 cargo build
@@ -80,10 +82,11 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-## ドキュメント一覧
+## Document index
 
-- [CONTRIBUTING.md](./CONTRIBUTING.md) — ビルド・開発ワークフロー・PR前チェックリスト
-- [docs/product-operation.md](./docs/product-operation.md) — プロダクト概要・ユースケース・ディレクトリ構成
-- [docs/README.md](./docs/README.md) — 設計ドキュメント群の索引(論文・製品運用イメージ・CLIマニュアル・個別コマンド仕様)
-- [docs/cli-manual.md](./docs/cli-manual.md) — 実装済み/未実装のCLIコマンド一覧
-- [docs/テスト知識管理のGit-nativeモデル_統合版.md](./docs/テスト知識管理のGit-nativeモデル_統合版.md) — 設計の元になった研究(論文ドラフト)
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — build/development workflow, pre-PR checklist
+- [docs/README.md](./docs/README.md) — document language index (Japanese/English)
+- [docs/en/product-operation.md](./docs/en/product-operation.md) — product overview, use cases, directory structure (日本語: [docs/ja/product-operation.md](./docs/ja/product-operation.md))
+- [docs/en/README.md](./docs/en/README.md) — index of design documents (paper, product operation picture, CLI manual, individual command specs) (日本語: [docs/ja/README.md](./docs/ja/README.md))
+- [docs/en/cli-manual.md](./docs/en/cli-manual.md) — list of implemented/unimplemented CLI commands (日本語: [docs/ja/cli-manual.md](./docs/ja/cli-manual.md))
+- [docs/en/git-native-model-for-test-knowledge-management.md](./docs/en/git-native-model-for-test-knowledge-management.md) — the research (paper draft) behind the design (日本語: [docs/ja/テスト知識管理のGit-nativeモデル_統合版.md](./docs/ja/テスト知識管理のGit-nativeモデル_統合版.md))

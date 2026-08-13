@@ -1,9 +1,11 @@
 # todo-minimal
 
-リポジトリ直下の [README.md](../../README.md) の最小チュートリアルで使う、コピーしてそのまま動かせる最小構成のサンプルです。
+日本語版 / Japanese version: [README.ja.md](./README.ja.md)
 
-- `axes/` — `markharness knowledge apply` が要求する axis レジストリ(`workflow` / `ui` / `validation`)。
-- `draft-v1.yml` — Requirement(`todo-management`) → Feature(`add-todo`) → Behavior(`add-task`) → Condition(`empty-title`) → ExpectedResult 1件からなる最小のチェーン。`markharness knowledge apply`/`validate` が読むドラフトYAML形式(詳細は[docs/cli-manual.md](../../docs/cli-manual.md) 1.3節)。
-- `draft-v2.yml` — 同じ Feature/Behavior に、2件目のCondition(`max-length`)を追加するドラフト。マイルストーン間の `ChangeEvent` を実演するために使う。
+A minimal, self-contained sample you can copy and run as-is, used in the minimal tutorial in the repository root [README.md](../../README.md).
 
-単独では動かず、`markharness init` 済みのプロジェクトディレクトリに `axes/` をコピーし、`markharness knowledge apply` にドラフトYAMLを渡す形で使います。手順はリポジトリ直下の README.md を参照してください。
+- `axes/` — the axis registry (`workflow` / `ui` / `validation`) required by `markharness knowledge apply`.
+- `draft-v1.yml` — a minimal chain of Requirement (`todo-management`) → Feature (`add-todo`) → Behavior (`add-task`) → Condition (`empty-title`) → one ExpectedResult. This is the draft YAML format read by `markharness knowledge apply`/`validate` (see [docs/en/cli-manual.md](../../docs/en/cli-manual.md) §1.3 for details).
+- `draft-v2.yml` — a draft that adds a second Condition (`max-length`) to the same Feature/Behavior. Used to demonstrate a `ChangeEvent` between milestones.
+
+It does not run standalone — copy `axes/` into a project directory that has already had `markharness init` run on it, then pass a draft YAML to `markharness knowledge apply`. See the repository root README.md for the full walkthrough.

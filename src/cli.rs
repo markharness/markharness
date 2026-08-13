@@ -912,7 +912,7 @@ fn read_and_parse_draft(draft_file: &std::path::Path) -> knowledge_draft::Knowle
 }
 
 /// Prints the validation outcome and, on failure, exits the process with
-/// code 1 (per §3.4 of docs/design/knowledge-apply-cli-spec.md). Returns normally
+/// code 1 (per §3.4 of docs/en/design/knowledge-apply-cli-spec.md). Returns normally
 /// only when `errors` is empty.
 fn report_validation_outcome(errors: &[ValidationError], json: bool) {
     if errors.is_empty() {

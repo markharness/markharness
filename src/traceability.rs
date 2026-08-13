@@ -19,7 +19,7 @@ pub struct TraceabilityIndex {
 }
 
 /// Builds the Requirement→Feature→Behavior→Condition→TestCase index (§2番目の
-/// 未実装項目, docs/cli-manual.md §2)。`testcases` の順序をそのまま使うため、
+/// 未実装項目, docs/ja/cli-manual.md §2)。`testcases` の順序をそのまま使うため、
 /// `generate::generate_testcases` の決定的な出力に依存する。
 pub fn build_index(testcases: &[TestCase]) -> TraceabilityIndex {
     TraceabilityIndex {

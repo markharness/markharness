@@ -10,7 +10,7 @@ use crate::knowledge_draft::{self, KnowledgeDraft, ValidationError};
 
 /// Blank draft chain written to the temp file before the editor is first
 /// opened. Mirrors the draft YAML shape documented in
-/// docs/cli-manual.md §1.3 (`knowledge validate`).
+/// docs/en/cli-manual.md §1.3 (`knowledge validate`).
 pub const EDIT_TEMPLATE: &str = "\
 # knowledge add --edit
 # Fill in the chain below (existing ids may omit label/axis/description),

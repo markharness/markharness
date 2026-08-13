@@ -24,7 +24,7 @@ pub enum ChangeType {
 
 /// One detected Feature change between two milestones (§3.5 ChangeEvent).
 /// `change_type` is computed as `None` here and filled in afterwards by a
-/// human via `markharness changes annotate` (per docs/cli-manual.md UC5, it
+/// human via `markharness changes annotate` (per docs/en/cli-manual.md UC5, it
 /// is not computed from the diff itself).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangeEvent {

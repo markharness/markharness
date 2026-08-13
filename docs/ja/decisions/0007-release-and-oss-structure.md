@@ -11,6 +11,7 @@ Accepted(一部実行済み・第7節は未実行)。
 - 第4節のリリースパイプラインは設計段階で`cargo-dist`の採用を検討したが、ローカル実行では依存追加を避け、`actions/upload-artifact`等の標準アクションによる手組みのmatrix buildで同等の機能(クロスプラットフォームビルド・チェックサム・CHANGELOG生成)を実装した。対象も`x86_64-pc-windows-gnu`を除く4ターゲット(`x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`)に絞った(GNU toolchainでのWindowsビルドは需要が確認できず、必要になった時点で追加する)。第4節本文もこれに合わせて修正済み。
 - 第7節(既存公開リポジトリ`markharness/markharness`の削除・再作成、`git filter-repo`による履歴書き換え、force push、Pages再設定)は、外部共有状態(スター・フォーク・既存リンク)に影響する不可逆操作のため未着手。実行にはユーザー自身によるGitHub上の最終確認が必要。
 - 第7節が完了した時点で、本ファイルの本セクション(ステータス)を`Accepted(実行完了)`に更新するのみとする。以前の運用(完了後に`docs/decisions/`へ「転記」して`docs/internal-notes/`の元ファイルを削除する、0006の前例)は、番号・ファイルの同一性を保てず、また実際に`docs/decisions/0005-review-2026-08-13-triage.md`という(移動前提の)パスを本ファイルが参照したまま実態(移動先は`docs/internal-notes/`)と食い違うバグを一度発生させた。単一ディレクトリ+Status行運用に変更した後は、この種の移動起因の陳腐化自体が構造的に起きなくなる。
+- 第5節(ドキュメント構成)は2026-08-14中に追加で更新した:`docs/`配下の全ドキュメント(論文・cli-manual・product-operation・gap-analysis・decisions・design)を`docs/ja/`・`docs/en/`の言語別ディレクトリへ分割し、英語版を全文新規作成した。ルートの`README.md`/`README.ja.md`は当初の想定どおり(第5節表の元案)のサフィックス方式のまま、`README.md`を英語版(既定)、`README.ja.md`を日本語版として実際に分割した。`examples/todo-minimal/`配下のREADMEも同様に分割した。第5節の表は現状の配置に合わせて更新済み。
 
 ## コンテキスト
 
@@ -84,13 +85,15 @@ CalVerタグ(`v2026.08.13`)運用をやめ、`Cargo.toml` の `version` フィ�
 
 | 種別 | 置き場所 | 備考 |
 |---|---|---|
-| ランディング・クイックスタート・コマンド概要 | `README.md` / `README.ja.md` | 現状維持。GitHub Pages(`markharness.com`)が自動レンダリング。 |
-| 設計背景(論文) | `docs/テスト知識管理のGit-nativeモデル_統合版.md` | 現状維持(既に公開済み)。 |
-| CLIコマンド全量リファレンス(実装済み/未実装含む) | `docs/cli-manual.md` | 新規公開。未実装項目を明記することで、同一要望のissue重複を防ぐ。 |
-| 運用イメージ | `docs/product-operation.md` | 新規公開。導入判断に必要。 |
-| 実装設計仕様 | `docs/design/`(新設、`testcase-generation-design.md` 等を移動) | 新規公開。コントリビュータ向け。公開前に実装との乖離を確認する。 |
-| 設計決定の記録(ADR) | `docs/decisions/` | 単一ディレクトリ+`## ステータス`セクションで管理(Nygard/MADR方式)。全ファイルを同一パスに置いたまま、`Status`が`Accepted`のもの(0001, 0002, 0003, 0004, 0005, 0006, 0007)は公開時もそのまま残す。製品判断に寄与しない作業メモ(例: 却下判定のみの外部レビュー対応)を非公開にしたい場合は、ディレクトリを分けず第7節の`git filter-repo`でファイル単位に除去する。 |
+| ランディング・クイックスタート・コマンド概要 | `README.md`(英語、既定)/ `README.ja.md`(日本語) | 現状維持。GitHub Pages(`markharness.com`)が`README.md`を自動レンダリング。 |
+| 設計背景(論文) | `docs/ja/テスト知識管理のGit-nativeモデル_統合版.md` / `docs/en/git-native-model-for-test-knowledge-management.md` | 既に公開済み。当初は単一ディレクトリ(`docs/`直下)だったが、2026-08-14に`docs/ja/`・`docs/en/`への言語別ディレクトリ分割を実施し、全文英訳を追加した。 |
+| CLIコマンド全量リファレンス(実装済み/未実装含む) | `docs/ja/cli-manual.md` / `docs/en/cli-manual.md` | 新規公開。未実装項目を明記することで、同一要望のissue重複を防ぐ。 |
+| 運用イメージ | `docs/ja/product-operation.md` / `docs/en/product-operation.md` | 新規公開。導入判断に必要。 |
+| 実装設計仕様 | `docs/ja/design/` / `docs/en/design/`(新設、`testcase-generation-design.md` 等を移動) | 新規公開。コントリビュータ向け。公開前に実装との乖離を確認する。 |
+| 設計決定の記録(ADR) | `docs/ja/decisions/` / `docs/en/decisions/` | 各言語ごとに単一ディレクトリ+`## ステータス`/`## Status`セクションで管理(Nygard/MADR方式)、番号は両言語で共通。全ファイルを同一パスに置いたまま、`Status`が`Accepted`のもの(0001, 0002, 0003, 0004, 0005, 0006, 0007)は公開時もそのまま残す。製品判断に寄与しない作業メモ(例: 却下判定のみの外部レビュー対応)を非公開にしたい場合は、ディレクトリを分けず第7節の`git filter-repo`でファイル単位に除去する。 |
 | コミュニティ知見(FAQ・トラブルシューティング) | (作らない。将来必要になれば GitHub Discussions) | Wikiは作成しない。PRレビューを経ない編集は本プロジェクトのTDD/ADR運用と一貫しない。 |
+
+`docs/ja/`・`docs/en/`は内容を鏡合わせで維持する運用とし、どちらかを更新したら同一PRで他方も更新する(詳細はCLAUDE.mdの「日本語版/英語版ドキュメントの同時更新」ルールを参照)。
 
 Pages(`markharness.com`)は現状のREADME自動レンダリングを維持し、専用ドキュメントサイト基盤(mdBook等)は導入しない。README/docs間のリンクで十分な段階と判断する。
 

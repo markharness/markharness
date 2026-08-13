@@ -19,7 +19,7 @@ pub struct BackfillReport {
 }
 
 /// Milestone names are `executions/<name>/milestone.yml` directory names,
-/// which UC4 assumes match a `git tag <name>` (docs/cli-manual.md §1.1/UC4).
+/// which UC4 assumes match a `git tag <name>` (docs/en/cli-manual.md §1.1/UC4).
 pub fn list_milestone_names(root: &Path) -> io::Result<Vec<String>> {
     let executions_dir = root.join("executions");
     let Ok(entries) = fs::read_dir(&executions_dir) else {

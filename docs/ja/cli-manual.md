@@ -703,7 +703,7 @@ backfill: 1 processed, 2 already up to date
 markharness milestone init <tag> [--json] [-d, --dir <path>]
 ```
 
-**用途**: 既存の `git tag <tag>` に対応する `executions/<tag>/milestone.yml` を作成する。UC4そのもの(リリースタイミングの意思決定として `git tag` を打つこと)は引き続き人間の判断ポイントであり本コマンドの対象外だが、そのタグを `backfill run`(1.12節)が認識できる形(`executions/<name>/milestone.yml` というディレクトリ名がタグ名と一致すること、[src/backfill.rs:21-22](../src/backfill.rs#L21-L22))に機械的にスキャフォールドする。
+**用途**: 既存の `git tag <tag>` に対応する `executions/<tag>/milestone.yml` を作成する。UC4そのもの(リリースタイミングの意思決定として `git tag` を打つこと)は引き続き人間の判断ポイントであり本コマンドの対象外だが、そのタグを `backfill run`(1.12節)が認識できる形(`executions/<name>/milestone.yml` というディレクトリ名がタグ名と一致すること、[src/backfill.rs:21-22](../../src/backfill.rs#L21-L22))に機械的にスキャフォールドする。
 
 **オプション**
 
@@ -716,7 +716,7 @@ markharness milestone init <tag> [--json] [-d, --dir <path>]
 **動作**
 
 - 対象の `tag` が `git tag` として存在しなければ、`git tag <tag>` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する(ファイルは作成しない)。
-- タグが存在し `executions/<tag>/milestone.yml` が未作成の場合、`id: <tag>` のみを内容として書き込む(committer dateなどはgitから都度取得する既存設計を変えないため保存しない、[src/backfill.rs:41-48](../src/backfill.rs#L41-L48))。
+- タグが存在し `executions/<tag>/milestone.yml` が未作成の場合、`id: <tag>` のみを内容として書き込む(committer dateなどはgitから都度取得する既存設計を変えないため保存しない、[src/backfill.rs:41-48](../../src/backfill.rs#L41-L48))。
 - `executions/<tag>/milestone.yml` が既に存在する場合は中身を変更せず、「既に初期化済み」である旨のメッセージを出して終了コード `0` で終了する(`markharness init` と同じ冪等パターン)。
 
 **終了コード**
