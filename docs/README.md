@@ -12,7 +12,8 @@
    - **[testcase-generation-design.md](./design/testcase-generation-design.md)** — `generate`(TestCase決定的生成)の仕様。
    - **[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md)** — `verify trace`/`verify pending`(実行結果とChangeEventの自動突合)の仕様。
 5. **[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)** — 設計と実装の乖離を、ケーススタディ運用リポジトリ`mh-sample-test-case`の実データ(tree SHAベース検知の実地確認、分岐・マージシナリオの検証を含む)で検証した調査資料。参考資料・監査ログの位置づけ。
-6. **[decisions/](./decisions/)** — 外部評価レビュー対応・設計上のトレードオフなど、「なぜそう決めたか」という判断理由の記録。番号順に読むと経緯を追える。
+6. **[decisions/](./decisions/)** — 外部評価レビュー対応・設計上のトレードオフなど、「なぜそう決めたか」という判断理由の記録。番号順に読むと経緯を追える。確定・実行完了した決定のみを置く。
+7. **[internal-notes/](./internal-notes/)** — まだ確定していない検討メモ、または決定済みだが一部未実行のランブック。完了した時点で要点を`decisions/`のADRに転記し、本ファイルは削除する運用(`decisions/0006`の前例を参照)。
 
 ## 資料の鮮度について
 
