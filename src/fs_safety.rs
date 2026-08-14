@@ -49,9 +49,12 @@ fn tmp_path_for(target: &Path) -> PathBuf {
 /// directly (see `clippy.toml`'s `disallowed-methods`).
 ///
 /// A stale `<target>.tmp` left behind by a previously interrupted run is
-/// removed before writing the new one; `remove_file` only unlinks the name
-/// itself (it never dereferences a symlink into its target), so this is
-/// safe even if that stale entry turns out to be a symlink.
+/// removed before writing the new one. A `<target>.tmp` that is itself a
+/// symlink/junction is rejected outright rather than unlinked: on Unix,
+/// `remove_file` would happily unlink it (it never dereferences a symlink
+/// into its target) and let the write proceed, but that would silently
+/// treat an attacker-planted link at the tmp path as ordinary leftover
+/// state instead of the tampering it is.
 pub fn replace_file(root: &Path, target: &Path, content: &[u8]) -> io::Result<()> {
     ensure_no_symlink_ancestor(root, target)?;
     if let Some(parent) = target.parent() {
@@ -59,10 +62,19 @@ pub fn replace_file(root: &Path, target: &Path, content: &[u8]) -> io::Result<()
     }
 
     let tmp_path = tmp_path_for(target);
-    if let Err(e) = fs::remove_file(&tmp_path)
-        && e.kind() != io::ErrorKind::NotFound
-    {
-        return Err(e);
+    match fs::symlink_metadata(&tmp_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "refusing to remove symlinked tmp path: {}",
+                    tmp_path.display()
+                ),
+            ));
+        }
+        Ok(_) => fs::remove_file(&tmp_path)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
     }
 
     let mut file = create_new_no_follow(&tmp_path)?;
