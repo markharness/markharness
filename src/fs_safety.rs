@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Creates a brand-new file at `path`, atomically refusing to follow (and
 /// erroring on) any symlink or junction already occupying that exact path.
@@ -105,6 +105,12 @@ pub fn remove_dir_all_no_follow(root: &Path, target: &Path) -> io::Result<()> {
 /// directories and files (`knowledge/`, `generated/`, `executions/`,
 /// `changes/`, `.markharness-cache/`, ...) are frequently created on demand.
 ///
+/// Also rejects any `ParentDir` (`..`), `RootDir`, or `Prefix` component in
+/// the part of `target` relative to `root`: `strip_prefix` only compares
+/// path components lexically, so `root/a/../../outside` still strips down
+/// to a relative path that walks back out of `root` once resolved by the
+/// OS, even though no individual step is a symlink.
+///
 /// Guards against a malicious repository placing a link where a managed
 /// directory or file is expected, so that a later
 /// `remove_dir_all`/`write`/`rename` doesn't silently follow the link
@@ -122,6 +128,20 @@ pub fn ensure_no_symlink_ancestor(root: &Path, target: &Path) -> io::Result<()> 
 
     let mut current = root.to_path_buf();
     for component in relative.components() {
+        match component {
+            Component::Normal(_) => {}
+            Component::CurDir => continue,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "{} escapes {} via a non-normal path component",
+                        target.display(),
+                        root.display()
+                    ),
+                ));
+            }
+        }
         current.push(component);
         if let Ok(metadata) = fs::symlink_metadata(&current)
             && metadata.file_type().is_symlink()
@@ -196,6 +216,54 @@ mod tests {
             result.is_err(),
             "expected an error for a target that is itself a symlink, got: {result:?}"
         );
+    }
+
+    #[test]
+    fn rejects_a_target_that_escapes_root_via_parent_dir_components() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let outside = dir.path().join("outside");
+        let target = root.join("a").join("..").join("..").join("outside");
+        assert_eq!(target.strip_prefix(&root).unwrap().components().count(), 4);
+
+        let result = ensure_no_symlink_ancestor(&root, &target);
+
+        assert!(
+            result.is_err(),
+            "expected an error for a target escaping root via '..', got: {result:?}"
+        );
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn replace_file_rejects_a_target_that_escapes_root_via_parent_dir_components() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let outside = dir.path().join("outside.yaml");
+        let target = root.join("a").join("..").join("..").join("outside.yaml");
+
+        let result = replace_file(&root, &target, b"payload");
+
+        assert!(result.is_err(), "expected an error, got: {result:?}");
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn remove_dir_all_no_follow_rejects_a_target_that_escapes_root_via_parent_dir_components() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), "keep me").unwrap();
+        let target = root.join("a").join("..").join("..").join("outside");
+
+        let result = remove_dir_all_no_follow(&root, &target);
+
+        assert!(result.is_err(), "expected an error, got: {result:?}");
+        assert!(outside.join("keep.txt").exists());
     }
 
     #[test]

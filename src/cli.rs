@@ -855,7 +855,15 @@ fn run_knowledge_add_edit(root: &std::path::Path) -> io::Result<()> {
         );
         std::process::exit(2);
     };
-    let tmp_path = env::temp_dir().join(format!("markharness-knowledge-add-{}.yml", process::id()));
+    // Created via tempfile::Builder rather than a PID-derived name so the
+    // path is both unpredictable and opened with O_EXCL-equivalent
+    // exclusive creation: an attacker sharing the temp directory can't
+    // pre-plant a symlink or file at a name they can't guess.
+    let tmp_file = tempfile::Builder::new()
+        .prefix("markharness-knowledge-add-")
+        .suffix(".yml")
+        .tempfile()?;
+    let tmp_path = tmp_file.path().to_path_buf();
     let mut stdout = io::stdout();
 
     let invoke_editor = |path: &std::path::Path| -> io::Result<()> {
@@ -877,10 +885,9 @@ fn run_knowledge_add_edit(root: &std::path::Path) -> io::Result<()> {
     };
 
     let result = knowledge_edit::run_edit_loop(root, &tmp_path, invoke_editor, &mut stdout);
-    // tmp_path is under env::temp_dir(), outside root, so it isn't a managed
-    // write and fs_safety's root-scoped guards don't apply here.
-    #[allow(clippy::disallowed_methods)]
-    let _ = fs::remove_file(&tmp_path);
+    // tmp_file's Drop removes the file; it's outside root so it isn't a
+    // managed write and fs_safety's root-scoped guards don't apply here.
+    drop(tmp_file);
 
     match result {
         Ok(apply_result) => {
