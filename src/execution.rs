@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::fs_safety::replace_file;
 use crate::id_cache;
 
 /// Only the fields record_execution needs from a generated TestCase. The
@@ -193,9 +194,7 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordErro
 
     let content = serde_yaml_ng::to_string(&entries)
         .expect("Vec<ExecutionEntry> serialization is infallible");
-    let tmp_path = results_path.with_extension("yml.tmp");
-    fs::write(&tmp_path, content)?;
-    fs::rename(&tmp_path, &results_path)?;
+    replace_file(root, &results_path, content.as_bytes())?;
 
     Ok(())
 }
@@ -239,6 +238,51 @@ mod tests {
         let result = record_execution(dir.path(), &args);
 
         assert!(matches!(result, Err(RecordError::CaseNotFound)));
+    }
+
+    #[cfg(unix)]
+    fn link_dir(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn link_dir(link: &Path, target: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/j"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /j failed");
+    }
+
+    #[test]
+    fn record_execution_refuses_to_follow_a_symlinked_milestone_dir() {
+        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
+        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("milestone.yml"), "id: m1\n").unwrap();
+        let milestone_dir = dir.path().join("executions").join("m1");
+        fs::remove_dir_all(&milestone_dir).unwrap();
+        link_dir(&milestone_dir, outside.path());
+
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                milestone: "m1",
+                case_id: "tc-ground-001",
+                result: ExecutionResult::Pass,
+                executor: "yamada",
+                note: None,
+            },
+        );
+
+        assert!(
+            matches!(result, Err(RecordError::Io(_))),
+            "expected an Io error, got: {result:?}"
+        );
+        assert!(!outside.path().join("results.yml").exists());
     }
 
     fn run_git(root: &Path, args: &[&str]) {

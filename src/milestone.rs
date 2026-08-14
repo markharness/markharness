@@ -1,8 +1,7 @@
-use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::fs_safety::ensure_no_symlink_ancestor;
+use crate::fs_safety::replace_file;
 use crate::git;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -34,15 +33,14 @@ pub fn milestone_init(root: &Path, tag: &str) -> Result<MilestoneInitOutcome, Mi
         return Ok(MilestoneInitOutcome::AlreadyInitialized);
     }
 
-    ensure_no_symlink_ancestor(root, &milestone_path)?;
-    fs::create_dir_all(&milestone_dir)?;
-    fs::write(&milestone_path, format!("id: {tag}\n"))?;
+    replace_file(root, &milestone_path, format!("id: {tag}\n").as_bytes())?;
     Ok(MilestoneInitOutcome::Created)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::process::Command;
 
     fn run_git(root: &Path, args: &[&str]) {

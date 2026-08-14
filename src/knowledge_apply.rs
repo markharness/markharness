@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::fs_safety::ensure_no_symlink_ancestor;
+use crate::fs_safety::replace_file;
 use crate::knowledge::{self, Behavior, Condition, ExpectedResult, Feature, Requirement};
 use crate::knowledge_draft::{self, KnowledgeDraft, ValidateOptions, ValidationError};
 
@@ -187,13 +187,7 @@ fn write_all_atomically(root: &Path, pending: &[(PathBuf, String)]) -> io::Resul
 }
 
 fn write_one(root: &Path, path: &Path, content: &str) -> io::Result<()> {
-    ensure_no_symlink_ancestor(root, path)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp_path = path.with_extension("yml.tmp");
-    fs::write(&tmp_path, content)?;
-    fs::rename(&tmp_path, path)
+    replace_file(root, path, content.as_bytes())
 }
 
 #[cfg(test)]
