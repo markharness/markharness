@@ -4,7 +4,7 @@
   "title": "Behavior",
   "type": "object",
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
     "feature": { "type": "string", "minLength": 1 },
     "label": { "type": "string", "minLength": 1 },
     "axis": { "type": "array", "items": { "type": "string" } },

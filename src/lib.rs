@@ -3,6 +3,7 @@ pub mod backfill;
 pub mod changes;
 pub mod cli;
 pub mod execution;
+pub mod fs_safety;
 pub mod generate;
 pub mod git;
 pub mod id_cache;

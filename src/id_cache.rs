@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::fs_safety::ensure_no_symlink_ancestor;
 use crate::git::{self, ObjectKind};
 use crate::knowledge;
 
@@ -153,13 +154,15 @@ pub fn resolve_feature_versions(
 
     if let Some(current_key) = current_key {
         let dir = cache_dir(root);
+        let path = cache_path(root, git_ref);
+        ensure_no_symlink_ancestor(root, &path)?;
         fs::create_dir_all(&dir)?;
         let cache_file = CacheFile {
             key: current_key,
             entries: features.clone(),
         };
         let json = serde_json::to_string(&cache_file).map_err(io::Error::other)?;
-        fs::write(cache_path(root, git_ref), json)?;
+        fs::write(path, json)?;
     }
 
     Ok(features)
@@ -316,6 +319,38 @@ mod tests {
         let second = resolve_feature_versions(dir.path(), "m2", false).unwrap();
 
         assert_ne!(first[0].tree_sha, second[0].tree_sha);
+    }
+
+    #[cfg(unix)]
+    fn link_dir(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn link_dir(link: &Path, target: &Path) {
+        let status = Command::new("cmd")
+            .args(["/c", "mklink", "/j"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /j failed");
+    }
+
+    #[test]
+    fn refuses_to_write_the_cache_through_a_symlinked_cache_dir() {
+        let dir = init_repo_with_feature("player-jump", "controls");
+        let outside = tempfile::tempdir().unwrap();
+        link_dir(&dir.path().join(".markharness-cache"), outside.path());
+
+        let result = resolve_feature_versions(dir.path(), "m1", true);
+
+        assert!(
+            result.is_err(),
+            "expected resolve_feature_versions to refuse a symlinked cache dir"
+        );
+        assert!(!outside.path().join("m1.json").exists());
     }
 
     #[test]

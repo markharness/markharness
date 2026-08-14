@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::fs_safety::ensure_no_symlink_ancestor;
 use crate::knowledge::{self, Behavior, Condition, ExpectedResult, Feature, Requirement};
 use crate::knowledge_draft::{self, KnowledgeDraft, ValidateOptions, ValidationError};
 
@@ -155,7 +156,7 @@ pub fn apply_draft(
         ));
     }
 
-    write_all_atomically(&pending).map_err(ApplyError::Io)?;
+    write_all_atomically(root, &pending).map_err(ApplyError::Io)?;
 
     Ok(ApplyResult {
         written_paths: pending
@@ -169,11 +170,11 @@ pub fn apply_draft(
     })
 }
 
-fn write_all_atomically(pending: &[(PathBuf, String)]) -> io::Result<()> {
+fn write_all_atomically(root: &Path, pending: &[(PathBuf, String)]) -> io::Result<()> {
     let mut written: Vec<PathBuf> = Vec::new();
 
     for (path, content) in pending {
-        if let Err(e) = write_one(path, content) {
+        if let Err(e) = write_one(root, path, content) {
             for written_path in &written {
                 let _ = fs::remove_file(written_path);
             }
@@ -185,7 +186,8 @@ fn write_all_atomically(pending: &[(PathBuf, String)]) -> io::Result<()> {
     Ok(())
 }
 
-fn write_one(path: &Path, content: &str) -> io::Result<()> {
+fn write_one(root: &Path, path: &Path, content: &str) -> io::Result<()> {
+    ensure_no_symlink_ancestor(root, path)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -242,6 +244,44 @@ expected:
         ApplyOptions {
             strip_redundant_prefix: false,
         }
+    }
+
+    #[cfg(unix)]
+    fn link_dir(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn link_dir(link: &Path, target: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/j"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /j failed");
+    }
+
+    #[test]
+    fn apply_draft_refuses_to_follow_a_symlinked_knowledge_dir() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let draft = parse_draft(FULL_DRAFT_YAML).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let knowledge_dir = dir.path().join("knowledge");
+        fs::remove_dir_all(&knowledge_dir).unwrap();
+        link_dir(&knowledge_dir, outside.path());
+
+        let result = apply_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            result.is_err(),
+            "expected apply_draft to refuse a symlinked knowledge/ dir"
+        );
+        assert!(
+            !outside.path().join("controls").exists(),
+            "apply_draft must not write through the symlinked ancestor"
+        );
     }
 
     #[test]

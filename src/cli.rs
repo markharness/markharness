@@ -9,6 +9,7 @@ use crate::axes;
 use crate::backfill;
 use crate::changes;
 use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
+use crate::fs_safety::ensure_no_symlink_ancestor;
 use crate::generate;
 use crate::id_cache;
 use crate::init;
@@ -425,16 +426,15 @@ pub fn run(cli: Cli) -> io::Result<()> {
             let root = env::current_dir()?;
             let testcases = generate::generate_testcases(&root.join("knowledge"))?;
             let testcases_dir = root.join("generated").join("testcases");
+            ensure_no_symlink_ancestor(&root, &testcases_dir)?;
             if testcases_dir.is_dir() {
                 std::fs::remove_dir_all(&testcases_dir)?;
             }
             std::fs::create_dir_all(&testcases_dir)?;
             for testcase in &testcases {
                 let file_name = format!("{}.yml", testcase.file_stem());
-                std::fs::write(
-                    testcases_dir.join(file_name),
-                    generate::serialize_testcase(testcase),
-                )?;
+                let testcase_path = safe_testcase_path(&testcases_dir, &file_name)?;
+                std::fs::write(testcase_path, generate::serialize_testcase(testcase))?;
             }
             let index = traceability::build_index(&testcases);
             std::fs::write(
@@ -1028,6 +1028,27 @@ fn axes_to_json(entries: &[axes::AxisEntry]) -> String {
     format!("[{}]", items.join(","))
 }
 
+/// Joins `testcases_dir` and `file_name` for a generated testcase, refusing
+/// any result that would not land directly inside `testcases_dir` (e.g. a
+/// `file_name` containing path separators or `..` components). Defense in
+/// depth: `generate::generate_testcases` already rejects non-slug condition
+/// ids, but this guards the write site itself against any other source of a
+/// malformed `file_name`.
+fn safe_testcase_path(testcases_dir: &std::path::Path, file_name: &str) -> io::Result<PathBuf> {
+    let path = testcases_dir.join(file_name);
+    if path.parent() != Some(testcases_dir) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to write testcase outside {}: {}",
+                testcases_dir.display(),
+                path.display()
+            ),
+        ));
+    }
+    Ok(path)
+}
+
 fn apply_result_to_json(result: &knowledge_apply::ApplyResult) -> String {
     let paths: Vec<String> = result
         .written_paths
@@ -1045,6 +1066,27 @@ fn apply_result_to_json(result: &knowledge_apply::ApplyResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn safe_testcase_path_joins_a_plain_file_name() {
+        let testcases_dir = PathBuf::from("generated/testcases");
+
+        let path = safe_testcase_path(&testcases_dir, "ground.yml").unwrap();
+
+        assert_eq!(path, testcases_dir.join("ground.yml"));
+    }
+
+    #[test]
+    fn safe_testcase_path_rejects_a_file_name_escaping_the_testcases_dir() {
+        let testcases_dir = PathBuf::from("generated/testcases");
+
+        let result = safe_testcase_path(&testcases_dir, "../../../../evil.yml");
+
+        assert!(
+            result.is_err(),
+            "expected an error for a file_name escaping testcases_dir, got: {result:?}"
+        );
+    }
 
     #[test]
     fn parses_init_dir_option() {

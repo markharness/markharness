@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::knowledge::{
-    parse_behavior, parse_condition, parse_expected_result, parse_feature, parse_requirement,
+    is_valid_slug, parse_behavior, parse_condition, parse_expected_result, parse_feature,
+    parse_requirement,
 };
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -48,25 +49,52 @@ impl TestCase {
     }
 }
 
+/// Lists `dir`'s direct subdirectories, excluding symlinks (and, on
+/// Windows, directory junctions — `DirEntry::file_type()` reports neither as
+/// a plain directory). Unlike `Path::is_dir()`, `file_type()` does not
+/// follow links, so a link pointing at an ancestor or at a directory outside
+/// the knowledge tree is skipped rather than walked into.
 pub(crate) fn sorted_subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
     let mut dirs: Vec<PathBuf> = fs::read_dir(dir)?
         .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_ok_and(|ft| ft.is_dir()))
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
         .collect();
     dirs.sort();
     Ok(dirs)
 }
 
+/// Defense in depth beyond the symlink exclusion in `sorted_subdirs`: caps
+/// how many directories a single `find_dirs_with_marker` call will visit, so
+/// an unexpectedly huge (but ordinary, link-free) tree fails fast instead of
+/// consuming unbounded time and memory.
+const MAX_VISITED_DIRS: usize = 100_000;
+
 /// Recursively searches `root` for directories directly containing `marker_file`,
 /// stopping the search along a branch as soon as a match is found.
 pub(crate) fn find_dirs_with_marker(root: &Path, marker_file: &str) -> io::Result<Vec<PathBuf>> {
+    find_dirs_with_marker_limited(root, marker_file, MAX_VISITED_DIRS)
+}
+
+fn find_dirs_with_marker_limited(
+    root: &Path,
+    marker_file: &str,
+    max_visited: usize,
+) -> io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0usize;
     while let Some(dir) = stack.pop() {
+        visited += 1;
+        if visited > max_visited {
+            return Err(io::Error::other(format!(
+                "knowledge tree traversal under {} visited more than {max_visited} directories; aborting",
+                root.display()
+            )));
+        }
         if dir.join(marker_file).is_file() {
             found.push(dir);
             continue;
@@ -107,6 +135,16 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
                     let condition_path = condition_dir.join("condition.yml");
                     let condition = parse_condition(&fs::read_to_string(&condition_path)?)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    if !is_valid_slug(&condition.id) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "{}: condition id \"{}\" is not a valid slug (lowercase alphanumeric and hyphen only)",
+                                condition_path.display(),
+                                condition.id
+                            ),
+                        ));
+                    }
 
                     let expected_dir = condition_dir.join("expected");
                     if !expected_dir.is_dir() {
@@ -165,6 +203,111 @@ pub fn serialize_testcase(testcase: &TestCase) -> String {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(unix)]
+    fn link_dir(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn link_dir(link: &Path, target: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/j"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /j failed");
+    }
+
+    /// A symlink/junction pointing back at an ancestor directory currently
+    /// makes `find_dirs_with_marker`/`sorted_subdirs` treat the link as an
+    /// ordinary subdirectory and walk into it, re-growing the same path
+    /// (`tree/loop`, `tree/loop/loop`, ...) until the OS's own path-length
+    /// limit finally errors it out — a real but incidental stop, not a
+    /// correct one, and exactly the resource-exhaustion behavior being
+    /// fixed. Runs on a separate thread with a bounded wait so a
+    /// pathological implementation fails this test instead of hanging the
+    /// whole suite.
+    #[test]
+    fn find_dirs_with_marker_does_not_grow_the_stack_through_a_self_referential_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("tree");
+        fs::create_dir_all(&root).unwrap();
+        link_dir(&root.join("loop"), &root);
+
+        let root_for_thread = root.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(find_dirs_with_marker(&root_for_thread, "marker.yml"));
+        });
+
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("find_dirs_with_marker did not terminate within 5s");
+        assert!(
+            result.is_ok(),
+            "find_dirs_with_marker should not error out via OS path-length limits: {result:?}"
+        );
+    }
+
+    /// Defense in depth on top of the symlink exclusion above: an ordinary
+    /// (non-symlink) tree that is simply too large must not be walked
+    /// without bound either. `find_dirs_with_marker_limited` lets tests
+    /// exercise the cap without actually creating a huge tree.
+    #[test]
+    fn find_dirs_with_marker_limited_errors_when_visited_count_exceeds_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("tree");
+        for i in 0..5 {
+            fs::create_dir_all(root.join(format!("dir-{i}"))).unwrap();
+        }
+
+        let result = find_dirs_with_marker_limited(&root, "marker.yml", 3);
+
+        assert!(
+            result.is_err(),
+            "expected an error when the tree has more directories than the cap allows"
+        );
+    }
+
+    #[test]
+    fn find_dirs_with_marker_limited_succeeds_when_within_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("tree");
+        for i in 0..3 {
+            let sub = root.join(format!("dir-{i}"));
+            fs::create_dir_all(&sub).unwrap();
+            fs::write(sub.join("marker.yml"), "id: x\n").unwrap();
+        }
+
+        let found = find_dirs_with_marker_limited(&root, "marker.yml", 10).unwrap();
+
+        assert_eq!(found.len(), 3);
+    }
+
+    /// The behavior that actually matters: a symlink to a directory outside
+    /// the knowledge tree must not be followed at all, even when it holds a
+    /// matching marker file. Today `sorted_subdirs` uses `Path::is_dir()`,
+    /// which follows the link, so this test starts Red.
+    #[test]
+    fn find_dirs_with_marker_does_not_follow_a_symlink_to_an_external_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("tree");
+        fs::create_dir_all(&root).unwrap();
+        let real = root.join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("marker.yml"), "id: real\n").unwrap();
+
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("marker.yml"), "id: outside\n").unwrap();
+        link_dir(&root.join("linked"), outside.path());
+
+        let found = find_dirs_with_marker(&root, "marker.yml").unwrap();
+
+        assert_eq!(found, vec![real]);
+    }
 
     fn write_requirement(root: &std::path::Path, requirement: &str, axis: &[&str]) {
         let dir = root.join("knowledge").join(requirement);
@@ -260,6 +403,54 @@ mod tests {
             format!("id: {id}\ncondition: {condition}\ndescription: |\n  {description}\n"),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn rejects_condition_with_path_traversal_id() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "User adds a task.",
+        );
+        // The directory name is a safe slug, but a malicious repository can
+        // still craft the `id:` field inside condition.yml independently of
+        // the directory it lives in.
+        let condition_dir = dir
+            .path()
+            .join("knowledge")
+            .join("req-todo")
+            .join("todo")
+            .join("todo-add-task")
+            .join("todo-add-task-evil");
+        fs::create_dir_all(&condition_dir).unwrap();
+        fs::write(
+            condition_dir.join("condition.yml"),
+            "id: ../../../../evil\nbehavior: todo-add-task\nlabel: evil\ndescription: |\n  Evil.\n",
+        )
+        .unwrap();
+        write_expected(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-evil",
+            "001",
+            "todo-add-task-evil-001",
+            "Shows a validation error.",
+        );
+
+        let result = generate_testcases(&dir.path().join("knowledge"));
+
+        assert!(
+            result.is_err(),
+            "expected an error for a condition.id containing path traversal, got: {result:?}"
+        );
     }
 
     #[test]

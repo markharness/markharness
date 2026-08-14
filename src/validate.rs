@@ -292,6 +292,28 @@ mod tests {
     }
 
     #[test]
+    fn reports_a_schema_violation_when_condition_id_is_not_a_valid_slug() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        fs::write(
+            dir.path()
+                .join("knowledge/controls/player-jump/jump/ground/condition.yml"),
+            "id: ../../../../evil\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\n",
+        )
+        .unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.path.contains("condition.yml") && i.message.contains("does not match")),
+            "expected a pattern-violation issue for condition.yml, got: {issues:?}"
+        );
+    }
+
+    #[test]
     fn reports_a_schema_violation_when_a_required_field_is_missing() {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());

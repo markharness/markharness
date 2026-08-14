@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use crate::fs_safety::ensure_no_symlink_ancestor;
 use crate::git;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub fn milestone_init(root: &Path, tag: &str) -> Result<MilestoneInitOutcome, Mi
         return Ok(MilestoneInitOutcome::AlreadyInitialized);
     }
 
+    ensure_no_symlink_ancestor(root, &milestone_path)?;
     fs::create_dir_all(&milestone_dir)?;
     fs::write(&milestone_path, format!("id: {tag}\n"))?;
     Ok(MilestoneInitOutcome::Created)
@@ -64,6 +66,38 @@ mod tests {
     fn commit_all(root: &Path, message: &str) {
         run_git(root, &["add", "-A"]);
         run_git(root, &["commit", "-q", "-m", message]);
+    }
+
+    #[cfg(unix)]
+    fn link_dir(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn link_dir(link: &Path, target: &Path) {
+        let status = Command::new("cmd")
+            .args(["/c", "mklink", "/j"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /j failed");
+    }
+
+    #[test]
+    fn milestone_init_refuses_to_follow_a_symlinked_executions_dir() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        run_git(dir.path(), &["tag", "m1"]);
+        let outside = tempfile::tempdir().unwrap();
+        link_dir(&dir.path().join("executions"), outside.path());
+
+        let result = milestone_init(dir.path(), "m1");
+
+        assert!(matches!(result, Err(MilestoneInitError::Io(_))));
+        assert!(!outside.path().join("m1").exists());
     }
 
     #[test]
