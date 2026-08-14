@@ -1,3 +1,8 @@
+// This module is the authorized place to call std::fs's follow-symlink
+// write/remove primitives directly; everything else in the crate should
+// route through the safe wrappers defined here instead (see clippy.toml).
+#![allow(clippy::disallowed_methods)]
+
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io;

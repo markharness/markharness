@@ -1,0 +1,15 @@
+# Managed writes/removes under a repository root must go through
+# src/fs_safety.rs's symlink-safe primitives (replace_file,
+# remove_dir_all_no_follow) instead of calling these directly, so a
+# malicious repository can't redirect them outside root via a symlink or
+# junction (see report.md's path-traversal finding). Enforced by
+# `#![cfg_attr(not(test), warn(clippy::disallowed_methods))]` in src/lib.rs;
+# fs_safety.rs itself and a few call sites that operate outside a managed
+# root are explicitly exempted with `#[allow(clippy::disallowed_methods)]`.
+disallowed-methods = [
+    "std::fs::write",
+    "std::fs::rename",
+    "std::fs::remove_dir_all",
+    "std::fs::remove_file",
+    "std::fs::File::create",
+]

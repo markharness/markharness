@@ -1,3 +1,10 @@
+// Managed writes must go through fs_safety's symlink-safe primitives
+// instead of calling std::fs::write/rename/remove_dir_all/remove_file or
+// File::create directly (see clippy.toml). Only enforced outside cfg(test)
+// so test fixtures can keep using std::fs freely for setup.
+#![warn(clippy::disallowed_methods)]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub mod axes;
 pub mod backfill;
 pub mod changes;

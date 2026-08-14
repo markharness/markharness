@@ -1,3 +1,8 @@
+// Integration test fixtures write directly to a scratch repo before
+// invoking the CLI binary; that's outside fs_safety's managed-root scope
+// (see clippy.toml / src/lib.rs).
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 use std::process::{Command, Output};
 

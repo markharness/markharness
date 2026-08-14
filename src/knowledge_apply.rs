@@ -176,6 +176,12 @@ fn write_all_atomically(root: &Path, pending: &[(PathBuf, String)]) -> io::Resul
     for (path, content) in pending {
         if let Err(e) = write_one(root, path, content) {
             for written_path in &written {
+                // written_path was just written by write_one (replace_file)
+                // in this same loop, so it's a known-good file we produced,
+                // not attacker-controlled input; rolling it back here
+                // doesn't need the symlink guards replace_file already
+                // applied when creating it.
+                #[allow(clippy::disallowed_methods)]
                 let _ = fs::remove_file(written_path);
             }
             return Err(e);

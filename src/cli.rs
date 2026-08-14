@@ -877,6 +877,9 @@ fn run_knowledge_add_edit(root: &std::path::Path) -> io::Result<()> {
     };
 
     let result = knowledge_edit::run_edit_loop(root, &tmp_path, invoke_editor, &mut stdout);
+    // tmp_path is under env::temp_dir(), outside root, so it isn't a managed
+    // write and fs_safety's root-scoped guards don't apply here.
+    #[allow(clippy::disallowed_methods)]
     let _ = fs::remove_file(&tmp_path);
 
     match result {

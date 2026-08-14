@@ -127,6 +127,10 @@ pub fn run_edit_loop<W: Write>(
     mut invoke_editor: impl FnMut(&Path) -> io::Result<()>,
     writer: &mut W,
 ) -> Result<ApplyResult, EditFlowError> {
+    // tmp_path is caller-supplied and, in production, lives under
+    // env::temp_dir() outside root, so it isn't a managed write and
+    // fs_safety's root-scoped guards don't apply here.
+    #[allow(clippy::disallowed_methods)]
     fs::write(tmp_path, EDIT_TEMPLATE)?;
     loop {
         invoke_editor(tmp_path)?;
