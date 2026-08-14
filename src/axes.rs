@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::fs_safety::replace_file;
+
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 pub struct AxisEntry {
     pub id: String,
@@ -34,10 +36,8 @@ pub fn list_axes(root: &Path) -> Vec<AxisEntry> {
 /// `knowledge_apply::apply_draft`). Creates `axes/` if it does not exist yet.
 /// Used by `knowledge add --edit`'s axis auto-registration.
 pub fn create_axis(root: &Path, id: &str) -> io::Result<PathBuf> {
-    let axes_dir = root.join("axes");
-    fs::create_dir_all(&axes_dir)?;
-    let path = axes_dir.join(format!("{id}.yml"));
-    fs::write(&path, format!("id: {id}\nlabel: {id}\n"))?;
+    let path = root.join("axes").join(format!("{id}.yml"));
+    replace_file(root, &path, format!("id: {id}\nlabel: {id}\n").as_bytes())?;
     Ok(path)
 }
 

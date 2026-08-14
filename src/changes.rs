@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::fs_safety::replace_file;
 use crate::generate;
 use crate::git;
 use crate::id_cache::{self, FeatureVersion};
@@ -351,7 +352,7 @@ pub fn annotate_change_type(
             continue;
         };
         event.change_type = Some(change_type);
-        fs::write(&path, serialize_changes(&events))?;
+        replace_file(root, &path, serialize_changes(&events).as_bytes())?;
         return Ok(());
     }
 
@@ -424,7 +425,7 @@ pub fn annotate_related_events(
             continue;
         };
         event.related_events.extend(related_ids.iter().cloned());
-        fs::write(&path, serialize_changes(&events))?;
+        replace_file(root, &path, serialize_changes(&events).as_bytes())?;
         return Ok(());
     }
 

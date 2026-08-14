@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use crate::fs_safety::replace_file;
+
 /// UC1〜UC8を支える物理ディレクトリ構成(論文 §3.5)。
 /// knowledge=UC1/UC1b, axes=UC1, generated=UC2/UC3, executions=UC4,
 /// changes=UC5/UC6, schema=UC7。
@@ -39,7 +41,7 @@ fn ensure_default_schemas(root: &Path) -> io::Result<()> {
     for (name, content) in crate::schema::DEFAULT_SCHEMA_FILES {
         let path = schema_dir.join(name);
         if !path.exists() {
-            fs::write(path, content)?;
+            replace_file(root, &path, content.as_bytes())?;
         }
     }
     Ok(())
@@ -71,7 +73,7 @@ fn ensure_gitignore(root: &Path) -> io::Result<()> {
         updated.push('\n');
     }
 
-    fs::write(&path, updated)
+    replace_file(root, &path, updated.as_bytes())
 }
 
 #[cfg(test)]

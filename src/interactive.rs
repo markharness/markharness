@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
+use crate::fs_safety::replace_file;
 use crate::knowledge::{
     Behavior, Condition, ExpectedResult, Feature, Requirement, contains_non_ascii, is_valid_slug,
     normalize_slug_candidate, romanize_label, serialize_behavior, serialize_condition,
@@ -149,7 +150,6 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Requirement axis (comma separated, e.g. ui, validation): ",
         )?;
-        fs::create_dir_all(&requirement_dir)?;
         let requirement = Requirement {
             id: requirement_id.clone(),
             label: requirement_label,
@@ -158,7 +158,11 @@ pub fn run_add<R: BufRead, W: Write>(
             source: None,
             related_issues: Vec::new(),
         };
-        fs::write(&requirement_path, serialize_requirement(&requirement))?;
+        replace_file(
+            root,
+            &requirement_path,
+            serialize_requirement(&requirement).as_bytes(),
+        )?;
     }
 
     let feature_candidates = list_candidate_ids(&requirement_dir, "feature.yml");
@@ -178,7 +182,6 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Axis (comma separated, e.g. ui, validation): ",
         )?;
-        fs::create_dir_all(&feature_dir)?;
         let feature = Feature {
             id: feature_id.clone(),
             requirement: requirement_id.clone(),
@@ -187,7 +190,7 @@ pub fn run_add<R: BufRead, W: Write>(
             description: None,
             forked_from: None,
         };
-        fs::write(&feature_path, serialize_feature(&feature))?;
+        replace_file(root, &feature_path, serialize_feature(&feature).as_bytes())?;
     }
 
     let behavior_candidates = list_candidate_ids(&feature_dir, "behavior.yml");
@@ -212,7 +215,6 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Behavior description (e.g. User adds a new task to the list.): ",
         )?;
-        fs::create_dir_all(&behavior_dir)?;
         let behavior = Behavior {
             id: behavior_id.clone(),
             feature: feature_id.clone(),
@@ -220,7 +222,11 @@ pub fn run_add<R: BufRead, W: Write>(
             axis,
             description,
         };
-        fs::write(&behavior_path, serialize_behavior(&behavior))?;
+        replace_file(
+            root,
+            &behavior_path,
+            serialize_behavior(&behavior).as_bytes(),
+        )?;
     }
 
     let condition_candidates = list_candidate_ids(&behavior_dir, "condition.yml");
@@ -256,14 +262,17 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Scenario (e.g. Submit the todo form with an empty title): ",
         )?;
-        fs::create_dir_all(&condition_dir)?;
         let condition = Condition {
             id: condition_id.clone(),
             behavior: behavior_id.clone(),
             label: condition_label,
             description,
         };
-        fs::write(&condition_path, serialize_condition(&condition))?;
+        replace_file(
+            root,
+            &condition_path,
+            serialize_condition(&condition).as_bytes(),
+        )?;
     }
 
     let expected_dir = condition_dir.join("expected");
@@ -287,7 +296,11 @@ pub fn run_add<R: BufRead, W: Write>(
         verified_by: None,
     };
     let expected_path = expected_dir.join(format!("{seq:03}.yml"));
-    fs::write(&expected_path, serialize_expected_result(&expected))?;
+    replace_file(
+        root,
+        &expected_path,
+        serialize_expected_result(&expected).as_bytes(),
+    )?;
 
     Ok(())
 }

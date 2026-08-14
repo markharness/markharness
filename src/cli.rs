@@ -9,7 +9,7 @@ use crate::axes;
 use crate::backfill;
 use crate::changes;
 use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
-use crate::fs_safety::ensure_no_symlink_ancestor;
+use crate::fs_safety::{remove_dir_all_no_follow, replace_file};
 use crate::generate;
 use crate::id_cache;
 use crate::init;
@@ -426,20 +426,22 @@ pub fn run(cli: Cli) -> io::Result<()> {
             let root = env::current_dir()?;
             let testcases = generate::generate_testcases(&root.join("knowledge"))?;
             let testcases_dir = root.join("generated").join("testcases");
-            ensure_no_symlink_ancestor(&root, &testcases_dir)?;
-            if testcases_dir.is_dir() {
-                std::fs::remove_dir_all(&testcases_dir)?;
-            }
+            remove_dir_all_no_follow(&root, &testcases_dir)?;
             std::fs::create_dir_all(&testcases_dir)?;
             for testcase in &testcases {
                 let file_name = format!("{}.yml", testcase.file_stem());
                 let testcase_path = safe_testcase_path(&testcases_dir, &file_name)?;
-                std::fs::write(testcase_path, generate::serialize_testcase(testcase))?;
+                replace_file(
+                    &root,
+                    &testcase_path,
+                    generate::serialize_testcase(testcase).as_bytes(),
+                )?;
             }
             let index = traceability::build_index(&testcases);
-            std::fs::write(
-                root.join("generated").join("traceability-index.json"),
-                traceability::serialize_index(&index),
+            replace_file(
+                &root,
+                &root.join("generated").join("traceability-index.json"),
+                traceability::serialize_index(&index).as_bytes(),
             )?;
             println!(
                 "generated {} testcase(s) into generated/testcases/",
@@ -491,10 +493,10 @@ pub fn run(cli: Cli) -> io::Result<()> {
             };
             let events = changes::compute_changes(&root, &from, &to, !no_cache, current_tree)?;
             let changes_dir = root.join("changes");
-            std::fs::create_dir_all(&changes_dir)?;
-            std::fs::write(
-                changes_dir.join(format!("{to}.yaml")),
-                changes::serialize_changes(&events),
+            replace_file(
+                &root,
+                &changes_dir.join(format!("{to}.yaml")),
+                changes::serialize_changes(&events).as_bytes(),
             )?;
             println!(
                 "computed {} change event(s) into changes/{to}.yaml",

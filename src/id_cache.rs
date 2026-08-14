@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::fs_safety::ensure_no_symlink_ancestor;
+use crate::fs_safety::{remove_dir_all_no_follow, replace_file};
 use crate::git::{self, ObjectKind};
 use crate::knowledge;
 
@@ -153,16 +153,13 @@ pub fn resolve_feature_versions(
     let features: Vec<FeatureVersion> = by_id.into_values().collect();
 
     if let Some(current_key) = current_key {
-        let dir = cache_dir(root);
         let path = cache_path(root, git_ref);
-        ensure_no_symlink_ancestor(root, &path)?;
-        fs::create_dir_all(&dir)?;
         let cache_file = CacheFile {
             key: current_key,
             entries: features.clone(),
         };
         let json = serde_json::to_string(&cache_file).map_err(io::Error::other)?;
-        fs::write(path, json)?;
+        replace_file(root, &path, json.as_bytes())?;
     }
 
     Ok(features)
@@ -172,12 +169,7 @@ pub fn resolve_feature_versions(
 /// letting the next `changes compute` recompute lazily (§UC7, cache rebuild
 /// は全削除のみで即時再計算はしない設計).
 pub fn rebuild_cache(root: &Path) -> io::Result<()> {
-    let dir = cache_dir(root);
-    match fs::remove_dir_all(&dir) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }
+    remove_dir_all_no_follow(root, &cache_dir(root))
 }
 
 #[cfg(test)]

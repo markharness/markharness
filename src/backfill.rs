@@ -3,6 +3,7 @@ use std::io;
 use std::path::Path;
 
 use crate::changes;
+use crate::fs_safety::replace_file;
 use crate::git;
 
 /// git notes namespace used to record backfill progress per to-milestone tag
@@ -74,10 +75,10 @@ pub fn backfill_run(root: &Path, use_cache: bool) -> io::Result<BackfillReport> 
         let events =
             changes::compute_changes(root, from_milestone, to_milestone, use_cache, false)?;
         let changes_dir = root.join("changes");
-        fs::create_dir_all(&changes_dir)?;
-        fs::write(
-            changes_dir.join(format!("{to_milestone}.yaml")),
-            changes::serialize_changes(&events),
+        replace_file(
+            root,
+            &changes_dir.join(format!("{to_milestone}.yaml")),
+            changes::serialize_changes(&events).as_bytes(),
         )?;
         git::notes_add(
             root,
