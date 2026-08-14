@@ -149,6 +149,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_option_like_commit_without_invoking_git() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1");
+        commit_all(dir.path(), "v1");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = compute_lineage(dir.path(), &malicious);
+
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
     fn classifies_as_linear_when_only_one_branch_changed_the_feature() {
         let dir = init_repo();
         write_feature(dir.path(), "base");

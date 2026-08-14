@@ -19,6 +19,20 @@ pub struct TreeEntry {
     pub kind: ObjectKind,
 }
 
+/// Rejects a revision-like argument that would be interpreted as a Git
+/// option rather than a revision (CWE-88 argument injection, e.g.
+/// `--output=<path>` causing `git log` to write to an attacker-chosen path).
+/// Callers must run this on every externally sourced revision/ref before
+/// splicing it into a git argv.
+fn reject_option_like(value: &str) -> io::Result<()> {
+    if value.starts_with('-') {
+        return Err(io::Error::other(format!(
+            "refusing to pass option-like value '{value}' as a git revision"
+        )));
+    }
+    Ok(())
+}
+
 fn run_git(root: &Path, args: &[&str]) -> io::Result<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -48,6 +62,7 @@ pub fn ls_tree_recursive(
     git_ref: &str,
     path_in_repo: &str,
 ) -> io::Result<Vec<TreeEntry>> {
+    reject_option_like(git_ref)?;
     let raw = run_git(root, &["ls-tree", "-r", "-t", git_ref, "--", path_in_repo])?;
     let mut entries = Vec::new();
     for line in raw.lines() {
@@ -86,6 +101,7 @@ pub fn ls_tree_recursive(
 /// key (§3.3 cache_key's `tree_sha(knowledge/ 配下のGitツリーオブジェクトSHA)`
 /// component).
 pub fn tree_sha(root: &Path, git_ref: &str, path_in_repo: &str) -> io::Result<Option<String>> {
+    reject_option_like(git_ref)?;
     let raw = run_git(root, &["ls-tree", git_ref, "--", path_in_repo])?;
     let Some(line) = raw.lines().next() else {
         return Ok(None);
@@ -112,6 +128,7 @@ pub fn show_blob_by_sha(root: &Path, sha: &str) -> io::Result<String> {
 /// one for a normal commit, two for a merge commit), via `git log --format=%P`.
 /// Used by the §3.2 merge-base lineage audit to find a merge commit's P1/P2.
 pub fn parents(root: &Path, commit: &str) -> io::Result<Vec<String>> {
+    reject_option_like(commit)?;
     let raw = run_git(root, &["log", "-1", "--format=%P", commit])?;
     Ok(raw.split_whitespace().map(|s| s.to_string()).collect())
 }
@@ -120,6 +137,8 @@ pub fn parents(root: &Path, commit: &str) -> io::Result<Vec<String>> {
 /// Used by the §3.2 merge-base lineage audit to find the merge base B a
 /// merge commit's two parents diverged from.
 pub fn merge_base(root: &Path, a: &str, b: &str) -> io::Result<String> {
+    reject_option_like(a)?;
+    reject_option_like(b)?;
     let raw = run_git(root, &["merge-base", a, b])?;
     Ok(raw.trim().to_string())
 }
@@ -127,6 +146,7 @@ pub fn merge_base(root: &Path, a: &str, b: &str) -> io::Result<String> {
 /// The committer date (ISO 8601) of the commit `git_ref` points at, used to
 /// order milestones by recency (§4.2).
 pub fn commit_date(root: &Path, git_ref: &str) -> io::Result<String> {
+    reject_option_like(git_ref)?;
     let raw = run_git(root, &["log", "-1", "--format=%cI", git_ref])?;
     Ok(raw.trim().to_string())
 }
@@ -134,6 +154,7 @@ pub fn commit_date(root: &Path, git_ref: &str) -> io::Result<String> {
 /// Reads a git notes entry under `notes_ref` for `git_ref`. Returns `None`
 /// when no note exists yet (rather than treating it as an error).
 pub fn notes_show(root: &Path, notes_ref: &str, git_ref: &str) -> io::Result<Option<String>> {
+    reject_option_like(git_ref)?;
     match run_git(root, &["notes", "--ref", notes_ref, "show", git_ref]) {
         Ok(content) => Ok(Some(content)),
         Err(_) => Ok(None),
@@ -157,6 +178,7 @@ pub fn tag_exists(root: &Path, tag: &str) -> io::Result<bool> {
 
 /// Overwrites (or creates) the git notes entry under `notes_ref` for `git_ref`.
 pub fn notes_add(root: &Path, notes_ref: &str, git_ref: &str, message: &str) -> io::Result<()> {
+    reject_option_like(git_ref)?;
     run_git(
         root,
         &[
@@ -182,6 +204,106 @@ mod tests {
     fn commit_all(dir: &Path, message: &str) {
         run_git(dir, &["add", "-A"]).unwrap();
         run_git(dir, &["commit", "-q", "-m", message]).unwrap();
+    }
+
+    #[test]
+    fn parents_rejects_option_like_revision_instead_of_writing_output_file() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = parents(dir.path(), &malicious);
+
+        assert!(result.is_err());
+        assert!(
+            !victim.exists(),
+            "git must not have been invoked with the option-like revision"
+        );
+    }
+
+    #[test]
+    fn commit_date_rejects_option_like_revision_instead_of_writing_output_file() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = commit_date(dir.path(), &malicious);
+
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
+    fn merge_base_rejects_option_like_revision() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = merge_base(dir.path(), &malicious, "HEAD");
+        assert!(result.is_err());
+
+        let result = merge_base(dir.path(), "HEAD", &malicious);
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
+    fn tree_sha_rejects_option_like_revision() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = tree_sha(dir.path(), &malicious, "README.md");
+
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
+    fn ls_tree_recursive_rejects_option_like_revision() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = ls_tree_recursive(dir.path(), &malicious, "README.md");
+
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
+    fn notes_show_rejects_option_like_revision() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = notes_show(dir.path(), "refs/notes/commits", &malicious);
+
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
+    fn parents_still_works_for_normal_tag_short_sha_and_head() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+
+        assert!(parents(dir.path(), "m1").is_ok());
+        assert!(parents(dir.path(), "HEAD").is_ok());
     }
 
     #[test]
