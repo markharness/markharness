@@ -489,10 +489,10 @@ $ markharness generate --json
 {"ok":true,"generated":1,"written":["generated/testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml","generated/traceability-index.json"]}
 ```
 
-`generated/testcases/empty-title.yml`:
+`generated/testcases/task-management/add-todo/add-task/empty-title.yml`:
 
 ```yaml
-case_id: tc-empty-title-001
+case_id: tc-task-management-add-todo-add-task-empty-title
 generated_from:
   requirement: task-management
   feature: add-todo
@@ -519,32 +519,47 @@ expected:
 ### 1.6 `markharness verify` — 生成物の差分検証(UC3: 生成物をレビュー・マージする)
 
 ```text
-markharness verify
+markharness verify [--json] [-d, --dir <path>]
 ```
 
-**用途**: `knowledge/` から `generate` と同じロジックで TestCase と `traceability-index.json` を再構築し(ディスクへは書き込まない)、コミット済みの `generated/testcases/*.yml` および `generated/traceability-index.json` と比較する。CI上でこのコマンドを実行し、`knowledge/` の変更を `generated/` へ反映し忘れていないかを検証する想定。
+**用途**: `knowledge/` から `generate` と同じロジックで TestCase と `traceability-index.json` を再構築し(ディスクへは書き込まない)、コミット済みの `generated/testcases/*.yml` および `generated/traceability-index.json` と比較する。CI上でこのコマンドを実行し、`knowledge/` の変更を `generated/` へ反映し忘れていないかを検証する想定(`generate --check` に相当する用途はこのコマンドが既に担っている)。
 
 **アクター**: Reviewer / CI Bot(UC3)
+
+**オプション**
+
+| オプション          | 説明                                                                          |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `-d, --dir <path>`   | 対象プロジェクトディレクトリ。省略時はカレントディレクトリ                    |
+| `--json`             | 人間可読メッセージの代わりに構造化JSONを出力する(下記参照)                    |
 
 **動作**
 
 - 差分が無ければ `generated/testcases/ is up to date with knowledge/` を表示し、終了コード `0`。
 - 差分があれば、追加・削除・変更されたファイルを `added:` / `removed:` / `changed:` のラベル付きでファイル名のソート順に一覧表示し、終了コード `1` で終了する(内容のunified diffまでは表示しない)。`generated/traceability-index.json` も他の生成物と同じ扱いで一覧に含まれる(ファイル名は `traceability-index.json`)。
+- `--json` 指定時は差分の有無にかかわらず `{"would_change":<bool>,"added":[...],"changed":[...],"removed":[...]}` を出力する。各パスは `generated/` からの相対パスで、TestCaseファイルは `testcases/` 接頭辞付き(例: `testcases/task-management/add-todo/add-task/empty-title.yml`)、`traceability-index.json` はそのままの名前(`generated/testcases/` 配下ではなく `generated/` 直下にあるため)。差分が無ければ終了コード `0`(`would_change:false`)、あれば `1`(`would_change:true`)。
 
 **使用例(差分なし)**
 
 ```console
 $ markharness verify
 generated/testcases/ is up to date with knowledge/
+$ markharness verify --json
+{"would_change":false,"added":[],"changed":[],"removed":[]}
 ```
 
 **使用例(差分あり)**
 
 ```console
 $ markharness verify
-added: generated/testcases/empty-title.yml
-changed: generated/testcases/max-length.yml
-removed: generated/testcases/duplicate-title.yml
+added: generated/testcases/task-management/add-todo/add-task/empty-title.yml
+changed: generated/testcases/task-management/add-todo/add-task/max-length.yml
+removed: generated/testcases/task-management/add-todo/add-task/duplicate-title.yml
+$ echo $?
+1
+
+$ markharness verify --json
+{"would_change":true,"added":["testcases/task-management/add-todo/add-task/empty-title.yml"],"changed":["testcases/task-management/add-todo/add-task/max-length.yml"],"removed":["testcases/task-management/add-todo/add-task/duplicate-title.yml"]}
 $ echo $?
 1
 ```

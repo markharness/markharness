@@ -142,6 +142,12 @@ pub enum ExecutionCommand {
 
 #[derive(clap::Args)]
 pub struct VerifyArgs {
+    /// Target project directory. Defaults to the current directory. Only used when no subcommand is given (bare `verify`'s diff mode); `trace`/`pending` carry their own --dir.
+    #[arg(long, short = 'd')]
+    pub dir: Option<PathBuf>,
+    /// Emit machine-readable JSON instead of human-readable text. Only used when no subcommand is given.
+    #[arg(long)]
+    pub json: bool,
     #[command(subcommand)]
     pub command: Option<VerifySubcommand>,
 }
@@ -775,12 +781,20 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 std::process::exit(1);
             }
         }
-        Command::Verify(VerifyArgs { command: None }) => {
-            let root = env::current_dir()?;
+        Command::Verify(VerifyArgs {
+            dir,
+            json,
+            command: None,
+        }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
             let diffs = verify::diff_generated_testcases(&root)?;
-            if diffs.is_empty() {
+            if json {
+                println!("{}", verify_diffs_to_json(&diffs));
+            } else if diffs.is_empty() {
                 println!("generated/testcases/ is up to date with knowledge/");
-                Ok(())
             } else {
                 for diff in &diffs {
                     let label = match diff.kind {
@@ -788,8 +802,12 @@ pub fn run(cli: Cli) -> io::Result<()> {
                         verify::DiffKind::Removed => "removed",
                         verify::DiffKind::Changed => "changed",
                     };
-                    println!("{label}: generated/testcases/{}", diff.file_name);
+                    println!("{label}: generated/{}", diff.file_name);
                 }
+            }
+            if diffs.is_empty() {
+                Ok(())
+            } else {
                 std::process::exit(1);
             }
         }
@@ -801,6 +819,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     dir,
                     json,
                 }),
+            ..
         }) => {
             let root = match dir {
                 Some(dir) => dir,
@@ -854,6 +873,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     fail_on_pending,
                     no_cache,
                 }),
+            ..
         }) => {
             let root = match dir {
                 Some(dir) => dir,
@@ -1269,6 +1289,28 @@ fn axes_add_result_to_json(path: &Path) -> String {
     )
 }
 
+/// `--json` output for bare `verify`'s dry-run diff (Step C): reports
+/// whether `generated/testcases/` would change if `generate` were run, and
+/// which files fall into each of the three buckets, so a CI caller doesn't
+/// have to parse the human-readable `added:`/`changed:`/`removed:` lines.
+fn verify_diffs_to_json(diffs: &[verify::DiffEntry]) -> String {
+    let bucket = |kind: verify::DiffKind| -> String {
+        let items: Vec<String> = diffs
+            .iter()
+            .filter(|d| d.kind == kind)
+            .map(|d| format!("\"{}\"", json_escape(&d.file_name)))
+            .collect();
+        format!("[{}]", items.join(","))
+    };
+    format!(
+        "{{\"would_change\":{},\"added\":{},\"changed\":{},\"removed\":{}}}",
+        !diffs.is_empty(),
+        bucket(verify::DiffKind::Added),
+        bucket(verify::DiffKind::Changed),
+        bucket(verify::DiffKind::Removed),
+    )
+}
+
 /// Joins `testcases_dir` and a testcase's `relative_path()` (the
 /// `{requirement}/{feature}/{behavior}/{condition}.yml` mirror of
 /// `knowledge/`), refusing any result that would escape `testcases_dir` via
@@ -1371,6 +1413,34 @@ mod tests {
                 assert!(!json);
             }
             _ => panic!("expected Generate command"),
+        }
+    }
+
+    #[test]
+    fn parses_bare_verify_dir_and_json_options() {
+        let cli = Cli::parse_from(["markharness", "verify", "--dir", "some/path", "--json"]);
+
+        match cli.command {
+            Command::Verify(VerifyArgs { dir, json, command }) => {
+                assert_eq!(dir, Some(PathBuf::from("some/path")));
+                assert!(json);
+                assert!(command.is_none());
+            }
+            _ => panic!("expected Verify command"),
+        }
+    }
+
+    #[test]
+    fn parses_bare_verify_without_dir_or_json_options() {
+        let cli = Cli::parse_from(["markharness", "verify"]);
+
+        match cli.command {
+            Command::Verify(VerifyArgs { dir, json, command }) => {
+                assert_eq!(dir, None);
+                assert!(!json);
+                assert!(command.is_none());
+            }
+            _ => panic!("expected Verify command"),
         }
     }
 

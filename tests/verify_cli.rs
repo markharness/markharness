@@ -162,8 +162,6 @@ fn bare_verify_still_reports_up_to_date_when_generated_matches_knowledge() {
         .expect("failed to run markharness binary");
     assert!(generate.status.success(), "{generate:?}");
 
-    // `verify` (no subcommand) takes no --dir of its own (it always uses the
-    // current directory), unchanged by the Option<VerifySubcommand> refactor.
     let output = Command::new(bin())
         .arg("verify")
         .current_dir(dir.path())
@@ -173,6 +171,76 @@ fn bare_verify_still_reports_up_to_date_when_generated_matches_knowledge() {
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("up to date"), "unexpected stdout: {stdout}");
+}
+
+/// Step C: bare `verify` used to only accept `env::current_dir()` and had no
+/// `--dir`, forcing callers to `cd` into the target project first (the same
+/// gap `generate` had before Step B).
+#[test]
+fn bare_verify_accepts_a_dir_option_targeting_a_directory_other_than_cwd() {
+    let dir = tempfile::tempdir().unwrap();
+    let init = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init.status.success());
+    let generate = run(&["generate", "--dir", dir.path().to_str().unwrap()]);
+    assert!(generate.status.success(), "{generate:?}");
+
+    let unrelated_cwd = tempfile::tempdir().unwrap();
+    let output = Command::new(bin())
+        .args(["verify", "--dir", dir.path().to_str().unwrap()])
+        .current_dir(unrelated_cwd.path())
+        .output()
+        .expect("failed to run markharness binary");
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("up to date"), "unexpected stdout: {stdout}");
+}
+
+#[test]
+fn bare_verify_json_reports_would_change_false_when_up_to_date() {
+    let dir = tempfile::tempdir().unwrap();
+    let init = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init.status.success());
+    let generate = run(&["generate", "--dir", dir.path().to_str().unwrap()]);
+    assert!(generate.status.success(), "{generate:?}");
+
+    let output = run(&["verify", "--dir", dir.path().to_str().unwrap(), "--json"]);
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["would_change"], serde_json::json!(false));
+    assert_eq!(parsed["added"], serde_json::json!([]));
+    assert_eq!(parsed["changed"], serde_json::json!([]));
+    assert_eq!(parsed["removed"], serde_json::json!([]));
+}
+
+#[test]
+fn bare_verify_json_reports_added_files_when_generated_is_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    let init = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init.status.success());
+    write_full_chain(dir.path(), "v1");
+
+    let output = run(&["verify", "--dir", dir.path().to_str().unwrap(), "--json"]);
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["would_change"], serde_json::json!(true));
+    let added = parsed["added"].as_array().unwrap();
+    assert!(
+        added
+            .iter()
+            .any(|p| p.as_str().unwrap().ends_with("edit-existing-todo.yml")),
+        "unexpected added list: {added:?}"
+    );
+    assert!(
+        added
+            .iter()
+            .any(|p| p.as_str().unwrap() == "traceability-index.json"),
+        "unexpected added list: {added:?}"
+    );
 }
 
 #[test]

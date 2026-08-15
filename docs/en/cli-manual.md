@@ -489,10 +489,10 @@ $ markharness generate --json
 {"ok":true,"generated":1,"written":["generated/testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml","generated/traceability-index.json"]}
 ```
 
-`generated/testcases/empty-title.yml`:
+`generated/testcases/task-management/add-todo/add-task/empty-title.yml`:
 
 ```yaml
-case_id: tc-empty-title-001
+case_id: tc-task-management-add-todo-add-task-empty-title
 generated_from:
   requirement: task-management
   feature: add-todo
@@ -519,32 +519,47 @@ If `knowledge/` has nothing in it, `generated/testcases/` becomes empty (0 files
 ### 1.6 `markharness verify` — Diff verification of generated artifacts (UC3: review and merge generated artifacts)
 
 ```text
-markharness verify
+markharness verify [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: Rebuilds the TestCase and `traceability-index.json` from `knowledge/` using the same logic as `generate` (without writing to disk), and compares them against the committed `generated/testcases/*.yml` and `generated/traceability-index.json`. Intended to be run in CI to check that changes to `knowledge/` have not been forgotten to be reflected in `generated/`.
+**Purpose**: Rebuilds the TestCase and `traceability-index.json` from `knowledge/` using the same logic as `generate` (without writing to disk), and compares them against the committed `generated/testcases/*.yml` and `generated/traceability-index.json`. Intended to be run in CI to check that changes to `knowledge/` have not been forgotten to be reflected in `generated/` (this command already covers what `generate --check` would have done).
 
 **Actor**: Reviewer / CI Bot (UC3)
+
+**Options**
+
+| Option              | Description                                                         |
+| -------------------- | -------------------------------------------------------------------- |
+| `-d, --dir <path>`   | Target project directory. Defaults to the current directory.        |
+| `--json`             | Prints structured JSON instead of the human-readable message (see below). |
 
 **Behavior**
 
 - If there is no diff, prints `generated/testcases/ is up to date with knowledge/` and exits with code `0`.
 - If there is a diff, lists the added, removed, and changed files, labeled `added:` / `removed:` / `changed:`, in file-name sort order, and exits with code `1` (does not show a unified diff of the contents). `generated/traceability-index.json` is included in the listing on the same footing as the other generated artifacts (under the file name `traceability-index.json`).
+- With `--json`, always prints `{"would_change":<bool>,"added":[...],"changed":[...],"removed":[...]}` regardless of whether there's a diff. Each path is relative to `generated/`: TestCase files carry a `testcases/` prefix (e.g. `testcases/task-management/add-todo/add-task/empty-title.yml`), and `traceability-index.json` is listed by its bare name (it lives directly under `generated/`, not under `generated/testcases/`). Exits `0` when there's no diff (`would_change:false`), `1` when there is (`would_change:true`).
 
 **Example (no diff)**
 
 ```console
 $ markharness verify
 generated/testcases/ is up to date with knowledge/
+$ markharness verify --json
+{"would_change":false,"added":[],"changed":[],"removed":[]}
 ```
 
 **Example (diff present)**
 
 ```console
 $ markharness verify
-added: generated/testcases/empty-title.yml
-changed: generated/testcases/max-length.yml
-removed: generated/testcases/duplicate-title.yml
+added: generated/testcases/task-management/add-todo/add-task/empty-title.yml
+changed: generated/testcases/task-management/add-todo/add-task/max-length.yml
+removed: generated/testcases/task-management/add-todo/add-task/duplicate-title.yml
+$ echo $?
+1
+
+$ markharness verify --json
+{"would_change":true,"added":["testcases/task-management/add-todo/add-task/empty-title.yml"],"changed":["testcases/task-management/add-todo/add-task/max-length.yml"],"removed":["testcases/task-management/add-todo/add-task/duplicate-title.yml"]}
 $ echo $?
 1
 ```

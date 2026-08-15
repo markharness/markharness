@@ -20,18 +20,25 @@ pub enum DiffKind {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DiffEntry {
-    /// Path relative to `generated/testcases/`, forward-slash separated
-    /// regardless of platform (this mirrors `knowledge/`'s nesting since
-    /// Step A, so it is no longer just a flat file name).
+    /// Path relative to `generated/` (not `generated/testcases/`), so a
+    /// caller can print `generated/{file_name}` uniformly for every entry.
+    /// Testcase files are prefixed `testcases/...` (mirroring `knowledge/`'s
+    /// nesting since Step A); the traceability index is the bare
+    /// `traceability-index.json`, which actually lives directly under
+    /// `generated/`, not under `generated/testcases/`. Forward-slash
+    /// separated regardless of platform.
     pub file_name: String,
     pub kind: DiffKind,
 }
 
-/// Forward-slash-normalizes a path relative to `generated/testcases/` so
-/// diff output is stable across platforms (`PathBuf`'s `Display` uses `\`
-/// on Windows).
+/// Forward-slash-normalizes a path relative to `generated/testcases/`, then
+/// prefixes it with `testcases/` so it is relative to `generated/` like
+/// every other `DiffEntry::file_name` (see that field's doc comment).
 fn to_diff_key(relative_path: &Path) -> String {
-    relative_path.to_string_lossy().replace('\\', "/")
+    format!(
+        "testcases/{}",
+        relative_path.to_string_lossy().replace('\\', "/")
+    )
 }
 
 fn read_existing_testcases(generated_dir: &Path) -> io::Result<BTreeMap<String, String>> {
@@ -445,7 +452,8 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "req-todo/todo/todo-add-task/todo-add-task-empty-input.yml".to_string(),
+                file_name: "testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml"
+                    .to_string(),
                 kind: DiffKind::Added,
             }]
         );
@@ -493,7 +501,8 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "req-todo/todo/todo-add-task/todo-add-task-empty-input.yml".to_string(),
+                file_name: "testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml"
+                    .to_string(),
                 kind: DiffKind::Changed,
             }]
         );
@@ -516,7 +525,7 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "req-todo/todo/todo-add-task/stale-condition.yml".to_string(),
+                file_name: "testcases/req-todo/todo/todo-add-task/stale-condition.yml".to_string(),
                 kind: DiffKind::Removed,
             }]
         );
