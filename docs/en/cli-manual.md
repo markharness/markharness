@@ -1017,7 +1017,7 @@ markharness -V
 
 ```console
 $ markharness --version
-markharness 0.2.0
+markharness 0.3.0
 ```
 
 ---
