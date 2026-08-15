@@ -262,7 +262,7 @@ markharness knowledge validate --batch <dir> [--json] [-d, --dir <path>]
 
 **Batch mode (`--batch <dir>`)**: Validates multiple drafts the same cumulative way `knowledge apply --batch` (section 1.4) does — in ascending file-name order, a later draft may reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch would newly create**, the same way it could reuse one an earlier draft actually applied. Unlike `apply --batch`, though, one draft's failure does not stop the run: every file in the batch is checked through to the end before results are reported together (this is the point of the command — surfacing every error before anything is written). A failed draft does not contribute to the cumulative state seen by later drafts (they are checked as though it were never in the batch). With `--json`, any failures print `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` (`errors` for validation errors, `error` for a parse error). Human-readable mode likewise prints every failing file's errors, prefixed with its file name. `{"ok":true}` when every file is valid. Nothing is ever written to the real project directory (internally, `knowledge/` and `axes/` are copied into a temp directory and validated there).
 
-**Draft YAML format** (a single run validates one chain)
+**Draft YAML format** (a single run validates one chain). A blank template is available via `markharness knowledge scaffold` (section 1.21). See `docs/knowledge_draft.schema.json` for a reference schema meant for IDE autocompletion (a static reference file not used for actual validation — the table below and `docs/design/knowledge-apply-cli-spec.md` are authoritative for `knowledge validate`/`apply`'s own validation rules).
 
 ```yaml
 requirement:
@@ -1054,6 +1054,40 @@ $ markharness axes list --dir tmp/todo-sample --json
 (`legacy-ui` is removed from `axes/` and no longer appears in `axes list`)
 
 **Use case mapping**: A companion command to `markharness axes add` (section 1.8). Does not map explicitly to any UC.
+
+---
+
+### 1.21 `markharness knowledge scaffold` — Print a blank draft YAML template
+
+```text
+markharness knowledge scaffold [--out <path>]
+```
+
+**Purpose**: Prints the same blank draft YAML chain (`EDIT_TEMPLATE`) that `knowledge add --edit` (section 1.10) writes into `$VISUAL`/`$EDITOR`, without spawning an editor. For non-interactive callers — AI agents and the like — that just want a draft file's starting point. Same five-tier (Requirement through ExpectedResult) blank chain as the "Draft YAML format" in section 1.3. See `docs/knowledge_draft.schema.json` for a reference schema meant for IDE autocompletion (not used for actual validation — see the note at the top of section 1.3).
+
+**Options**
+
+| Option         | Description                                                                                              |
+| -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `--out <path>` | Write to this path instead of stdout. Refuses to overwrite an existing file at that path (exit code `2`) |
+
+**Example (stdout)**
+
+```console
+$ markharness knowledge scaffold > drafts/01-new-condition.yml
+```
+
+**Example (`--out`)**
+
+```console
+$ markharness knowledge scaffold --out drafts/01-new-condition.yml
+$ markharness knowledge scaffold --out drafts/01-new-condition.yml
+error: cannot write drafts/01-new-condition.yml: ...(refuses to overwrite the existing file)
+$ echo $?
+2
+```
+
+**Use case mapping**: Supports UC1 "describe knowledge." Intended to pair with `knowledge apply --batch <dir>` (section 1.4): run `scaffold --out drafts/NN-xxx.yml` repeatedly, then apply the whole directory at once.
 
 ---
 

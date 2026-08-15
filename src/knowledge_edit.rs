@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+use crate::fs_safety::create_new_no_follow;
 use crate::knowledge::is_valid_slug;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions, ApplyResult};
 use crate::knowledge_draft::{self, KnowledgeDraft, ValidationError};
@@ -39,6 +40,19 @@ condition:
 expected:
   - description:
 ";
+
+/// Writes `EDIT_TEMPLATE` — the same blank draft chain `knowledge add --edit`
+/// opens in `$VISUAL`/`$EDITOR` — to `out`, for non-interactive callers (e.g.
+/// AI agents) that want a starting point without driving an editor. Refuses
+/// to overwrite a file already at `out` (a symlink there is refused too,
+/// rather than followed), the same "don't clobber existing work" stance
+/// `axes::add_axis` takes for an existing axis file. `out` is a caller-chosen
+/// path outside any managed `root`, so this uses `create_new_no_follow`
+/// directly rather than `fs_safety::replace_file`'s root-scoped guards.
+pub fn write_scaffold(out: &Path) -> io::Result<()> {
+    let mut file = create_new_no_follow(out)?;
+    file.write_all(EDIT_TEMPLATE.as_bytes())
+}
 
 /// Reads `VISUAL` then `EDITOR`, mirroring common CLI editor precedence
 /// (e.g. git). Returns `None` when neither is set or both are blank.
@@ -171,6 +185,31 @@ pub fn run_edit_loop<W: Write>(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn write_scaffold_writes_the_edit_template_to_a_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("draft.yml");
+
+        write_scaffold(&out).unwrap();
+
+        assert_eq!(fs::read_to_string(&out).unwrap(), EDIT_TEMPLATE);
+    }
+
+    #[test]
+    fn write_scaffold_refuses_to_overwrite_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("draft.yml");
+        fs::write(&out, "existing work in progress\n").unwrap();
+
+        let result = write_scaffold(&out);
+
+        assert!(result.is_err(), "expected an error, got: {result:?}");
+        assert_eq!(
+            fs::read_to_string(&out).unwrap(),
+            "existing work in progress\n"
+        );
+    }
 
     fn setup_root_with_axes(axis_ids: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

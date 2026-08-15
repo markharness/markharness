@@ -262,7 +262,7 @@ markharness knowledge validate --batch <dir> [--json] [-d, --dir <path>]
 
 **バッチモード(`--batch <dir>`)**: `knowledge apply --batch`(1.4節)と同じ累積方式で複数ドラフトを検証する——ファイル名の昇順で、後続のドラフトは同じバッチ内で**先行するドラフトが新規作成するはずのRequirement/Feature/Behavior**を、実際に適用したときと同様に再利用できる。ただし`apply --batch`と異なり、1件のドラフトが失敗しても打ち切らず、**バッチ内の全ファイルを最後まで検証してから**結果をまとめて返す(「書き込み前に全件のエラーを一括で洗い出す」ことが本コマンドの狙いのため)。失敗したドラフトは、以降のドラフトから見た累積状態には反映されない(そのドラフトがバッチに存在しなかったものとして後続を検証する)。`--json`指定時、失敗があれば `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` を出力する(`errors`はバリデーションエラー、`error`はパースエラー)。人間可読モードでも同様に、失敗したファイルすべてについてファイル名を付けてエラーを出力する。全ファイルが有効なら `{"ok":true}`。実ディスクへの書き込みは一切行わない(内部的に `knowledge/`・`axes/` を一時ディレクトリへコピーし、その上で検証する)。
 
-**ドラフトYAMLの形式**(1回の実行で1本のチェーンを検証する)
+**ドラフトYAMLの形式**(1回の実行で1本のチェーンを検証する)。空の雛形は `markharness knowledge scaffold`(1.21節)で取得できる。IDE補完用の参考スキーマは `docs/knowledge_draft.schema.json` (実際の検証には使われない静的な参考ファイルで、`knowledge validate`/`apply` 自体の検証ルールは以下の表と `docs/design/knowledge-apply-cli-spec.md` を正とする)。
 
 ```yaml
 requirement:
@@ -1054,6 +1054,40 @@ $ markharness axes list --dir tmp/todo-sample --json
 (`legacy-ui` が `axes/` から削除され、以降 `axes list` に現れなくなる)
 
 **ユースケース対応**: `markharness axes add`(1.8節)と対になる補助コマンド。どのUCにも明示的には現れない。
+
+---
+
+### 1.21 `markharness knowledge scaffold` — 空のドラフトYAML雛形の出力
+
+```text
+markharness knowledge scaffold [--out <path>]
+```
+
+**用途**: `knowledge add --edit`(1.10節)が `$VISUAL`/`$EDITOR` に書き出すのと同じ空のドラフトYAMLチェーン(`EDIT_TEMPLATE`)を、エディタを起動せずそのまま出力する。AIエージェント等、非対話でdraftファイルの雛形だけを取得したい呼び出し元向け。内容は1.3節の「ドラフトYAMLの形式」と同じ5階層(Requirement〜ExpectedResult)の空チェーン。IDE補完用の参考スキーマは `docs/knowledge_draft.schema.json` を参照(実際の検証には使われない。1.3節冒頭参照)。
+
+**オプション**
+
+| オプション    | 説明                                                                             |
+| ------------- | -------------------------------------------------------------------------------- |
+| `--out <path>` | 標準出力の代わりにこのパスへ書き出す。出力先に既存ファイルがある場合は上書きせずエラー(終了コード `2`)で拒否する |
+
+**使用例(標準出力)**
+
+```console
+$ markharness knowledge scaffold > drafts/01-new-condition.yml
+```
+
+**使用例(`--out`)**
+
+```console
+$ markharness knowledge scaffold --out drafts/01-new-condition.yml
+$ markharness knowledge scaffold --out drafts/01-new-condition.yml
+error: cannot write drafts/01-new-condition.yml: ...(既に存在するため上書き拒否)
+$ echo $?
+2
+```
+
+**ユースケース対応**: UC1「知識を記述する」を補助する。1.4節の `knowledge apply --batch <dir>` と組み合わせ、`scaffold --out drafts/NN-xxx.yml` を繰り返してからまとめて適用する運用を想定している。
 
 ---
 

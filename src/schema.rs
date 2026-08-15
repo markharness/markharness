@@ -91,6 +91,50 @@ mod tests {
         .unwrap()
     }
 
+    /// `docs/knowledge_draft.schema.json` is a reference-only artifact (not
+    /// loaded by `knowledge_draft::validate_draft` — see the file's own
+    /// `$comment`), so its only automated check is that it stays valid JSON
+    /// Schema and accepts the same draft shape `knowledge scaffold` prints.
+    #[test]
+    fn knowledge_draft_reference_schema_is_valid_and_accepts_the_scaffold_template() {
+        let schema_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/docs/knowledge_draft.schema.json"
+        );
+        let schema_text = std::fs::read_to_string(schema_path)
+            .expect("docs/knowledge_draft.schema.json must exist");
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema_text).expect("must be valid JSON");
+
+        let draft_yaml = "\
+requirement:
+  id: controls
+  label: controls
+  axis: [gameplay]
+
+feature:
+  id: player-jump
+  label: player-jump
+  axis: [gameplay, animation]
+
+behavior:
+  id: jump
+  label: jump
+  axis: [gameplay]
+  description: Player presses jump.
+
+condition:
+  id: ground
+  label: ground
+  description: Jump from the ground and land
+
+expected:
+  - description: lands safely
+";
+
+        assert_eq!(validate_yaml(&schema, draft_yaml), Ok(()));
+    }
+
     #[test]
     fn validate_yaml_accepts_a_conforming_document() {
         let schema = feature_schema();

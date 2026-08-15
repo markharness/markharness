@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.com/schema/knowledge_draft.schema.json",
+  "title": "KnowledgeDraft",
+  "$comment": "Reference only. Unlike schema/*.schema.json (which markharness validate loads at runtime as the actual, per-project-customizable check), this file is NOT read by knowledge validate/apply — that command's rules live in src/knowledge_draft.rs and include state-dependent checks (e.g. a field is required only when its entry doesn't already exist under knowledge/, axis values must be registered under axes/) that plain JSON Schema cannot express. Intended for editor/IDE autocompletion against draft YAML files such as the one `markharness knowledge scaffold` prints.",
+  "type": "object",
+  "properties": {
+    "requirement": { "$ref": "#/$defs/requirementDraft" },
+    "feature": { "$ref": "#/$defs/featureDraft" },
+    "behavior": { "$ref": "#/$defs/behaviorDraft" },
+    "condition": { "$ref": "#/$defs/conditionDraft" },
+    "expected": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/expectedDraft" }
+    }
+  },
+  "required": ["requirement", "feature", "behavior", "condition"],
+  "additionalProperties": false,
+  "$defs": {
+    "requirementDraft": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "label": { "type": "string" },
+        "axis": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "featureDraft": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "label": { "type": "string" },
+        "axis": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" },
+        "forked_from": { "type": "string" }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "behaviorDraft": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "label": { "type": "string" },
+        "axis": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "conditionDraft": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "label": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "expectedDraft": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

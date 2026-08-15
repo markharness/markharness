@@ -329,6 +329,12 @@ pub enum KnowledgeCommand {
         #[arg(long)]
         edit: bool,
     },
+    /// Print a blank draft YAML chain (the same template `knowledge add --edit` opens) for non-interactive callers
+    Scaffold {
+        /// Write to this path instead of stdout. Refuses to overwrite an existing file.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Validate a draft YAML file without writing anything
     Validate {
         /// Path to the draft YAML file. Required unless --batch is given.
@@ -396,6 +402,19 @@ pub fn run(cli: Cli) -> io::Result<()> {
             );
             Ok(())
         }
+        Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {
+            Some(out) => match knowledge_edit::write_scaffold(&out) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    eprintln!("error: cannot write {}: {e}", out.display());
+                    std::process::exit(2);
+                }
+            },
+            None => {
+                print!("{}", knowledge_edit::EDIT_TEMPLATE);
+                Ok(())
+            }
+        },
         Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
             let root = match dir {
                 Some(dir) => dir,
