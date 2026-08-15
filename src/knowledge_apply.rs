@@ -196,6 +196,114 @@ fn write_one(root: &Path, path: &Path, content: &str) -> io::Result<()> {
     replace_file(root, path, content.as_bytes())
 }
 
+#[derive(Debug)]
+pub struct BatchApplyResult {
+    pub written_paths: Vec<PathBuf>,
+}
+
+/// Why one draft file within a `--batch` directory could not be applied.
+#[derive(Debug)]
+pub enum DraftFileError {
+    Parse(String),
+    Validation(Vec<ValidationError>),
+}
+
+#[derive(Debug)]
+pub enum BatchApplyError {
+    /// `file` (its name within the batch directory) failed to parse or
+    /// validate. Every file this batch call had already written for earlier
+    /// drafts has been removed before this is returned, so the call has zero
+    /// net effect on `knowledge/` — see `apply_batch`'s doc comment for what
+    /// "atomic" means here precisely.
+    Draft {
+        file: PathBuf,
+        error: DraftFileError,
+    },
+    Io(io::Error),
+}
+
+/// Validates and applies every `*.yml` file in `draft_paths` (already
+/// resolved and sorted by the caller — typically a batch directory's direct
+/// children in file-name order), in order.
+///
+/// Each draft is validated against `knowledge/`'s state as it stands *after*
+/// every earlier draft in this same batch has been applied — not against the
+/// state before the batch started. This lets a later draft in the batch
+/// reuse a Requirement/Feature/Behavior an earlier draft in the same batch
+/// just created (the common case this exists for: many small Condition
+/// drafts sharing one new parent chain), the same way it could reuse one
+/// that already existed on disk before the batch ran.
+///
+/// If any draft fails to parse or validate, every file already written by
+/// this batch call (by earlier, successful drafts) is deleted before
+/// returning the error, so the directory tree ends up exactly as it started
+/// — an all-or-nothing outcome for the whole batch, even though each draft
+/// is validated incrementally rather than all at once against a single
+/// snapshot.
+pub fn apply_batch(
+    root: &Path,
+    draft_paths: &[PathBuf],
+    options: &ApplyOptions,
+) -> Result<BatchApplyResult, BatchApplyError> {
+    let mut all_written: Vec<PathBuf> = Vec::new();
+
+    for draft_path in draft_paths {
+        let file_name = draft_path
+            .file_name()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| draft_path.clone());
+
+        let yaml = match fs::read_to_string(draft_path) {
+            Ok(yaml) => yaml,
+            Err(e) => {
+                rollback(root, &all_written);
+                return Err(BatchApplyError::Io(e));
+            }
+        };
+        let draft = match knowledge_draft::parse_draft(&yaml) {
+            Ok(draft) => draft,
+            Err(e) => {
+                rollback(root, &all_written);
+                return Err(BatchApplyError::Draft {
+                    file: file_name,
+                    error: DraftFileError::Parse(e.to_string()),
+                });
+            }
+        };
+
+        match apply_draft(root, &draft, options) {
+            Ok(result) => all_written.extend(result.written_paths),
+            Err(ApplyError::Validation(errors)) => {
+                rollback(root, &all_written);
+                return Err(BatchApplyError::Draft {
+                    file: file_name,
+                    error: DraftFileError::Validation(errors),
+                });
+            }
+            Err(ApplyError::Io(e)) => {
+                rollback(root, &all_written);
+                return Err(BatchApplyError::Io(e));
+            }
+        }
+    }
+
+    Ok(BatchApplyResult {
+        written_paths: all_written,
+    })
+}
+
+/// Removes every file this batch call wrote, undoing a partially-applied
+/// batch. `written` holds paths relative to `root` (as returned by
+/// `apply_draft`), all of which this same call just created via
+/// `replace_file`, so no symlink guard is needed to remove them (mirrors
+/// `write_all_atomically`'s single-draft rollback).
+fn rollback(root: &Path, written: &[PathBuf]) {
+    for path in written {
+        #[allow(clippy::disallowed_methods)]
+        let _ = fs::remove_file(root.join(path));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,5 +579,161 @@ expected:
                 .iter()
                 .any(|p| p.ends_with("ground/condition.yml"))
         );
+    }
+
+    const SECOND_CONDITION_REUSING_PARENT_YAML: &str = "\
+requirement:
+  id: controls
+
+feature:
+  id: player-jump
+
+behavior:
+  id: jump
+
+condition:
+  id: air
+  label: air
+  description: Jump in the air.
+
+expected:
+  - description: does not take fall damage
+";
+
+    fn write_draft_file(dir: &std::path::Path, name: &str, yaml: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, yaml).unwrap();
+        path
+    }
+
+    #[test]
+    fn apply_batch_applies_every_draft_and_returns_their_combined_written_paths() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
+        let second = write_draft_file(
+            &drafts_dir,
+            "02-air.yml",
+            SECOND_CONDITION_REUSING_PARENT_YAML,
+        );
+
+        let result = apply_batch(dir.path(), &[first, second], &no_strip()).unwrap();
+
+        assert_eq!(result.written_paths.len(), 7); // 5 from the first draft + 2 (condition.yml, expected/001.yml) from the second
+        assert!(
+            dir.path()
+                .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+                .is_file()
+        );
+        assert!(
+            dir.path()
+                .join("knowledge/controls/player-jump/jump/air/condition.yml")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn apply_batch_lets_a_later_draft_reuse_a_parent_an_earlier_draft_in_the_batch_just_created() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        // Neither `controls`, `player-jump`, nor `jump` exist on disk before
+        // this call — the second draft only supplies bare ids for them,
+        // relying on the first draft (applied first, within this same
+        // batch) to have created them.
+        let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
+        let second = write_draft_file(
+            &drafts_dir,
+            "02-air.yml",
+            SECOND_CONDITION_REUSING_PARENT_YAML,
+        );
+
+        let result = apply_batch(dir.path(), &[first, second], &no_strip());
+
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn apply_batch_rolls_back_every_file_when_a_later_draft_fails_validation() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
+        // A new condition ("air") with no description: condition.description
+        // is required whenever the condition doesn't already exist.
+        let invalid_yaml = "\
+requirement:
+  id: controls
+
+feature:
+  id: player-jump
+
+behavior:
+  id: jump
+
+condition:
+  id: air
+  label: air
+";
+        let second = write_draft_file(&drafts_dir, "02-air.yml", invalid_yaml);
+
+        let result = apply_batch(dir.path(), &[first, second], &no_strip());
+
+        assert!(matches!(
+            result,
+            Err(BatchApplyError::Draft {
+                error: DraftFileError::Validation(_),
+                ..
+            })
+        ));
+        assert!(
+            !dir.path()
+                .join("knowledge/controls/requirement.yml")
+                .exists(),
+            "the first draft's files must be rolled back when the second draft is invalid"
+        );
+    }
+
+    #[test]
+    fn apply_batch_rolls_back_every_file_when_a_later_draft_fails_to_parse() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
+        let second = write_draft_file(&drafts_dir, "02-broken.yml", "not: [valid yaml");
+
+        let result = apply_batch(dir.path(), &[first, second], &no_strip());
+
+        assert!(matches!(
+            result,
+            Err(BatchApplyError::Draft {
+                error: DraftFileError::Parse(_),
+                ..
+            })
+        ));
+        assert!(
+            !dir.path()
+                .join("knowledge/controls/requirement.yml")
+                .exists(),
+            "the first draft's files must be rolled back when the second draft fails to parse"
+        );
+    }
+
+    #[test]
+    fn apply_batch_reports_which_file_failed() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        let bad = write_draft_file(&drafts_dir, "broken.yml", "not: [valid yaml");
+
+        let result = apply_batch(dir.path(), &[bad], &no_strip());
+
+        match result {
+            Err(BatchApplyError::Draft { file, .. }) => {
+                assert_eq!(file, PathBuf::from("broken.yml"))
+            }
+            other => panic!("expected Draft error, got {other:?}"),
+        }
     }
 }

@@ -354,6 +354,7 @@ $ echo $?
 
 ```text
 markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
+markharness knowledge apply --batch <dir> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
 ```
 
 **Purpose**: Performs the same validation as `knowledge validate` (section 1.3), and if there are no problems, writes **atomically** under `knowledge/`. Even when only some of the five tiers (Requirement through ExpectedResult) are newly created, the write happens all at once after all validation passes (temp file + rename; if an I/O error occurs mid-write, even the files already succeeded are rolled back). Files for an existing id (reuse) are not overwritten.
@@ -362,11 +363,20 @@ markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-re
 
 | Option                      | Description                                                                                                                                                                                                                                                                                          |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<draft-file>`              | (required) Path to the draft YAML file. Same format as section 1.3.                                                                                                                                                                                                                                  |
+| `<draft-file>`              | Path to the draft YAML file. Same format as section 1.3. Mutually exclusive with `--batch`.                                                                                                                                                                                                          |
+| `--batch <dir>`             | Treats every `*.yml` directly under `<dir>` as a draft file, validating and applying them one at a time in ascending file-name order. Mutually exclusive with `<draft-file>`. See "Batch mode" below.                                                                                              |
 | `-d, --dir <path>`         | Same as section 1.3                                                                                                                                                                                                                                                                                   |
 | `--json`                    | Same as section 1.3. On success, prints the list of written files (see below).                                                                                                                                                                                                                       |
 | `--strip-redundant-prefix` | When `condition.id` starts with `{behavior.id}-`, adopts the id with the prefix stripped, without confirmation. If not given, stops with a `redundant_prefix` error (see section 1.3). If a directory of the same name as the stripped id already exists (legacy data), it is reused as-is without stripping, just as with `knowledge add`. |
 | `--dry-run`                 | Synonymous with `knowledge validate` (validates only, does not write). A separate name intended for use in CI, etc.                                                                                                                                                                                  |
+
+**Batch mode (`--batch <dir>`)**: Instead of manually looping `validate` → `apply` over each Condition one at a time, applies every draft YAML accumulated in a scratch directory in one call.
+
+- Each draft is validated and applied in ascending file-name order (e.g. `01-empty-title.yml`, `02-max-length.yml`, ...). A later draft can reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch just created**, by referencing it via id alone — the same way it could reuse one that already existed on disk before a single `apply`. No dependency resolution is performed, so name files so a parent-creating draft sorts before the drafts that reuse it.
+- **All-or-nothing overall**: if any one draft fails with a validation or parse error, every file already written earlier in this batch call is deleted, and `knowledge/` ends up exactly as it was before the batch ran. Note, however, that each draft is validated against `knowledge/`'s state immediately before *that* draft is applied (reflecting the results of earlier drafts in the batch) — this is not a single upfront validation pass across every draft before any writing begins.
+- `--dry-run --batch <dir>` only validates each draft against `knowledge/`'s *current* state (it does not simulate any other draft in the batch being applied first) and never writes. Because of this, when drafts in the batch depend on each other, a `--dry-run` validation can disagree with what a real (non-dry-run) run would do — a later draft may report a validation error over a parent that "doesn't exist yet," even though a real run would succeed because an earlier draft creates that parent first.
+- If `<dir>` has no `*.yml` files directly under it, this is not an error — it succeeds as `{"ok":true,"written":[]}` (zero drafts applied).
+- Validation/parse error `--json` output adds `"file":"<name>"` to the single-draft shape: `{"ok":false,"file":"...","errors":[...]}` for a validation failure, or `{"ok":false,"file":"...","error":"..."}` for a parse failure. The human-readable mode likewise prefixes each error line with the file name.
 
 **Exit codes**
 
@@ -397,6 +407,28 @@ $ echo $?
 ```
 
 `draft.yml`'s `condition.id: add-task-max-length` (duplicating Behavior id `add-task`) is written as `max-length`. Same behavior as the automatic stripping in `knowledge add` (section 1.2).
+
+**Example (applying multiple drafts at once with `--batch`)**
+
+```console
+$ ls drafts/
+01-empty-title.yml  02-max-length.yml  03-duplicate-title.yml
+$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample --json
+{"ok":true,"written":["knowledge/req-todo/todo/add-task/empty-title/condition.yml","knowledge/req-todo/todo/add-task/empty-title/expected/001.yml","knowledge/req-todo/todo/add-task/max-length/condition.yml","knowledge/req-todo/todo/add-task/max-length/expected/001.yml","knowledge/req-todo/todo/add-task/duplicate-title/condition.yml","knowledge/req-todo/todo/add-task/duplicate-title/expected/001.yml"]}
+```
+
+`02-max-length.yml`/`03-duplicate-title.yml` reference `req-todo`/`todo`/`add-task` — newly created by `01-empty-title.yml` — by id alone, reusing them just as a single `apply` reuses an existing parent.
+
+**Example (`--batch` rejects the whole batch on a validation error)**
+
+```console
+$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample
+error: 02-max-length.yml: missing_description: condition.description must not be empty (path=condition.description)
+$ echo $?
+1
+```
+
+(No files remain under `knowledge/`, including the ones `01-empty-title.yml` had already written)
 
 **Example (`--dry-run`)**
 

@@ -354,6 +354,7 @@ $ echo $?
 
 ```text
 markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
+markharness knowledge apply --batch <dir> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
 ```
 
 **用途**: `knowledge validate`(1.3節)と同じ検証を行い、問題がなければ `knowledge/` 配下に**アトミックに**書き込む。5階層(Requirement〜ExpectedResult)のうち一部だけを新規作成する場合でも、全バリデーションが通過した後にまとめて書き込む(一時ファイル+リネーム。書き込み中にI/Oエラーが発生した場合は成功済みファイルも含めてロールバックする)。既存id(再利用)のファイルは上書きしない。
@@ -362,11 +363,20 @@ markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-re
 
 | オプション                 | 説明                                                                                                                                                                                                                                                                                     |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<draft-file>`             | (必須)ドラフトYAMLファイルのパス。形式は1.3節と共通                                                                                                                                                                                                                                      |
+| `<draft-file>`             | ドラフトYAMLファイルのパス。形式は1.3節と共通。`--batch` と排他                                                                                                                                                                                                                          |
+| `--batch <dir>`            | `<dir>` 直下の `*.yml` を全部ドラフトとして扱い、ファイル名の昇順で1件ずつ検証・適用する。`<draft-file>` と排他。下記「バッチモード」参照                                                                                                                                               |
 | `-d, --dir <path>`         | 1.3節と同様                                                                                                                                                                                                                                                                              |
 | `--json`                   | 1.3節と同様。成功時は書き込んだファイル一覧を出力する(下記参照)                                                                                                                                                                                                                          |
 | `--strip-redundant-prefix` | `condition.id` が `{behavior.id}-` で始まる場合、確認なしで接頭辞を除去したidを採用する。未指定の場合は `redundant_prefix` エラーで停止する(1.3節参照)。除去後idと同名のディレクトリが既に存在する(レガシーデータ)場合は、`knowledge add` と同様に除去せず既存のものをそのまま再利用する |
 | `--dry-run`                | `knowledge validate` と同義(検証のみ行い書き込まない)。CI等での用途を想定した別名                                                                                                                                                                                                        |
+
+**バッチモード(`--batch <dir>`)**: 複数のConditionを1件ずつ`validate`→`apply`と手動で回す代わりに、スクラッチディレクトリに溜めた複数のドラフトYAMLを一括で適用する。
+
+- 各ドラフトはファイル名の昇順(例: `01-empty-title.yml`, `02-max-length.yml`, ...)で順番に検証・適用される。後続のドラフトは、同じバッチ内で**先に適用されたドラフトが新規作成したRequirement/Feature/Behavior**を、そのドラフトを個別に`apply`したときと同様に(id のみを指定して)再利用できる。依存関係の解決自体は行わないため、親を先に作るドラフトのファイル名が子より辞書順で先になるよう命名すること。
+- **全体としてall-or-nothing**: いずれか1件のドラフトが検証エラーまたはパースエラーで失敗した場合、それより前に適用済みだった(このバッチ呼び出し内で書き込まれた)ファイルもすべて削除され、`knowledge/`はバッチ実行前の状態に戻る。ただし検証自体は各ドラフトをそれぞれの適用直前の`knowledge/`の状態に対して行う(先行するドラフトの結果を踏まえて後続を検証する)ため、「全ドラフトを最初にまとめて検証してから書き込む」という意味の事前一括検証ではない点に注意。
+- `--dry-run --batch <dir>` は、各ドラフトを現在の`knowledge/`の状態(=バッチ内の他ドラフトの適用は一切シミュレートしない)に対して検証するのみで、書き込みは一切行わない。そのため、バッチ内の依存関係がある場合、実際に(`--dry-run`無しで)適用したときの結果と`--dry-run`での検証結果が食い違う可能性がある(後続ドラフトが「まだ存在しない親」への依存を理由に検証エラーになるが、実際に適用すると先行ドラフトがその親を作るため成功する、というケース)。
+- `<dir>` 直下に `*.yml` が1つも無い場合はエラーにならず、`{"ok":true,"written":[]}` (0件適用)として成功する。
+- バリデーションエラー・パースエラーの `--json` 出力には、単体適用時の形式に `"file":"<ファイル名>"` を追加した `{"ok":false,"file":"...","errors":[...]}` (バリデーションエラー)または `{"ok":false,"file":"...","error":"..."}` (パースエラー)を用いる。人間可読モードでもエラーメッセージの先頭にファイル名を付加する。
 
 **終了コード**
 
@@ -397,6 +407,28 @@ $ echo $?
 ```
 
 `draft.yml` の `condition.id: add-task-max-length`(Behavior id `add-task` と重複)は `max-length` として書き込まれる。`knowledge add`(1.2節)の自動除去と同じ挙動。
+
+**使用例(`--batch` で複数ドラフトを一括適用)**
+
+```console
+$ ls drafts/
+01-empty-title.yml  02-max-length.yml  03-duplicate-title.yml
+$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample --json
+{"ok":true,"written":["knowledge/req-todo/todo/add-task/empty-title/condition.yml","knowledge/req-todo/todo/add-task/empty-title/expected/001.yml","knowledge/req-todo/todo/add-task/max-length/condition.yml","knowledge/req-todo/todo/add-task/max-length/expected/001.yml","knowledge/req-todo/todo/add-task/duplicate-title/condition.yml","knowledge/req-todo/todo/add-task/duplicate-title/expected/001.yml"]}
+```
+
+`02-max-length.yml`/`03-duplicate-title.yml` は `01-empty-title.yml` が新規作成した `req-todo`/`todo`/`add-task` を `id` のみで参照して再利用している(単体`apply`で既存の親を再利用するのと同じ書き方)。
+
+**使用例(`--batch` でバリデーションエラーにより全体を書き込み拒否)**
+
+```console
+$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample
+error: 02-max-length.yml: missing_description: condition.description must not be empty (path=condition.description)
+$ echo $?
+1
+```
+
+(`01-empty-title.yml` が既に書き込んでいたファイルも含め、`knowledge/` 配下には一切ファイルが残らない)
 
 **使用例(`--dry-run`)**
 

@@ -324,8 +324,12 @@ pub enum KnowledgeCommand {
     },
     /// Validate a draft YAML file and, if valid, write it under knowledge/
     Apply {
-        /// Path to the draft YAML file
-        draft_file: PathBuf,
+        /// Path to the draft YAML file. Required unless --batch is given.
+        #[arg(required_unless_present = "batch")]
+        draft_file: Option<PathBuf>,
+        /// Directory whose direct *.yml children are all treated as draft files and applied in file-name order. If any fails to parse or validate, every file this call wrote (including by earlier, successful drafts in the same batch) is removed before it returns.
+        #[arg(long, conflicts_with = "draft_file")]
+        batch: Option<PathBuf>,
         /// Target project directory containing knowledge/. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -403,6 +407,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
         }
         Command::Knowledge(KnowledgeCommand::Apply {
             draft_file,
+            batch,
             dir,
             json,
             strip_redundant_prefix,
@@ -412,6 +417,18 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
+
+            if let Some(batch_dir) = batch {
+                return run_knowledge_apply_batch(
+                    &root,
+                    &batch_dir,
+                    json,
+                    strip_redundant_prefix,
+                    dry_run,
+                );
+            }
+            let draft_file =
+                draft_file.expect("clap requires draft_file when --batch is not given");
             let draft = read_and_parse_draft(&draft_file);
 
             if dry_run {
@@ -429,7 +446,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             match knowledge_apply::apply_draft(&root, &draft, &options) {
                 Ok(result) => {
                     if json {
-                        println!("{}", apply_result_to_json(&result));
+                        println!("{}", written_paths_to_json(&result.written_paths));
                     }
                     Ok(())
                 }
@@ -969,6 +986,138 @@ fn run_knowledge_add_edit(root: &std::path::Path) -> io::Result<()> {
     }
 }
 
+/// Lists `dir`'s direct `*.yml` children, sorted by name for a deterministic
+/// application order. A later draft in a `--batch` run is validated against
+/// `knowledge/`'s state *after* every earlier one in this same listing has
+/// been applied (see `knowledge_apply::apply_batch`), so file naming (e.g.
+/// `01-...yml`, `02-...yml`) controls which drafts can reuse a parent
+/// another draft in the batch creates.
+fn sorted_yaml_files_in(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("yml"))
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Prints one draft file's validation errors, prefixed with the file name so
+/// they're distinguishable within a `--batch` run, then exits with code 1
+/// (the same code single-draft validation failure uses, via
+/// `report_validation_outcome`).
+fn report_batch_validation_error(file: &Path, errors: &[ValidationError], json: bool) -> ! {
+    if json {
+        println!(
+            "{{\"ok\":false,\"file\":\"{}\",\"errors\":{}}}",
+            json_escape(&file.to_string_lossy()),
+            validation_errors_to_json_array(errors)
+        );
+    } else {
+        for e in errors {
+            let mut detail = String::new();
+            if let Some(suggestion) = &e.suggestion {
+                detail.push_str(&format!("suggested=\"{suggestion}\", "));
+            }
+            detail.push_str(&format!("path={}", e.path));
+            eprintln!(
+                "error: {}: {}: {} ({detail})",
+                file.display(),
+                e.code.as_str(),
+                e.message
+            );
+        }
+    }
+    std::process::exit(1);
+}
+
+/// Prints one draft file's parse error, prefixed with the file name, then
+/// exits with code 2 (the same code a single-draft parse failure uses, via
+/// `read_and_parse_draft`).
+fn report_batch_parse_error(file: &Path, message: &str, json: bool) -> ! {
+    if json {
+        println!(
+            "{{\"ok\":false,\"file\":\"{}\",\"error\":\"{}\"}}",
+            json_escape(&file.to_string_lossy()),
+            json_escape(message)
+        );
+    } else {
+        eprintln!("error: {}: {message}", file.display());
+    }
+    std::process::exit(2);
+}
+
+fn run_knowledge_apply_batch(
+    root: &Path,
+    batch_dir: &Path,
+    json: bool,
+    strip_redundant_prefix: bool,
+    dry_run: bool,
+) -> io::Result<()> {
+    let draft_paths = match sorted_yaml_files_in(batch_dir) {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!(
+                "error: cannot read batch directory {}: {e}",
+                batch_dir.display()
+            );
+            std::process::exit(2);
+        }
+    };
+
+    if dry_run {
+        let options = ValidateOptions {
+            strip_redundant_prefix,
+        };
+        for draft_path in &draft_paths {
+            let file_name = draft_path
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| draft_path.clone());
+            let yaml = match fs::read_to_string(draft_path) {
+                Ok(yaml) => yaml,
+                Err(e) => report_batch_parse_error(&file_name, &e.to_string(), json),
+            };
+            let draft = match knowledge_draft::parse_draft(&yaml) {
+                Ok(draft) => draft,
+                Err(e) => report_batch_parse_error(&file_name, &e.to_string(), json),
+            };
+            let errors = knowledge_draft::validate_draft(root, &draft, &options);
+            if !errors.is_empty() {
+                report_batch_validation_error(&file_name, &errors, json);
+            }
+        }
+        if json {
+            println!("{{\"ok\":true}}");
+        }
+        return Ok(());
+    }
+
+    let options = ApplyOptions {
+        strip_redundant_prefix,
+    };
+    match knowledge_apply::apply_batch(root, &draft_paths, &options) {
+        Ok(result) => {
+            if json {
+                println!("{}", written_paths_to_json(&result.written_paths));
+            }
+            Ok(())
+        }
+        Err(knowledge_apply::BatchApplyError::Draft { file, error }) => match error {
+            knowledge_apply::DraftFileError::Parse(message) => {
+                report_batch_parse_error(&file, &message, json)
+            }
+            knowledge_apply::DraftFileError::Validation(errors) => {
+                report_batch_validation_error(&file, &errors, json)
+            }
+        },
+        Err(knowledge_apply::BatchApplyError::Io(e)) => {
+            eprintln!("error: filesystem error: {e}");
+            std::process::exit(3);
+        }
+    }
+}
+
 fn read_and_parse_draft(draft_file: &std::path::Path) -> knowledge_draft::KnowledgeDraft {
     let yaml = match fs::read_to_string(draft_file) {
         Ok(yaml) => yaml,
@@ -1052,9 +1201,16 @@ fn validation_error_to_json(e: &ValidationError) -> String {
     )
 }
 
-fn errors_to_json(errors: &[ValidationError]) -> String {
+fn validation_errors_to_json_array(errors: &[ValidationError]) -> String {
     let items: Vec<String> = errors.iter().map(validation_error_to_json).collect();
-    format!("{{\"ok\":false,\"errors\":[{}]}}", items.join(","))
+    format!("[{}]", items.join(","))
+}
+
+fn errors_to_json(errors: &[ValidationError]) -> String {
+    format!(
+        "{{\"ok\":false,\"errors\":{}}}",
+        validation_errors_to_json_array(errors)
+    )
 }
 
 fn lineage_to_json(entries: &[lineage::FeatureLineage]) -> String {
@@ -1136,9 +1292,8 @@ fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<
     Ok(testcases_dir.join(relative_path))
 }
 
-fn apply_result_to_json(result: &knowledge_apply::ApplyResult) -> String {
-    let paths: Vec<String> = result
-        .written_paths
+fn written_paths_to_json(written_paths: &[PathBuf]) -> String {
+    let paths: Vec<String> = written_paths
         .iter()
         .map(|p| {
             format!(
@@ -1342,12 +1497,14 @@ mod tests {
         match cli.command {
             Command::Knowledge(KnowledgeCommand::Apply {
                 draft_file,
+                batch,
                 dir,
                 json,
                 strip_redundant_prefix,
                 dry_run,
             }) => {
-                assert_eq!(draft_file, PathBuf::from("draft.yml"));
+                assert_eq!(draft_file, Some(PathBuf::from("draft.yml")));
+                assert_eq!(batch, None);
                 assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")));
                 assert!(json);
                 assert!(strip_redundant_prefix);
@@ -1364,16 +1521,45 @@ mod tests {
         match cli.command {
             Command::Knowledge(KnowledgeCommand::Apply {
                 draft_file,
+                batch,
                 dir,
                 json,
                 strip_redundant_prefix,
                 dry_run,
             }) => {
-                assert_eq!(draft_file, PathBuf::from("draft.yml"));
+                assert_eq!(draft_file, Some(PathBuf::from("draft.yml")));
+                assert_eq!(batch, None);
                 assert_eq!(dir, None);
                 assert!(!json);
                 assert!(!strip_redundant_prefix);
                 assert!(!dry_run);
+            }
+            _ => panic!("expected Knowledge Apply command"),
+        }
+    }
+
+    #[test]
+    fn parses_knowledge_apply_with_batch_option() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "knowledge",
+            "apply",
+            "--batch",
+            "tmp/drafts",
+            "--dir",
+            "tmp/todo-sample",
+        ]);
+
+        match cli.command {
+            Command::Knowledge(KnowledgeCommand::Apply {
+                draft_file,
+                batch,
+                dir,
+                ..
+            }) => {
+                assert_eq!(draft_file, None);
+                assert_eq!(batch, Some(PathBuf::from("tmp/drafts")));
+                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")));
             }
             _ => panic!("expected Knowledge Apply command"),
         }
