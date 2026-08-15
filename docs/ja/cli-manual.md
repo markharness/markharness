@@ -989,6 +989,24 @@ $ echo $?
 
 ---
 
+### 1.19 `markharness --version` / `-V` — バージョン表示
+
+```text
+markharness --version
+markharness -V
+```
+
+**用途**: `Cargo.toml` の `version`(ビルド時に `CARGO_PKG_VERSION` として埋め込まれる)を表示する。バージョン番号は `Cargo.toml` を唯一の情報源とする(CLAUDE.mdの運用ルール)。
+
+**使用例**
+
+```console
+$ markharness --version
+markharness 0.2.0
+```
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。

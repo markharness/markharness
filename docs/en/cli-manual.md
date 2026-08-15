@@ -989,6 +989,24 @@ $ echo $?
 
 ---
 
+### 1.19 `markharness --version` / `-V` — Display version
+
+```text
+markharness --version
+markharness -V
+```
+
+**Purpose**: Prints the `version` from `Cargo.toml` (embedded at build time as `CARGO_PKG_VERSION`). `Cargo.toml` is the single source of truth for the version number (per the CLAUDE.md operating rule).
+
+**Example**
+
+```console
+$ markharness --version
+markharness 0.2.0
+```
+
+---
+
 ## 2. Unimplemented (Planned) Commands
 
 The following are commands planned for future implementation, based on the use case diagram and use case descriptions in `docs/product-operation.md`. The command names and options are tentative proposals and may change at implementation time.

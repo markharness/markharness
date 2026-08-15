@@ -24,7 +24,7 @@ use crate::validate;
 use crate::verify;
 
 #[derive(Parser)]
-#[command(name = "markharness")]
+#[command(name = "markharness", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -1366,6 +1366,16 @@ fn generate_result_to_json(generated: usize, written: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::error::ErrorKind;
+    use clap::CommandFactory;
+
+    #[test]
+    fn version_flag_reports_display_version() {
+        let result = Cli::command().try_get_matches_from(["markharness", "--version"]);
+
+        let err = result.expect_err("--version should short-circuit with an error");
+        assert_eq!(err.kind(), ErrorKind::DisplayVersion);
+    }
 
     #[test]
     fn safe_testcase_path_joins_a_nested_relative_path() {
