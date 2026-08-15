@@ -1,9 +1,10 @@
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::fs_safety::replace_file;
+use crate::fs_safety::{remove_file_no_follow, replace_file};
 use crate::knowledge::is_valid_slug;
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
@@ -86,9 +87,162 @@ pub fn add_axis(root: &Path, id: &str, label: Option<&str>) -> Result<PathBuf, A
     Ok(path)
 }
 
+#[derive(Debug, Deserialize)]
+struct AxisBearingEntry {
+    #[serde(default)]
+    axis: Vec<String>,
+}
+
+/// Recursively collects every axis id referenced by a `requirement.yml`,
+/// `feature.yml`, or `behavior.yml` under `knowledge_root` (the only three
+/// entity kinds with an `axis` field; `condition.yml`/`expected/*.yml` have
+/// none).
+fn collect_referenced_axes(knowledge_root: &Path) -> HashSet<String> {
+    let mut referenced = HashSet::new();
+    collect_referenced_axes_into(knowledge_root, &mut referenced);
+    referenced
+}
+
+fn collect_referenced_axes_into(dir: &Path, out: &mut HashSet<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_referenced_axes_into(&path, out);
+            continue;
+        }
+        let is_axis_bearing_file = matches!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("requirement.yml" | "feature.yml" | "behavior.yml")
+        );
+        if !is_axis_bearing_file {
+            continue;
+        }
+        if let Ok(yaml) = fs::read_to_string(&path)
+            && let Ok(parsed) = serde_yaml_ng::from_str::<AxisBearingEntry>(&yaml)
+        {
+            out.extend(parsed.axis);
+        }
+    }
+}
+
+/// Returns the ids of every `axes/*.yml` entry not referenced by any
+/// `requirement`/`feature`/`behavior`'s `axis:` list anywhere under
+/// `knowledge/`, sorted by id.
+pub fn find_unused(root: &Path) -> Vec<String> {
+    let referenced = collect_referenced_axes(&root.join("knowledge"));
+    let mut unused: Vec<String> = list_axes(root)
+        .into_iter()
+        .map(|entry| entry.id)
+        .filter(|id| !referenced.contains(id))
+        .collect();
+    unused.sort();
+    unused
+}
+
+/// Returns the ids `find_unused` reports, additionally deleting each one's
+/// `axes/<id>.yml` when `delete` is true (a no-op report otherwise).
+pub fn prune(root: &Path, delete: bool) -> io::Result<Vec<String>> {
+    let unused = find_unused(root);
+    if delete {
+        for id in &unused {
+            let path = root.join("axes").join(format!("{id}.yml"));
+            remove_file_no_follow(root, &path)?;
+        }
+    }
+    Ok(unused)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_unused_reports_an_axis_referenced_by_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::write(
+            dir.path().join("axes/orphan.yml"),
+            "id: orphan\nlabel: orphan\n",
+        )
+        .unwrap();
+
+        let unused = find_unused(dir.path());
+
+        assert_eq!(unused, vec!["orphan".to_string()]);
+    }
+
+    #[test]
+    fn find_unused_excludes_an_axis_referenced_by_a_requirement() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::write(
+            dir.path().join("axes/gameplay.yml"),
+            "id: gameplay\nlabel: gameplay\n",
+        )
+        .unwrap();
+        let requirement_dir = dir.path().join("knowledge/controls");
+        fs::create_dir_all(&requirement_dir).unwrap();
+        fs::write(
+            requirement_dir.join("requirement.yml"),
+            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+        )
+        .unwrap();
+
+        let unused = find_unused(dir.path());
+
+        assert!(unused.is_empty());
+    }
+
+    #[test]
+    fn prune_without_delete_reports_unused_axes_but_leaves_files_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::write(
+            dir.path().join("axes/orphan.yml"),
+            "id: orphan\nlabel: orphan\n",
+        )
+        .unwrap();
+
+        let pruned = prune(dir.path(), false).unwrap();
+
+        assert_eq!(pruned, vec!["orphan".to_string()]);
+        assert!(dir.path().join("axes/orphan.yml").exists());
+    }
+
+    #[test]
+    fn prune_with_delete_removes_only_the_unused_axis_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::write(
+            dir.path().join("axes/orphan.yml"),
+            "id: orphan\nlabel: orphan\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("axes/gameplay.yml"),
+            "id: gameplay\nlabel: gameplay\n",
+        )
+        .unwrap();
+        let requirement_dir = dir.path().join("knowledge/controls");
+        fs::create_dir_all(&requirement_dir).unwrap();
+        fs::write(
+            requirement_dir.join("requirement.yml"),
+            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+        )
+        .unwrap();
+
+        let pruned = prune(dir.path(), true).unwrap();
+
+        assert_eq!(pruned, vec!["orphan".to_string()]);
+        assert!(!dir.path().join("axes/orphan.yml").exists());
+        assert!(
+            dir.path().join("axes/gameplay.yml").exists(),
+            "an axis still referenced by a requirement must not be deleted"
+        );
+    }
 
     #[test]
     fn returns_empty_list_when_axes_dir_missing() {

@@ -1022,6 +1022,41 @@ markharness 0.2.0
 
 ---
 
+### 1.20 `markharness axes prune` — Detect/delete unused axes
+
+```text
+markharness axes prune [--delete] [--json] [-d, --dir <path>]
+```
+
+**Purpose**: Detects axes registered under `axes/*.yml` that are not referenced by any Requirement/Feature/Behavior's `axis:` list anywhere under `knowledge/` (orphaned axes). `condition.yml`/`expected/*.yml` have no `axis` field, so they are not scanned.
+
+**Behavior**
+
+- Report-only by default (`axes/*.yml` is never deleted unless `--delete` is given).
+- With `--delete`, actually deletes `axes/<id>.yml` for every unused axis found. No second confirmation (e.g. an additional `--yes`) is required — passing `--delete` itself is treated as explicit consent, since only orphaned axes with no reference anywhere are ever a candidate, so the risk of losing anything important is low.
+- With `--json`, prints `{"axes":[<ids of unused axes>],"deleted":<bool>}`. `deleted` reflects whether `--delete` was given; the `axes` key and structure are the same regardless of `--delete`, so a caller doesn't need separate parsing logic for the two modes.
+
+**Example (report only)**
+
+```console
+$ markharness axes prune --dir tmp/todo-sample --json
+{"axes":["legacy-ui"],"deleted":false}
+```
+
+**Example (delete)**
+
+```console
+$ markharness axes prune --delete --dir tmp/todo-sample --json
+{"axes":["legacy-ui"],"deleted":true}
+$ markharness axes list --dir tmp/todo-sample --json
+```
+
+(`legacy-ui` is removed from `axes/` and no longer appears in `axes list`)
+
+**Use case mapping**: A companion command to `markharness axes add` (section 1.8). Does not map explicitly to any UC.
+
+---
+
 ## 2. Unimplemented (Planned) Commands
 
 The following are commands planned for future implementation, based on the use case diagram and use case descriptions in `docs/product-operation.md`. The command names and options are tentative proposals and may change at implementation time.

@@ -93,6 +93,18 @@ pub fn replace_file(root: &Path, target: &Path, content: &[u8]) -> io::Result<()
     rename_result
 }
 
+/// Removes the single file at `target`, refusing to follow a symlink/junction
+/// at `target` itself or any of its ancestors. A missing `target` is treated
+/// as success (removal is idempotent), mirroring `remove_dir_all_no_follow`.
+pub fn remove_file_no_follow(root: &Path, target: &Path) -> io::Result<()> {
+    ensure_no_symlink_ancestor(root, target)?;
+    match fs::remove_file(target) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Recursively removes `target` and its contents, refusing to follow a
 /// symlink/junction at `target` itself or any of its ancestors. A missing
 /// `target` is treated as success (removal is idempotent).
@@ -372,6 +384,28 @@ mod tests {
         replace_file(root, &target, b"fresh content").unwrap();
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "fresh content");
+    }
+
+    #[test]
+    fn remove_file_no_follow_removes_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let target = root.join("axes").join("unused.yml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "id: unused\nlabel: unused\n").unwrap();
+
+        remove_file_no_follow(root, &target).unwrap();
+
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn remove_file_no_follow_treats_a_missing_file_as_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let target = root.join("axes").join("missing.yml");
+
+        assert!(remove_file_no_follow(root, &target).is_ok());
     }
 
     #[test]

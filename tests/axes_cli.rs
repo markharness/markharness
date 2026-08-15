@@ -69,6 +69,51 @@ fn axes_add_json_reports_the_written_path() {
 }
 
 #[test]
+fn axes_prune_reports_an_unused_axis_and_leaves_it_in_place() {
+    let dir = init_project();
+    std::fs::write(
+        dir.path().join("axes/orphan.yml"),
+        "id: orphan\nlabel: orphan\n",
+    )
+    .unwrap();
+
+    let output = run(&["axes", "prune", "--dir", dir.path().to_str().unwrap(), "--json"]);
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["axes"], serde_json::json!(["orphan"]));
+    assert_eq!(parsed["deleted"], serde_json::json!(false));
+    assert!(dir.path().join("axes/orphan.yml").exists());
+}
+
+#[test]
+fn axes_prune_delete_removes_the_unused_axis_file() {
+    let dir = init_project();
+    std::fs::write(
+        dir.path().join("axes/orphan.yml"),
+        "id: orphan\nlabel: orphan\n",
+    )
+    .unwrap();
+
+    let output = run(&[
+        "axes",
+        "prune",
+        "--delete",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["axes"], serde_json::json!(["orphan"]));
+    assert_eq!(parsed["deleted"], serde_json::json!(true));
+    assert!(!dir.path().join("axes/orphan.yml").exists());
+}
+
+#[test]
 fn axes_add_exits_two_and_does_not_overwrite_when_the_id_already_exists() {
     let dir = init_project();
     let first = run(&[

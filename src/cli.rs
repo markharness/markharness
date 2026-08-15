@@ -304,6 +304,18 @@ pub enum AxesCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Report axes/*.yml entries not referenced by any requirement/feature/behavior's axis: list
+    Prune {
+        /// Also delete each unused axis's axes/<id>.yml (default is report-only)
+        #[arg(long)]
+        delete: bool,
+        /// Target project directory containing axes/. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -570,6 +582,27 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     std::process::exit(3);
                 }
             }
+        }
+        Command::Axes(AxesCommand::Prune { delete, dir, json }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let unused = axes::prune(&root, delete)?;
+            if json {
+                println!("{}", axes_prune_result_to_json(&unused, delete));
+            } else if unused.is_empty() {
+                println!("no unused axes found under axes/");
+            } else {
+                for id in &unused {
+                    if delete {
+                        println!("deleted axes/{id}.yml (unused)");
+                    } else {
+                        println!("{id} (unused)");
+                    }
+                }
+            }
+            Ok(())
         }
         Command::Cache(CacheCommand::Rebuild { dir }) => {
             let root = match dir {
@@ -1369,6 +1402,17 @@ fn axes_add_result_to_json(path: &Path) -> String {
         "{{\"ok\":true,\"written\":[\"{}\"]}}",
         json_escape(&path.to_string_lossy().replace('\\', "/"))
     )
+}
+
+/// Same key structure (`axes`/`deleted`) for both a dry-run report and an
+/// actual `--delete` run, so a caller doesn't need separate parsing logic
+/// for the two modes.
+fn axes_prune_result_to_json(unused: &[String], deleted: bool) -> String {
+    let ids: Vec<String> = unused
+        .iter()
+        .map(|id| format!("\"{}\"", json_escape(id)))
+        .collect();
+    format!("{{\"axes\":[{}],\"deleted\":{deleted}}}", ids.join(","))
 }
 
 /// `--json` output for bare `verify`'s dry-run diff (Step C): reports
