@@ -427,7 +427,7 @@ $ echo $?
 ### 1.5 `markharness generate` — TestCase の決定的生成(UC2: TestCaseを決定的生成する)
 
 ```text
-markharness generate
+markharness generate [--json] [-d, --dir <path>]
 ```
 
 **用途**: `knowledge/` 配下を決定的に走査し、`Requirement × Feature × Behavior × Condition × ExpectedResult` から `TestCase` を機械的に組み立てて、`generated/testcases/` 配下に **1 Condition = 1 ファイル** の `.yml` として再生成する。実行のたびに `generated/testcases/` を空にしてから書き直すため、削除された Condition に対応する古いファイルも自動的に消える。
@@ -445,12 +445,16 @@ markharness generate
 - `axis`: `Requirement` / `Feature` / `Behavior` の `axis` を合成(union、重複除去のうえソート)した観点一覧(§3.4「axisの継承」)。
 - 出力は `serde_yaml_ng` によるシリアライズで、同一入力に対して常に同一の出力になる(決定性、CIでの差分検証の前提)。
 - `generate` は `generated/testcases/*.yml` に加えて `generated/traceability-index.json`(Requirement → Feature → Behavior → Condition → TestCase の対応関係を持つ機械可読索引。`serde_json` による整形済みJSON)も同時に再生成する。`markharness verify`(1.6節)はこのファイルも差分検証対象に含める。
+- `--dir` を省略するとカレントディレクトリを対象にする(他のコマンドと同じ規約。以前は `generate` だけこのオプションを持たず常にカレントディレクトリ固定だった)。
+- `--json` を指定すると、人間可読メッセージの代わりに `{"ok":true,"generated":<件数>,"written":[<書き込んだファイルパスの一覧(traceability-index.jsonを含む)>]}` を出力する。表示上の件数と実際に書き込まれたファイル数が食い違っていないかを、呼び出し側が機械的に突き合わせられるようにするための出力。
 
 **使用例**
 
 ```console
 $ markharness generate
 generated 1 testcase(s) into generated/testcases/
+$ markharness generate --json
+{"ok":true,"generated":1,"written":["generated/testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml","generated/traceability-index.json"]}
 ```
 
 `generated/testcases/empty-title.yml`:

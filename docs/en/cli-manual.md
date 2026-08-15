@@ -427,7 +427,7 @@ $ echo $?
 ### 1.5 `markharness generate` — Deterministic generation of TestCase (UC2: deterministically generate TestCase)
 
 ```text
-markharness generate
+markharness generate [--json] [-d, --dir <path>]
 ```
 
 **Purpose**: Deterministically traverses `knowledge/`, mechanically assembles `TestCase` from `Requirement × Feature × Behavior × Condition × ExpectedResult`, and regenerates them as `.yml` files under `generated/testcases/`, **one file per Condition**. Each run empties `generated/testcases/` before rewriting it, so stale files corresponding to a deleted Condition are automatically removed too.
@@ -445,12 +445,16 @@ markharness generate
 - `axis`: a list of viewpoints formed by combining (union, deduplicated and sorted) the `axis` of the `Requirement` / `Feature` / `Behavior` (§3.4 "axis inheritance").
 - The output is serialized with `serde_yaml_ng`, and always produces the same output for the same input (determinism, a prerequisite for diff verification in CI).
 - In addition to `generated/testcases/*.yml`, `generate` also regenerates `generated/traceability-index.json` at the same time (a machine-readable index holding the Requirement → Feature → Behavior → Condition → TestCase correspondence, as pretty-printed JSON via `serde_json`). `markharness verify` (section 1.6) also includes this file in its diff verification.
+- Omitting `--dir` targets the current directory (the same convention every other command follows; `generate` used to be the sole exception, always pinned to the current directory).
+- `--json` prints `{"ok":true,"generated":<count>,"written":[<list of written file paths, including traceability-index.json>]}` instead of the human-readable message, so a caller can mechanically reconcile the reported count against the actual written files.
 
 **Example**
 
 ```console
 $ markharness generate
 generated 1 testcase(s) into generated/testcases/
+$ markharness generate --json
+{"ok":true,"generated":1,"written":["generated/testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml","generated/traceability-index.json"]}
 ```
 
 `generated/testcases/empty-title.yml`:

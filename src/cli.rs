@@ -42,7 +42,14 @@ pub enum Command {
     #[command(subcommand)]
     Knowledge(KnowledgeCommand),
     /// Deterministically (re)generate generated/testcases/*.yml from knowledge/
-    Generate,
+    Generate {
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify generated output against knowledge/, or trace/audit execution results against ChangeEvents
     Verify(VerifyArgs),
     /// List axes/*.yml registry entries
@@ -422,12 +429,16 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Generate => {
-            let root = env::current_dir()?;
+        Command::Generate { dir, json } => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
             let testcases = generate::generate_testcases(&root.join("knowledge"))?;
             let testcases_dir = root.join("generated").join("testcases");
             remove_dir_all_no_follow(&root, &testcases_dir)?;
             std::fs::create_dir_all(&testcases_dir)?;
+            let mut written = Vec::new();
             for testcase in &testcases {
                 let testcase_path = safe_testcase_path(&testcases_dir, &testcase.relative_path())?;
                 replace_file(
@@ -435,17 +446,24 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     &testcase_path,
                     generate::serialize_testcase(testcase).as_bytes(),
                 )?;
+                written.push(testcase_path);
             }
             let index = traceability::build_index(&testcases);
+            let index_path = root.join("generated").join("traceability-index.json");
             replace_file(
                 &root,
-                &root.join("generated").join("traceability-index.json"),
+                &index_path,
                 traceability::serialize_index(&index).as_bytes(),
             )?;
-            println!(
-                "generated {} testcase(s) into generated/testcases/",
-                testcases.len()
-            );
+            written.push(index_path);
+            if json {
+                println!("{}", generate_result_to_json(testcases.len(), &written));
+            } else {
+                println!(
+                    "generated {} testcase(s) into generated/testcases/",
+                    testcases.len()
+                );
+            }
             Ok(())
         }
         Command::Axes(AxesCommand::List { dir, json }) => {
@@ -1076,6 +1094,22 @@ fn apply_result_to_json(result: &knowledge_apply::ApplyResult) -> String {
     format!("{{\"ok\":true,\"written\":[{}]}}", paths.join(","))
 }
 
+fn generate_result_to_json(generated: usize, written: &[PathBuf]) -> String {
+    let paths: Vec<String> = written
+        .iter()
+        .map(|p| {
+            format!(
+                "\"{}\"",
+                json_escape(&p.to_string_lossy().replace('\\', "/"))
+            )
+        })
+        .collect();
+    format!(
+        "{{\"ok\":true,\"generated\":{generated},\"written\":[{}]}}",
+        paths.join(",")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1101,6 +1135,32 @@ mod tests {
             result.is_err(),
             "expected an error for a relative_path escaping testcases_dir, got: {result:?}"
         );
+    }
+
+    #[test]
+    fn parses_generate_dir_and_json_options() {
+        let cli = Cli::parse_from(["markharness", "generate", "--dir", "some/path", "--json"]);
+
+        match cli.command {
+            Command::Generate { dir, json } => {
+                assert_eq!(dir, Some(PathBuf::from("some/path")));
+                assert!(json);
+            }
+            _ => panic!("expected Generate command"),
+        }
+    }
+
+    #[test]
+    fn parses_generate_without_dir_or_json_options() {
+        let cli = Cli::parse_from(["markharness", "generate"]);
+
+        match cli.command {
+            Command::Generate { dir, json } => {
+                assert_eq!(dir, None);
+                assert!(!json);
+            }
+            _ => panic!("expected Generate command"),
+        }
     }
 
     #[test]

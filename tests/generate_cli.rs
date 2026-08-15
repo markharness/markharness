@@ -18,6 +18,13 @@ fn run_in(dir: &Path, args: &[&str]) -> Output {
         .expect("failed to run markharness binary")
 }
 
+fn run(args: &[&str]) -> Output {
+    Command::new(bin())
+        .args(args)
+        .output()
+        .expect("failed to run markharness binary")
+}
+
 #[cfg(unix)]
 fn link_dir(link: &Path, target: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
@@ -78,6 +85,70 @@ fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, co
         format!("id: {condition}-001\ncondition: {condition}\ndescription: |\n  Expected.\n"),
     )
     .unwrap();
+}
+
+/// Step B: unlike every other subcommand, `generate` used to only accept
+/// `env::current_dir()` and had no `--dir`, forcing callers to `cd` into the
+/// target project first.
+#[test]
+fn generate_accepts_a_dir_option_targeting_a_directory_other_than_cwd() {
+    let root = tempfile::tempdir().unwrap();
+    let init_output = run_in(root.path(), &["init"]);
+    assert!(init_output.status.success());
+    write_chain(root.path(), "req-one", "feature-a", "behavior-a", "ground");
+
+    // Run from an unrelated cwd, targeting `root` only via --dir.
+    let unrelated_cwd = tempfile::tempdir().unwrap();
+    let output = run_in(
+        unrelated_cwd.path(),
+        &["generate", "--dir", root.path().to_str().unwrap()],
+    );
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        root.path()
+            .join("generated/testcases/req-one/feature-a/behavior-a/ground.yml")
+            .is_file()
+    );
+}
+
+/// Step B: `--json` should report the generated count and every written
+/// path, so callers don't have to reconcile a human-readable count string
+/// against the actual file count (the original reported bug was exactly
+/// this kind of silent mismatch).
+#[test]
+fn generate_json_reports_generated_count_and_written_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let init_output = run_in(root.path(), &["init"]);
+    assert!(init_output.status.success());
+    write_chain(root.path(), "req-one", "feature-a", "behavior-a", "ground");
+
+    let output = run(&["generate", "--dir", root.path().to_str().unwrap(), "--json"]);
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["ok"], serde_json::json!(true));
+    assert_eq!(parsed["generated"], serde_json::json!(1));
+    let written = parsed["written"].as_array().unwrap();
+    assert!(
+        written.iter().any(|p| p
+            .as_str()
+            .unwrap()
+            .ends_with("generated/testcases/req-one/feature-a/behavior-a/ground.yml")),
+        "unexpected written list: {written:?}"
+    );
+    assert!(
+        written
+            .iter()
+            .any(|p| p.as_str().unwrap().ends_with("traceability-index.json")),
+        "unexpected written list: {written:?}"
+    );
 }
 
 /// Regression test for the reported bug: two Conditions with the same
