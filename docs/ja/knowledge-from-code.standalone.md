@@ -81,7 +81,7 @@ generated/testcases/   # <requirement>/<feature>/<behavior>/<condition>.yml、`m
 
 Phase 2 で特定した各 Condition について:
 
-1. `KnowledgeDraft` スキーマに合致するドラフト YAML ファイルを(例えばスクラッチパスに)書く:
+1. `KnowledgeDraft` スキーマに合致するドラフト YAML ファイルを(例えばスクラッチパスに)書く。空の雛形は `markharness knowledge scaffold`(stdout に出力、`--out <path>` でファイル出力も可 — 既存ファイルは上書きしない)で取得できる。IDE 補完用に `docs/knowledge_draft.schema.json` という参考スキーマも用意されている(あくまで参考用 — 「既存エントリなら label/axis/description は省略可」「axis は `axes/` に登録済みである必要がある」といった状態依存のルールはプレーンな JSON Schema では表現できないため、実際のチェックは常に `knowledge validate`/`apply` が行う):
 
    ```yaml
    requirement:
@@ -118,18 +118,20 @@ Phase 2 で特定した各 Condition について:
 
    既に存在し変更のない階層では `label`/`axis`/`description` を省略する — 矛盾する値を渡すと `conflicting_existing_value` で検証に失敗する。
 
-   **Condition id の衝突:** `markharness generate` は各 Condition を、素の `condition.id` を使って `generated/testcases/<condition-id>.yml` に書き出す — Behavior/Feature による名前空間分けは**行わない**。`markharness knowledge validate`/`apply` は、異なる Behavior 間での id の再利用を検出*しない*(一意性のチェックは Behavior 内でのみ行われる)ため、異なる Behavior に属する2つの Condition が同じ id を共有していると(例: `add-todo` と `edit-todo` の両方に `valid-title`、あるいは `edit-todo`・`toggle-todo`・`delete-todo` で `nonexistent-id` を使い回す等)、生成されたファイルが黙って上書きされる — 後から実行した `generate` が勝ち、それ以前のテスト知識はエラーなく `generated/testcases/` から消える。Condition をドラフトする前に、その id が `knowledge/` 内の他の場所で既に使われていないか確認し(例: `find knowledge -name condition.yml` や `grep -r "^id: <slug>" knowledge`)、使われていれば一意な id にする — 恣意的なサフィックスを付けるより、区別点を id に織り込む方が良い(例: 追加時の `valid-title` に対し編集時は `valid-new-title`、`id-not-found-on-toggle` と `id-not-found-on-delete` など)。
+   **Condition id の一意性:** `markharness generate` は各 Condition を `generated/testcases/<requirement>/<feature>/<behavior>/<condition-id>.yml` に書き出す — `knowledge/` と全く同じ階層をそのままミラーする。そのため `condition.id` は同じ Behavior 内でのみ一意であればよく(`markharness knowledge validate`/`apply` もその範囲でのみ一意性を検証する)、異なる Behavior で同じ id を再利用しても(例: `add-todo` と `edit-todo` の両方で `valid-title` を使う等)出力が衝突することはない。id をリネームしたり衝突を避けたりする作業は不要 — 詳細は末尾の「原則」を参照。
 
 2. 検証: `markharness knowledge validate <draft-file> --json`。報告されたエラー(`invalid_slug`、`missing_axis`、`missing_description`、`unknown_axis`、`redundant_prefix`、`conflicting_existing_value`、`parent_not_found`、`unknown_forked_from`)をすべて解消してから次に進む。
 3. 適用: `markharness knowledge apply <draft-file> --json`(`--strip-redundant-prefix` は、意図的に `behavior-` プレフィックス付きの `condition.id` を剥がしたい場合のみ追加する)。
 4. 対応するチェックリストのステップを完了にする。
+
+複数の Condition をまとめて処理する場合は、ドラフトファイルを1つのディレクトリに集め、`markharness knowledge validate --batch <dir> --json`(または同じチェックを行う `markharness knowledge apply --batch <dir> --dry-run --json`)で一括検証してから `markharness knowledge apply --batch <dir> --json` を実行してもよい。ファイルはディレクトリ内のファイル名順に適用され、後続のドラフトは同じバッチ内で先行するドラフトが作成した Requirement/Feature/Behavior を参照できる。`apply --batch`(`--dry-run` なし)が途中のファイルで失敗した場合、その回の呼び出しで書き込み済みのファイルも含めてすべてロールバックされる(バッチ全体が不可分)。
 
 ### Phase 5 — 生成
 
 計画していたすべての Condition を適用し終えたら:
 
 1. `markharness generate` を実行し、`knowledge/` から `generated/testcases/*.yml` を決定的に(再)生成する。
-2. 生成されたファイル数が、適用した Condition の数と一致することを確認する(例: `find knowledge -name condition.yml | wc -l` と `find generated/testcases -maxdepth 1 -type f | wc -l` を比較)。数が一致しない場合は condition-id の衝突により生成ファイルが黙って上書きされたことを意味する — Phase 4 の「Condition id の衝突」に戻り、衝突している `condition.id` をリネームして再生成する。
+2. 生成されたファイル数が、適用した Condition の数と一致することを確認する(例: `find knowledge -name condition.yml | wc -l` と `find generated/testcases -type f -name "*.yml" | wc -l` を比較 — `generated/testcases/` は `knowledge/` と同じ階層にミラーされるため、`-maxdepth 1` は付けずに再帰的に数える)。数が一致しない場合は、同じ requirement/feature/behavior/condition の組み合わせに誤って複数回 apply していないか等、意図しない重複を確認する。
 3. `markharness validate` を実行し、`knowledge/`/`axes/` が引き続き `schema/*.schema.json` に準拠し、相互参照が解決することを確認する。
 4. もう一度 `markharness generate` を実行し、差分が出ないことを確認する — これは多くの CI 設定がチェックする内容なので、引き渡す前にローカルで確認しておく。
 

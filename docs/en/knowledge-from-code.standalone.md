@@ -118,7 +118,15 @@ than guessing.
 For each Condition identified in Phase 2:
 
 1. Write a draft YAML file (e.g. to a scratch path) matching the
-   `KnowledgeDraft` schema:
+   `KnowledgeDraft` schema. A blank template is available via
+   `markharness knowledge scaffold` (prints to stdout, or writes to a file
+   with `--out <path>` — it refuses to overwrite an existing file). A
+   reference schema for editor/IDE autocompletion is also available at
+   `docs/knowledge_draft.schema.json` (reference only — state-dependent
+   rules such as "label/axis/description are optional once the entry
+   already exists" or "axis values must already be registered under
+   `axes/`" can't be expressed in plain JSON Schema, so the real checks are
+   always performed by `knowledge validate`/`apply`):
 
    ```yaml
    requirement:
@@ -157,22 +165,14 @@ For each Condition identified in Phase 2:
    unchanged — supplying a conflicting value fails validation with
    `conflicting_existing_value`.
 
-   **Condition id collisions:** `markharness generate` writes each Condition
-   to `generated/testcases/<condition-id>.yml` using the bare `condition.id`
-   — it does **not** namespace by Behavior/Feature. `markharness knowledge
-validate`/`apply` do _not_ catch reused ids across different Behaviors
-   (uniqueness is only enforced within a Behavior), so two Conditions in
-   different Behaviors sharing an id (e.g. `valid-title` under both
-   `add-todo` and `edit-todo`, or `nonexistent-id` reused under `edit-todo`,
-   `toggle-todo`, `delete-todo`) will silently overwrite each other's
-   generated file — the later `generate` run wins and earlier test knowledge
-   goes missing from `generated/testcases/` with no error. Before drafting a
-   Condition, check whether its id is already used anywhere else in
-   `knowledge/` (e.g. `find knowledge -name condition.yml` or `grep -r
-"^id: <slug>" knowledge`) and, if so, make it unique — prefer folding in
-   what makes it distinct (e.g. `valid-new-title` for edit vs. `valid-title`
-   for add, `id-not-found-on-toggle` vs. `id-not-found-on-delete`) rather
-   than an arbitrary suffix.
+   **Condition id uniqueness:** `markharness generate` writes each Condition
+   to `generated/testcases/<requirement>/<feature>/<behavior>/<condition-id>.yml`
+   — it fully mirrors `knowledge/`'s own hierarchy. So `condition.id` only
+   needs to be unique within its own Behavior (`markharness knowledge
+   validate`/`apply` enforce exactly that scope), and reusing the same id
+   under a different Behavior (e.g. `valid-title` under both `add-todo` and
+   `edit-todo`) never collides in the generated output. No renaming or
+   collision-avoidance work is needed — see "Principles" below for details.
 
 2. Validate: `markharness knowledge validate <draft-file> --json`. Fix every
    reported error (`invalid_slug`, `missing_axis`, `missing_description`,
@@ -183,6 +183,17 @@ validate`/`apply` do _not_ catch reused ids across different Behaviors
    `behavior-`-prefixed `condition.id` stripped).
 4. Mark the corresponding checklist step done.
 
+To process multiple Conditions at once, collect the draft files in a single
+directory and batch-validate them with `markharness knowledge validate
+--batch <dir> --json` (or `markharness knowledge apply --batch <dir>
+--dry-run --json`, which runs the same check) before running `markharness
+knowledge apply --batch <dir> --json`. Files are applied in filename order
+within the directory, and a later draft in the batch may reference a
+Requirement/Feature/Behavior an earlier draft in the same batch just
+created. If `apply --batch` (without `--dry-run`) fails partway through, the
+entire call is rolled back, including files it had already written in that
+same invocation — a batch apply is all-or-nothing.
+
 ### Phase 5 — Generate
 
 Once every planned Condition has been applied:
@@ -191,10 +202,11 @@ Once every planned Condition has been applied:
    `generated/testcases/*.yml` from `knowledge/`.
 2. Confirm the count of generated files matches the count of Conditions
    applied (e.g. `find knowledge -name condition.yml | wc -l` vs. `find
-generated/testcases -maxdepth 1 -type f | wc -l`). A mismatch means a
-   condition-id collision silently overwrote a generated file — go back and
-   rename the colliding `condition.id`s (see "Condition id collisions" in
-   Phase 4) and regenerate.
+generated/testcases -type f -name "*.yml" | wc -l` — note no `-maxdepth 1`:
+   `generated/testcases/` mirrors `knowledge/`'s hierarchy, so files are
+   nested, not flat). A mismatch suggests an unintended duplicate, e.g. the
+   same requirement/feature/behavior/condition combination applied more than
+   once — investigate before regenerating.
 3. Run `markharness validate` to confirm `knowledge/`/`axes/` still conform
    to `schema/*.schema.json` and cross-references resolve.
 4. Re-run `markharness generate` once more and confirm no diff — this is
