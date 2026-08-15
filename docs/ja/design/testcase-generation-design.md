@@ -81,7 +81,7 @@ function generate_testcases(knowledge_root):
                     expected_results = [parse(p) for p in expected_paths]
 
                     testcases.append(TestCase{
-                        case_id: f"tc-{condition.id}-001",
+                        case_id: f"tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}",
                         generated_from: {requirement.id, feature.id, behavior.id, condition.id,
                                           expected_results: [e.id for e in expected_results]},
                         title: condition.description,
@@ -102,10 +102,10 @@ function generate_testcases(knowledge_root):
 **当初案(§9参照)とは異なり、`TestCase`は「1 Condition = 1 TestCase」の単位で生成され、そのConditionが持つ全ての`ExpectedResult`を1つの`TestCase`に集約する**(ExpectedResultの数だけ`TestCase`を分割しない)。`case_id`は
 
 ```
-tc-{condition.id}-001
+tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}
 ```
 
-で命名する。連番部分は現状常に`001`固定であり(1 Condition = 1 TestCaseのため連番が増える余地が無い)、将来1 Conditionから複数`TestCase`を生成する拡張が入った場合のための予約桁という位置づけに留まる。`generated/testcases/`配下のファイル名は`case_id`ではなく`condition.id`(`TestCase::file_stem()`)をそのまま使う(例:`generated/testcases/ground.yml`)。
+で命名する(旧版は`tc-{condition.id}-001`という、末尾に予約の連番3桁を付ける命名だったが、`condition.id`だけを別のBehavior配下で再利用すると`case_id`が衝突する欠陥があったため、`requirement`/`feature`/`behavior`/`condition`の4つのidをすべて連結する形に変更した。`knowledge/`のディレクトリ階層自体が同じ`condition.id`の重複を許さない構造になっているため、その階層をそのまま`case_id`に反映させれば、衝突を検出する別レイヤーの検査を持たなくても衝突が構造的に起こり得なくなる)。`generated/testcases/`配下の出力先も同様に、`case_id`と同じ理由で`condition.id`単体のフラットなファイル名(`generated/testcases/ground.yml`)から、`knowledge/`と同じ階層をそのままミラーした`generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml`(`TestCase::relative_path()`)に変更した。
 
 ### 3.3 title / steps / expected のテキスト組み立て
 
@@ -235,10 +235,24 @@ axis: [data, security, ui]   # requirement[security] + feature[ui, data] + behav
 | 項目 | 初版の案 | 実装 |
 |---|---|---|
 | TestCaseの生成単位 | ExpectedResult 1件につき1 TestCase | **Condition 1件につき1 TestCase**(ExpectedResultは`expected`配列に集約) |
-| `case_id`の形式 | `{feature_id}-{condition_id}-{連番3桁}` | `tc-{condition.id}-001`(連番は現状常に`001`固定) |
+| `case_id`の形式 | `{feature_id}-{condition_id}-{連番3桁}` | `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}`(§10参照。旧実装は`tc-{condition.id}-001`だったが、`condition.id`がBehaviorをまたいで衝突する欠陥のため変更した) |
 | axisの継承元 | Featureの`axis`のみ | Requirement・Feature・Behaviorの`axis`を合成(union) |
 | title/expectedのテキスト | 固定テンプレートによる文合成 | knowledge側のフィールド値をそのまま転記(加工なし) |
 | Behavior階層 | 生成に使わない(将来拡張の余地として言及のみ) | `find_dirs_with_marker`で明示的に探索し、`steps`/`axis`に反映する必須階層 |
 | ファイル拡張子 | `.yaml`(サンプルに合わせた表記) | `.yml`(`markharness init`の規約) |
 
-この変更は、3.2節で述べた通り「1 Condition = 1 TestCase」という単純な対応関係の方が決定性の証明・実装が容易であり、かつCondition自体が既に「1つの検証観点」を表す粒度であるため、ExpectedResultで細分化する必要が薄いと判断されたことによる。当初案が課題としていた「`condition_id`が`feature_id`のprefixを部分的に含む場合の重複」問題(旧案の連番id生成に起因)は、`case_id`が`condition.id`のみから機械的に決まる現行方式では発生しない。
+この変更は、3.2節で述べた通り「1 Condition = 1 TestCase」という単純な対応関係の方が決定性の証明・実装が容易であり、かつCondition自体が既に「1つの検証観点」を表す粒度であるため、ExpectedResultで細分化する必要が薄いと判断されたことによる。
+
+なお、`case_id`が`condition.id`のみから機械的に決まる方式(`tc-{condition.id}-001`)は、当初案が課題としていた「`condition_id`が`feature_id`のprefixを部分的に含む場合の重複」問題は回避できていたが、**別のBehavior配下で同じ`condition.id`が再利用された場合に`case_id`が衝突する**という欠陥があった。これは実運用(AIエージェントによる知識生成)で実際に踏まれ、`generated/testcases/`のフラットな出力先(`condition.id`のみをファイル名に使う)により生成ファイルが無言で上書きされる事故につながった。この欠陥への対処は§10を参照。
+
+## 10. `case_id`衝突の構造的解消(実運用フィードバックによる変更)
+
+§9の実装(`tc-{condition.id}-001` + フラットな`generated/testcases/{condition.id}.yml`)を実際にAIエージェントによる知識生成タスクで使わせたところ、異なるBehavior配下で同じ`condition.id`(例: `valid-title`)を再利用した際に、後から`generate`した`TestCase`のファイルが先に生成した同名ファイルを無言で上書きし、テストケースが消失する事故が発生した。`knowledge apply`/`knowledge validate`の一意性チェックはBehaviorスコープに閉じており、この種のグローバルな衝突は検出しない。
+
+これに対して、「グローバル重複チェックを新設する」のではなく、**衝突が構造的に起こり得ない設計に変更する**方針を採った。
+
+- `generated/testcases/`の出力先を、`knowledge/`と同じ4階層(`{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml`)でフルミラーする(`TestCase::relative_path()`)。`knowledge/`のディレクトリ階層自体が同一パスへの重複配置を許さない(同じディレクトリに同じ名前の子ディレクトリを2つ作ることはファイルシステム上できない)ため、これをそのまま出力先に反映すれば、ファイル名の衝突はこの4階層の名前が完全に一致する場合(=つまりそもそも`knowledge/`側で同一の対象を指している場合)に限られ、構造的に起こり得なくなる。
+- `case_id`も同様の理由で`tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}`に変更し、`execution record`が使う`case_id`ルックアップキー自体の衝突も同時に解消する(ファイル名だけ直しても、`case_id`が`condition.id`のみに依存したままでは実行結果記録時の曖昧さが残るため)。
+- 副作用として、`requirement.id`/`feature.id`/`behavior.id`もパスの一部になるため、`condition.id`だけに課していた「有効なslugであること」の検証(`is_valid_slug`によるパストラバーサル対策)を、この3つのidにも同様に課すよう`generate_testcases`を拡張した。
+
+この方針により、「衝突を検出して警告/エラーにする」という別レイヤーの検査ロジックを持つ必要がなくなり、バグのクラス自体を設計から排除できた。後方互換性は考慮していない(破壊的変更)。詳細は`checklist-cli-usability-improvements.md`を参照。

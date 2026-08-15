@@ -438,8 +438,8 @@ markharness generate
 
 - `knowledge/` 配下を `requirement.yml` → `feature.yml` → `behavior.yml` → `condition.yml` → `expected/*.yml` の順に、パスのソート順で走査する(実行環境・タイムスタンプに依存しない)。`Behavior` を持たない `Feature` や `expected/` が空(または存在しない)の `Condition` からは `TestCase` は生成されない。
 - **集約モデル**: 1つの `Condition` の `expected/` 配下にある全ファイルを、1つの `TestCase` の `expected` 配列に集約する(1 Condition = 1 TestCase。1 expected ファイルごとに別 TestCase を作る旧モデルからの変更)。
-- `case_id = "tc-{condition.id}-001"`。連番は将来 1 Condition から複数 TestCase を生成する拡張のために予約されており、現状は常に `001`。
-- 出力ファイル名は `generated/testcases/{condition.id}.yml`(`case_id` の `tc-` 接頭辞は付けない)。
+- `case_id = "tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}"`。`requirement`/`feature`/`behavior`/`condition` の4つのidをすべて連結することで、`condition.id` が別の Behavior で再利用されても `case_id` の衝突が構造的に起こり得ないようにしている。
+- 出力ファイルは `generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml` に、`knowledge/` と同じ階層でフルミラーして書き込まれる(旧版は `generated/testcases/{condition.id}.yml` というフラットな命名で、異なる Behavior 配下で同じ `condition.id` が再利用されると無言で上書きされる欠陥があった)。
 - `title` = `condition.description`、`steps` = `[behavior.description]`、`expected` = 各 `expected/*.yml` の `description` をファイル名のソート順で列挙。
 - `generated_from` に `requirement` / `feature` / `behavior` / `condition` の各 id と、集約元の `expected_results`(`expected/*.yml` の `id` の一覧)を記録する。
 - `axis`: `Requirement` / `Feature` / `Behavior` の `axis` を合成(union、重複除去のうえソート)した観点一覧(§3.4「axisの継承」)。

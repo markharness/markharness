@@ -113,19 +113,17 @@ fn iso8601_utc_now() -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
 
-/// Finds the `generated/testcases/*.yml` file with this `case_id` (the
-/// file's stem is the condition id, so the filename itself can't be used).
+/// Finds the `generated/testcases/**/*.yml` file with this `case_id` (files
+/// are nested `{requirement}/{feature}/{behavior}/{condition}.yml`, so the
+/// filename alone can't be used — and even the full relative path is only a
+/// mirror of `knowledge/`, not itself the identity being searched for).
 fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<MinimalTestCase>> {
     let testcases_dir = root.join("generated").join("testcases");
-    let Ok(entries) = fs::read_dir(&testcases_dir) else {
-        return Ok(None);
-    };
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("yml") {
+    for relative_path in crate::generate::list_files_recursive(&testcases_dir)? {
+        if relative_path.extension().and_then(|e| e.to_str()) != Some("yml") {
             continue;
         }
-        let content = fs::read_to_string(&path)?;
+        let content = fs::read_to_string(testcases_dir.join(&relative_path))?;
         if let Ok(testcase) = serde_yaml_ng::from_str::<MinimalTestCase>(&content)
             && testcase.case_id == case_id
         {

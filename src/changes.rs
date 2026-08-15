@@ -523,7 +523,10 @@ mod tests {
         assert!(event.from_tree_sha.is_some());
         assert!(event.to_tree_sha.is_some());
         assert_ne!(event.from_tree_sha, event.to_tree_sha);
-        assert_eq!(event.impacted_testcases, vec!["tc-ground-001".to_string()]);
+        assert_eq!(
+            event.impacted_testcases,
+            vec!["tc-controls-player-jump-jump-ground".to_string()]
+        );
     }
 
     #[test]
@@ -558,7 +561,10 @@ mod tests {
             .iter()
             .find(|e| e.feature_id == "player-jump")
             .unwrap();
-        assert_eq!(event.impacted_testcases, vec!["tc-ground-001".to_string()]);
+        assert_eq!(
+            event.impacted_testcases,
+            vec!["tc-controls-player-jump-jump-ground".to_string()]
+        );
     }
 
     #[test]
@@ -596,7 +602,10 @@ mod tests {
         impacted.sort();
         assert_eq!(
             impacted,
-            vec!["tc-air-001".to_string(), "tc-ground-001".to_string()]
+            vec![
+                "tc-controls-player-jump-jump-air".to_string(),
+                "tc-controls-player-jump-jump-ground".to_string(),
+            ]
         );
     }
 

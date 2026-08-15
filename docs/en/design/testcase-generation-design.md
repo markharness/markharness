@@ -102,10 +102,10 @@ function generate_testcases(knowledge_root):
 **Unlike the initial proposal (see §9), a `TestCase` is generated at the unit of "1 Condition = 1 TestCase," aggregating all `ExpectedResult`s that Condition has into a single `TestCase`** (it does not split into as many `TestCase`s as there are ExpectedResults). `case_id` is named as
 
 ```
-tc-{condition.id}-001
+tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}
 ```
 
-The sequence-number portion is currently always fixed at `001` (since it is 1 Condition = 1 TestCase, there is no room for the sequence number to increase); it remains positioned as a reserved digit slot for a possible future extension in which multiple `TestCase`s are generated from one Condition. The filename under `generated/testcases/` uses `condition.id` (`TestCase::file_stem()`) as-is, not `case_id` (e.g. `generated/testcases/ground.yml`).
+(the earlier implementation named it `tc-{condition.id}-001`, with a reserved 3-digit sequence number at the end; it was changed to concatenate all four of `requirement`/`feature`/`behavior`/`condition` because a `case_id` collision occurred whenever a `condition.id` was reused under a different Behavior. Since `knowledge/`'s own directory hierarchy already never allows the same `condition.id` to be duplicated, mirroring that hierarchy directly into `case_id` makes the collision structurally impossible without needing a separate check layer to detect it). The output location under `generated/testcases/` was changed for the same reason, from the flat `condition.id`-only filename (`generated/testcases/ground.yml`) to a full mirror of `knowledge/`'s own hierarchy: `generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml` (`TestCase::relative_path()`).
 
 ### 3.3 Text Assembly for title / steps / expected
 
@@ -235,10 +235,24 @@ The initial version of this document (the exploratory draft) examined, based on 
 | Item | Initial proposal | Implementation |
 |---|---|---|
 | TestCase generation unit | 1 TestCase per ExpectedResult | **1 TestCase per Condition** (ExpectedResults are aggregated into the `expected` array) |
-| Form of `case_id` | `{feature_id}-{condition_id}-{3-digit sequence number}` | `tc-{condition.id}-001` (the sequence number is currently always fixed at `001`) |
+| Form of `case_id` | `{feature_id}-{condition_id}-{3-digit sequence number}` | `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` (see §10; the earlier implementation was `tc-{condition.id}-001`, changed because of a collision defect when `condition.id` was reused across Behaviors) |
 | Source of axis inheritance | Feature's `axis` only | Composition (union) of Requirement, Feature, and Behavior's `axis` |
 | title/expected text | Sentence composition via a fixed template | Knowledge-side field values transcribed as-is (no processing) |
 | Behavior level | Not used in generation (mentioned only as room for future extension) | A required level explicitly searched for via `find_dirs_with_marker` and reflected in `steps`/`axis` |
 | File extension | `.yaml` (notation matching the samples) | `.yml` (convention of `markharness init`) |
 
-This change was made because, as described in §3.2, the simple correspondence of "1 Condition = 1 TestCase" is easier to prove/implement determinism for, and because a Condition itself already represents a granularity of "one verification perspective," making the need for further subdivision by ExpectedResult thin. The problem the initial proposal had been concerned with — "duplication when `condition_id` partially includes `feature_id` as a prefix" (arising from the old proposal's sequential-id generation) — does not occur under the current scheme, where `case_id` is mechanically determined from `condition.id` alone.
+This change was made because, as described in §3.2, the simple correspondence of "1 Condition = 1 TestCase" is easier to prove/implement determinism for, and because a Condition itself already represents a granularity of "one verification perspective," making the need for further subdivision by ExpectedResult thin.
+
+Note that the scheme where `case_id` is mechanically determined from `condition.id` alone (`tc-{condition.id}-001`) did avoid the problem the initial proposal had been concerned with — "duplication when `condition_id` partially includes `feature_id` as a prefix" — but it had a different defect: **`case_id` collided whenever the same `condition.id` was reused under a different Behavior.** This was actually hit in real-world use (AI-agent-driven knowledge generation), where the flat output location under `generated/testcases/` (using `condition.id` alone as the filename) caused generated files to be silently overwritten. See §10 for how this defect was addressed.
+
+## 10. Structurally Eliminating `case_id` Collisions (a change driven by real-world usage feedback)
+
+When the §9 implementation (`tc-{condition.id}-001` plus the flat `generated/testcases/{condition.id}.yml`) was actually used for an AI-agent-driven knowledge-generation task, reusing the same `condition.id` (e.g. `valid-title`) under two different Behaviors caused the later `generate` run's `TestCase` file to silently overwrite the earlier one with the same name, losing test cases. `knowledge apply`/`knowledge validate`'s uniqueness check is scoped to a single Behavior and does not detect this kind of global collision.
+
+Rather than adding a new global-uniqueness check layer, the fix taken was to **change the design so the collision is structurally impossible**:
+
+- The output location under `generated/testcases/` now fully mirrors `knowledge/`'s own 4-level hierarchy (`{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml`, via `TestCase::relative_path()`). Because `knowledge/`'s own directory hierarchy never allows two directories with the same name to coexist at the same path, mirroring that hierarchy directly into the output location means a filename collision can now only happen when all four levels of the path are identical — i.e. when `knowledge/` itself already refers to the same object. It cannot happen otherwise.
+- `case_id` was changed to `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` for the same reason, which simultaneously eliminates the collision in the lookup key that `execution record` uses (fixing only the filename would have left `case_id` itself still ambiguous when reused across Behaviors, since it depended on `condition.id` alone).
+- As a side effect, since `requirement.id`/`feature.id`/`behavior.id` now also become path components, the "must be a valid slug" check (`is_valid_slug`, guarding against path traversal) that was previously applied only to `condition.id` was extended to these three ids as well in `generate_testcases`.
+
+This approach removes the need for a separate check layer that detects and warns/errors on collisions — the bug class itself is eliminated by design. Backward compatibility was not a concern (this is a breaking change). See `checklist-cli-usability-improvements.md` for details.

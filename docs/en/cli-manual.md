@@ -438,8 +438,8 @@ markharness generate
 
 - Traverses `knowledge/` in the order `requirement.yml` → `feature.yml` → `behavior.yml` → `condition.yml` → `expected/*.yml`, in path sort order (independent of the execution environment or timestamps). No `TestCase` is generated from a `Feature` that has no `Behavior`, or from a `Condition` whose `expected/` is empty (or absent).
 - **Aggregation model**: All files under a single `Condition`'s `expected/` are aggregated into the `expected` array of a single `TestCase` (1 Condition = 1 TestCase; a change from the earlier model that made a separate TestCase per expected file).
-- `case_id = "tc-{condition.id}-001"`. The sequence number is reserved for a future extension that generates multiple TestCases from one Condition; currently it is always `001`.
-- The output file name is `generated/testcases/{condition.id}.yml` (the `tc-` prefix of `case_id` is not applied).
+- `case_id = "tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}"`. Concatenating all four ids (`requirement`/`feature`/`behavior`/`condition`) makes a `case_id` collision structurally impossible even if a `condition.id` is reused under a different Behavior.
+- The output file is written to `generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml`, fully mirroring `knowledge/`'s own hierarchy (the earlier flat `generated/testcases/{condition.id}.yml` naming had a defect where reusing the same `condition.id` under a different Behavior silently overwrote the earlier file).
 - `title` = `condition.description`, `steps` = `[behavior.description]`, `expected` = the `description` of each `expected/*.yml`, listed in file-name sort order.
 - `generated_from` records each of the `requirement` / `feature` / `behavior` / `condition` ids, and the source `expected_results` (the list of `id`s of `expected/*.yml`) that were aggregated.
 - `axis`: a list of viewpoints formed by combining (union, deduplicated and sorted) the `axis` of the `Requirement` / `Feature` / `Behavior` (§3.4 "axis inheritance").

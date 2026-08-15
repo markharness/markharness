@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::env;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::axes;
@@ -429,8 +429,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             remove_dir_all_no_follow(&root, &testcases_dir)?;
             std::fs::create_dir_all(&testcases_dir)?;
             for testcase in &testcases {
-                let file_name = format!("{}.yml", testcase.file_stem());
-                let testcase_path = safe_testcase_path(&testcases_dir, &file_name)?;
+                let testcase_path = safe_testcase_path(&testcases_dir, &testcase.relative_path())?;
                 replace_file(
                     &root,
                     &testcase_path,
@@ -1040,25 +1039,27 @@ fn axes_to_json(entries: &[axes::AxisEntry]) -> String {
     format!("[{}]", items.join(","))
 }
 
-/// Joins `testcases_dir` and `file_name` for a generated testcase, refusing
-/// any result that would not land directly inside `testcases_dir` (e.g. a
-/// `file_name` containing path separators or `..` components). Defense in
-/// depth: `generate::generate_testcases` already rejects non-slug condition
-/// ids, but this guards the write site itself against any other source of a
-/// malformed `file_name`.
-fn safe_testcase_path(testcases_dir: &std::path::Path, file_name: &str) -> io::Result<PathBuf> {
-    let path = testcases_dir.join(file_name);
-    if path.parent() != Some(testcases_dir) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "refusing to write testcase outside {}: {}",
-                testcases_dir.display(),
-                path.display()
-            ),
-        ));
+/// Joins `testcases_dir` and a testcase's `relative_path()` (the
+/// `{requirement}/{feature}/{behavior}/{condition}.yml` mirror of
+/// `knowledge/`), refusing any result that would escape `testcases_dir` via
+/// a `..`/root/prefix component. Defense in depth: `generate::generate_testcases`
+/// already rejects non-slug requirement/feature/behavior/condition ids, but
+/// this guards the write site itself against any other source of a
+/// malformed relative path.
+fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<PathBuf> {
+    for component in relative_path.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "refusing to write testcase outside {}: {}",
+                    testcases_dir.display(),
+                    relative_path.display()
+                ),
+            ));
+        }
     }
-    Ok(path)
+    Ok(testcases_dir.join(relative_path))
 }
 
 fn apply_result_to_json(result: &knowledge_apply::ApplyResult) -> String {
@@ -1080,23 +1081,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn safe_testcase_path_joins_a_plain_file_name() {
+    fn safe_testcase_path_joins_a_nested_relative_path() {
         let testcases_dir = PathBuf::from("generated/testcases");
+        let relative_path = PathBuf::from("req-todo/todo/todo-add-task/ground.yml");
 
-        let path = safe_testcase_path(&testcases_dir, "ground.yml").unwrap();
+        let path = safe_testcase_path(&testcases_dir, &relative_path).unwrap();
 
-        assert_eq!(path, testcases_dir.join("ground.yml"));
+        assert_eq!(path, testcases_dir.join(&relative_path));
     }
 
     #[test]
-    fn safe_testcase_path_rejects_a_file_name_escaping_the_testcases_dir() {
+    fn safe_testcase_path_rejects_a_relative_path_escaping_the_testcases_dir() {
         let testcases_dir = PathBuf::from("generated/testcases");
+        let relative_path = PathBuf::from("../../../../evil.yml");
 
-        let result = safe_testcase_path(&testcases_dir, "../../../../evil.yml");
+        let result = safe_testcase_path(&testcases_dir, &relative_path);
 
         assert!(
             result.is_err(),
-            "expected an error for a file_name escaping testcases_dir, got: {result:?}"
+            "expected an error for a relative_path escaping testcases_dir, got: {result:?}"
         );
     }
 

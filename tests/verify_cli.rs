@@ -48,8 +48,9 @@ fn commit_all_with_date(root: &Path, message: &str, hour_offset: u32) {
 /// A full Requirement->Feature->Behavior->Condition->ExpectedResult chain
 /// (`generate`'s structural input) whose Feature label is the only thing
 /// that changes between v1/v2, so the resulting `case_id` is always
-/// `tc-edit-existing-todo-001` (`generate::generate_testcases` derives
-/// `case_id` as `tc-{condition.id}-001`).
+/// `tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo`
+/// (`generate::generate_testcases` derives `case_id` as
+/// `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}`).
 fn write_full_chain(root: &Path, label: &str) {
     let dir = root.join("knowledge/req-todo/todo-edit/edit-existing-todo");
     std::fs::create_dir_all(&dir).unwrap();
@@ -83,7 +84,7 @@ fn write_full_chain(root: &Path, label: &str) {
 
 /// A project with two milestones (`test1`, `test2`) where `todo-edit`
 /// changed between them, `changes/test2.yaml` computed via the real CLI
-/// (`generate` + `changes compute`), impacting `tc-edit-existing-todo-001`.
+/// (`generate` + `changes compute`), impacting `tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo`.
 fn init_project_with_pending_change() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
@@ -124,7 +125,9 @@ fn init_project_with_pending_change() -> tempfile::TempDir {
     assert!(generate.status.success(), "{generate:?}");
     assert!(
         dir.path()
-            .join("generated/testcases/edit-existing-todo.yml")
+            .join(
+                "generated/testcases/req-todo/todo-edit/edit-existing-todo/edit-existing-todo.yml"
+            )
             .is_file()
     );
 
@@ -140,8 +143,8 @@ fn init_project_with_pending_change() -> tempfile::TempDir {
     assert!(compute.status.success(), "{compute:?}");
     let changes_content = std::fs::read_to_string(dir.path().join("changes/test2.yaml")).unwrap();
     assert!(
-        changes_content.contains("tc-edit-existing-todo-001"),
-        "expected changes/test2.yaml to impact tc-edit-existing-todo-001, got:\n{changes_content}"
+        changes_content.contains("tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo"),
+        "expected changes/test2.yaml to impact tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo, got:\n{changes_content}"
     );
 
     dir
@@ -190,7 +193,7 @@ fn verify_pending_reports_the_impacted_testcase_before_reexecution() {
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("tc-edit-existing-todo-001"),
+        stdout.contains("tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo"),
         "unexpected stdout: {stdout}"
     );
     assert!(stdout.contains("pending"), "unexpected stdout: {stdout}");
@@ -233,7 +236,7 @@ fn verify_trace_reports_the_reflected_change_after_reexecution() {
     let record = run(&[
         "execution",
         "record",
-        "tc-edit-existing-todo-001",
+        "tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo",
         "--milestone",
         "test2",
         "--result",
@@ -248,7 +251,7 @@ fn verify_trace_reports_the_reflected_change_after_reexecution() {
     let output = run(&[
         "verify",
         "trace",
-        "tc-edit-existing-todo-001",
+        "tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo",
         "--milestone",
         "test2",
         "--dir",
@@ -278,7 +281,7 @@ fn verify_trace_reports_the_reflected_change_after_reexecution() {
     ]);
     let pending_stdout = String::from_utf8_lossy(&pending_after.stdout);
     assert!(
-        !pending_stdout.contains("tc-edit-existing-todo-001"),
+        !pending_stdout.contains("tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo"),
         "expected re-executed case to no longer be pending: {pending_stdout}"
     );
 }
@@ -290,7 +293,7 @@ fn verify_trace_exits_two_when_no_verified_blobs_recorded() {
     let output = run(&[
         "verify",
         "trace",
-        "tc-edit-existing-todo-001",
+        "tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo",
         "--milestone",
         "test2",
         "--dir",

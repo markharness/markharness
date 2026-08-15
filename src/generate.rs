@@ -43,9 +43,19 @@ fn union_axis(sources: &[&[String]]) -> Vec<String> {
 }
 
 impl TestCase {
-    /// The base name (without extension) used for `generated/testcases/<file_stem>.yml`.
-    pub fn file_stem(&self) -> &str {
-        &self.generated_from.condition
+    /// The path, relative to `generated/testcases/`, this TestCase is
+    /// written to: `{requirement}/{feature}/{behavior}/{condition}.yml`,
+    /// mirroring `knowledge/`'s own hierarchy. Because this mirrors a tree
+    /// that is itself collision-free (two Conditions cannot occupy the same
+    /// `knowledge/<req>/<feature>/<behavior>/<condition>/` directory), no two
+    /// TestCases can ever be written to the same path, unlike the flat
+    /// `<condition.id>.yml` naming this replaced (which silently overwrote
+    /// when the same condition.id was reused under a different Behavior).
+    pub fn relative_path(&self) -> PathBuf {
+        Path::new(&self.generated_from.requirement)
+            .join(&self.generated_from.feature)
+            .join(&self.generated_from.behavior)
+            .join(format!("{}.yml", self.generated_from.condition))
     }
 }
 
@@ -107,6 +117,68 @@ fn find_dirs_with_marker_limited(
     Ok(found)
 }
 
+/// Recursively lists every regular file under `root`, returned as paths
+/// relative to `root` (sorted for determinism). Symlinked files and
+/// directories are skipped rather than followed, mirroring `sorted_subdirs`.
+/// Used to read back a `generated/testcases/` tree that now mirrors
+/// `knowledge/`'s own nesting instead of being flat.
+pub(crate) fn list_files_recursive(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    if !root.is_dir() {
+        return Ok(files);
+    }
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(dir) = stack.pop() {
+        visited += 1;
+        if visited > MAX_VISITED_DIRS {
+            return Err(io::Error::other(format!(
+                "directory traversal under {} visited more than {MAX_VISITED_DIRS} directories; aborting",
+                root.display()
+            )));
+        }
+        for entry in fs::read_dir(&dir)?.filter_map(|e| e.ok()) {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() {
+                files.push(
+                    path.strip_prefix(root)
+                        .expect("entry path is a child of root")
+                        .to_path_buf(),
+                );
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Rejects an id (requirement/feature/behavior/condition) that isn't a
+/// plain slug before it can become a path component of `case_id` or of
+/// `generated/testcases/`'s mirrored directory tree (`TestCase::relative_path`).
+/// Without this, a crafted `id:` field (independent of the trusted directory
+/// name it lives in) could smuggle `../` or similar through into the write
+/// path.
+fn require_valid_slug(source_path: &Path, field: &str, id: &str) -> io::Result<()> {
+    if is_valid_slug(id) {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "{}: {field} id \"{id}\" is not a valid slug (lowercase alphanumeric and hyphen only)",
+            source_path.display()
+        ),
+    ))
+}
+
 pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
     let mut testcases = Vec::new();
 
@@ -117,6 +189,7 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
         }
         let requirement = parse_requirement(&fs::read_to_string(&requirement_path)?)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        require_valid_slug(&requirement_path, "requirement", &requirement.id)?;
 
         for feature_dir in sorted_subdirs(&requirement_dir)? {
             let feature_path = feature_dir.join("feature.yml");
@@ -125,26 +198,19 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
             }
             let feature = parse_feature(&fs::read_to_string(&feature_path)?)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            require_valid_slug(&feature_path, "feature", &feature.id)?;
 
             for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
                 let behavior_path = behavior_dir.join("behavior.yml");
                 let behavior = parse_behavior(&fs::read_to_string(&behavior_path)?)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                require_valid_slug(&behavior_path, "behavior", &behavior.id)?;
 
                 for condition_dir in find_dirs_with_marker(&behavior_dir, "condition.yml")? {
                     let condition_path = condition_dir.join("condition.yml");
                     let condition = parse_condition(&fs::read_to_string(&condition_path)?)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                    if !is_valid_slug(&condition.id) {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "{}: condition id \"{}\" is not a valid slug (lowercase alphanumeric and hyphen only)",
-                                condition_path.display(),
-                                condition.id
-                            ),
-                        ));
-                    }
+                    require_valid_slug(&condition_path, "condition", &condition.id)?;
 
                     let expected_dir = condition_dir.join("expected");
                     if !expected_dir.is_dir() {
@@ -173,7 +239,10 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
                     let axis = union_axis(&[&requirement.axis, &feature.axis, &behavior.axis]);
 
                     testcases.push(TestCase {
-                        case_id: format!("tc-{}-001", condition.id),
+                        case_id: format!(
+                            "tc-{}-{}-{}-{}",
+                            requirement.id, feature.id, behavior.id, condition.id
+                        ),
                         generated_from: GeneratedFrom {
                             requirement: requirement.id.clone(),
                             feature: feature.id.clone(),
@@ -307,6 +376,52 @@ mod tests {
         let found = find_dirs_with_marker(&root, "marker.yml").unwrap();
 
         assert_eq!(found, vec![real]);
+    }
+
+    #[test]
+    fn list_files_recursive_returns_empty_for_a_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let files = list_files_recursive(&dir.path().join("does-not-exist")).unwrap();
+
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn list_files_recursive_finds_files_nested_several_levels_deep() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("tree");
+        fs::create_dir_all(root.join("a/b/c")).unwrap();
+        fs::write(root.join("top.yml"), "top").unwrap();
+        fs::write(root.join("a/mid.yml"), "mid").unwrap();
+        fs::write(root.join("a/b/c/deep.yml"), "deep").unwrap();
+
+        let files = list_files_recursive(&root).unwrap();
+
+        assert_eq!(
+            files,
+            vec![
+                PathBuf::from("a/b/c/deep.yml"),
+                PathBuf::from("a/mid.yml"),
+                PathBuf::from("top.yml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_files_recursive_does_not_follow_a_symlinked_subdirectory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("tree");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("real.yml"), "real").unwrap();
+
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.yml"), "secret").unwrap();
+        link_dir(&root.join("linked"), outside.path());
+
+        let files = list_files_recursive(&root).unwrap();
+
+        assert_eq!(files, vec![PathBuf::from("real.yml")]);
     }
 
     fn write_requirement(root: &std::path::Path, requirement: &str, axis: &[&str]) {
@@ -499,7 +614,10 @@ mod tests {
 
         assert_eq!(testcases.len(), 1);
         let tc = &testcases[0];
-        assert_eq!(tc.case_id, "tc-todo-add-task-empty-input-001");
+        assert_eq!(
+            tc.case_id,
+            "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input"
+        );
         assert_eq!(tc.generated_from.requirement, "req-todo");
         assert_eq!(tc.generated_from.feature, "todo");
         assert_eq!(tc.generated_from.behavior, "todo-add-task");
@@ -559,7 +677,10 @@ mod tests {
 
         assert_eq!(testcases.len(), 1);
         let tc = &testcases[0];
-        assert_eq!(tc.case_id, "tc-todo-complete-task-toggle-done-001");
+        assert_eq!(
+            tc.case_id,
+            "tc-req-todo-todo-todo-complete-task-todo-complete-task-toggle-done"
+        );
         assert_eq!(
             tc.generated_from.expected_results,
             vec![
@@ -639,8 +760,14 @@ mod tests {
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
 
         assert_eq!(testcases.len(), 2);
-        assert_eq!(testcases[0].case_id, "tc-enemy-attack-melee-range-001");
-        assert_eq!(testcases[1].case_id, "tc-todo-add-task-empty-input-001");
+        assert_eq!(
+            testcases[0].case_id,
+            "tc-req-enemy-enemy-enemy-attack-enemy-attack-melee-range"
+        );
+        assert_eq!(
+            testcases[1].case_id,
+            "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input"
+        );
     }
 
     #[test]
@@ -731,7 +858,7 @@ mod tests {
     #[test]
     fn serialized_testcase_contains_no_leading_comment() {
         let testcase = TestCase {
-            case_id: "tc-todo-add-task-empty-input-001".to_string(),
+            case_id: "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input".to_string(),
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
@@ -751,7 +878,7 @@ mod tests {
         let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(
             parsed["case_id"].as_str(),
-            Some("tc-todo-add-task-empty-input-001")
+            Some("tc-req-todo-todo-todo-add-task-todo-add-task-empty-input")
         );
         assert_eq!(parsed["generated_from"]["feature"].as_str(), Some("todo"));
     }
@@ -799,9 +926,9 @@ mod tests {
     }
 
     #[test]
-    fn file_stem_matches_condition_id() {
+    fn relative_path_mirrors_the_requirement_feature_behavior_condition_hierarchy() {
         let testcase = TestCase {
-            case_id: "tc-todo-add-task-empty-input-001".to_string(),
+            case_id: "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input".to_string(),
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
@@ -815,6 +942,75 @@ mod tests {
             axis: vec!["ui".to_string()],
         };
 
-        assert_eq!(testcase.file_stem(), "todo-add-task-empty-input");
+        assert_eq!(
+            testcase.relative_path(),
+            Path::new("req-todo")
+                .join("todo")
+                .join("todo-add-task")
+                .join("todo-add-task-empty-input.yml")
+        );
+    }
+
+    #[test]
+    fn generate_testcases_rejects_a_requirement_with_path_traversal_id() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let requirement_dir = dir.path().join("knowledge").join("req-todo");
+        fs::create_dir_all(&requirement_dir).unwrap();
+        fs::write(
+            requirement_dir.join("requirement.yml"),
+            "id: ../../../../evil\nlabel: evil\naxis: []\n",
+        )
+        .unwrap();
+
+        let result = generate_testcases(&dir.path().join("knowledge"));
+
+        assert!(
+            result.is_err(),
+            "expected an error for a requirement.id containing path traversal, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn generate_testcases_rejects_a_feature_with_path_traversal_id() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        let feature_dir = dir.path().join("knowledge/req-todo/todo");
+        fs::create_dir_all(&feature_dir).unwrap();
+        fs::write(
+            feature_dir.join("feature.yml"),
+            "id: ../../../../evil\nrequirement: req-todo\nlabel: evil\naxis: []\n",
+        )
+        .unwrap();
+
+        let result = generate_testcases(&dir.path().join("knowledge"));
+
+        assert!(
+            result.is_err(),
+            "expected an error for a feature.id containing path traversal, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn generate_testcases_rejects_a_behavior_with_path_traversal_id() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        let behavior_dir = dir.path().join("knowledge/req-todo/todo/todo-add-task");
+        fs::create_dir_all(&behavior_dir).unwrap();
+        fs::write(
+            behavior_dir.join("behavior.yml"),
+            "id: ../../../../evil\nfeature: todo\nlabel: evil\naxis: []\ndescription: |\n  Evil.\n",
+        )
+        .unwrap();
+
+        let result = generate_testcases(&dir.path().join("knowledge"));
+
+        assert!(
+            result.is_err(),
+            "expected an error for a behavior.id containing path traversal, got: {result:?}"
+        );
     }
 }

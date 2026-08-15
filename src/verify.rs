@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::backfill;
 use crate::execution::ExecutionEntry;
-use crate::generate::{generate_testcases, serialize_testcase};
+use crate::generate::{generate_testcases, list_files_recursive, serialize_testcase};
 use crate::id_cache;
 use crate::traceability::{build_index, serialize_index};
 
@@ -20,22 +20,25 @@ pub enum DiffKind {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DiffEntry {
+    /// Path relative to `generated/testcases/`, forward-slash separated
+    /// regardless of platform (this mirrors `knowledge/`'s nesting since
+    /// Step A, so it is no longer just a flat file name).
     pub file_name: String,
     pub kind: DiffKind,
 }
 
+/// Forward-slash-normalizes a path relative to `generated/testcases/` so
+/// diff output is stable across platforms (`PathBuf`'s `Display` uses `\`
+/// on Windows).
+fn to_diff_key(relative_path: &Path) -> String {
+    relative_path.to_string_lossy().replace('\\', "/")
+}
+
 fn read_existing_testcases(generated_dir: &Path) -> io::Result<BTreeMap<String, String>> {
     let mut existing = BTreeMap::new();
-    if !generated_dir.is_dir() {
-        return Ok(existing);
-    }
-    for entry in fs::read_dir(generated_dir)? {
-        let path = entry?.path();
-        if path.is_file()
-            && let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned())
-        {
-            existing.insert(name, fs::read_to_string(&path)?);
-        }
+    for relative_path in list_files_recursive(generated_dir)? {
+        let content = fs::read_to_string(generated_dir.join(&relative_path))?;
+        existing.insert(to_diff_key(&relative_path), content);
     }
     Ok(existing)
 }
@@ -46,8 +49,8 @@ pub fn diff_generated_testcases(root: &Path) -> io::Result<Vec<DiffEntry>> {
     let testcases = generate_testcases(&root.join("knowledge"))?;
     let mut expected: BTreeMap<String, String> = BTreeMap::new();
     for testcase in &testcases {
-        let file_name = format!("{}.yml", testcase.file_stem());
-        expected.insert(file_name, serialize_testcase(testcase));
+        let key = to_diff_key(&testcase.relative_path());
+        expected.insert(key, serialize_testcase(testcase));
     }
 
     let existing = read_existing_testcases(&root.join("generated").join("testcases"))?;
@@ -442,7 +445,7 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "todo-add-task-empty-input.yml".to_string(),
+                file_name: "req-todo/todo/todo-add-task/todo-add-task-empty-input.yml".to_string(),
                 kind: DiffKind::Added,
             }]
         );
@@ -456,13 +459,10 @@ mod tests {
 
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
         let testcases_dir = dir.path().join("generated/testcases");
-        fs::create_dir_all(&testcases_dir).unwrap();
         for testcase in &testcases {
-            fs::write(
-                testcases_dir.join(format!("{}.yml", testcase.file_stem())),
-                serialize_testcase(testcase),
-            )
-            .unwrap();
+            let path = testcases_dir.join(testcase.relative_path());
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, serialize_testcase(testcase)).unwrap();
         }
         write_matching_index(dir.path());
 
@@ -477,7 +477,9 @@ mod tests {
         crate::init::run_init(dir.path()).unwrap();
         write_knowledge_todo_add_task(dir.path());
 
-        let testcases_dir = dir.path().join("generated/testcases");
+        let testcases_dir = dir
+            .path()
+            .join("generated/testcases/req-todo/todo/todo-add-task");
         fs::create_dir_all(&testcases_dir).unwrap();
         fs::write(
             testcases_dir.join("todo-add-task-empty-input.yml"),
@@ -491,7 +493,7 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "todo-add-task-empty-input.yml".to_string(),
+                file_name: "req-todo/todo/todo-add-task/todo-add-task-empty-input.yml".to_string(),
                 kind: DiffKind::Changed,
             }]
         );
@@ -502,7 +504,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        let testcases_dir = dir.path().join("generated/testcases");
+        let testcases_dir = dir
+            .path()
+            .join("generated/testcases/req-todo/todo/todo-add-task");
         fs::create_dir_all(&testcases_dir).unwrap();
         fs::write(testcases_dir.join("stale-condition.yml"), "stale content\n").unwrap();
         write_matching_index(dir.path());
@@ -512,7 +516,7 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "stale-condition.yml".to_string(),
+                file_name: "req-todo/todo/todo-add-task/stale-condition.yml".to_string(),
                 kind: DiffKind::Removed,
             }]
         );
@@ -525,13 +529,10 @@ mod tests {
         write_knowledge_todo_add_task(dir.path());
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
         let testcases_dir = dir.path().join("generated/testcases");
-        fs::create_dir_all(&testcases_dir).unwrap();
         for testcase in &testcases {
-            fs::write(
-                testcases_dir.join(format!("{}.yml", testcase.file_stem())),
-                serialize_testcase(testcase),
-            )
-            .unwrap();
+            let path = testcases_dir.join(testcase.relative_path());
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, serialize_testcase(testcase)).unwrap();
         }
 
         let diffs = diff_generated_testcases(dir.path()).unwrap();
@@ -552,13 +553,10 @@ mod tests {
         write_knowledge_todo_add_task(dir.path());
         let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
         let testcases_dir = dir.path().join("generated/testcases");
-        fs::create_dir_all(&testcases_dir).unwrap();
         for testcase in &testcases {
-            fs::write(
-                testcases_dir.join(format!("{}.yml", testcase.file_stem())),
-                serialize_testcase(testcase),
-            )
-            .unwrap();
+            let path = testcases_dir.join(testcase.relative_path());
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, serialize_testcase(testcase)).unwrap();
         }
         fs::write(
             dir.path().join("generated/traceability-index.json"),

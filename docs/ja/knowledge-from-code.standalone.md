@@ -44,7 +44,7 @@ knowledge/
                     └── 001.yml, 002.yml, ...
 
 axes/                  # 横断的な axis レジストリ、axis 1つにつき axes/<id>.yml 1ファイル
-generated/testcases/   # <condition>.yml、`markharness generate` により決定的に再生成される — 手編集禁止
+generated/testcases/   # <requirement>/<feature>/<behavior>/<condition>.yml、`markharness generate` により決定的に再生成される — 手編集禁止
 ```
 
 ## 手順
@@ -144,4 +144,4 @@ Phase 2 で特定した各 Condition について:
 - `generated/testcases/*.yml` を手編集しないこと。これは派生出力である。`knowledge/` 配下のみを(`apply` 経由で)書き、残りは `markharness generate` に生成させる。
 - 大きなドラフト1つより、小さなドラフト(Condition ごとに1つ)を複数作る方を優先する — 検証と修正が段階的に行いやすい。
 - Condition の結果がコードだけでは完全に決まらない外部状態(I/O・並行性・設定)に依存する場合は、単一の決定的な結果を断定するのではなく、その旨を description に記載する。
-- `condition.id` は、その Behavior 内だけでなく `knowledge/` ツリー全体で一意である必要がある — `generate` は出力を `generated/testcases/<condition-id>.yml` にフラット化し、衝突時は黙って上書きする。作業完了を報告する前に、Phase 5 で生成ファイル数と Condition 数を突き合わせて確認すること。
+- `condition.id` は Behavior 内で一意であればよい(`knowledge apply`/`knowledge validate` が検証する)。`generate` の出力先は `knowledge/` と同じ階層(`generated/testcases/<requirement>/<feature>/<behavior>/<condition>.yml`)にフルミラーされるため、別の Behavior で同じ `condition.id` を再利用しても衝突しない(旧版はフラットな `generated/testcases/<condition-id>.yml` に出力しており、Behavior をまたいだ再利用時に黙って上書きされる欠陥があったが、構造的に解消済み)。
