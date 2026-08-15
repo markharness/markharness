@@ -861,8 +861,11 @@ condition:
 
         let result = validate_batch(dir.path(), &[first, second], &no_strip_validate()).unwrap();
 
-        assert!(result.ok(), "expected both drafts to validate, got {:?}",
-            result.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+        assert!(
+            result.ok(),
+            "expected both drafts to validate, got {:?}",
+            result.results.iter().map(|r| &r.error).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -875,7 +878,11 @@ condition:
 
         let result = validate_batch(dir.path(), &[broken, valid], &no_strip_validate()).unwrap();
 
-        assert_eq!(result.results.len(), 2, "both files must be reported, not just the first");
+        assert_eq!(
+            result.results.len(),
+            2,
+            "both files must be reported, not just the first"
+        );
         assert!(matches!(
             result.results[0].error,
             Some(DraftFileError::Parse(_))
@@ -916,7 +923,10 @@ condition:
         // `jump` still don't exist, so this draft must fail too (missing
         // axis/description for entries that don't yet exist) rather than
         // succeeding as if the first draft's parents had been created.
-        let second = write_draft_file(&drafts_dir, "02-ground.yml", "\
+        let second = write_draft_file(
+            &drafts_dir,
+            "02-ground.yml",
+            "\
 requirement:
   id: controls
 
@@ -933,7 +943,8 @@ condition:
 
 expected:
   - description: lands safely
-");
+",
+        );
 
         let result = validate_batch(dir.path(), &[first, second], &no_strip_validate()).unwrap();
 

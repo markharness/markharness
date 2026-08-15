@@ -77,7 +77,13 @@ fn axes_prune_reports_an_unused_axis_and_leaves_it_in_place() {
     )
     .unwrap();
 
-    let output = run(&["axes", "prune", "--dir", dir.path().to_str().unwrap(), "--json"]);
+    let output = run(&[
+        "axes",
+        "prune",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
 
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);

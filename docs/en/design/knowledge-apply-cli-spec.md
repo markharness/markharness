@@ -139,6 +139,8 @@ Each rule corresponds to an error code in §6.
 
 **Notes added at implementation time**: Rule #10 (`unknown_forked_from`) was not in the initial version of this specification, but was added by `knowledge_draft.rs::feature_id_exists` to match the implementation of the `feature.forked_from` field (`knowledge.rs`). Since Feature ids are assumed to be unique across the entire repository even when nested under `requirement`, the search is exhaustive under `knowledge/` across `requirement` levels.
 
+**Notes added at implementation time**: Rule #2 (`missing_axis`) populates `suggestion` with the registered axes (comma-separated, sorted) whenever `axes/*.yml` has at least one registered; when none are registered, there is nothing to suggest, so `suggestion` stays `null` and `message` instead points the caller at `markharness axes add` (`knowledge_draft.rs::missing_axis_error`). The blank draft template `knowledge add --edit`/`knowledge scaffold` emit (`EDIT_TEMPLATE`) used to write `axis: []`; it now writes a blank scalar (`axis:`) like the template's other unfilled fields (`id:`, `label:`) do, since `axis: []` looked filled-in at a glance even though it still triggers this rule for a new entry.
+
 ## 6. Error Output Format
 
 **Human-readable (default)**: One error per line to `stderr`.

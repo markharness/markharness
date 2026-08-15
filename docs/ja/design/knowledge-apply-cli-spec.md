@@ -139,6 +139,8 @@ expected:
 
 **実装時の追記**：ルール#10(`unknown_forked_from`)は本仕様の初版になかったが、`feature.forked_from`フィールド(`knowledge.rs`)の実装にあわせて`knowledge_draft.rs::feature_id_exists`で追加された。Feature idは`requirement`配下にネストしていてもリポジトリ全体で一意である前提のため、`knowledge/`配下を`requirement`階層をまたいで全探索する。
 
+**実装時の追記**：ルール#2(`missing_axis`)は、`axes/*.yml` に1件以上axisが登録されている場合は `suggestion` フィールドに登録済みaxis一覧(カンマ区切り、ソート済み)を提示する。1件も登録が無い場合は提示すべき候補が無いため `suggestion` は `null` のままとし、代わりに `message` に `markharness axes add` での登録を促す文言を加える(`knowledge_draft.rs::missing_axis_error`)。`knowledge add --edit`/`knowledge scaffold` が出す空のドラフト雛形(`EDIT_TEMPLATE`)も、以前は `axis: []` としていたが、他の未入力フィールド(`id:`/`label:`)と同じ空スカラー(`axis:`)に変更した——`axis: []` は一見入力済みに見えるにもかかわらず新規エントリでは本ルールに抵触するため、紛らわしい落とし穴だった。
+
 ## 6. エラー出力フォーマット
 
 **人間可読(デフォルト)**: `stderr` に1行1エラー。

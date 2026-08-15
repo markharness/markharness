@@ -106,9 +106,8 @@ Phase 2 で特定した各 Condition について:
    condition:
      id:
        <condition-slug> # behavior id をプレフィックスとして繰り返さない
-       # knowledge/ ツリー全体で一意である必要があり、
-       # その Behavior 内だけで一意では不十分 —
-       # 下記「Condition id の衝突」参照
+       # 同じ Behavior 内でのみ一意であればよい —
+       # 詳細は下記「Condition id の一意性」参照
      label: <label>
      description: <このパスを引き起こす具体的な入力/状態 — file:line を明記>
 

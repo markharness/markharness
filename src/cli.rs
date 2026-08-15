@@ -340,7 +340,7 @@ pub enum KnowledgeCommand {
         /// Path to the draft YAML file. Required unless --batch is given.
         #[arg(required_unless_present = "batch")]
         draft_file: Option<PathBuf>,
-        /// Directory whose direct *.yml children are all treated as draft files and validated in file-name order, cumulatively (a later draft may reuse a Requirement/Feature/Behavior an earlier, valid draft in the same batch would create), without writing anything. Every file is checked and reported, even after an earlier one fails.
+        /// Directory whose direct *.yml children are all treated as draft files and validated in file-name order, cumulatively (a later draft may reuse a Requirement/Feature/Behavior an earlier, valid draft in the same batch would create), without writing anything. Every file is checked and reported, even after an earlier one fails. Exits with code 2 if no *.yml files are found directly under it (a directory of only .yaml drafts does not count).
         #[arg(long, conflicts_with = "draft_file")]
         batch: Option<PathBuf>,
         /// Target project directory containing knowledge/. Defaults to the current directory.
@@ -355,7 +355,7 @@ pub enum KnowledgeCommand {
         /// Path to the draft YAML file. Required unless --batch is given.
         #[arg(required_unless_present = "batch")]
         draft_file: Option<PathBuf>,
-        /// Directory whose direct *.yml children are all treated as draft files and applied in file-name order. If any fails to parse or validate, every file this call wrote (including by earlier, successful drafts in the same batch) is removed before it returns.
+        /// Directory whose direct *.yml children are all treated as draft files and applied in file-name order. If any fails to parse or validate, every file this call wrote (including by earlier, successful drafts in the same batch) is removed before it returns. Exits with code 2 if no *.yml files are found directly under it (a directory of only .yaml drafts does not count).
         #[arg(long, conflicts_with = "draft_file")]
         batch: Option<PathBuf>,
         /// Target project directory containing knowledge/. Defaults to the current directory.
@@ -1085,6 +1085,40 @@ fn sorted_yaml_files_in(dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Reads `batch_dir` via `sorted_yaml_files_in` and exits with code 2 if it
+/// matched zero `*.yml` files — a directory of `.yaml` drafts (the wrong
+/// extension) would otherwise look like an empty-but-successful batch to a
+/// caller that only checks `ok`/exit status. Shared by `knowledge validate
+/// --batch` and `knowledge apply --batch` (including `--dry-run`) so both
+/// report this the same way.
+fn read_batch_dir_or_exit(batch_dir: &Path, json: bool) -> Vec<PathBuf> {
+    let draft_paths = match sorted_yaml_files_in(batch_dir) {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!(
+                "error: cannot read batch directory {}: {e}",
+                batch_dir.display()
+            );
+            std::process::exit(2);
+        }
+    };
+
+    if draft_paths.is_empty() {
+        let message = format!(
+            "no *.yml files found in batch directory {}",
+            batch_dir.display()
+        );
+        if json {
+            println!("{{\"ok\":false,\"error\":\"{}\"}}", json_escape(&message));
+        } else {
+            eprintln!("error: {message}");
+        }
+        std::process::exit(2);
+    }
+
+    draft_paths
+}
+
 /// Prints one draft file's validation errors, prefixed with the file name so
 /// they're distinguishable within a `--batch` run, then exits with code 1
 /// (the same code single-draft validation failure uses, via
@@ -1135,9 +1169,16 @@ fn report_batch_parse_error(file: &Path, message: &str, json: bool) -> ! {
 /// single-file shapes but as an array element rather than the whole payload.
 fn draft_validation_failure_to_json(result: &DraftValidation) -> String {
     let file = json_escape(&result.file.to_string_lossy());
-    match result.error.as_ref().expect("caller filters to failures only") {
+    match result
+        .error
+        .as_ref()
+        .expect("caller filters to failures only")
+    {
         DraftFileError::Parse(message) => {
-            format!("{{\"file\":\"{file}\",\"error\":\"{}\"}}", json_escape(message))
+            format!(
+                "{{\"file\":\"{file}\",\"error\":\"{}\"}}",
+                json_escape(message)
+            )
         }
         DraftFileError::Validation(errors) => {
             format!(
@@ -1201,16 +1242,7 @@ fn report_batch_validate_result(result: &knowledge_apply::BatchValidateResult, j
 }
 
 fn run_knowledge_validate_batch(root: &Path, batch_dir: &Path, json: bool) -> io::Result<()> {
-    let draft_paths = match sorted_yaml_files_in(batch_dir) {
-        Ok(paths) => paths,
-        Err(e) => {
-            eprintln!(
-                "error: cannot read batch directory {}: {e}",
-                batch_dir.display()
-            );
-            std::process::exit(2);
-        }
-    };
+    let draft_paths = read_batch_dir_or_exit(batch_dir, json);
 
     let options = ValidateOptions {
         strip_redundant_prefix: false,
@@ -1227,16 +1259,7 @@ fn run_knowledge_apply_batch(
     strip_redundant_prefix: bool,
     dry_run: bool,
 ) -> io::Result<()> {
-    let draft_paths = match sorted_yaml_files_in(batch_dir) {
-        Ok(paths) => paths,
-        Err(e) => {
-            eprintln!(
-                "error: cannot read batch directory {}: {e}",
-                batch_dir.display()
-            );
-            std::process::exit(2);
-        }
-    };
+    let draft_paths = read_batch_dir_or_exit(batch_dir, json);
 
     if dry_run {
         let options = ValidateOptions {
@@ -1511,8 +1534,8 @@ fn generate_result_to_json(generated: usize, written: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::error::ErrorKind;
     use clap::CommandFactory;
+    use clap::error::ErrorKind;
 
     #[test]
     fn version_flag_reports_display_version() {

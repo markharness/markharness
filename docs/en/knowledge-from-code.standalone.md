@@ -151,9 +151,8 @@ For each Condition identified in Phase 2:
    condition:
      id:
        <condition-slug> # do not repeat the behavior id as a prefix
-       # MUST be unique across the entire knowledge/
-       # tree, not just within its Behavior — see
-       # "Condition id collisions" below
+       # only needs to be unique within this Behavior —
+       # see "Condition id uniqueness" below
      label: <label>
      description: <the specific input/state that triggers this path — cite file:line>
 

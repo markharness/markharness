@@ -236,6 +236,37 @@ fn push_invalid_slug(errors: &mut Vec<ValidationError>, path: &str, value: &str)
     }
 }
 
+/// Builds the `missing_axis` error for a new requirement/feature/behavior
+/// with no (or empty) `axis`. When the project has axes registered, the
+/// `suggestion` field lists them (sorted, for deterministic output) as
+/// candidates to pick from; when none are registered, `suggestion` stays
+/// `None` (there's nothing to suggest) and `message` tells the caller to
+/// register one first instead.
+fn missing_axis_error(path_prefix: &str, axis_registry: &HashSet<String>) -> ValidationError {
+    if axis_registry.is_empty() {
+        return ValidationError {
+            code: ValidationErrorCode::MissingAxis,
+            path: format!("{path_prefix}.axis"),
+            value: None,
+            message: format!(
+                "{path_prefix}.axis is required when creating a new entry, but no axes are \
+                 registered yet — run `markharness axes add` to register one"
+            ),
+            suggestion: None,
+        };
+    }
+
+    let mut registered: Vec<&str> = axis_registry.iter().map(String::as_str).collect();
+    registered.sort();
+    ValidationError {
+        code: ValidationErrorCode::MissingAxis,
+        path: format!("{path_prefix}.axis"),
+        value: None,
+        message: format!("{path_prefix}.axis is required when creating a new entry"),
+        suggestion: Some(registered.join(", ")),
+    }
+}
+
 fn push_axis_checks(
     errors: &mut Vec<ValidationError>,
     path_prefix: &str,
@@ -246,24 +277,12 @@ fn push_axis_checks(
     match axis {
         None => {
             if !exists {
-                errors.push(ValidationError {
-                    code: ValidationErrorCode::MissingAxis,
-                    path: format!("{path_prefix}.axis"),
-                    value: None,
-                    message: format!("{path_prefix}.axis is required when creating a new entry"),
-                    suggestion: None,
-                });
+                errors.push(missing_axis_error(path_prefix, axis_registry));
             }
         }
         Some(values) => {
             if !exists && values.is_empty() {
-                errors.push(ValidationError {
-                    code: ValidationErrorCode::MissingAxis,
-                    path: format!("{path_prefix}.axis"),
-                    value: None,
-                    message: format!("{path_prefix}.axis is required when creating a new entry"),
-                    suggestion: None,
-                });
+                errors.push(missing_axis_error(path_prefix, axis_registry));
             }
             for (i, value) in values.iter().enumerate() {
                 if !axis_registry.contains(value) {
@@ -783,6 +802,41 @@ expected:
             errors
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::MissingAxis && e.path == "behavior.axis")
+        );
+    }
+
+    #[test]
+    fn validate_draft_missing_axis_suggests_registered_axes_when_any_are_registered() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.behavior.axis = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        let error = errors
+            .iter()
+            .find(|e| e.code == ValidationErrorCode::MissingAxis && e.path == "behavior.axis")
+            .expect("expected a missing_axis error for behavior.axis");
+        assert_eq!(error.suggestion, Some("animation, gameplay".to_string()));
+    }
+
+    #[test]
+    fn validate_draft_missing_axis_has_no_suggestion_when_no_axes_are_registered() {
+        let dir = setup_root_with_axes(&[]);
+        let mut draft = full_new_draft();
+        draft.behavior.axis = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        let error = errors
+            .iter()
+            .find(|e| e.code == ValidationErrorCode::MissingAxis && e.path == "behavior.axis")
+            .expect("expected a missing_axis error for behavior.axis");
+        assert_eq!(error.suggestion, None);
+        assert!(
+            error.message.contains("axes add"),
+            "expected a hint to register an axis: {}",
+            error.message
         );
     }
 

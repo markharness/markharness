@@ -546,7 +546,7 @@ fn apply_batch_dry_run_json_reports_every_failing_file_not_just_the_first() {
 }
 
 #[test]
-fn apply_batch_succeeds_as_a_no_op_when_the_directory_has_no_yml_files() {
+fn apply_batch_exits_two_when_the_directory_has_no_yml_files() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
@@ -558,12 +558,81 @@ fn apply_batch_succeeds_as_a_no_op_when_the_directory_has_no_yml_files() {
         drafts_dir.to_str().unwrap(),
         "--dir",
         dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no *.yml files"), "{stderr}");
+    assert!(
+        stderr.contains(&drafts_dir.to_string_lossy().to_string()),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn apply_batch_json_reports_error_when_the_directory_has_no_yml_files() {
+    let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    let drafts_dir = dir.path().join("drafts");
+    fs::create_dir_all(&drafts_dir).unwrap();
+    // A .yaml file must not satisfy the .yml-only batch convention.
+    fs::write(drafts_dir.join("draft.yaml"), VALID_DRAFT).unwrap();
+
+    let output = run(&[
+        "knowledge",
+        "apply",
+        "--batch",
+        drafts_dir.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
         "--json",
     ]);
 
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "{\"ok\":true,\"written\":[]}");
+    assert!(stdout.contains("\"ok\":false"), "{stdout}");
+    assert!(stdout.contains("\"error\":"), "{stdout}");
+    assert!(!dir.path().join("knowledge/controls").exists());
+}
+
+#[test]
+fn apply_batch_dry_run_exits_two_when_the_directory_has_no_yml_files() {
+    let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    let drafts_dir = dir.path().join("drafts");
+    fs::create_dir_all(&drafts_dir).unwrap();
+
+    let output = run(&[
+        "knowledge",
+        "apply",
+        "--batch",
+        drafts_dir.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--dry-run",
+        "--json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
+fn validate_batch_exits_two_when_the_directory_has_no_yml_files() {
+    let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    let drafts_dir = dir.path().join("drafts");
+    fs::create_dir_all(&drafts_dir).unwrap();
+
+    let output = run(&[
+        "knowledge",
+        "validate",
+        "--batch",
+        drafts_dir.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"ok\":false"), "{stdout}");
 }
 
 #[test]

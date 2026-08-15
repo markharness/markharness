@@ -16,20 +16,22 @@ pub const EDIT_TEMPLATE: &str = "\
 # knowledge add --edit
 # Fill in the chain below (existing ids may omit label/axis/description),
 # then save and exit the editor to apply. Validation errors reopen the editor.
+# axis needs at least one id for a new requirement/feature/behavior — run
+# `markharness axes list` to see what's registered.
 requirement:
   id:
   label:
-  axis: []
+  axis:
 
 feature:
   id:
   label:
-  axis: []
+  axis:
 
 behavior:
   id:
   label:
-  axis: []
+  axis:
   description:
 
 condition:
@@ -194,6 +196,28 @@ mod tests {
         write_scaffold(&out).unwrap();
 
         assert_eq!(fs::read_to_string(&out).unwrap(), EDIT_TEMPLATE);
+    }
+
+    #[test]
+    fn edit_template_leaves_axis_blank_instead_of_an_empty_list() {
+        // `axis: []` parses as "provided but empty," which trips
+        // `missing_axis` for a new entry the same way an omitted `axis:`
+        // does — but looks filled-in at a glance, unlike the template's
+        // other blank scalar fields (`id:`, `label:`). Keep it a blank
+        // scalar like those so the field visibly needs input.
+        assert!(
+            !EDIT_TEMPLATE.contains("axis: []"),
+            "axis: [] looks pre-filled even though it still fails missing_axis validation: {EDIT_TEMPLATE}"
+        );
+        assert!(EDIT_TEMPLATE.contains("axis:\n"), "{EDIT_TEMPLATE}");
+    }
+
+    #[test]
+    fn edit_template_explains_that_axis_is_required_for_new_entries() {
+        assert!(
+            EDIT_TEMPLATE.contains("axes list"),
+            "expected a hint to run `markharness axes list`: {EDIT_TEMPLATE}"
+        );
     }
 
     #[test]

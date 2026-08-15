@@ -260,7 +260,7 @@ markharness knowledge validate --batch <dir> [--json] [-d, --dir <path>]
 | `-d, --dir <path>` | Target project directory (the parent of `knowledge/`). Defaults to the current directory.                    |
 | `--json`           | Print errors/results as single-line JSON. If omitted, prints human-readable text.                             |
 
-**Batch mode (`--batch <dir>`)**: Validates multiple drafts the same cumulative way `knowledge apply --batch` (section 1.4) does — in ascending file-name order, a later draft may reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch would newly create**, the same way it could reuse one an earlier draft actually applied. Unlike `apply --batch`, though, one draft's failure does not stop the run: every file in the batch is checked through to the end before results are reported together (this is the point of the command — surfacing every error before anything is written). A failed draft does not contribute to the cumulative state seen by later drafts (they are checked as though it were never in the batch). With `--json`, any failures print `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` (`errors` for validation errors, `error` for a parse error). Human-readable mode likewise prints every failing file's errors, prefixed with its file name. `{"ok":true}` when every file is valid. Nothing is ever written to the real project directory (internally, `knowledge/` and `axes/` are copied into a temp directory and validated there).
+**Batch mode (`--batch <dir>`)**: Validates multiple drafts the same cumulative way `knowledge apply --batch` (section 1.4) does — in ascending file-name order, a later draft may reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch would newly create**, the same way it could reuse one an earlier draft actually applied. Unlike `apply --batch`, though, one draft's failure does not stop the run: every file in the batch is checked through to the end before results are reported together (this is the point of the command — surfacing every error before anything is written). A failed draft does not contribute to the cumulative state seen by later drafts (they are checked as though it were never in the batch). With `--json`, any failures print `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` (`errors` for validation errors, `error` for a parse error). Human-readable mode likewise prints every failing file's errors, prefixed with its file name. `{"ok":true}` when every file is valid. Nothing is ever written to the real project directory (internally, `knowledge/` and `axes/` are copied into a temp directory and validated there). If `<dir>` has no `*.yml` files directly under it (including when it only contains `.yaml`-extension drafts), this is an error: exit code 2, with `{"ok":false,"error":"no *.yml files found in batch directory <dir>"}` (same behavior as section 1.4's "Batch mode").
 
 **Draft YAML format** (a single run validates one chain). A blank template is available via `markharness knowledge scaffold` (section 1.21). See `docs/knowledge_draft.schema.json` for a reference schema meant for IDE autocompletion (a static reference file not used for actual validation — the table below and `docs/design/knowledge-apply-cli-spec.md` are authoritative for `knowledge validate`/`apply`'s own validation rules).
 
@@ -299,7 +299,7 @@ expected:
 | Error code                   | Meaning                                                                                                                    |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `invalid_slug`               | The id contains characters other than lowercase alphanumerics and hyphens                                                 |
-| `missing_axis`               | `axis` is empty/unspecified for a newly created Requirement/Feature/Behavior                                              |
+| `missing_axis`               | `axis` is empty/unspecified for a newly created Requirement/Feature/Behavior. When `axes/*.yml` has at least one axis registered, `suggestion` lists the registered axes (comma-separated); when none are registered, `suggestion` stays `null` and `message` points the caller at `axes add` instead |
 | `missing_description`        | `description` is empty for a newly created Behavior/Condition, or for any ExpectedResult                                  |
 | `unknown_axis`               | An axis value not registered in the `axes/*.yml` registry (a close match, if any, is offered in `suggestion`)             |
 | `redundant_prefix`           | `condition.id` starts with `{behavior.id}-` (when `--strip-redundant-prefix` is not given to `knowledge apply`; see 1.4)  |
@@ -312,7 +312,7 @@ expected:
 | ---- | --------------------------------------------------------------------------------------------------- |
 | 0    | Success (no errors)                                                                                  |
 | 1    | Validation errors present (error content on stderr; on JSON stdout when `--json` is given)          |
-| 2    | Usage error (file not found, YAML unparsable)                                                        |
+| 2    | Usage error (file not found, YAML unparsable, `--batch <dir>` has no `*.yml` files)                 |
 
 **Example (success, human-readable)**
 
@@ -390,7 +390,7 @@ markharness knowledge apply --batch <dir> [--json] [-d, --dir <path>] [--strip-r
 - Each draft is validated and applied in ascending file-name order (e.g. `01-empty-title.yml`, `02-max-length.yml`, ...). A later draft can reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch just created**, by referencing it via id alone — the same way it could reuse one that already existed on disk before a single `apply`. No dependency resolution is performed, so name files so a parent-creating draft sorts before the drafts that reuse it.
 - **All-or-nothing overall**: if any one draft fails with a validation or parse error, every file already written earlier in this batch call is deleted, and `knowledge/` ends up exactly as it was before the batch ran. Note, however, that each draft is validated against `knowledge/`'s state immediately before *that* draft is applied (reflecting the results of earlier drafts in the batch) — this is not a single upfront validation pass across every draft before any writing begins.
 - `--dry-run --batch <dir>` is a thin alias that calls the exact same implementation as `knowledge validate --batch` (section 1.3) and never writes. Like section 1.3, it is cumulative (it does simulate every other draft in the batch being applied first) and checks every file (one failure does not stop the run), so it can never disagree with what a real (non-dry-run) run would do. See section 1.3's "Batch mode" for the `--json` output shape and exit code.
-- If `<dir>` has no `*.yml` files directly under it, this is not an error — it succeeds as `{"ok":true,"written":[]}` (zero drafts applied; `{"ok":true}` under `--dry-run`).
+- If `<dir>` has no `*.yml` files directly under it (e.g. the directory only holds `.yaml`-extension drafts), this is an error: exit code 2, with `{"ok":false,"error":"no *.yml files found in batch directory <dir>"}` under `--json` (plain text on stderr otherwise). Treating a zero-match batch as a silent success would let an extension mistake or an empty directory pass unnoticed.
 - Validation/parse error `--json` output (without `--dry-run`, when an actual write attempt fails) adds `"file":"<name>"` to the single-draft shape: `{"ok":false,"file":"...","errors":[...]}` for a validation failure, or `{"ok":false,"file":"...","error":"..."}` for a parse failure. Unlike `--dry-run` (section 1.3's collect-everything behavior), this stops at the first failure — since a write-mode failure requires rolling back everything already written, there is no point validating further. The human-readable mode likewise prefixes each error line with the file name.
 
 **Exit codes**
@@ -399,7 +399,7 @@ markharness knowledge apply --batch <dir> [--json] [-d, --dir <path>] [--strip-r
 | ---- | ------------------------------------------------------------------------------------ |
 | 0    | Success (write succeeded; no error when `--dry-run` is given)                       |
 | 1    | Validation errors present (same format as section 1.3; no files are written at all) |
-| 2    | Usage error (file not found, YAML unparsable)                                       |
+| 2    | Usage error (file not found, YAML unparsable, `--batch <dir>` has no `*.yml` files)  |
 | 3    | Filesystem error (e.g., write failure)                                              |
 
 **Example (success, `--json`)**
