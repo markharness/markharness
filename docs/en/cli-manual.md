@@ -246,19 +246,23 @@ Expected result (e.g. shows a validation error): shows a length validation error
 
 ```text
 markharness knowledge validate <draft-file> [--json] [-d, --dir <path>]
+markharness knowledge validate --batch <dir> [--json] [-d, --dir <path>]
 ```
 
 **Purpose**: Without depending on the sequential TTY prompts assumed by `knowledge add` (section 1.2), this validates the schema and consistency of one Requirement→Feature→Behavior→Condition→ExpectedResult chain given as a single draft YAML file. **It has no side effects and performs no file writes whatsoever.** It is intended for non-interactive invocation by AI agents such as Claude Code, and for use from a future GUI implementation. `docs/design/knowledge-apply-cli-spec.md` is authoritative for the detailed design intent and the full list of validation rules.
 
 **Options**
 
-| Option              | Description                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------------ |
-| `<draft-file>`     | (required) Path to the draft YAML file                                                    |
-| `-d, --dir <path>` | Target project directory (the parent of `knowledge/`). Defaults to the current directory. |
-| `--json`           | Print errors/results as single-line JSON. If omitted, prints human-readable text.          |
+| Option              | Description                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `<draft-file>`     | Path to the draft YAML file. Mutually exclusive with `--batch` (exactly one of the two is required)          |
+| `--batch <dir>`    | Treats every `*.yml` directly under `<dir>` as a draft file and validates them cumulatively in ascending file-name order. See "Batch mode" below |
+| `-d, --dir <path>` | Target project directory (the parent of `knowledge/`). Defaults to the current directory.                    |
+| `--json`           | Print errors/results as single-line JSON. If omitted, prints human-readable text.                             |
 
-**Draft YAML format** (a single run validates one chain; bulk validation of multiple chains is not supported)
+**Batch mode (`--batch <dir>`)**: Validates multiple drafts the same cumulative way `knowledge apply --batch` (section 1.4) does — in ascending file-name order, a later draft may reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch would newly create**, the same way it could reuse one an earlier draft actually applied. Unlike `apply --batch`, though, one draft's failure does not stop the run: every file in the batch is checked through to the end before results are reported together (this is the point of the command — surfacing every error before anything is written). A failed draft does not contribute to the cumulative state seen by later drafts (they are checked as though it were never in the batch). With `--json`, any failures print `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` (`errors` for validation errors, `error` for a parse error). Human-readable mode likewise prints every failing file's errors, prefixed with its file name. `{"ok":true}` when every file is valid. Nothing is ever written to the real project directory (internally, `knowledge/` and `axes/` are copied into a temp directory and validated there).
+
+**Draft YAML format** (a single run validates one chain)
 
 ```yaml
 requirement:
@@ -346,6 +350,17 @@ $ echo $?
 1
 ```
 
+**Example (`--batch`, validating several drafts, one fails)**
+
+```console
+$ markharness knowledge validate --batch drafts/ --dir tmp/todo-sample --json
+{"ok":false,"failures":[{"file":"01-broken.yml","error":"failed to parse draft: ..."},{"file":"03-air.yml","errors":[{"code":"missing_description","path":"condition.description","value":null,"message":"condition.description must not be empty","suggestion":null}]}]}
+$ echo $?
+1
+```
+
+A valid file such as `02-*.yml` is not included in `failures`. `03-air.yml` is still checked through to the end even though `01-broken.yml` failed to parse first.
+
 **Use case mapping**: Supports UC1 "describe knowledge" (`docs/product-operation.md` line 103) in a TTY-independent way. Shares the same validation logic as `knowledge add` in section 1.2.
 
 ---
@@ -374,9 +389,9 @@ markharness knowledge apply --batch <dir> [--json] [-d, --dir <path>] [--strip-r
 
 - Each draft is validated and applied in ascending file-name order (e.g. `01-empty-title.yml`, `02-max-length.yml`, ...). A later draft can reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch just created**, by referencing it via id alone — the same way it could reuse one that already existed on disk before a single `apply`. No dependency resolution is performed, so name files so a parent-creating draft sorts before the drafts that reuse it.
 - **All-or-nothing overall**: if any one draft fails with a validation or parse error, every file already written earlier in this batch call is deleted, and `knowledge/` ends up exactly as it was before the batch ran. Note, however, that each draft is validated against `knowledge/`'s state immediately before *that* draft is applied (reflecting the results of earlier drafts in the batch) — this is not a single upfront validation pass across every draft before any writing begins.
-- `--dry-run --batch <dir>` only validates each draft against `knowledge/`'s *current* state (it does not simulate any other draft in the batch being applied first) and never writes. Because of this, when drafts in the batch depend on each other, a `--dry-run` validation can disagree with what a real (non-dry-run) run would do — a later draft may report a validation error over a parent that "doesn't exist yet," even though a real run would succeed because an earlier draft creates that parent first.
-- If `<dir>` has no `*.yml` files directly under it, this is not an error — it succeeds as `{"ok":true,"written":[]}` (zero drafts applied).
-- Validation/parse error `--json` output adds `"file":"<name>"` to the single-draft shape: `{"ok":false,"file":"...","errors":[...]}` for a validation failure, or `{"ok":false,"file":"...","error":"..."}` for a parse failure. The human-readable mode likewise prefixes each error line with the file name.
+- `--dry-run --batch <dir>` is a thin alias that calls the exact same implementation as `knowledge validate --batch` (section 1.3) and never writes. Like section 1.3, it is cumulative (it does simulate every other draft in the batch being applied first) and checks every file (one failure does not stop the run), so it can never disagree with what a real (non-dry-run) run would do. See section 1.3's "Batch mode" for the `--json` output shape and exit code.
+- If `<dir>` has no `*.yml` files directly under it, this is not an error — it succeeds as `{"ok":true,"written":[]}` (zero drafts applied; `{"ok":true}` under `--dry-run`).
+- Validation/parse error `--json` output (without `--dry-run`, when an actual write attempt fails) adds `"file":"<name>"` to the single-draft shape: `{"ok":false,"file":"...","errors":[...]}` for a validation failure, or `{"ok":false,"file":"...","error":"..."}` for a parse failure. Unlike `--dry-run` (section 1.3's collect-everything behavior), this stops at the first failure — since a write-mode failure requires rolling back everything already written, there is no point validating further. The human-readable mode likewise prefixes each error line with the file name.
 
 **Exit codes**
 

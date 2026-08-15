@@ -401,6 +401,109 @@ fn apply_batch_dry_run_validates_only_and_writes_nothing() {
 }
 
 #[test]
+fn validate_batch_exits_zero_and_writes_nothing_for_a_valid_batch() {
+    let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    let drafts_dir = dir.path().join("drafts");
+    fs::create_dir_all(&drafts_dir).unwrap();
+    write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
+
+    let output = run(&[
+        "knowledge",
+        "validate",
+        "--batch",
+        drafts_dir.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "{\"ok\":true}");
+    assert!(!dir.path().join("knowledge/controls").exists());
+}
+
+#[test]
+fn validate_batch_lets_a_later_draft_reuse_a_parent_an_earlier_draft_creates() {
+    let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    let drafts_dir = dir.path().join("drafts");
+    fs::create_dir_all(&drafts_dir).unwrap();
+    write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
+    write_batch_draft(&drafts_dir, "02-air.yml", SECOND_CONDITION_REUSING_PARENT);
+
+    let output = run(&[
+        "knowledge",
+        "validate",
+        "--batch",
+        drafts_dir.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "{\"ok\":true}");
+}
+
+#[test]
+fn validate_batch_json_reports_every_failing_file_not_just_the_first() {
+    let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    let drafts_dir = dir.path().join("drafts");
+    fs::create_dir_all(&drafts_dir).unwrap();
+    write_batch_draft(&drafts_dir, "01-broken.yml", "not: [valid yaml");
+    let missing_description = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    write_batch_draft(&drafts_dir, "02-invalid.yml", &missing_description);
+
+    let output = run(&[
+        "knowledge",
+        "validate",
+        "--batch",
+        drafts_dir.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"ok\":false"), "{stdout}");
+    assert!(stdout.contains("\"file\":\"01-broken.yml\""), "{stdout}");
+    assert!(stdout.contains("\"file\":\"02-invalid.yml\""), "{stdout}");
+    assert!(
+        stdout.contains("\"code\":\"missing_description\""),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn apply_batch_dry_run_json_reports_every_failing_file_not_just_the_first() {
+    let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    let drafts_dir = dir.path().join("drafts");
+    fs::create_dir_all(&drafts_dir).unwrap();
+    write_batch_draft(&drafts_dir, "01-broken.yml", "not: [valid yaml");
+    let missing_description = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    write_batch_draft(&drafts_dir, "02-invalid.yml", &missing_description);
+
+    let output = run(&[
+        "knowledge",
+        "apply",
+        "--batch",
+        drafts_dir.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--dry-run",
+        "--json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"file\":\"01-broken.yml\""), "{stdout}");
+    assert!(stdout.contains("\"file\":\"02-invalid.yml\""), "{stdout}");
+    assert!(!dir.path().join("knowledge/controls").exists());
+}
+
+#[test]
 fn apply_batch_succeeds_as_a_no_op_when_the_directory_has_no_yml_files() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
     let drafts_dir = dir.path().join("drafts");
