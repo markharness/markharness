@@ -304,6 +304,105 @@ fn rollback(root: &Path, written: &[PathBuf]) {
     }
 }
 
+/// One `--batch` draft file's validation outcome: `None` when it validated
+/// cleanly, `Some` otherwise (parse failure or validation errors).
+pub struct DraftValidation {
+    pub file: PathBuf,
+    pub error: Option<DraftFileError>,
+}
+
+pub struct BatchValidateResult {
+    pub results: Vec<DraftValidation>,
+}
+
+impl BatchValidateResult {
+    pub fn ok(&self) -> bool {
+        self.results.iter().all(|r| r.error.is_none())
+    }
+}
+
+/// Validates every `*.yml` file in `draft_paths` (already resolved and
+/// sorted by the caller) without writing anything to `root`, and without
+/// stopping at the first invalid file.
+///
+/// Mirrors `apply_batch`'s cumulative semantics: a later draft is validated
+/// against the state left by every earlier *valid* draft in this same batch
+/// (not against `root`'s state before the batch started), by replaying
+/// `apply_draft` against an isolated copy of `root`'s `knowledge/` and
+/// `axes/` under a temp directory that is discarded once every file has been
+/// checked. A draft that fails to parse or validate contributes nothing to
+/// that cumulative state — later drafts are checked as though it were never
+/// in the batch — but checking continues through the rest of the batch
+/// regardless, so every file's outcome is reported in one call.
+pub fn validate_batch(
+    root: &Path,
+    draft_paths: &[PathBuf],
+    options: &ValidateOptions,
+) -> io::Result<BatchValidateResult> {
+    let scratch = tempfile::tempdir()?;
+    copy_dir_if_exists(&root.join("knowledge"), &scratch.path().join("knowledge"))?;
+    copy_dir_if_exists(&root.join("axes"), &scratch.path().join("axes"))?;
+
+    let apply_options = ApplyOptions {
+        strip_redundant_prefix: options.strip_redundant_prefix,
+    };
+
+    let mut results = Vec::with_capacity(draft_paths.len());
+    for draft_path in draft_paths {
+        let file_name = draft_path
+            .file_name()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| draft_path.clone());
+
+        let yaml = fs::read_to_string(draft_path)?;
+        let draft = match knowledge_draft::parse_draft(&yaml) {
+            Ok(draft) => draft,
+            Err(e) => {
+                results.push(DraftValidation {
+                    file: file_name,
+                    error: Some(DraftFileError::Parse(e.to_string())),
+                });
+                continue;
+            }
+        };
+
+        match apply_draft(scratch.path(), &draft, &apply_options) {
+            Ok(_) => results.push(DraftValidation {
+                file: file_name,
+                error: None,
+            }),
+            Err(ApplyError::Validation(errors)) => results.push(DraftValidation {
+                file: file_name,
+                error: Some(DraftFileError::Validation(errors)),
+            }),
+            Err(ApplyError::Io(e)) => return Err(e),
+        }
+    }
+
+    Ok(BatchValidateResult { results })
+}
+
+/// Recursively copies `from` into `to` when `from` exists, creating `to`.
+/// A no-op when `from` is missing (mirrors `load_axis_registry`'s and
+/// `apply_draft`'s existing "absent directory means empty" convention).
+fn copy_dir_if_exists(from: &Path, to: &Path) -> io::Result<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let dest_path = to.join(entry.file_name());
+        if entry_path.is_dir() {
+            copy_dir_if_exists(&entry_path, &dest_path)?;
+        } else {
+            fs::copy(&entry_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +449,12 @@ expected:
 
     fn no_strip() -> ApplyOptions {
         ApplyOptions {
+            strip_redundant_prefix: false,
+        }
+    }
+
+    fn no_strip_validate() -> ValidateOptions {
+        ValidateOptions {
             strip_redundant_prefix: false,
         }
     }
@@ -717,6 +822,125 @@ condition:
                 .join("knowledge/controls/requirement.yml")
                 .exists(),
             "the first draft's files must be rolled back when the second draft fails to parse"
+        );
+    }
+
+    #[test]
+    fn validate_batch_reports_ok_for_a_single_valid_draft_and_does_not_touch_real_root() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
+
+        let result = validate_batch(dir.path(), &[first], &no_strip_validate()).unwrap();
+
+        assert!(result.ok());
+        assert_eq!(result.results.len(), 1);
+        assert!(result.results[0].error.is_none());
+        assert!(
+            !dir.path().join("knowledge/controls").exists(),
+            "validate_batch must not write into the real root"
+        );
+    }
+
+    #[test]
+    fn validate_batch_lets_a_later_draft_reuse_a_parent_an_earlier_draft_in_the_batch_creates() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        // Neither `controls`, `player-jump`, nor `jump` exist on disk before
+        // this call — the second draft only supplies bare ids for them,
+        // relying on the first draft (validated first, within this same
+        // batch) to have created them.
+        let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
+        let second = write_draft_file(
+            &drafts_dir,
+            "02-air.yml",
+            SECOND_CONDITION_REUSING_PARENT_YAML,
+        );
+
+        let result = validate_batch(dir.path(), &[first, second], &no_strip_validate()).unwrap();
+
+        assert!(result.ok(), "expected both drafts to validate, got {:?}",
+            result.results.iter().map(|r| &r.error).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn validate_batch_reports_every_file_instead_of_stopping_at_the_first_failure() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        let broken = write_draft_file(&drafts_dir, "01-broken.yml", "not: [valid yaml");
+        let valid = write_draft_file(&drafts_dir, "02-ground.yml", FULL_DRAFT_YAML);
+
+        let result = validate_batch(dir.path(), &[broken, valid], &no_strip_validate()).unwrap();
+
+        assert_eq!(result.results.len(), 2, "both files must be reported, not just the first");
+        assert!(matches!(
+            result.results[0].error,
+            Some(DraftFileError::Parse(_))
+        ));
+        assert!(
+            result.results[1].error.is_none(),
+            "the second, valid file must still be checked and reported as valid"
+        );
+        assert!(!result.ok());
+    }
+
+    #[test]
+    fn validate_batch_does_not_let_a_failed_draft_pollute_cumulative_state_for_later_drafts() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let drafts_dir = dir.path().join("drafts");
+        fs::create_dir_all(&drafts_dir).unwrap();
+        // A new condition ("air") with no description: condition.description
+        // is required whenever the condition doesn't already exist. This
+        // draft fails validation, so its parent chain (controls/player-jump/
+        // jump) must NOT be treated as already existing by the next draft.
+        let invalid_yaml = "\
+requirement:
+  id: controls
+
+feature:
+  id: player-jump
+
+behavior:
+  id: jump
+
+condition:
+  id: air
+  label: air
+";
+        let first = write_draft_file(&drafts_dir, "01-air.yml", invalid_yaml);
+        // References the same bare parent ids as the failed draft above.
+        // Since that draft never actually applied, `controls`/`player-jump`/
+        // `jump` still don't exist, so this draft must fail too (missing
+        // axis/description for entries that don't yet exist) rather than
+        // succeeding as if the first draft's parents had been created.
+        let second = write_draft_file(&drafts_dir, "02-ground.yml", "\
+requirement:
+  id: controls
+
+feature:
+  id: player-jump
+
+behavior:
+  id: jump
+
+condition:
+  id: ground
+  label: ground
+  description: Jump from the ground and land
+
+expected:
+  - description: lands safely
+");
+
+        let result = validate_batch(dir.path(), &[first, second], &no_strip_validate()).unwrap();
+
+        assert!(result.results[0].error.is_some());
+        assert!(
+            result.results[1].error.is_some(),
+            "the second draft must not see the first draft's never-applied parent chain as existing"
         );
     }
 
