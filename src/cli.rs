@@ -284,6 +284,20 @@ pub enum AxesCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Register a new axis under axes/ (errors if it already exists)
+    Add {
+        /// The axis id (a slug: lowercase alphanumeric and hyphen only)
+        id: String,
+        /// Display label. Defaults to the id when omitted.
+        #[arg(long)]
+        label: Option<String>,
+        /// Target project directory containing axes/. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -487,6 +501,41 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
             Ok(())
+        }
+        Command::Axes(AxesCommand::Add {
+            id,
+            label,
+            dir,
+            json,
+        }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            match axes::add_axis(&root, &id, label.as_deref()) {
+                Ok(path) => {
+                    if json {
+                        println!("{}", axes_add_result_to_json(&path));
+                    } else {
+                        println!("created {}", path.display());
+                    }
+                    Ok(())
+                }
+                Err(axes::AddAxisError::InvalidId) => {
+                    eprintln!(
+                        "error: axis id \"{id}\" is not a valid slug (lowercase alphanumeric and hyphen only)"
+                    );
+                    std::process::exit(2);
+                }
+                Err(axes::AddAxisError::AlreadyExists) => {
+                    eprintln!("error: axis '{id}' already exists under axes/");
+                    std::process::exit(2);
+                }
+                Err(axes::AddAxisError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+            }
         }
         Command::Cache(CacheCommand::Rebuild { dir }) => {
             let root = match dir {
@@ -1057,6 +1106,13 @@ fn axes_to_json(entries: &[axes::AxisEntry]) -> String {
     format!("[{}]", items.join(","))
 }
 
+fn axes_add_result_to_json(path: &Path) -> String {
+    format!(
+        "{{\"ok\":true,\"written\":[\"{}\"]}}",
+        json_escape(&path.to_string_lossy().replace('\\', "/"))
+    )
+}
+
 /// Joins `testcases_dir` and a testcase's `relative_path()` (the
 /// `{requirement}/{feature}/{behavior}/{condition}.yml` mirror of
 /// `knowledge/`), refusing any result that would escape `testcases_dir` via
@@ -1349,6 +1405,77 @@ mod tests {
         ]);
 
         run(cli).unwrap();
+    }
+
+    #[test]
+    fn parses_axes_add_with_all_options() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "axes",
+            "add",
+            "state",
+            "--label",
+            "State",
+            "--dir",
+            "sample",
+            "--json",
+        ]);
+
+        match cli.command {
+            Command::Axes(AxesCommand::Add {
+                id,
+                label,
+                dir,
+                json,
+            }) => {
+                assert_eq!(id, "state");
+                assert_eq!(label, Some("State".to_string()));
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert!(json);
+            }
+            _ => panic!("expected Axes Add command"),
+        }
+    }
+
+    #[test]
+    fn parses_axes_add_with_only_required_arg() {
+        let cli = Cli::parse_from(["markharness", "axes", "add", "state"]);
+
+        match cli.command {
+            Command::Axes(AxesCommand::Add {
+                id,
+                label,
+                dir,
+                json,
+            }) => {
+                assert_eq!(id, "state");
+                assert_eq!(label, None);
+                assert_eq!(dir, None);
+                assert!(!json);
+            }
+            _ => panic!("expected Axes Add command"),
+        }
+    }
+
+    #[test]
+    fn axes_add_writes_the_axis_file() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let cli = Cli::parse_from([
+            "markharness",
+            "axes",
+            "add",
+            "state",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        run(cli).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("axes/state.yml")).unwrap(),
+            "id: state\nlabel: state\n"
+        );
     }
 
     #[test]

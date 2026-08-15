@@ -420,7 +420,7 @@ $ echo $?
 
 (No files are created under `knowledge/` at all)
 
-**Use case mapping**: Supports UC1 "describe knowledge" (`docs/product-operation.md` line 103) in a TTY-independent way. The common entry point through which an AI agent or a future GUI implementation finalizes and registers knowledge. The human-facing `$EDITOR`-launching wrapper is implemented as `knowledge add --edit` (section 1.9).
+**Use case mapping**: Supports UC1 "describe knowledge" (`docs/product-operation.md` line 103) in a TTY-independent way. The common entry point through which an AI agent or a future GUI implementation finalizes and registers knowledge. The human-facing `$EDITOR`-launching wrapper is implemented as `knowledge add --edit` (section 1.10).
 
 ---
 
@@ -546,7 +546,41 @@ $ markharness axes list --dir tmp/todo-sample --json
 
 ---
 
-### 1.8 `forked_from` (UC1b: manually describe a conceptual derivation from another Feature)
+### 1.8 `markharness axes add` — Non-interactive axis registration
+
+```text
+markharness axes add <id> [--label <label>] [--json] [-d, --dir <path>]
+```
+
+**Purpose**: Creates `axes/<id>.yml`. `knowledge add --edit` (section 1.10) auto-registers unregistered axes as part of its interactive edit flow, but that is aimed at an interactive user who can launch `$VISUAL`/`$EDITOR` — it isn't usable by an AI agent or other caller driving the CLI non-interactively off JSON output. `axes add` is the standalone write command for that case, symmetric with the other resources (Requirement/Feature/Behavior/Condition).
+
+**Behavior**
+
+- `<id>` follows the same slug constraint as `condition.id` etc. (lowercase alphanumerics and hyphens only). An invalid id exits with code `2`.
+- Omitting `--label` defaults `label` to the same value as `<id>` (the same "id doubles as label when omitted" convention every other command follows).
+- If `axes/<id>.yml` already exists, it is **not overwritten**. An error message is printed and the command exits with code `2` (edit the existing file directly if you need to change it).
+- With `--json`, prints `{"ok":true,"written":["axes/<id>.yml"]}`.
+
+**Example**
+
+```console
+$ markharness axes add persistence --dir tmp/todo-sample
+created tmp/todo-sample/axes/persistence.yml
+
+$ markharness axes add persistence --dir tmp/todo-sample
+error: axis 'persistence' already exists under axes/
+$ echo $?
+2
+
+$ markharness axes add security --label Security --dir tmp/todo-sample --json
+{"ok":true,"written":["tmp/todo-sample/axes/security.yml"]}
+```
+
+**Use case mapping**: Like `markharness axes list` (section 1.7), a helper command that does not explicitly correspond to any UC.
+
+---
+
+### 1.9 `forked_from` (UC1b: manually describe a conceptual derivation from another Feature)
 
 There is no dedicated command; instead, the operational practice is to write the id of the source Feature directly into the `forked_from` field of `feature.yml` (§3.1). The draft YAML for `knowledge validate`/`apply` (sections 1.3/1.4) also accepts `feature.forked_from`; if the referenced Feature does not exist anywhere under `knowledge/`, it stops with an `unknown_forked_from` error. Because this is domain knowledge that cannot be automatically derived from Git history, unlike `derived_from` (the version history of the same Feature, §3.2–3.4), only validation is performed and no automatic computation is done.
 
@@ -560,7 +594,7 @@ feature:
 
 ---
 
-### 1.9 `markharness knowledge add --edit` — `$EDITOR` editing of draft YAML (UC1: describe knowledge)
+### 1.10 `markharness knowledge add --edit` — `$EDITOR` editing of draft YAML (UC1: describe knowledge)
 
 ```text
 markharness knowledge add --edit [-d, --dir <path>]
@@ -589,13 +623,13 @@ wrote knowledge/controls/player-jump/jump/ground/expected/001.yml
 
 ---
 
-### 1.10 `markharness cache rebuild` — Discarding the id cache (UC7: discard/rebuild the id cache)
+### 1.11 `markharness cache rebuild` — Discarding the id cache (UC7: discard/rebuild the id cache)
 
 ```text
 markharness cache rebuild [-d, --dir <path>]
 ```
 
-**Purpose**: Deletes `.markharness-cache/` entirely (the uncommitted cache of Feature id→tree SHA resolution results used by `changes compute` in section 1.11. It is keyed by a content-addressing scheme, and is automatically recomputed on load whenever the content of `knowledge/` or the tool version changes, so explicit `rebuild` is normally unnecessary). Does not perform an immediate recomputation (it is computed lazily on the next `changes compute` run). No error occurs if the cache directory does not exist (idempotent).
+**Purpose**: Deletes `.markharness-cache/` entirely (the uncommitted cache of Feature id→tree SHA resolution results used by `changes compute` in section 1.12. It is keyed by a content-addressing scheme, and is automatically recomputed on load whenever the content of `knowledge/` or the tool version changes, so explicit `rebuild` is normally unnecessary). Does not perform an immediate recomputation (it is computed lazily on the next `changes compute` run). No error occurs if the cache directory does not exist (idempotent).
 
 **Example**
 
@@ -612,7 +646,7 @@ removed .markharness-cache/ under /path/to/project
 
 ---
 
-### 1.11 `markharness changes compute` — Computing ChangeEvents (UC5: automatically compute ChangeEvent)
+### 1.12 `markharness changes compute` — Computing ChangeEvents (UC5: automatically compute ChangeEvent)
 
 ```text
 markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [-d, --dir <path>]
@@ -630,9 +664,9 @@ The target project directory (`-d`/`--dir`, the parent of `knowledge/`) may be a
 - `impacted_testcases` lists the `TestCase.case_id`s originating from the changed Feature, enumerated from the same generation graph as `generate` (section 1.5) (the structural generation graph of §3.2(A); version history is not used). Which point in time's `knowledge/` this generation graph is built from splits into two modes as of 2026-08 (as of 2026-08-12; see also [change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4).
   - **Default (`--current-tree` not given)**: Built from the `knowledge/` tree pointed to by the `to-milestone` tag (expanded into a temporary `git worktree`). Recomputing the same interval later always yields the same result.
   - **When `--current-tree` is given**: Built from `knowledge/` in the current working tree (legacy behavior). As long as the working tree keeps changing, recomputation results for the same interval can also change.
-- `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.15) (§3.5).
-- Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.10), keyed by content-addressing.
-- The `from-milestone..to-milestone` interval is traversed with `git rev-list --ancestry-path`, and for every two-parent merge commit present within the interval, the section 1.16 `lineage` determination logic is internally run using `git merge-base` (oldest first). If a target Feature is judged a `true_divergence` (true divergence) at any of the merges, an entry consisting of `merge_commit` (the merge commit SHA, for auditing) and `parent_tree_shas: [P1, P2]` is appended to the `true_divergences` field, in the order they occurred (§3.2). If the same Feature undergoes true divergence multiple times within the interval, all of them are recorded. For a normal linear history, or when there is no merge within the interval, it remains an empty array.
+- `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.16) (§3.5).
+- Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.11), keyed by content-addressing.
+- The `from-milestone..to-milestone` interval is traversed with `git rev-list --ancestry-path`, and for every two-parent merge commit present within the interval, the section 1.17 `lineage` determination logic is internally run using `git merge-base` (oldest first). If a target Feature is judged a `true_divergence` (true divergence) at any of the merges, an entry consisting of `merge_commit` (the merge commit SHA, for auditing) and `parent_tree_shas: [P1, P2]` is appended to the `true_divergences` field, in the order they occurred (§3.2). If the same Feature undergoes true divergence multiple times within the interval, all of them are recorded. For a normal linear history, or when there is no merge within the interval, it remains an empty array.
 - **Note on branch-strategy dependence**: The `from_tree_sha`/`to_tree_sha` diff detection itself does not depend on the branch strategy (merge/squash/rebase/fast-forward), but `true_divergences` presupposes that a two-parent merge commit actually remains within the milestone interval; with squash merges, rebases, or fast-forward merges, the divergence relationship of the original branch is lost from the commit graph, so it is not detected (remains an empty array; paper §3.4 Table 2).
 
 **Output example** (`changes/m2.yaml`, linear history case)
@@ -673,13 +707,13 @@ The target project directory (`-d`/`--dir`, the parent of `knowledge/`) may be a
 
 ---
 
-### 1.12 `markharness backfill run` — Batch processing of past milestones (UC6: run backfill asynchronously)
+### 1.13 `markharness backfill run` — Batch processing of past milestones (UC6: run backfill asynchronously)
 
 ```text
 markharness backfill run [--no-cache] [-d, --dir <path>]
 ```
 
-**Purpose**: Targets the milestones for which `executions/*/milestone.yml` exists, orders them newest-first by the commit date (committer date) of the corresponding git tag, and runs processing equivalent to `changes compute` (section 1.11) for each pair of adjacent milestones, generating `changes/<milestone>.yaml`. A single run processes all pairs and then exits (it is not a resident daemon; intended for periodic execution from CI, etc.).
+**Purpose**: Targets the milestones for which `executions/*/milestone.yml` exists, orders them newest-first by the commit date (committer date) of the corresponding git tag, and runs processing equivalent to `changes compute` (section 1.12) for each pair of adjacent milestones, generating `changes/<milestone>.yaml`. A single run processes all pairs and then exits (it is not a resident daemon; intended for periodic execution from CI, etc.).
 
 **Behavior**
 
@@ -687,7 +721,7 @@ markharness backfill run [--no-cache] [-d, --dir <path>]
 - Completion of processing for each milestone (the "to" side) is recorded in `git notes --ref=markharness-backfill`; on the next run, the same pair is not recomputed and is skipped (§4.3).
 - Unless `--no-cache` is given, it shares the same `.markharness-cache/` as `changes compute`.
 
-The constraint for when the target project directory (`-d`/`--dir`) is a subdirectory of the git repository is resolved the same way as in section 1.11 ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
+The constraint for when the target project directory (`-d`/`--dir`) is a subdirectory of the git repository is resolved the same way as in section 1.12 ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
 
 **Example**
 
@@ -701,13 +735,13 @@ backfill: 1 processed, 2 already up to date
 
 ---
 
-### 1.13 `markharness milestone init` — Creating `executions/<tag>/milestone.yml` (a helper for UC4: tag a milestone)
+### 1.14 `markharness milestone init` — Creating `executions/<tag>/milestone.yml` (a helper for UC4: tag a milestone)
 
 ```text
 markharness milestone init <tag> [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: Creates `executions/<tag>/milestone.yml` corresponding to an existing `git tag <tag>`. UC4 itself (making the release-timing decision by putting down a `git tag`) remains a point of human judgment and is out of scope for this command, but this mechanically scaffolds that tag into the form that `backfill run` (section 1.12) can recognize (a directory name under `executions/<name>/milestone.yml` that matches the tag name, [src/backfill.rs:21-22](../../src/backfill.rs#L21-L22)).
+**Purpose**: Creates `executions/<tag>/milestone.yml` corresponding to an existing `git tag <tag>`. UC4 itself (making the release-timing decision by putting down a `git tag`) remains a point of human judgment and is out of scope for this command, but this mechanically scaffolds that tag into the form that `backfill run` (section 1.13) can recognize (a directory name under `executions/<name>/milestone.yml` that matches the tag name, [src/backfill.rs:21-22](../../src/backfill.rs#L21-L22)).
 
 **Options**
 
@@ -761,7 +795,7 @@ $ echo $?
 
 ---
 
-### 1.14 `markharness execution record` — Recording a TestCase execution result (UC4: destination for recording execution results)
+### 1.15 `markharness execution record` — Recording a TestCase execution result (UC4: destination for recording execution results)
 
 ```text
 markharness execution record <case_id> --milestone <name> --result <pass|fail|skip> --executor <name> [--note <text>] [--json] [-d, --dir <path>]
@@ -787,7 +821,7 @@ markharness execution record <case_id> --milestone <name> --result <pass|fail|sk
 - If `case_id` is not found in any of the current (HEAD's) `generated/testcases/*.yml`, prints an error message prompting the user to first run `markharness generate`, and exits with code `2`. Since the file name under `generated/testcases/` is the `condition.id`, which differs from `case_id` ([section 1.5](#15-markharness-generate--deterministic-generation-of-testcase-uc2-deterministically-generate-testcase)), this check is done by reading the contents of each file (the `case_id` field). It does not go back to the content as of a past milestone; it always validates against the current HEAD.
 - Once validation passes, one entry consisting of `case_id` / `result` / `executor` / `note` (not output if omitted) / `executed_at` (ISO8601, UTC) is appended to `executions/<milestone>/results.yml`. Existing entries are left unchanged and the new one is appended at the end (past execution history and records of re-execution are also preserved).
 - The write uses the same "temp file + rename" atomic method as `knowledge apply` (section 1.4) (all entries are re-read and written together).
-- Since the computation of `verified_feature_tree_shas` (see near section 1.16) goes through the same Feature tree SHA resolution process as `changes compute`, the constraint for when the target project directory is a subdirectory of a git repository is likewise resolved ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
+- Since the computation of `verified_feature_tree_shas` (see near section 1.17) goes through the same Feature tree SHA resolution process as `changes compute`, the constraint for when the target project directory is a subdirectory of a git repository is likewise resolved ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
 
 **Exit codes**
 
@@ -826,13 +860,13 @@ $ echo $?
 
 ---
 
-### 1.15 `markharness changes annotate` — Post-hoc entry of change_type / related_events (§3.5)
+### 1.16 `markharness changes annotate` — Post-hoc entry of change_type / related_events (§3.5)
 
 ```text
 markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
 ```
 
-**Purpose**: Lets a human set, after the fact, the `change_type` and `related_events` of a `ChangeEvent` computed by `changes compute` (section 1.11). Since it searches across all `*.yaml` files under `changes/` by `event_id`, the caller does not need to know in advance which milestone interval's file contains it.
+**Purpose**: Lets a human set, after the fact, the `change_type` and `related_events` of a `ChangeEvent` computed by `changes compute` (section 1.12). Since it searches across all `*.yaml` files under `changes/` by `event_id`, the caller does not need to know in advance which milestone interval's file contains it.
 
 **Behavior**
 
@@ -856,13 +890,13 @@ set related_events on player-jump--m2--m3
 
 ---
 
-### 1.16 `markharness changes lineage` — Lineage audit via merge-base ancestor search (§3.2, secondary feature)
+### 1.17 `markharness changes lineage` — Lineage audit via merge-base ancestor search (§3.2, secondary feature)
 
 ```text
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: For a given merge commit, compares the tree SHA of its two parents (P1, P2) and the merge base (B) via `git merge-base`, and for each Feature id, determines and outputs the §3.2 case classification (`linear` / `true_divergence` / `single_parent`) — an audit-only command. `changes compute` (section 1.11) internally invokes the same determination logic as this command for every two-parent merge commit present within the `from-milestone..to-milestone` interval, and reflects the result in `true_divergences`. To manually audit/verify an individual merge commit by itself, run this command independently. This command itself does not write to `changes/*.yaml` (it is a read-only audit command). In repositories operated with squash merges, rebases, or fast-forward merges, the target two-parent merge commits simply do not exist on the commit graph in the first place, so there is nothing this command can audit (paper §3.4 Table 2).
+**Purpose**: For a given merge commit, compares the tree SHA of its two parents (P1, P2) and the merge base (B) via `git merge-base`, and for each Feature id, determines and outputs the §3.2 case classification (`linear` / `true_divergence` / `single_parent`) — an audit-only command. `changes compute` (section 1.12) internally invokes the same determination logic as this command for every two-parent merge commit present within the `from-milestone..to-milestone` interval, and reflects the result in `true_divergences`. To manually audit/verify an individual merge commit by itself, run this command independently. This command itself does not write to `changes/*.yaml` (it is a read-only audit command). In repositories operated with squash merges, rebases, or fast-forward merges, the target two-parent merge commits simply do not exist on the commit graph in the first place, so there is nothing this command can audit (paper §3.4 Table 2).
 
 **Behavior**
 
@@ -880,7 +914,7 @@ player-jump: linear
 
 ---
 
-### 1.17 `markharness validate` — Structural validation of knowledge/, axes/, executions/ (§3.5/§3.6)
+### 1.18 `markharness validate` — Structural validation of knowledge/, axes/, executions/ (§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
@@ -888,7 +922,7 @@ markharness validate [--json] [-d, --dir <path>]
 
 **Purpose**: Performs JSON Schema validation of all YAML under `knowledge/` (`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`), `axes/*.yml`, and `executions/<milestone>/results.yml`, against the corresponding `schema/*.schema.json` (a default set placed by `markharness init`; section 1.1). In addition, it validates cross-reference constraints that cannot be expressed by JSON Schema alone: whether `axis` tags are registered in `axes/*.yml`, and whether `feature.yml`'s `forked_from` points to an actually existing Feature id.
 
-**Schema of `executions/*/results.yml`**: `execution_result.schema.json` requires `case_id` / `result` (`pass`/`fail`/`skip`) / `executor` / `executed_at`, and treats `note` / `verified_feature_tree_shas` as optional fields (section 1.14). `verified_feature_tree_shas` is absent from execution records written before this specification was introduced, but since it is defined as an optional field, such past records still pass schema validation as-is. In this case, `verify trace`/`verify pending` (change-event-verification-tracking-spec.md §6) does not retroactively backfill the record, and treats it as "unknown."
+**Schema of `executions/*/results.yml`**: `execution_result.schema.json` requires `case_id` / `result` (`pass`/`fail`/`skip`) / `executor` / `executed_at`, and treats `note` / `verified_feature_tree_shas` as optional fields (section 1.15). `verified_feature_tree_shas` is absent from execution records written before this specification was introduced, but since it is defined as an optional field, such past records still pass schema validation as-is. In this case, `verify trace`/`verify pending` (change-event-verification-tracking-spec.md §6) does not retroactively backfill the record, and treats it as "unknown."
 
 **Behavior**
 

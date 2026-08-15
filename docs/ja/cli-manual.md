@@ -420,7 +420,7 @@ $ echo $?
 
 (`knowledge/` 配下には一切ファイルが作成されない)
 
-**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。AIエージェント・将来のGUI実装が知識を確定登録するための共通エントリポイント。人間向けの `$EDITOR` 起動ラッパーは `knowledge add --edit`(1.9節)として実装済み。
+**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。AIエージェント・将来のGUI実装が知識を確定登録するための共通エントリポイント。人間向けの `$EDITOR` 起動ラッパーは `knowledge add --edit`(1.10節)として実装済み。
 
 ---
 
@@ -546,7 +546,41 @@ $ markharness axes list --dir tmp/todo-sample --json
 
 ---
 
-### 1.8 `forked_from`(UC1b: 別Featureからの概念的派生を手動記述する)
+### 1.8 `markharness axes add` — 観点(axis)の非対話登録
+
+```text
+markharness axes add <id> [--label <label>] [--json] [-d, --dir <path>]
+```
+
+**用途**: `axes/<id>.yml` を新規作成する。`knowledge add --edit`(1.10節)は未登録axisを対話編集フロー内で自動登録するが、それは `$VISUAL`/`$EDITOR` を起動できる対話的な利用者向けであり、AIエージェント等がJSON出力を見ながら非対話的にCLIを組み立てる用途には使えない。`axes add` はそのための、他のリソース(Requirement/Feature/Behavior/Condition)と対称的な単体の書き込みコマンド。
+
+**動作**
+
+- `<id>` は `condition.id` 等と同じスラッグ制約(小文字英数字とハイフンのみ)。不正な場合は終了コード `2`。
+- `--label` を省略すると `label` は `<id>` と同じ値になる(他コマンドと同じ「省略時はidをlabelにも使う」規約)。
+- `axes/<id>.yml` が既に存在する場合は**上書きしない**。エラーメッセージを表示して終了コード `2` で終了する(既存リソースを触りたい場合は現状ファイルを直接編集する運用)。
+- `--json` 指定時は `{"ok":true,"written":["axes/<id>.yml"]}` を出力する。
+
+**使用例**
+
+```console
+$ markharness axes add persistence --dir tmp/todo-sample
+created tmp/todo-sample/axes/persistence.yml
+
+$ markharness axes add persistence --dir tmp/todo-sample
+error: axis 'persistence' already exists under axes/
+$ echo $?
+2
+
+$ markharness axes add security --label Security --dir tmp/todo-sample --json
+{"ok":true,"written":["tmp/todo-sample/axes/security.yml"]}
+```
+
+**ユースケース対応**: `markharness axes list`(1.7節)と同じく、どのUCにも明示的には現れない補助コマンド。
+
+---
+
+### 1.9 `forked_from`(UC1b: 別Featureからの概念的派生を手動記述する)
 
 専用コマンドはなく、`feature.yml` の `forked_from` フィールドに派生元Featureのidを直接記述する運用(§3.1)。`knowledge validate`/`apply`(1.3/1.4節)のドラフトYAMLでも `feature.forked_from` を受け付け、参照先のFeatureが `knowledge/` 配下のどこにも存在しない場合は `unknown_forked_from` エラーで停止する。Git履歴からは自動導出できないドメイン知識のため、`derived_from`(同一Featureの版履歴、§3.2〜3.4)とは異なり検証のみ行い自動計算はしない。
 
@@ -560,7 +594,7 @@ feature:
 
 ---
 
-### 1.9 `markharness knowledge add --edit` — ドラフトYAMLの$EDITOR編集(UC1: 知識を記述する)
+### 1.10 `markharness knowledge add --edit` — ドラフトYAMLの$EDITOR編集(UC1: 知識を記述する)
 
 ```text
 markharness knowledge add --edit [-d, --dir <path>]
@@ -589,13 +623,13 @@ wrote knowledge/controls/player-jump/jump/ground/expected/001.yml
 
 ---
 
-### 1.10 `markharness cache rebuild` — idキャッシュの破棄(UC7: idキャッシュを破棄・再構築する)
+### 1.11 `markharness cache rebuild` — idキャッシュの破棄(UC7: idキャッシュを破棄・再構築する)
 
 ```text
 markharness cache rebuild [-d, --dir <path>]
 ```
 
-**用途**: `.markharness-cache/`(1.11節の `changes compute` が使う、Featureのid→tree SHA解決結果の非コミットキャッシュ。内容アドレス方式のキーで格納されており、`knowledge/`の内容やツールのバージョンが変われば読み込み時に自動的に再計算されるため、通常は明示的な`rebuild`は不要)を丸ごと削除する。即時の再計算は行わない(次回 `changes compute` 実行時に遅延計算される)。キャッシュディレクトリが存在しない場合もエラーにならない(冪等)。
+**用途**: `.markharness-cache/`(1.12節の `changes compute` が使う、Featureのid→tree SHA解決結果の非コミットキャッシュ。内容アドレス方式のキーで格納されており、`knowledge/`の内容やツールのバージョンが変われば読み込み時に自動的に再計算されるため、通常は明示的な`rebuild`は不要)を丸ごと削除する。即時の再計算は行わない(次回 `changes compute` 実行時に遅延計算される)。キャッシュディレクトリが存在しない場合もエラーにならない(冪等)。
 
 **使用例**
 
@@ -612,7 +646,7 @@ removed .markharness-cache/ under /path/to/project
 
 ---
 
-### 1.11 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
+### 1.12 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
 
 ```text
 markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [-d, --dir <path>]
@@ -630,9 +664,9 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 - `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.5節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4も参照)。
   - **既定(`--current-tree`未指定)**：`to-milestone`タグが指す`knowledge/`ツリー(一時`git worktree`に展開)から構築する。同じ区間を後日再計算しても常に同じ結果になる。
   - **`--current-tree`指定時**：現在の作業ツリーの`knowledge/`から構築する(従来動作)。作業ツリーが変化し続ける限り、同じ区間の再計算結果も変わりうる。
-- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.15節)で事後入力する運用(§3.5)。
-- `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.10節)。
-- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.16節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
+- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.16節)で事後入力する運用(§3.5)。
+- `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.11節)。
+- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.17節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
 - **ブランチ戦略への依存に注意**：`from_tree_sha`/`to_tree_sha`の差分検出そのものはブランチ戦略(merge/squash/rebase/fast-forward)に依存しないが、`true_divergences`はマイルストーン区間内に2親を持つマージコミットが実際に残っていることが前提であり、squash mergeやrebase・fast-forward mergeでは元ブランチの分岐関係がコミットグラフから失われるため検出されない(空配列のまま。論文§3.4表2)。
 
 **出力例**(`changes/m2.yaml`、線形履歴の場合)
@@ -673,13 +707,13 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 
 ---
 
-### 1.12 `markharness backfill run` — 過去マイルストーンの一括処理(UC6: バックフィルを非同期実行する)
+### 1.13 `markharness backfill run` — 過去マイルストーンの一括処理(UC6: バックフィルを非同期実行する)
 
 ```text
 markharness backfill run [--no-cache] [-d, --dir <path>]
 ```
 
-**用途**: `executions/*/milestone.yml` が存在するマイルストーンを対象に、対応する git tag のコミット日時(committer date)で新しい順に並べ、隣接する2マイルストーンごとに `changes compute`(1.11節)相当の処理を実行して `changes/<milestone>.yaml` を生成する。1回の実行で全ペアを処理し終了する(常駐デーモンではない。CI等からの定期実行を想定)。
+**用途**: `executions/*/milestone.yml` が存在するマイルストーンを対象に、対応する git tag のコミット日時(committer date)で新しい順に並べ、隣接する2マイルストーンごとに `changes compute`(1.12節)相当の処理を実行して `changes/<milestone>.yaml` を生成する。1回の実行で全ペアを処理し終了する(常駐デーモンではない。CI等からの定期実行を想定)。
 
 **動作**
 
@@ -687,7 +721,7 @@ markharness backfill run [--no-cache] [-d, --dir <path>]
 - 各マイルストーン(to側)の処理完了は `git notes --ref=markharness-backfill` に記録され、次回実行時に同じペアは再計算されずスキップされる(§4.3)。
 - `--no-cache` を指定しない場合、`changes compute` と同じ `.markharness-cache/` を共有する。
 
-対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.11節と同じく解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
+対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.12節と同じく解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
 
 **使用例**
 
@@ -701,13 +735,13 @@ backfill: 1 processed, 2 already up to date
 
 ---
 
-### 1.13 `markharness milestone init` — `executions/<tag>/milestone.yml` の作成(UC4: マイルストーンをタグ付けする、の補助)
+### 1.14 `markharness milestone init` — `executions/<tag>/milestone.yml` の作成(UC4: マイルストーンをタグ付けする、の補助)
 
 ```text
 markharness milestone init <tag> [--json] [-d, --dir <path>]
 ```
 
-**用途**: 既存の `git tag <tag>` に対応する `executions/<tag>/milestone.yml` を作成する。UC4そのもの(リリースタイミングの意思決定として `git tag` を打つこと)は引き続き人間の判断ポイントであり本コマンドの対象外だが、そのタグを `backfill run`(1.12節)が認識できる形(`executions/<name>/milestone.yml` というディレクトリ名がタグ名と一致すること、[src/backfill.rs:21-22](../../src/backfill.rs#L21-L22))に機械的にスキャフォールドする。
+**用途**: 既存の `git tag <tag>` に対応する `executions/<tag>/milestone.yml` を作成する。UC4そのもの(リリースタイミングの意思決定として `git tag` を打つこと)は引き続き人間の判断ポイントであり本コマンドの対象外だが、そのタグを `backfill run`(1.13節)が認識できる形(`executions/<name>/milestone.yml` というディレクトリ名がタグ名と一致すること、[src/backfill.rs:21-22](../../src/backfill.rs#L21-L22))に機械的にスキャフォールドする。
 
 **オプション**
 
@@ -761,7 +795,7 @@ $ echo $?
 
 ---
 
-### 1.14 `markharness execution record` — TestCase実行結果の記録(UC4: 実行結果の記録先)
+### 1.15 `markharness execution record` — TestCase実行結果の記録(UC4: 実行結果の記録先)
 
 ```text
 markharness execution record <case_id> --milestone <name> --result <pass|fail|skip> --executor <name> [--note <text>] [--json] [-d, --dir <path>]
@@ -787,7 +821,7 @@ markharness execution record <case_id> --milestone <name> --result <pass|fail|sk
 - `case_id` が現在の(HEAD時点の)`generated/testcases/*.yml` のいずれにも見つからなければ、`markharness generate` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する。`generated/testcases/` のファイル名は `condition.id` であり `case_id` とは異なる([1.5節](#15-markharness-generate--testcase-の決定的生成uc2-testcaseを決定的生成する))ため、この検証は各ファイルの中身(`case_id` フィールド)を読んで行う。過去マイルストーン時点の内容までは遡らず、常に現在のHEADに対して検証する。
 - 検証を通過すると、`case_id` / `result` / `executor` / `note`(省略時は出力しない)/ `executed_at`(ISO8601, UTC)を1エントリとして `executions/<milestone>/results.yml` に追記する。既存のエントリは変更せず、末尾に追加する(過去の実行履歴・再実行の記録も保持する)。
 - 書き込みは `knowledge apply`(1.4節)と同じ「一時ファイル+リネーム」のアトミック方式(全エントリを読み直してまとめて書く)。
-- `verified_feature_tree_shas`(1.16節付近参照)の算出は `changes compute` と同じFeature tree SHA解決処理を経由するため、対象プロジェクトディレクトリがgitリポジトリのサブディレクトリの場合の制約は同様に解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
+- `verified_feature_tree_shas`(1.17節付近参照)の算出は `changes compute` と同じFeature tree SHA解決処理を経由するため、対象プロジェクトディレクトリがgitリポジトリのサブディレクトリの場合の制約は同様に解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
 
 **終了コード**
 
@@ -826,13 +860,13 @@ $ echo $?
 
 ---
 
-### 1.15 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
+### 1.16 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
 
 ```text
 markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
 ```
 
-**用途**: `changes compute`(1.11節)が算出した `ChangeEvent` の `change_type` と `related_events` を、人間が事後に設定する。`changes/` 配下の全 `*.yaml` ファイルを `event_id` で横断検索するため、呼び出し側はどのマイルストーン区間のファイルに含まれるかを事前に知る必要がない。
+**用途**: `changes compute`(1.12節)が算出した `ChangeEvent` の `change_type` と `related_events` を、人間が事後に設定する。`changes/` 配下の全 `*.yaml` ファイルを `event_id` で横断検索するため、呼び出し側はどのマイルストーン区間のファイルに含まれるかを事前に知る必要がない。
 
 **動作**
 
@@ -856,13 +890,13 @@ set related_events on player-jump--m2--m3
 
 ---
 
-### 1.16 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
+### 1.17 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
 
 ```text
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
 ```
 
-**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.11節)は、`from-milestone..to-milestone`区間内に存在する全ての2親マージコミットについて本コマンドと同じ判定ロジックを内部で呼び出し、結果を`true_divergences`に反映する。個別のマージコミット単体を人手で監査・確認したい場合は、本コマンドを独立に実行する。本コマンド自体は `changes/*.yaml` への書き込みを行わない(読み取り専用の監査コマンド)。squash mergeやrebase・fast-forward mergeで運用されたリポジトリでは、そもそも対象となる2親マージコミットがコミットグラフ上に存在しないため、本コマンドで監査できる対象自体が無い(論文§3.4表2)。
+**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.12節)は、`from-milestone..to-milestone`区間内に存在する全ての2親マージコミットについて本コマンドと同じ判定ロジックを内部で呼び出し、結果を`true_divergences`に反映する。個別のマージコミット単体を人手で監査・確認したい場合は、本コマンドを独立に実行する。本コマンド自体は `changes/*.yaml` への書き込みを行わない(読み取り専用の監査コマンド)。squash mergeやrebase・fast-forward mergeで運用されたリポジトリでは、そもそも対象となる2親マージコミットがコミットグラフ上に存在しないため、本コマンドで監査できる対象自体が無い(論文§3.4表2)。
 
 **動作**
 
@@ -880,7 +914,7 @@ player-jump: linear
 
 ---
 
-### 1.17 `markharness validate` — knowledge/・axes/・executions/ の構造検証(§3.5/§3.6)
+### 1.18 `markharness validate` — knowledge/・axes/・executions/ の構造検証(§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
@@ -888,7 +922,7 @@ markharness validate [--json] [-d, --dir <path>]
 
 **用途**: `knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `axes/*.yml`、および `executions/<milestone>/results.yml` を、対応する `schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか。
 
-**`executions/*/results.yml`のスキーマ**: `execution_result.schema.json` は `case_id` / `result`(`pass`/`fail`/`skip`) / `executor` / `executed_at` を必須、`note` / `verified_feature_tree_shas` を任意フィールドとする(1.14節)。`verified_feature_tree_shas` は本仕様導入前に書かれた実行記録には存在しないが、任意フィールドとして定義しているため過去の記録もそのままスキーマ検証を通る。この場合、`verify trace`/`verify pending`(change-event-verification-tracking-spec.md §6)は当該レコードを遡及的に補完せず「不明」として扱う。
+**`executions/*/results.yml`のスキーマ**: `execution_result.schema.json` は `case_id` / `result`(`pass`/`fail`/`skip`) / `executor` / `executed_at` を必須、`note` / `verified_feature_tree_shas` を任意フィールドとする(1.15節)。`verified_feature_tree_shas` は本仕様導入前に書かれた実行記録には存在しないが、任意フィールドとして定義しているため過去の記録もそのままスキーマ検証を通る。この場合、`verify trace`/`verify pending`(change-event-verification-tracking-spec.md §6)は当該レコードを遡及的に補完せず「不明」として扱う。
 
 **動作**
 
