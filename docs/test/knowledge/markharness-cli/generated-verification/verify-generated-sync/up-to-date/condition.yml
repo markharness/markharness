@@ -1,0 +1,5 @@
+id: up-to-date
+behavior: verify-generated-sync
+label: generated/testcases/ が knowledge/ の再生成結果と一致する。src/cli.rs:847-875
+description: |
+  generated/testcases/ が knowledge/ の再生成結果と一致する。src/cli.rs:847-875

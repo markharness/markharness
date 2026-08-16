@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-knowledge-authoring-validate-and-apply-draft-invalid-draft
+generated_from:
+  requirement: markharness-cli
+  feature: knowledge-authoring
+  behavior: validate-and-apply-draft
+  condition: invalid-draft
+  expected_results:
+  - invalid-draft-001
+title: |
+  slug、必須説明、axis または親参照に検証エラーがあるドラフトを指定する。src/knowledge_draft.rs:390-602
+steps:
+- |
+  Validate and apply draft を CLI から実行する。
+expected:
+- |
+  エラー一覧を報告し、知識ファイルを書き込まない。src/cli.rs:462-465,493-499; src/knowledge_apply.rs:34-55
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

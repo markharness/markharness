@@ -1,0 +1,5 @@
+id: multiple-milestones
+behavior: backfill-history
+label: 2件以上の未処理 milestone が存在する。src/cli.rs:727-740; src/backfill.rs:61-122
+description: |
+  2件以上の未処理 milestone が存在する。src/cli.rs:727-740; src/backfill.rs:61-122

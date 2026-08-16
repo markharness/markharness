@@ -1,0 +1,6 @@
+id: record-milestone-and-result
+feature: execution-tracking
+label: Record milestone and result
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Record milestone and result を CLI から実行する。

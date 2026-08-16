@@ -1,0 +1,4 @@
+id: valid-annotation-001
+condition: valid-annotation
+description: |
+  対象 ChangeEvent を更新し、設定した項目を報告する。src/cli.rs:670-691; src/changes.rs:342-379,413-467

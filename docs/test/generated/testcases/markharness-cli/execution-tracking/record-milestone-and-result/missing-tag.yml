@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-execution-tracking-record-milestone-and-result-missing-tag
+generated_from:
+  requirement: markharness-cli
+  feature: execution-tracking
+  behavior: record-milestone-and-result
+  condition: missing-tag
+  expected_results:
+  - missing-tag-001
+title: |
+  milestone init に存在しない Git tag を指定する。src/cli.rs:742-772
+steps:
+- |
+  Record milestone and result を CLI から実行する。
+expected:
+- |
+  先に git tag が必要である旨を表示して終了コード2にする。src/cli.rs:761-766; src/milestone.rs:25-35
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

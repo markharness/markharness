@@ -1,0 +1,5 @@
+id: no-verified-blobs
+behavior: trace-execution
+label: 対象実行記録に verified_feature_tree_shas がない。src/cli.rs:916-921
+description: |
+  対象実行記録に verified_feature_tree_shas がない。src/cli.rs:916-921

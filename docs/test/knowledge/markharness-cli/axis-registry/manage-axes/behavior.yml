@@ -1,0 +1,6 @@
+id: manage-axes
+feature: axis-registry
+label: Manage axes
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Manage axes を CLI から実行する。

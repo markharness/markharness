@@ -1,0 +1,5 @@
+id: valid-draft
+behavior: validate-and-apply-draft
+label: 登録済み axis と有効な階層を参照するドラフトを指定する。src/cli.rs:442-505
+description: |
+  登録済み axis と有効な階層を参照するドラフトを指定する。src/cli.rs:442-505

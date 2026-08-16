@@ -1,0 +1,6 @@
+id: initialize-project
+feature: project-lifecycle
+label: Initialize project
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Initialize project を CLI から実行する。

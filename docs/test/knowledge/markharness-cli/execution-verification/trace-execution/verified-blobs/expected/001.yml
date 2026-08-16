@@ -1,0 +1,4 @@
+id: verified-blobs-001
+condition: verified-blobs
+description: |
+  対応 Feature と実行日時、および追従する ChangeEvent があればその情報を返す。src/cli.rs:891-914; src/verify.rs:183-264

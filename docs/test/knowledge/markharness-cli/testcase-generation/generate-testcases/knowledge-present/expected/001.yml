@@ -1,0 +1,4 @@
+id: knowledge-present-001
+condition: knowledge-present
+description: |
+  Condition ごとの TestCase を generated/testcases/ のミラー階層へ書き、traceability-index.json も更新する。src/cli.rs:513-534

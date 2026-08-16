@@ -1,0 +1,5 @@
+id: json-output
+behavior: generate-testcases
+label: generate に --json を指定する。src/cli.rs:532-537
+description: |
+  generate に --json を指定する。src/cli.rs:532-537

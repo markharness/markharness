@@ -1,0 +1,4 @@
+id: valid-result-001
+condition: valid-result
+description: |
+  results.yml に結果を記録し、通常出力または JSON で成功を返す。src/cli.rs:793-806; src/execution.rs:159-203

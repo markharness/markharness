@@ -1,0 +1,4 @@
+id: merge-commit-001
+condition: merge-commit
+description: |
+  各 Feature を linear または true_divergence として判定して出力する。src/cli.rs:704-715; src/lineage.rs:35-56

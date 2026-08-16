@@ -1,0 +1,4 @@
+id: unknown-event-001
+condition: unknown-event
+description: |
+  書込み前に検証してエラーとし、change_type と related_events の部分更新を残さない。src/cli.rs:662-669; src/changes.rs:381-411

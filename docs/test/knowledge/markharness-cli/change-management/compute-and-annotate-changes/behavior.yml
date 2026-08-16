@@ -1,0 +1,6 @@
+id: compute-and-annotate-changes
+feature: change-management
+label: Compute and annotate changes
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Compute and annotate changes を CLI から実行する。

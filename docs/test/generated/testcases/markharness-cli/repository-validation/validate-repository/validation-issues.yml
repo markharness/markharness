@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-repository-validation-validate-repository-validation-issues
+generated_from:
+  requirement: markharness-cli
+  feature: repository-validation
+  behavior: validate-repository
+  condition: validation-issues
+  expected_results:
+  - validation-issues-001
+title: |
+  YAML schema 違反または解決不能な参照がある。src/validate.rs:122-424
+steps:
+- |
+  Validate repository を CLI から実行する。
+expected:
+- |
+  全検証問題を出力して終了コード1にする。src/cli.rs:836-843
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

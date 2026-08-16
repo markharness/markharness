@@ -1,0 +1,6 @@
+id: repository-validation
+requirement: markharness-cli
+label: Repository validation
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Repository validation に関する利用者向け CLI 機能。

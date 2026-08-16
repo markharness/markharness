@@ -1,0 +1,6 @@
+id: execution-verification
+requirement: markharness-cli
+label: Execution verification
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Execution verification に関する利用者向け CLI 機能。

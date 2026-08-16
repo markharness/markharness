@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-generated-verification-verify-generated-sync-added-removed-or-changed
+generated_from:
+  requirement: markharness-cli
+  feature: generated-verification
+  behavior: verify-generated-sync
+  condition: added-removed-or-changed
+  expected_results:
+  - added-removed-or-changed-001
+title: |
+  生成済みファイルに追加・削除・内容差分のいずれかがある。src/verify.rs:55-181
+steps:
+- |
+  Verify generated sync を CLI から実行する。
+expected:
+- |
+  差分を added、removed、changed に分類して出力し、終了コード1にする。src/cli.rs:857-874
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

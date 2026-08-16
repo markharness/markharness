@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-repository-validation-validate-repository-valid-repository
+generated_from:
+  requirement: markharness-cli
+  feature: repository-validation
+  behavior: validate-repository
+  condition: valid-repository
+  expected_results:
+  - valid-repository-001
+title: |
+  knowledge/ と axes/ が schema と参照制約を満たす。src/cli.rs:824-845
+steps:
+- |
+  Validate repository を CLI から実行する。
+expected:
+- |
+  valid メッセージまたは {ok:true} を出力して成功する。src/cli.rs:829-835; src/validate.rs:122-183
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

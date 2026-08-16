@@ -1,0 +1,4 @@
+id: multiple-milestones-001
+condition: multiple-milestones
+description: |
+  新しい組から順に changes ファイルを作り、処理済み数を報告する。src/cli.rs:733-738; src/backfill.rs:61-122

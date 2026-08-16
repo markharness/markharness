@@ -1,0 +1,4 @@
+id: invalid-or-duplicate-id-001
+condition: invalid-or-duplicate-id
+description: |
+  理由を示して終了コード2で拒否し、axis ファイルを作成しない。src/cli.rs:583-594

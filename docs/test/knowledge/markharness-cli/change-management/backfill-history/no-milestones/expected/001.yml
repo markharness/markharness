@@ -1,0 +1,4 @@
+id: no-milestones-001
+condition: no-milestones
+description: |
+  空の processed/skipped レポートを返し、エラーにしない。src/backfill.rs:61-73

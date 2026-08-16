@@ -1,0 +1,5 @@
+id: valid-repository
+behavior: validate-repository
+label: knowledge/ と axes/ が schema と参照制約を満たす。src/cli.rs:824-845
+description: |
+  knowledge/ と axes/ が schema と参照制約を満たす。src/cli.rs:824-845

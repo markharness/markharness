@@ -1,0 +1,6 @@
+id: verify-generated-sync
+feature: generated-verification
+label: Verify generated sync
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Verify generated sync を CLI から実行する。

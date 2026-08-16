@@ -1,0 +1,5 @@
+id: prune-unused
+behavior: manage-axes
+label: axes prune を未使用 axis がある状態で実行する。src/cli.rs:602-623
+description: |
+  axes prune を未使用 axis がある状態で実行する。src/cli.rs:602-623

@@ -1,0 +1,5 @@
+id: merge-commit
+behavior: classify-feature-lineage
+label: changes lineage に複数親を持つ merge commit を指定する。src/cli.rs:695-725; src/lineage.rs:58-137
+description: |
+  changes lineage に複数親を持つ merge commit を指定する。src/cli.rs:695-725; src/lineage.rs:58-137

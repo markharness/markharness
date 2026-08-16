@@ -1,0 +1,6 @@
+id: trace-execution
+feature: execution-verification
+label: Trace execution
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Trace execution を CLI から実行する。

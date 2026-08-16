@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-execution-verification-trace-execution-no-verified-blobs
+generated_from:
+  requirement: markharness-cli
+  feature: execution-verification
+  behavior: trace-execution
+  condition: no-verified-blobs
+  expected_results:
+  - no-verified-blobs-001
+title: |
+  対象実行記録に verified_feature_tree_shas がない。src/cli.rs:916-921
+steps:
+- |
+  Trace execution を CLI から実行する。
+expected:
+- |
+  検証済み blob がない旨を表示して終了コード2にする。src/cli.rs:916-921
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

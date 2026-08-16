@@ -1,0 +1,5 @@
+id: valid-annotation
+behavior: compute-and-annotate-changes
+label: 存在する event_id に change type または関連 event を指定する。src/cli.rs:670-692
+description: |
+  存在する event_id に change type または関連 event を指定する。src/cli.rs:670-692

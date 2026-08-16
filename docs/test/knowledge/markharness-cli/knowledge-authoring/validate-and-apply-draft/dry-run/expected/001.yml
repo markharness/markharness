@@ -1,0 +1,4 @@
+id: dry-run-001
+condition: dry-run
+description: |
+  検証結果だけを報告し、knowledge/ を変更しない。src/cli.rs:477-488

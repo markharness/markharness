@@ -1,0 +1,5 @@
+id: valid-result
+behavior: record-milestone-and-result
+label: 初期化済み milestone と存在する case_id を execution record に指定する。src/cli.rs:774-822
+description: |
+  初期化済み milestone と存在する case_id を execution record に指定する。src/cli.rs:774-822

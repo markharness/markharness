@@ -1,0 +1,5 @@
+id: invalid-or-duplicate-id
+behavior: manage-axes
+label: axes add に無効な slug または既存 id を指定する。src/cli.rs:563-600; src/axes.rs:73-104
+description: |
+  axes add に無効な slug または既存 id を指定する。src/cli.rs:563-600; src/axes.rs:73-104

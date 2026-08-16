@@ -1,0 +1,6 @@
+id: execution-tracking
+requirement: markharness-cli
+label: Execution tracking
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Execution tracking に関する利用者向け CLI 機能。

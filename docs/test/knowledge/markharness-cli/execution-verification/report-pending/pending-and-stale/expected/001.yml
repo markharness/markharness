@@ -1,0 +1,4 @@
+id: pending-and-stale-001
+condition: pending-and-stale
+description: |
+  未実行を pending、さらに変更済みのものを stale として区別して報告する。src/cli.rs:949-978

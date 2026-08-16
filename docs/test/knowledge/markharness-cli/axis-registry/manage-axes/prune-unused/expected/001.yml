@@ -1,0 +1,4 @@
+id: prune-unused-001
+condition: prune-unused
+description: |
+  既定では未使用 id を報告するだけで、--delete 指定時だけ対応ファイルを削除する。src/cli.rs:608-621; src/axes.rs:147-158

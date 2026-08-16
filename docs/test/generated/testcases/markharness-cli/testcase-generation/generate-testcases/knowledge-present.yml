@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-testcase-generation-generate-testcases-knowledge-present
+generated_from:
+  requirement: markharness-cli
+  feature: testcase-generation
+  behavior: generate-testcases
+  condition: knowledge-present
+  expected_results:
+  - knowledge-present-001
+title: |
+  有効な Condition と ExpectedResult が knowledge/ に存在する。src/cli.rs:508-538; src/generate.rs:182-264
+steps:
+- |
+  Generate TestCases を CLI から実行する。
+expected:
+- |
+  Condition ごとの TestCase を generated/testcases/ のミラー階層へ書き、traceability-index.json も更新する。src/cli.rs:513-534
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

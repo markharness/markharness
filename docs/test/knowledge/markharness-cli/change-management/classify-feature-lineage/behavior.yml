@@ -1,0 +1,6 @@
+id: classify-feature-lineage
+feature: change-management
+label: Classify feature lineage
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Classify feature lineage を CLI から実行する。

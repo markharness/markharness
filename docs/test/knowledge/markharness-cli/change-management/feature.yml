@@ -1,0 +1,6 @@
+id: change-management
+requirement: markharness-cli
+label: Change management
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Change management に関する利用者向け CLI 機能。

@@ -1,0 +1,4 @@
+id: validation-issues-001
+condition: validation-issues
+description: |
+  全検証問題を出力して終了コード1にする。src/cli.rs:836-843

@@ -1,0 +1,4 @@
+id: json-output-001
+condition: json-output
+description: |
+  生成件数と書込先を機械可読な JSON で出力する。src/cli.rs:532-534

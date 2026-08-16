@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-change-management-backfill-history-no-milestones
+generated_from:
+  requirement: markharness-cli
+  feature: change-management
+  behavior: backfill-history
+  condition: no-milestones
+  expected_results:
+  - no-milestones-001
+title: |
+  milestone が存在しない。src/backfill.rs:61-73
+steps:
+- |
+  Backfill change history を CLI から実行する。
+expected:
+- |
+  空の processed/skipped レポートを返し、エラーにしない。src/backfill.rs:61-73
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

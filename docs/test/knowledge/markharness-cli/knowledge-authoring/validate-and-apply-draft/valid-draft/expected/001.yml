@@ -1,0 +1,4 @@
+id: valid-draft-001
+condition: valid-draft
+description: |
+  検証は成功し、apply は knowledge/ 配下へ正規化済みファイルを書き込む。src/cli.rs:459-505; src/knowledge_apply.rs:34-241

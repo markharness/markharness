@@ -1,0 +1,4 @@
+id: no-verified-blobs-001
+condition: no-verified-blobs
+description: |
+  検証済み blob がない旨を表示して終了コード2にする。src/cli.rs:916-921

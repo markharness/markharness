@@ -1,0 +1,5 @@
+id: validation-issues
+behavior: validate-repository
+label: YAML schema 違反または解決不能な参照がある。src/validate.rs:122-424
+description: |
+  YAML schema 違反または解決不能な参照がある。src/validate.rs:122-424

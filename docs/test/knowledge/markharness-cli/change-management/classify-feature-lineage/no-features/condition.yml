@@ -1,0 +1,5 @@
+id: no-features
+behavior: classify-feature-lineage
+label: 対象 commit と親に Feature が存在しない。src/cli.rs:703-707
+description: |
+  対象 commit と親に Feature が存在しない。src/cli.rs:703-707

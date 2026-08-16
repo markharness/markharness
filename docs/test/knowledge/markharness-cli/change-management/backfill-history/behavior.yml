@@ -1,0 +1,6 @@
+id: backfill-history
+feature: change-management
+label: Backfill change history
+axis: [cli, validation, persistence, git, safety]
+description: |
+  Backfill change history を CLI から実行する。

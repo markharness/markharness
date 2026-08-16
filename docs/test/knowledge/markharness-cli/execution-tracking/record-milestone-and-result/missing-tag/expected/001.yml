@@ -1,0 +1,4 @@
+id: missing-tag-001
+condition: missing-tag
+description: |
+  先に git tag が必要である旨を表示して終了コード2にする。src/cli.rs:761-766; src/milestone.rs:25-35

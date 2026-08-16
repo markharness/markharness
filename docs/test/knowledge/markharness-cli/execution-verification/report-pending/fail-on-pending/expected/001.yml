@@ -1,0 +1,4 @@
+id: fail-on-pending-001
+condition: fail-on-pending
+description: |
+  レポート出力後に終了コード1にする。src/cli.rs:981-984

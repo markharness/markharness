@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-execution-tracking-record-milestone-and-result-missing-case-or-milestone
+generated_from:
+  requirement: markharness-cli
+  feature: execution-tracking
+  behavior: record-milestone-and-result
+  condition: missing-case-or-milestone
+  expected_results:
+  - missing-case-or-milestone-001
+title: |
+  未初期化 milestone または存在しない case_id を指定する。src/cli.rs:807-817
+steps:
+- |
+  Record milestone and result を CLI から実行する。
+expected:
+- |
+  該当する前提不足を表示して終了コード2にし、実行結果を記録しない。src/cli.rs:807-817
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

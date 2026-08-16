@@ -1,0 +1,5 @@
+id: added-removed-or-changed
+behavior: verify-generated-sync
+label: 生成済みファイルに追加・削除・内容差分のいずれかがある。src/verify.rs:55-181
+description: |
+  生成済みファイルに追加・削除・内容差分のいずれかがある。src/verify.rs:55-181

@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-change-management-classify-feature-lineage-no-features
+generated_from:
+  requirement: markharness-cli
+  feature: change-management
+  behavior: classify-feature-lineage
+  condition: no-features
+  expected_results:
+  - no-features-001
+title: |
+  対象 commit と親に Feature が存在しない。src/cli.rs:703-707
+steps:
+- |
+  Classify feature lineage を CLI から実行する。
+expected:
+- |
+  no Features found と表示する。src/cli.rs:705-707
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

@@ -1,0 +1,22 @@
+case_id: tc-markharness-cli-axis-registry-manage-axes-prune-unused
+generated_from:
+  requirement: markharness-cli
+  feature: axis-registry
+  behavior: manage-axes
+  condition: prune-unused
+  expected_results:
+  - prune-unused-001
+title: |
+  axes prune を未使用 axis がある状態で実行する。src/cli.rs:602-623
+steps:
+- |
+  Manage axes を CLI から実行する。
+expected:
+- |
+  既定では未使用 id を報告するだけで、--delete 指定時だけ対応ファイルを削除する。src/cli.rs:608-621; src/axes.rs:147-158
+axis:
+- cli
+- git
+- persistence
+- safety
+- validation

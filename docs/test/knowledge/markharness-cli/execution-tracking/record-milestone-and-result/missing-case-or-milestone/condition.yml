@@ -1,0 +1,5 @@
+id: missing-case-or-milestone
+behavior: record-milestone-and-result
+label: 未初期化 milestone または存在しない case_id を指定する。src/cli.rs:807-817
+description: |
+  未初期化 milestone または存在しない case_id を指定する。src/cli.rs:807-817
