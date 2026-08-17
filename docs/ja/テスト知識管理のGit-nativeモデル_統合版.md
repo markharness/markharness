@@ -11,7 +11,7 @@
 
 ## 0. 経緯サマリー
 
-1. **初期案(A案)**：機能構造・テストケース・実行結果・マイルストーンを統合する情報モデル。研究テーマとしては要件⇔テスト⇔実装のトレーサビリティ研究(Cleland-Huang, 2011等)と重なり新規性が弱いが、「バージョン軸を第一級概念とする派生関係の追跡」は既存TMSにない差別化余地として残った(付録A・検討まとめ第1章)。
+1. **初期案(A案)**：機能構造・テストケース・実行結果・マイルストーンを統合する情報モデル。研究テーマとしては要件⇔テスト⇔実装のトレーサビリティ研究(Cleland-Huang, 2011等)と重なり新規性が弱いが、「バージョン軸を第一級概念とする派生関係の追跡」は、調査対象の既存TMSとの差分候補として残った(付録A・検討まとめ第1章。現時点の限定は第2.9節)。
 2. **Git階層・グラフ構造案との統合**：テスト知識(Requirement/Feature/Behavior/Condition/ExpectedResult)を木構造+横断的観点(Axis、グラフ構造)で管理し、テストケースをその派生物として扱うモデルに統合(検討まとめ第2〜3章)。
 3. **LLM活用への全面ピボット案(不採用)**：「AI専用知識グラフ」への転換を検討したが、(a)クエリ速度・使いやすさの懸念は対象がLLMになっても解消されない、(b)新規性の主張として弱い、(c)評価方法が根本的に変わり単独では査読耐性が下がる、との理由で不採用(付録A.1)。
 4. **部分ピボットと段階的な設計修正**：人間向けモデルを土台に、LLM角度は将来課題として切り出した上で、研究テーマを「案1：構造表現」単独に絞り込み(検討まとめ第4章)、以降10回以上の技術的指摘を受けて以下を確定させた。
@@ -21,7 +21,7 @@
    - 系譜確定のタイミングをコミット単位からマイルストーン境界単位に変更し、ブランチ戦略(merge/rebase/squash)非依存にした(第3.4節)。
    - 既存の大規模リポジトリへの移行を可能にする、マイルストーン限定・非同期・Git notes・遅延計算によるバックフィルアーキテクチャを本編に組み込んだ(第4章)。
    - 実験の対照群を、自作の疑似TMSや人工的な単一ツール比較ではなく、対象組織が実際に使う複合運用に統合(第5.2節)。
-   - タスクを「既存運用でも対応可能な浅い変更」と「既存運用が原理的に対応不能な深い変更」に層別化し、正答率(特に深い変更層)を主指標とした(第5.3節)。
+   - タスクを「直近1リリース内の浅い変更」と「複数世代にまたがり、既存運用では複数情報源の手動照合を要する深い変更」に層別化し、正答率(特に深い変更層)を主指標とした(第5.3節)。
    - 正解データの構築を、記憶に依存する聞き取りから、当時の成果物(co-change等)に基づく機械的な再構成に変更し、その際のノイズ除去基準を明記した(第5.4節)。
 
 以下、本編。
@@ -46,7 +46,7 @@ flowchart LR
     B2["Jira等\n(課題とテストの紐付け)"]
     B3["git log / git blame\n(手動での履歴確認)"]
   end
-  GAP["原理的に答えられない問い：\n『過去のある変更は、今のどのテストに影響するか』"]
+  GAP["複数情報源の手動照合を要する問い：\n『過去のある変更は、今のどのテストに影響するか』"]
   subgraph AFTER["提案モデル（実験群）"]
     direction TB
     A1["knowledge/\n(Feature / Condition / ExpectedResult)"]
@@ -56,7 +56,7 @@ flowchart LR
   BEFORE --> GAP --> AFTER
 ```
 
-現状運用(TestRail/Jira/git検索の組み合わせ)は、いずれも「過去のある変更が今のどのテストに影響するか」という問いに、複数のFeatureにまたがる派生関係を横断的なクエリ対象として保持していないため原理的に答えられない(TestRailのようにテストケース単体の履歴比較・復元機能を持つ製品はあるが、これは個々のテストケースの編集履歴に閉じており、Featureの変更が波及するテストケース群を横断的に特定する機能ではない。第1.3節・第2.4節)。本研究はこの空白を、Git自身のオブジェクトモデルを土台にしたマイルストーン境界のChangeEventモデルで埋める(第3章)。この基盤は単純なパスベースの`git diff`/`git log --follow`ではなく、パス独立なID解決とディレクトリ単位のtree SHA比較を組み合わせた設計上の中核メカニズムであり、リネーム・再配置に対して頑健である(第1.3節・第3.3節)。
+対象とする現状運用(TestRail/Jira/git検索の組み合わせ)は、「過去のある変更が今のどのテストに影響するか」という問いに必要な、複数Feature・複数リリースにまたがる派生関係を直接問い合わせ可能な形では保持しておらず、回答には複数情報源の手動照合を要する(TestRailのようにテストケース単体の履歴比較・復元機能を持つ製品はあるが、Featureの変更が波及するテストケース群を横断的に特定する機能とは異なる。第1.3節・第2.8節)。本研究は、この照合をGit自身のオブジェクトモデルを土台にしたマイルストーン境界のChangeEventモデルで支援できるという仮説を検討する(第3章)。この基盤は単純なパスベースの`git diff`/`git log --follow`ではなく、パス独立なID解決とディレクトリ単位のtree SHA比較を組み合わせた設計上の中核メカニズムであり、ディレクトリのリネーム・再配置後も同一のFeature idを解決できる(第1.3節・第3.3節)。
 
 ### 1.2 研究課題(RQ)
 
@@ -69,11 +69,17 @@ flowchart LR
 ### 1.3 貢献
 
 1. **設計上の中核メカニズム**：(a)Featureの識別子をディレクトリパスではなく`feature.yml`の`id:`フィールドから読み取るパス独立なID解決、(b)比較単位を`feature.yml`単体のblob SHAではなくFeatureディレクトリ全体のtree SHAとすることで、Condition/ExpectedResultのみの変更もfeature.yml非経由で検知する仕組み、(c)`knowledge/`のtree SHAと正規化ルール・スキーマ・ツールの各バージョンを合成した内容アドレス方式のid解決キャッシュ(Gitの`commit-graph`補助キャッシュと同じ設計思想)、の3点を、コミットグラフの祖先探索(`git merge-base`)と組み合わせ、ブランチ運用に依存せずマイルストーン境界で版履歴を導出するモデルの設計(第3章)。ただし「ブランチ運用に依存しない」のは最終tree差分による主系譜(`changes compute`)に限られ、祖先探索を用いるマージの系譜監査(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とする副次機能であり、squash/rebase運用では機能しない(第3.4節・表2)。パスベースの履歴追跡(`git diff`・`git log --follow`等)はディレクトリのリネーム・再配置に弱く、木構造化されたテスト知識の論理的な同一性を保証しないのに対し、本モデルは(a)によってこの制約を回避する。
-2. 横断的観点(Axis)を物理ディレクトリ構造から独立させ、木構造を保持したまま多対多関係を表現する設計パターン(第3.5節)。
+2. **実装設計上の特徴**：横断的観点(Axis)を物理ディレクトリ構造から独立させ、木構造を保持したまま多対多関係を表現する構成(第3.5節)。これは一般的なモデリング手法の適用であり、単独の研究的新規性としては主張しない。
 3. 既存の大規模リポジトリへの段階的な導入を狙って設計した、マイルストーン単位の非同期バックフィルアーキテクチャ(第4章)。ただしこの設計が実際の大規模リポジトリでも意図通り機能するかは、本ドラフト時点では実データによる検証(ケーススタディ)を経ていない仮説である(第6章Threats to Validity・第7章Future Work参照)。
 4. 対象組織の実際の現状運用を対照群とし、正解データを当時の成果物から再構成した、実データに基づく評価設計(第5章)。
 
-**本研究の差分**：Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、再検証追跡を統合したローカル/Git-native運用である。既存TMS(TestRail等)が提供するテストケース単体の履歴比較・復元機能とは異なり、複数のFeatureにまたがる版履歴を横断的にクエリできる点が本モデルの中心的な差分である(第2.4節)。
+**本研究の差分**：Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、再検証追跡を統合したローカル/Git-native運用である。既存TMS(TestRail等)が提供するテストケース単体の履歴比較・復元機能とは異なり、複数Feature・複数リリースにまたがる版履歴を問い合わせるための情報を単一モデルで導出できる点が差分の一つである(第2.8節)。ただし、要件・テストトレーサビリティ、イベントベースの変更伝播、要件ベースの回帰テスト選択・テスト生成、trace link evolution、content fingerprintによる変更鮮度判定にはそれぞれ前例がある。本研究は「個別要素の世界初」を主張せず、Feature集約のversion identity・決定論的テスト派生・snapshot差分・影響TestCase導出・version-bound execution evidence・再検証状態という6性質を統合した**検証対象の設計仮説**として位置づける(第2.9節)。
+
+### 1.4 研究・OSS・プロダクトとしての位置づけ
+
+- **研究上**：Markharnessは「世界初のテスト管理方式」の完成を主張するものではなく、test knowledge derivationとversion-aware verificationが複数世代の変更影響識別を改善するかという仮説を検証するためのreference implementationである。現時点では設計・中核機能の実装までであり、有効性は未検証である。
+- **OSSとして**：Git-native / knowledge-firstという設計思想を持つTMSの一選択肢である。Doorstop、StrictDoc、tmt/fmf、GTMや既存TMSを置き換える普遍的な上位方式とは位置づけず、用途と必要な意味論が異なる代替案として提供する。
+- **プロダクトとして**：TestRail等とのfeature parityを目指さず、専用サーバー不要・専用DB不要・Gitをsource of truthとするdeveloper-oriented test managementに焦点を置く。将来GUIを提供する場合も、汎用TMSの画面群の複製ではなく、ChangeEvent、影響TestCase、version-bound evidence、pending/staleを中心としたrelease verification UIを主眼とする。
 
 **注**：開発者が作業ブランチ上で即座に行える差分照会(第3.2節の構造的生成グラフを使う実装上の利便機能)は、版履歴のChangeEventモデルを使わないため本研究の核心的貢献・RQ1の評価対象には含めない(検討経緯は付録A参照)。
 
@@ -93,30 +99,75 @@ Agile Traceability Information Model(Cleland-Huang et al., 2011)をはじめと�
 
 Classification Tree Method(CTM)は、分類木からのテストケース生成という点で本研究のFeature+Condition→TestCase生成と発想を共有する。ただし、CTMはテスト設計技法であり、Git管理・バージョン履歴・実行結果追跡を含むライフサイクル管理は範囲外である。本研究はテスト設計技法ではなく、設計後のライフサイクル管理を主眼とする点でCTMと立場が異なる。
 
-### 2.4 既存テスト管理ツール・Git-native運用との比較
+### 2.4 イベントベースの変更伝播モデル(Event-Based Traceability)
+
+Cleland-Huang, Chang, Christensen(2003)のEvent-Based Traceability(EBT)は、進化するartifactの変更をeventとして扱い、traceability linkを介してその影響を関係者・依存artifactへ伝播させる枠組みを確立している。したがって「変更イベントから影響artifactを求める」という発想自体は新規ではない。EBTは主にartifactの編集操作(editing operation)の観測を起点として変更を伝播させるのに対し、本モデルはマイルストーン境界の2 snapshot間のtree SHA差分から`ChangeEvent`を事後的・機械的に再構成する(第3.2〜3.4節)。中間の編集操作列を必要とせず、branch/merge/squash/rebaseの経路に依存しない(第3.4節、ただし主系譜`changes compute`に限る点は第1.3節・第3.4節参照)という性質は、operationログの継続的な追跡を前提とするEBTとは異なる設計選択であり、利点(中間操作列への非依存)と欠点(最終状態から消えた一時的変更・編集意図を表せないこと)の双方を伴う。
+
+### 2.5 要件ベースの回帰テスト選択(Requirements-Based Regression Test Selection)
+
+Chittimalli & Harrold(2008)は、ソースコードやシステムモデルではなく、system requirementsと関連TestCaseの対応関係を用いて回帰テストを選択する手法を示した。「変更されたrequirementから影響を受けるTestCaseを選択する」という発想自体は、この研究分野において既知である。本モデルとの差は、選択の入力になるrequirement-TestCase対応の一部が、人手で維持するassociation/coverage matrixではなく、テスト知識からの決定論的生成関係として構造的に得られる点(第3.1〜3.2節の`generates`関係)、および選択後の実行証拠鮮度まで一貫してモデル化している点(`verified_feature_tree_shas`、第3.7節)にある。従来のRequirements RTSは「何を再実行すべきか」を選ぶ段階までを扱うのに対し、本モデルはさらに「現時点で有効な再検証証拠が既に存在するか」まで判定する。
+
+### 2.6 要件ベースのテスト生成・モデルベーステスト(RBTG/MBT)
+
+要件やモデルからテストケースを自動生成する研究は大規模に存在する。Yang, Huang, Cui, Niu, Towey(2025)による1994〜2024年・267研究を対象とした包括的サーベイが示す通り、「Feature/Conditionの組合せからテストケースを生成する」こと自体を新規性として主張することはできない。本モデルにおけるFeature+Condition→TestCase生成(第3.1節)は、この広範な研究領域の一手法にすぎない。差分は生成アルゴリズムそのものではなく、生成物をGit上のversioned knowledgeに由来する派生物(derived artifact)として位置づけ、変更影響分析(第3.2〜3.5節)・実行証拠鮮度(第3.7節)と接続するライフサイクル統合にある。
+
+### 2.7 複数バージョンにまたがるTrace Link Evolution
+
+Rahimiら(2018)のTrace Link Evolver(TLE)は、連続するソフトウェアversion間でrequirements-code間の双方向trace linkを進化させる手法を示している。「複数versionをまたぐtraceabilityの維持」という課題自体は、この研究によって既に扱われている。本モデルは、trace linkの修復・進化そのものではなく、(a)Feature集約のcontent-addressed version identity(tree SHA、第3.1〜3.3節)、(b)決定論的なテスト派生(第3.1節の`generates`関係)、(c)snapshot差分による変更影響の導出(第3.2〜3.4節)、(d)version-boundの実行証拠と再検証状態の導出(第3.7節)を単一のモデルへ統合する点で区別される。
+
+### 2.8 既存テスト管理ツール・Git-native運用との比較
 
 既存の選択肢は、保存形式・バージョン管理方式の観点から3カテゴリに整理できる。
 
-**(1) 商用TMS・自己ホスト型TMS**：TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン機能・トレーサビリティ機能を備える。TestRail(Enterprise版)はテストケース単体の版履歴比較・復元機能(Test case versioning)を提供するが、これは個々のテストケースの編集履歴に閉じており、Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、複数Featureをまたぐ再検証追跡を統合したローカル/Git-native運用は提供しない(参考文献参照)。他の主要製品を含め、複数世代にわたる派生関係を横断的なクエリ対象として扱う機能は一般的に存在しない(TestRailは2026年時点でオンプレミス版の提供を終了しクラウド専用。Xrayは Jira Data Center 経由で自己ホスト可能)。無料・自己ホスト可能な既存選択肢(Kiwi TCMS、TestLink、Klaros Test Management)も同様の制約を持つ。
+**(1) 商用TMS・自己ホスト型TMS**：TestRail・Zephyr Scale・Xray・qTest等の主要製品はマイルストーン機能・トレーサビリティ機能を備える。TestRail(Enterprise版)はテストケース単体の版履歴比較・復元機能を提供する。確認した公式資料では、Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、複数Featureをまたぐversion-boundな再検証追跡を統合した機能までは確認できなかった。他の商用TMSおよびKiwi TCMS・TestLink・Klaros Test Managementについては同一粒度の公式仕様調査を完了していないため、本稿では当該機能を「なし」と判定せず未確認とする。
 
 **(2) 素朴なGit運用**：Markdown/YAMLでのテストケース管理をGit上でそのまま行う運用も実務に存在する(第1.1節)。バージョンキーはcommitハッシュに依存し体系化されず、版履歴の自動導出・変更影響分析のいずれも持たない。
 
-**(3) 構造化メタデータ＋Git管理型ツール(GTM、tmt/fmf)**：GTM(the Git Test Management System)は"Git-native test management"という本研究と同一のキーワードを標榜し、Markdownでのテストケース管理をGit上で行うツールである。バージョン管理はファイル名末尾へのv1/v2/v3付与とversionフィールドによる手動整数方式(オプション機能)であり、変更履歴はCHANGELOG.mdの手動記述とGitのbranch/PRレビューに依存する。自動的なChangeEvent相当の導出機構は公開ドキュメントの範囲では確認できない(参考文献参照)。tmt/fmf(Red Hat発のOSSテスト実行フレームワーク、fmfをメタデータ形式として採用)は学術・実務双方で認知度が高い。`adjust`属性により製品・ディストリビューション・アーキテクチャ等のコンテキストに応じてテストメタデータを動的修正できるが、これは環境間の空間的バリエーションを扱う機構であり、版履歴・変更履歴・リリース/マイルストーンの概念や変更影響分析に相当する機能はCore仕様の範囲では確認できない(参考文献参照)。いずれも公開ドキュメントで確認した範囲での結論であり、tmtのPlans/Stories/Policy仕様・プラグイン群、GTMのソースコード実装は未検証である。
+**(3) 構造化メタデータ＋Git管理型ツール(Doorstop、StrictDoc、GTM、tmt/fmf)**：Doorstopは要件・テストケース等のlinkable itemをYAMLとしてバージョン管理下に置き、document tree・traceability validation・publication機能を提供する。さらに各itemの内容由来のSHA-256 fingerprint、レビュー時点のfingerprint、親itemへのlinkに記録したfingerprintを比較し、変更後のitemやlinkをunreviewed/suspectとして検出する。したがってcontent-derived identityとtrace-link freshness自体は既知である。本モデルとの差は、Feature配下全体をGit tree SHAで集約し、生成TestCaseの実行証拠をそのFeature versionへbindして、マイルストーン間の再実行要否を導出する点に置く。StrictDocはhuman-readableなテキストでrequirements/specificationを管理し、requirements・test cases・test results間のtraceabilityやJUnit XML等のtest report統合を提供する。差分はtest result traceabilityの有無ではなく、結果が対象knowledge versionを記録し、knowledge変更後にresult validityを自動再評価する意味論が公開仕様の確認範囲では見つからない点である。GTMはMarkdown上のテスト管理と手動整数versionを提供する。tmt/fmfはGit refによるremote plan取得、Storiesのverified状態、Results、`adjust`/Policyを備えるため「versionの概念自体を持たない」とは扱わない。一方、Feature content versionと実行証拠を結び、変更後の再検証状態を導出するドメインモデルは、確認した公開仕様の範囲では見つからなかった。これらは機能の非存在を証明する結論ではなく、第2.9節に示す調査範囲内の比較である。
 
-実務では、これら単体のツールではなく、TMS・課題管理ツール(Jira等)・git検索を組み合わせて運用するのが一般的だが、いずれの組み合わせも過去の世代の変更を体系的には辿れない。本研究はこの構造的な欠落を埋める位置づけにあり、評価設計(第5章)はこの実態を反映する。
+実務では、これら単体ではなくTMS・課題管理ツール・git検索等を組み合わせて運用する。その組合せから過去の変更影響を調査できる場合もあるが、対象とする現状運用ではFeature versionとTestCase・実行証拠の関係を直接問い合わせられず、複数情報源の手動照合を要する。本研究は、この照合を単一モデルで支援する設計が正答率・所要時間を改善するかを評価する。
 
 **表1：既存選択肢との比較**
 
 | ツール | 保存形式 | バージョンキー方式 | 版履歴の自動導出 | マイルストーン境界の変更影響分析 | 主目的 |
 |---|---|---|---|---|---|
-| TestRail等 商用TMS | DB(非Git) | 非公開注1 | ケース単体の履歴比較・復元のみ(横断クエリ不可) | なし | テストケース管理(スナップショット中心) |
+| TestRail等 商用TMS | DB(非Git) | TestRailの内部方式は非公開注1 | TestRailはケース単体の履歴比較・復元あり。横断的派生履歴は公開仕様では未確認 | マイルストーン境界のversion-bound再検証判定は未確認 | テストケース・実行管理 |
+| Doorstop | YAML(Git管理) | item SHA-256 fingerprint＋VCS注3 | item/linkのreviewed fingerprint差分からunreviewed/suspectを検出 | milestone単位のTestCase selectionは未確認 | Document tree・traceability validation・review freshness |
+| StrictDoc | テキスト(Git管理) | Git version/branch macro注3 | Git diff生成あり。version-bound result validityは未確認 | 未確認 | Requirements/specification管理とtest result traceability |
 | GTM | Markdown(Git管理) | 手動整数(v1/v2/v3、オプション)注2 | なし(Gitコミット履歴＋手動双方向リンクに依存) | なし | Git上でのテスト資産の可読性・相互参照 |
-| tmt/fmf | YAML(Git管理、fmf継承) | 該当なし(バージョンの概念自体を持たない) | なし | なし(`adjust`は環境間の空間的分岐であり時間軸と直交) | 複数環境・CI/CD間の実行移植性 |
+| tmt/fmf | YAML(Git管理、fmf継承) | Git ref指定可 | metadata継承・`adjust`/Policyあり。時系列の派生履歴は未確認 | version-bound evidenceによる再検証判定は未確認 | 複数環境・CI/CD間の実行移植性 |
 | 素朴なGit運用 | Markdown/YAML(Git管理) | commitハッシュ(体系化されない) | なし | なし | ー |
 | 本研究(markharness) | Markdown/YAML(Git管理) | tree SHA(コンテンツアドレス) | あり(マイルストーン境界で`ChangeEvent`を自動導出) | あり(`derived_from`＋`ChangeEvent`) | 版履歴・変更影響の第一級管理 |
 
 注1：TestRail公式サポート記事「Test case versioning」および公式ブログは、バージョン比較・復元機能の存在を述べているが、内部のバージョン識別方式(シーケンス番号か、タイムスタンプかなど)については記述がなく、非公開である(調査日：2026-08-13)。  
 注2：GTMの手動整数方式は、本研究が第3.2節で人間の手動整数管理からGitのコンテンツアドレス方式へ移行した、まさにその不採用対象の方式にあたる。
+注3：Doorstopはitem内容とlink先からSHA-256 fingerprintを計算し、`reviewed`および親linkに保存したfingerprintとの差から変更鮮度を判定する。これはMarkharnessのcontent-addressed identity/freshnessに近い重要な先行機構である。相違はMarkharnessがFeatureディレクトリ全体のGit tree SHAをversion identityとし、TestExecutionをそのversionへbindしてrelease verificationのpending/staleを導出する点にある。StrictDocはtest result traceabilityを提供するが、確認した公開仕様ではこのversion bindingと変更後のvalidity再評価までは見つからなかった(調査日：2026-08-18)。
+
+### 2.9 新規性の位置付けと調査範囲の限定
+
+本節までのRelated Workが示す通り、本モデルの個々の構成要素には強い先行研究・既存ツールが存在する。したがって、次のような広い表現は避ける。
+
+- 「Git管理下でのrequirements/test traceability」自体が新しい(Doorstop・StrictDoc・GTM・tmt/fmf等がある)。
+- 「変更されたrequirementから影響テストを選ぶ」こと自体が新しい(Requirements RTS、第2.5節)。
+- 「要件・構造からテストケースを生成する」こと自体が新しい(RBTG/MBT、第2.6節)。
+- 「変更イベントから影響を伝播させる」こと自体が新しい(EBT、第2.4節)。
+- 「複数versionをまたぐtraceability」自体が未研究である(Trace Link Evolution、第2.7節、およびEBT)。
+- 「商用TMSにはversion historyがない」(TestRail Enterprise版にテストケース単体の版履歴機能がある、第2.8節)。
+
+本研究が検証対象として提案する差分は、個別の構成要素ではなく、次の性質の**統合**である。
+
+```text
+Feature集約のcontent-addressed version identity(tree SHA、第3.1〜3.3節)
+  + 決定論的なTestCase派生(第3.1節)
+  + マイルストーンsnapshot差分によるChangeEvent導出(第3.2〜3.4節)
+  + 影響TestCaseの導出(第3.5節)
+  + 検証対象Feature versionへbindされた実行証拠(第3.7節)
+  + そこから導出される再検証状態(pending/stale、第3.7節)
+```
+
+**調査範囲の限定**：本節を含む第2章のRelated Workは、既存の関連研究サーベイと、比較的関連性の高い研究・公式ツール文書を対象としたtargeted searchに基づく。検索式・データベース・包含/除外基準・重複除去・品質評価・snowballingを事前登録したプロトコルに従って網羅的に実施したformal systematic reviewではない。したがって、本章での「確認できない」「公開資料の範囲では見つからない」という記述は、当該機能の非存在を証明するものではなく、既知の先行研究・ツールに対する現時点の比較状況を示すにとどまる。この限定を踏まえ、本研究の新規性は次のように限定的に主張する。
+
+> 既存のサーベイおよび関連研究・ツールに対するtargeted searchの範囲では、上記6性質を同時に提供する方式は確認できなかった。この観察は新規性や機能の非存在を証明するものではない。本研究では、この統合をtest knowledge derivationとversion-aware verificationに関する検証対象の設計仮説として扱う。
 
 ---
 
@@ -189,13 +240,13 @@ flowchart LR
 
 本モデルには目的の異なる2種類のグラフが存在し、これを区別することが実装・評価の両面で重要である。
 
-**(A) 構造的な生成グラフ(静的、版に依存しない)**：`FEATURE`/`CONDITION`→`TESTCASE`という`generates`関係。現在のFeature/Conditionからどのテストケースが生成されるかを表す静的な構造であり、版履歴を必要としない。開発者が作業ブランチ上で「今この変更で、どのTestCaseが再生成されるか」を知りたい場合、必要なのはこの生成グラフと、現在の変更内容(HEADと基準点の単純な差分)だけであり、これは実質的に`git diff`をスコープした処理である。**この機能は実装上の利便機能であり、研究上の核心的貢献・RQ1の評価対象には含めない**(既存運用にはこの機能自体が存在しないため実務上の価値はあるが、版履歴のChangeEventモデルを一切使わないため評価軸としては切り分ける)。
+**(A) 構造的な生成グラフ(静的、版に依存しない)**：`FEATURE`/`CONDITION`→`TESTCASE`という`generates`関係。現在のFeature/Conditionからどのテストケースが生成されるかを表す静的な構造であり、版履歴を必要としない。開発者が作業ブランチ上で「今この変更で、どのTestCaseが再生成されるか」を知りたい場合、必要なのはこの生成グラフと、現在の変更内容(HEADと基準点の単純な差分)だけであり、これは実質的に`git diff`をスコープした処理である。**この機能は実装上の利便機能であり、研究上の核心的貢献・RQ1の評価対象には含めない**。対象とする現状運用での有無や実務上の効果は別途評価すべき事項であり、版履歴のChangeEventモデルを使わないため本稿では評価軸を切り分ける。
 
-**(B) 版履歴のChangeEventモデル(derived_from、マイルストーン境界で確定)**：同一Featureが前後のマイルストーンでどう変化してきたかを、`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として表す、本研究の核心的なモデル。マイルストーン区間ごとに独立して計算するモデルであり、版ノード・辺を持つ永続的なグラフ構造として保持するわけではない(永続グラフへの拡張は第7章 Future Workを参照)。既存TMS・素朴なGit運用のいずれも持たない機能であり、RQ1が検証する対象はこちらに限定する。
+**(B) 版履歴のChangeEventモデル(derived_from、マイルストーン境界で確定)**：同一Featureが前後のマイルストーンでどう変化してきたかを、`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として表す、本研究の核心的なモデル。マイルストーン区間ごとに独立して計算するモデルであり、版ノード・辺を持つ永続的なグラフ構造として保持するわけではない(永続グラフへの拡張は第7章 Future Workを参照)。調査した公開仕様では同じ統合は確認できなかったが、非存在を主張するものではない。RQ1が検証する対象はこちらに限定する。
 
 版履歴のChangeEventモデル(B)の導出は以下の通り。
 
-- **tree SHAが担うこと**：Featureディレクトリ内容の衝突しない識別。内容が異なれば必然的に異なる値になるため、ブランチ分岐時の番号衝突(人間が手動で整数を上げる場合に起こりうる)は起きない。ただし、これだけでは「どのtreeがどのtreeから派生したか」という親子関係は一切わからない。
+- **tree SHAが担うこと**：Featureディレクトリ内のentry名・mode・参照先objectを含むGit treeに対する、実用上衝突耐性を持つcontent identifier。通常の運用では異なるGit treeを異なるSHAとして識別でき、人間が手動で整数を上げる場合の番号競合を回避できる。ただしハッシュ衝突が数学的に不可能という意味ではなく、SHAだけでは「どのtreeがどのtreeから派生したか」という親子関係もわからない。
 - **祖先探索が担うこと**：マージコミットMの親P1・P2から、マージベース(共通祖先)Bを特定するには`git merge-base P1 P2`によるコミットグラフの探索が必要であり、ハッシュの比較だけで済む処理ではない(Gitのcommit-graphファイル・世代番号による最適化により実務上は効率的だが、明示的なグラフアルゴリズムの実行である)。
 - 対象idについて、tree(B)・tree(P1)・tree(P2)・tree(M)を取得し、以下のように場合分けする。
   - tree(P1) == tree(B) かつ tree(P2) != tree(B)：P2側でのみ変更。線形履歴として扱う。
@@ -364,7 +415,7 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
 
-これらのうち「設計から簡略化」の項目は、RQ1の評価(第5章)が主に必要とする「マイルストーン境界での線形な版履歴追跡」自体には影響しない。`git merge-base`による分岐検出は、マイルストーン区間内の任意の位置で発生した全マージについて`changes compute`の主系譜へ自動反映されるようになったため、複雑なブランチ運用を行う組織でのケーススタディ(第5.2節)でも`lineage`コマンドの補助的併用なしに版履歴の精度を確保できる。
+これらのうち「設計から簡略化」の項目は、RQ1が主に対象とするマイルストーン境界の線形比較には直接関与しない。`git merge-base`による分岐判定は、マイルストーン区間内の全マージについて`changes compute`の主系譜へ自動反映する実装となっている。ただし、複雑な実リポジトリにおける検出精度は未評価であり、第5章のケーススタディで確認する必要がある。
 
 ### 3.7 変更検知に基づく再検証トラッキング
 
@@ -453,8 +504,8 @@ flowchart TB
 
 「使い慣れた実運用」対「導入直後の提案ツール」という比較は、習熟度の交絡がタスク速度に強く影響する。この交絡を無視せず、タスクを2層に分けて評価し、**この層別化は実験開始前に事前登録**する。
 
-- **層α(浅い変更)**：直近1リリース内の変更。対照群の運用でも原理的に対応可能な範囲。速度面で対照群が有利になることをあらかじめ想定される結果として明記する。
-- **層β(深い変更)**：複数世代前からの派生・複数リリースをまたぐ変更。対照群の運用は版間の派生関係を体系的に保持していないため、習熟度に関係なく正答に必要な情報自体が欠落している。本研究の核心的主張が直接効くのはこの層である。
+- **層α(浅い変更)**：直近1リリース内の変更。対照群でも比較的少ない情報源の照合で対応できると予想される範囲。速度面で対照群が有利になる可能性を事前に明記する。
+- **層β(深い変更)**：複数世代前からの派生・複数リリースをまたぐ変更。対象とする対照群は版間の派生関係を直接問い合わせ可能な形では保持していないため、複数情報源の手動照合によるコストや見落としが増えると予想される。本研究は、この予想が正答率・所要時間に現れるかを検証し、情報の原理的欠落は前提としない。
 
 **主指標**は層βにおける正答率(適合率・再現率)とする。速度は補助指標とし、習熟度の交絡があることを解釈時に明記する。
 
@@ -468,20 +519,20 @@ flowchart TB
 
 1. **無関係な同時変更(束ねられたコミット)**：コミット/PRの変更行数・変更ファイル数が対象プロジェクトの中央値の3倍を超える等、異常に大きい場合は候補から除外するか個別精査に回す。コミットメッセージ・PR説明文に複数の意図が記載されている場合も精査対象とする。
 2. **機械的な変更(意味を持たない同時変更)**：diffが空白・改行のみ、既知の自動生成パターン(スナップショット更新等)に一致する場合、または同一コミットで数十〜数百ファイルが同時変更されている(一括リネーム・一括フォーマットの兆候)場合は除外する。
-3. **意味的な無関連**：変更されたテストファイルが、モデル上の構造的な生成関係(第3.2節(A)：`FEATURE`/`CONDITION`→`TESTCASE`)と一致するかを確認し、一致する場合のみ強い候補として採用する。過去のコミット全体で出現頻度が極端に高いテストファイル(スモークテスト等)は特異性が低く重み付けを下げるか除外する。
+3. **意味的な無関連**：変更されたテストファイルの意味的関連性は、Markharnessの生成関係を正解判定に使用せず、要件・PR説明・テスト目的・実装差分等のモデル非依存な成果物に基づいて専門家が判定する。Markharnessの`FEATURE`/`CONDITION`→`TESTCASE`関係との一致は、ground truth確定後に妥当性分析として報告し、候補の採否には使わない。過去のコミット全体で出現頻度が極端に高いテストファイルは、専門家判定時に低特異性の補助情報として提示する。
 
-**二段階の構築プロセス**：(1)上記基準による機械的フィルタリングで候補セットを作成し、(2)独立した複数の専門家(最低2名)による軽量な確認(Yes/No)を行い、評価者間一致度(Cohen's kappa等)を報告する。意見が割れた候補は正解データから除外するか部分点として扱う。
+**open-worldな構築プロセス**：(1)上記成果物から初期候補セットを作成する。(2)独立した複数の専門家(最低2名)が、初期候補の採否だけでなく、要件・実装差分・当時の全TestCase一覧を用いて候補外から影響TestCaseを追加できる形で個別に判定する。(3)各専門家が列挙した集合と初期候補の和集合を、別の専門家または合議で最終判定し、評価者間一致度(Cohen's kappa等)を報告する。これにより、当時更新・実行・リンクされなかったためco-changeやCIログに現れない影響TestCaseを候補外のまま見落とすことを避ける。なお、成果物自体に残らず専門家も復元できない未観測影響は捕捉できないため、その限界を報告する。
 
 **第二優先(成果物が得られない場合)**：聞き取りに頼らざるを得ない場合も、単独担当者ではなく独立した複数の専門家に個別判断させ、一致度を報告する。層βのタスクは、可能な限り成果物ベースで正解データが再構成できる変更を優先的に選定し、聞き取りベースの割合が高い場合は結果の解釈に留保を付ける。
 
 ### 5.5 タスク・指標・サンプルサイズ
 
-被験者に、対象プロジェクトの実際の過去の変更を提示し、影響を受けるTestCase群を特定させる。主指標は層βの正答率(適合率・再現率)。速度・被験者の主観的自信度(NASA-TLX等)は補助指標。サンプルサイズは統計的検定に耐えるよう群あたり15〜30名を目安とし、被験者の経験年数・対象プロジェクトへの熟知度・現状運用ツールへの習熟度を共変量として記録する。実験群のタスクでは、`impacted_testcases`の候補数(第3.5節のFeature単位の保守的候補抽出による母数)も適合率・再現率と併記し、層別化タスクで過大な候補集合が生じた場合にそれが結果から分かるようにする。
+被験者に、対象プロジェクトの実際の過去の変更を提示し、影響を受けるTestCase群を特定させる。主指標は層βの正答率(適合率・再現率)。速度・被験者の主観的負荷(NASA-TLX等)は補助指標とする。サンプルサイズは固定の人数目安を先に置かず、パイロットから得た効果量・分散、主検定、検出力、有意水準、脱落率を用いた事前power analysisで決定し、その計算と前提を事前登録する。被験者の経験年数・対象プロジェクトへの熟知度・現状運用ツールへの習熟度を共変量として記録する。実験群のタスクでは、`impacted_testcases`の候補数も適合率・再現率と併記する。
 
 ### 5.6 想定される脅威(Threats to Validity)
 
 - **内的妥当性**：課題文の設計のカウンターバランス、両群への事前練習セッション。
-- **構成概念妥当性**：「深い変更」の定義を事前に固定。正解データの構築方法(成果物ベース/聞き取りベース)の内訳を明記し、聞き取りベースの割合が高い場合は結果の留保を付ける。co-changeノイズ除去基準(変更ファイル数・出現頻度の閾値)は対象プロジェクトの規模・開発文化に依存し、他プロジェクトへの直接移植には調整が必要。
+- **構成概念妥当性**：「深い変更」の定義を事前に固定。正解データの構築方法(成果物ベース/専門家による候補追加/聞き取りベース)の内訳を明記し、未観測影響を完全には復元できない限界を報告する。co-changeノイズ除去基準(変更ファイル数・出現頻度の閾値)は対象プロジェクトの規模・開発文化に依存するため、パイロット後に固定して事前登録し、恣意的な事後調整を行わない。
 - **外的妥当性**：単一組織・単一ドメインのケーススタディに留まる場合の一般化可能性の限界。対照群の「現状運用」は組織によって異なるため、他組織での追試では対照群の構成が変わりうる。
 
 ---
@@ -512,13 +563,13 @@ flowchart TB
 
 ## 8. Conclusion
 
-本研究は、Gitのコンテンツアドレス(tree SHA)・非コミットのid解決キャッシュ・コミットグラフの祖先探索(`git merge-base`)を組み合わせ、ブランチ運用に依存せずマイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。既存TMS・素朴なGit運用のいずれも、複数世代にわたるテスト知識の派生関係を第一級のクエリ対象として扱わない(第2章・第2.4節)という構造的な欠落に対し、本モデルはGit自身のオブジェクトモデルを土台にしたマイルストーン境界のChangeEventモデルで応える設計提案である。
+本研究は、Gitのコンテンツアドレス(tree SHA)・非コミットのid解決キャッシュ・コミットグラフの祖先探索(`git merge-base`)を組み合わせ、マイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。既存研究・ツールにはcontent fingerprint、trace-link freshness、test result traceability等の関連機構が存在する(第2.4〜2.8節)。本モデルはそれらの個別要素の新規性を主張せず、Feature集約version、テスト派生、変更影響、version-bound execution evidence、再検証状態をGit上で統合する設計仮説と、そのreference implementationを提示する。
 
 この設計は`markharness`(Rust実装、本リポジトリ)としてリファレンス実装され、`changes compute`によるマイルストーン境界の版履歴自動計算(区間内の任意の位置で発生した全マージへの`lineage`統合を含む、第3.2節「統合(2026-08追記)」)、`changes lineage`による`git merge-base`ベースの分岐監査、`verify trace`/`verify pending`による実行結果との自動突合(第3.7節)を含む中核機能が動作することを確認した。第3.6節にまとめた通り、設計から意図的に簡略化した箇所(id解決キャッシュのバージョン改訂運用が未検証等)と、未実装のまま残した箇所(既存TMSからのインポータ)がある。
 
 **本研究の現時点での性質**：本ドラフトは、RQ1(「明示的な版履歴を持つモデルは、複数世代にわたる変更影響識別タスクにおいて既存の複合運用より正答率・所要時間を改善するか」)を検証する**設計提案とリファレンス実装のレポート**であり、第5章に計画した被験者実験による実証的評価は本ドラフト時点では未実施である。したがって、RQ1に対する肯定的な結論を本ドラフトでは主張しない。第3章で述べたモデル構造(版履歴の第一級化)が、既存運用にはない情報(過去世代からの派生関係)をテスターに提供しうるという設計上の期待は成り立つが、これが実際の正答率・所要時間の改善に結びつくかどうかは、第5章の評価計画に沿った被験者実験を経て初めて判断できる。
 
-**Future Workとしての実証**：RQ1の被験者実験による検証は、本研究の直接の続編として位置づける(第7章)。第5章の評価計画(タスク層別化・正解データ構築・対照群の統合)は実験開始前の事前登録内容として確定させてあり、次段階はこの計画に沿った実験の実施と結果の報告である。あわせて、id解決キャッシュのバージョン改訂運用の実証(第3.3節)、大規模リポジトリでのバックフィル性能実測(第4章)も、モデル自体の評価とは独立に取り組むべき実装課題として残っている(`changes lineage`の主系譜統合は第3.2節「統合(2026-08追記)」の通り実装済みのため、本項からは除外した)。
+**Future Workとしての実証**：RQ1の被験者実験による検証は、本研究の直接の続編として位置づける(第7章)。第5章は事前登録案の骨格であり、次段階ではパイロット後に効果量・分散、主検定、サンプルサイズ、co-change閾値をpower analysisとともに確定し、実験開始前に登録する。その後、この計画に沿って実験を実施・報告する。あわせて、id解決キャッシュのバージョン改訂運用の実証(第3.3節)、大規模リポジトリでのバックフィル性能実測(第4章)も独立した実装課題として残る。
 
 ---
 
@@ -565,6 +616,14 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 ## 参考文献
 
 - Cleland-Huang, J. et al. (2011). Agile Traceability Information Model.
+- Cleland-Huang, J., Chang, C. K., Christensen, M. (2003). Event-Based Traceability for Managing Evolutionary Change. *IEEE Transactions on Software Engineering*, 29(9), 796–810. https://doi.org/10.1109/TSE.2003.1232285
+- Chittimalli, P. K., Harrold, M. J. (2008). Regression Test Selection on System Requirements. *ISEC 2008*, pp. 87–96. https://doi.org/10.1145/1342211.1342229
+- Rahimi, M., Cleland-Huang, J. et al. (2018). Evolving Software Trace Links Between Requirements and Source Code. *Empirical Software Engineering*, 23, 2198–2231. https://doi.org/10.1007/s10664-017-9561-x
+- Yang, Z., Huang, R., Cui, C., Niu, N., Towey, D. (2025). Requirements-Based Test Generation: A Comprehensive Survey. https://arxiv.org/abs/2505.02015
+- Doorstop official documentation. Overview. https://doorstop.readthedocs.io/en/latest/
+- Doorstop official documentation. Item fingerprints and reviewed links. https://doorstop.readthedocs.io/en/v2.0/reference/item/
+- Doorstop official documentation. Validating requirements and suspect links. https://doorstop.readthedocs.io/en/stable/cli/validation.html
+- StrictDoc official documentation: Traceability and test report integration. https://strictdoc.readthedocs.io/en/stable/stable/docs/strictdoc_01_user_guide-TRACE.html
 - Software Test Data Management Based on Knowledge Graph. https://www.informatica.si/index.php/informatica/article/download/6416/3168
 - Model management to support systems engineering workflows using ontology-based knowledge graphs. https://arxiv.org/html/2512.09596v1
 - UOOR: Seamless and Traceable Requirements. https://arxiv.org/pdf/2502.18617
@@ -584,6 +643,8 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 - tmt documentation. https://tmt.readthedocs.io/en/stable/
 - tmt Core specification. https://tmt.readthedocs.io/en/stable/spec/core.html
 - tmt Tests specification. https://tmt.readthedocs.io/en/stable/spec/tests.html
+- tmt Metadata Specification. https://tmt.readthedocs.io/en/stable/spec.html
+- tmt Plans specification: Import Plans and Git refs. https://tmt.readthedocs.io/en/latest/spec/plans.html
 
 ---
 
@@ -591,6 +652,9 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
 
+- **2026-08-18(3)**：再レビュー指摘に対応。商用TMS比較の未調査項目を「なし」から「未確認」へ変更し、本文に残る非存在断定を限定。§5.4を候補外TestCaseの追加を許すopen-world reviewへ変更。§5.5とConclusionの事前登録状態を「骨格」に修正。tree SHAを数学的に衝突しない識別子とする表現と、実リポジトリで精度確保済みとする表現を修正。旧変更履歴のDoorstop評価は本改訂および2026-08-18(2)で訂正された。
+- **2026-08-18(2)**：レビュー指摘に対応。DoorstopのSHA-256 item fingerprint・reviewed fingerprint・suspect linkをcontent-derived identity/freshnessの先行機構として再評価し、表1と§2.8〜2.9の比較を修正。StrictDocのtest result traceability、tmtのGit ref/Stories/Results等を踏まえて断定を緩和。「原理的に答えられない」「構造的欠落」を、対象運用では複数情報源の手動照合を要するという検証可能な仮説へ修正。§1.4に研究・OSS・プロダクトの三層の位置づけを追加。§5.4のground truth構築から提案モデル自身による選別を除去し、§5.5の固定人数目安をpower analysisへ変更。Conclusionと参考文献を同期更新。
+- **2026-08-18**：`markharness_評価・Related_Work・新規性評価_研究ノート.md`の指摘に対応してRelated Workを拡充し、当時のtargeted searchに基づく組合せ差分を記述した。Doorstopのfingerprint/freshness評価および新規性表現は、後続の2026-08-18(2)・(3)で訂正・限定している。
 - **2026-08-13(3)**：`テスト知識管理のGit-nativeモデル_評価レビュー_有用性判定と修正指示.md`の修正指示(有用と判定した項目)に対応。(1)「ブランチ戦略に依存しない」の主張を、最終tree差分による主系譜(`changes compute`、ブランチ戦略非依存)とマージの系譜監査(`changes lineage`/`true_divergences`、マージコミットの保持が前提)に分解し、§1.3・§3.4に説明と戦略別の挙動表(表2)を追加。(2)`executions/*/results.yml`用のJSON Schema(`schema/execution_result.schema.json`)を実装し、`markharness validate`の検証対象に追加(`src/schema.rs`・`src/validate.rs`)。既存の`verified_feature_tree_shas`を持たない実行記録は任意フィールドとして扱われるためスキーマ検証を通過し、「不明」扱いの既定方針(change-event-verification-tracking-spec.md §6)と整合させた。(3)Feature `id:`変更時に版履歴が断絶する制約を利用者向け文書(README.md、cli-manual.md)に明記し、移行手順・エイリアス機構を実装しない判断を[docs/decisions/0004-feature-id-change-migration.md](./decisions/0004-feature-id-change-migration.md)に記録。(4)第4章冒頭・§4.1・§1.3貢献3に、バックフィルアーキテクチャの大規模リポジトリでの実効性が実測未検証の仮説であることを明記(第6章・第7章への参照を追加)。§3.6実装状況まとめの表も上記(2)(3)に合わせて更新。
 - **2026-08-13(2)**：表1のTestRail行「バージョンキー方式：内部シーケンス番号」に典拠がなく、公式資料が開示していない内部実装を推測で補完していたとの指摘に対応。TestRail公式サポート記事「Test case versioning」・公式ブログを再確認したが、バージョン比較・復元機能の存在は述べているものの内部のバージョン識別方式には言及がなかったため、「非公開」に修正し脚注で典拠を明記(調査日：2026-08-13)。
 - **2026-08-13**：外部評価レビュー・関連研究網羅性指摘(GTM・tmt/fmfの欠落)に対応。§2.4を単一段落の二極対比から、商用TMS・素朴なGit運用・構造化メタデータ＋Git管理型ツール(GTM、tmt/fmf)の三極構成に再構成し、比較表(表1)を追加。GTMの手動整数バージョン方式が第3.2節で不採用とした方式そのものである点を脚注で明記。付録A.1にGTMS(同一ドメインの類似製品)への言及を追記。参考文献にGTM・GTMS・tmt関連の一次情報6件を追加。§1.3・§2.1〜2.3・第5章は指摘の対象外であり変更していない(判断理由は[docs/decisions/0003-related-work-gtm-tmt.md](./decisions/0003-related-work-gtm-tmt.md)を参照)。
