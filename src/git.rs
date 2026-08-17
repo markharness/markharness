@@ -151,6 +151,24 @@ pub fn commit_date(root: &Path, git_ref: &str) -> io::Result<String> {
     Ok(raw.trim().to_string())
 }
 
+/// Whether `ancestor` is an ancestor of (or the same commit as) `descendant`
+/// in `root`'s history, via `git merge-base --is-ancestor`. Used to break
+/// committer-date ties when ordering milestones by recency (§4.2): two
+/// milestones tagged within the same wall-clock second must still be
+/// ordered by actual history rather than by string-comparing equal dates.
+pub fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> io::Result<bool> {
+    reject_option_like(ancestor)?;
+    reject_option_like(descendant)?;
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    Ok(status.success())
+}
+
 /// Reads a git notes entry under `notes_ref` for `git_ref`. Returns `None`
 /// when no note exists yet (rather than treating it as an error).
 pub fn notes_show(root: &Path, notes_ref: &str, git_ref: &str) -> io::Result<Option<String>> {
@@ -619,5 +637,35 @@ mod tests {
         commit_all(dir.path(), "init");
 
         assert!(!tag_exists(dir.path(), "nope").unwrap());
+    }
+
+    #[test]
+    fn is_ancestor_true_for_an_earlier_commit_on_the_same_branch() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "first");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+        fs::write(dir.path().join("README.md"), "world\n").unwrap();
+        commit_all(dir.path(), "second");
+        run_git(dir.path(), &["tag", "m2"]).unwrap();
+
+        assert!(is_ancestor(dir.path(), "m1", "m2").unwrap());
+        assert!(!is_ancestor(dir.path(), "m2", "m1").unwrap());
+    }
+
+    #[test]
+    fn is_ancestor_rejects_option_like_revision() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = is_ancestor(dir.path(), &malicious, "HEAD");
+        assert!(result.is_err());
+
+        let result = is_ancestor(dir.path(), "HEAD", &malicious);
+        assert!(result.is_err());
+        assert!(!victim.exists());
     }
 }

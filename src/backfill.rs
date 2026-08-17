@@ -39,13 +39,38 @@ pub fn list_milestone_names(root: &Path) -> io::Result<Vec<String>> {
 /// Orders milestone names newest-first by their tag's committer date.
 /// Milestones whose tag cannot be resolved (name/tag mismatch) are dropped
 /// rather than failing the whole run.
+///
+/// Two milestones committed within the same wall-clock second get the same
+/// committer-date string, which the initial date sort cannot break a tie
+/// on. A follow-up ancestry-aware pass (`git merge-base --is-ancestor`)
+/// corrects any adjacent pair the date sort left in the wrong order: if the
+/// name currently placed "newer" is actually an ancestor of the one behind
+/// it, the two are swapped. Pairs with no provable ancestor relationship
+/// (e.g. diverged branches) are left as the date sort placed them.
 pub fn order_by_recency(root: &Path, names: Vec<String>) -> Vec<String> {
     let mut dated: Vec<(String, String)> = names
         .into_iter()
         .filter_map(|name| git::commit_date(root, &name).ok().map(|date| (name, date)))
         .collect();
     dated.sort_by(|a, b| b.1.cmp(&a.1));
-    dated.into_iter().map(|(name, _)| name).collect()
+    let mut ordered: Vec<String> = dated.into_iter().map(|(name, _)| name).collect();
+
+    let len = ordered.len();
+    for _ in 0..len {
+        let mut swapped = false;
+        for i in 0..len.saturating_sub(1) {
+            let newer_is_actually_older =
+                git::is_ancestor(root, &ordered[i], &ordered[i + 1]).unwrap_or(false);
+            if newer_is_actually_older {
+                ordered.swap(i, i + 1);
+                swapped = true;
+            }
+        }
+        if !swapped {
+            break;
+        }
+    }
+    ordered
 }
 
 fn already_processed(root: &Path, to_milestone: &str) -> bool {
@@ -214,5 +239,30 @@ mod tests {
 
         assert!(report.processed.is_empty());
         assert!(report.skipped.is_empty());
+    }
+
+    /// Regression test for the README's canonical demo, which fails with
+    /// `--to must be strictly newer than --from` when two milestones are
+    /// committed within the same wall-clock second: `order_by_recency` used
+    /// to sort purely by committer-date string, so a tie left the tags in
+    /// their original (alphabetical) order regardless of which one actually
+    /// came later in history. Ancestry (`git merge-base --is-ancestor`) must
+    /// win over a date tie.
+    #[test]
+    fn order_by_recency_breaks_same_second_committer_date_ties_by_ancestry() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1");
+        // Same hour_offset for both milestones: identical committer date.
+        commit_and_tag_milestone(dir.path(), "v1", "m1", 1);
+        write_feature(dir.path(), "v2");
+        commit_and_tag_milestone(dir.path(), "v2", "m2", 1);
+
+        let ordered = order_by_recency(dir.path(), vec!["m1".to_string(), "m2".to_string()]);
+
+        assert_eq!(
+            ordered,
+            vec!["m2".to_string(), "m1".to_string()],
+            "m2 is a descendant of m1 in history and must sort first despite the tied committer date"
+        );
     }
 }

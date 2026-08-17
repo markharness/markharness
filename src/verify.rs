@@ -247,7 +247,8 @@ pub enum PendingError {
     /// An explicitly given `--from`/`--to` milestone has no
     /// `executions/<name>/milestone.yml`.
     MilestoneNotFound,
-    /// `to` is not strictly newer than `from` by committer date.
+    /// `to` is not strictly newer than `from` (by committer date, with
+    /// ancestry breaking same-second ties — see `backfill::order_by_recency`).
     InvalidRange,
     Io(io::Error),
 }
@@ -715,16 +716,37 @@ mod tests {
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
         write_feature(dir.path(), "v1");
-        // Same committer date for both: a name-order tie-break in
-        // order_by_recency puts "test2" (the `to`) before "test1" (the
-        // `from`) in the newest-first list, i.e. to_index > from_index.
+        commit_and_tag_milestone(dir.path(), "test1", 1);
+        write_feature(dir.path(), "v2");
+        commit_and_tag_milestone(dir.path(), "test2", 2);
+
+        // `test1` is genuinely `test2`'s descendant here (created later, in
+        // the same history), so asking for `--from test2 --to test1` is a
+        // real inversion, not just a naming choice.
+        let result = pending(dir.path(), Some(("test2", "test1")), false);
+
+        assert!(matches!(result, Err(PendingError::InvalidRange)));
+    }
+
+    /// Regression test for the flaky README quick start: two milestones
+    /// committed within the same wall-clock second used to leave
+    /// `order_by_recency` unable to break the committer-date tie, so an
+    /// explicit `--from test1 --to test2` (correct in history) was wrongly
+    /// rejected as `InvalidRange`. Ancestry must resolve the tie instead.
+    #[test]
+    fn pending_accepts_explicit_range_when_milestones_share_the_same_committer_second() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q"]);
+        run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+        run_git(dir.path(), &["config", "user.name", "Test"]);
+        write_feature(dir.path(), "v1");
         commit_and_tag_milestone(dir.path(), "test1", 1);
         write_feature(dir.path(), "v2");
         commit_and_tag_milestone(dir.path(), "test2", 1);
 
         let result = pending(dir.path(), Some(("test1", "test2")), false);
 
-        assert!(matches!(result, Err(PendingError::InvalidRange)));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
     #[test]

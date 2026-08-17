@@ -30,6 +30,23 @@ pub fn run_init(root: &Path) -> io::Result<()> {
     }
     ensure_gitignore(root)?;
     ensure_default_schemas(root)?;
+    ensure_gitkeep_in_empty_dirs(root)?;
+    Ok(())
+}
+
+/// `git` never tracks an empty directory, so a bare `mkdir` (as `run_init`
+/// above does for `SUBDIRS`) is invisible to `git add -A` and does not
+/// survive a commit/clone round trip. Drop a placeholder file into every
+/// subdirectory that is still empty after the rest of `init` has run, so
+/// the full UC1-UC8 directory layout is actually committable.
+fn ensure_gitkeep_in_empty_dirs(root: &Path) -> io::Result<()> {
+    for name in SUBDIRS {
+        let dir = root.join(name);
+        let is_empty = fs::read_dir(&dir)?.next().is_none();
+        if is_empty {
+            replace_file(root, &dir.join(".gitkeep"), b"")?;
+        }
+    }
     Ok(())
 }
 
@@ -171,6 +188,46 @@ mod tests {
             fs::read_to_string(dir.path().join("schema/feature.schema.json")).unwrap(),
             "custom content"
         );
+    }
+
+    /// `git` does not track empty directories, so a plain `mkdir` for
+    /// `knowledge/`, `axes/`, `generated/`, `executions/`, `changes/` is
+    /// invisible to `git add -A` and never survives a commit/clone round
+    /// trip. `init` must leave something committable behind in every
+    /// directory it creates that isn't otherwise populated (`schema/` gets
+    /// real files from `ensure_default_schemas`, so it needs no placeholder).
+    #[test]
+    fn creates_gitkeep_placeholder_in_directories_that_would_otherwise_be_empty_so_git_can_track_them()
+     {
+        let dir = tempfile::tempdir().unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        for name in ["knowledge", "axes", "generated", "executions", "changes"] {
+            assert!(
+                dir.path().join(name).join(".gitkeep").is_file(),
+                "{name} should contain a .gitkeep placeholder"
+            );
+        }
+        assert!(
+            !dir.path().join("schema").join(".gitkeep").exists(),
+            "schema/ already has real files and needs no placeholder"
+        );
+    }
+
+    #[test]
+    fn does_not_add_gitkeep_to_a_directory_that_already_has_content() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path().join("knowledge/req/feat/feature.yml"),
+            "id: feat\n",
+        )
+        .unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        assert!(!dir.path().join("knowledge").join(".gitkeep").exists());
     }
 
     #[test]

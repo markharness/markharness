@@ -45,12 +45,14 @@ markharness changes compute v1 v2
 cat changes/v2.yaml
 
 # 7. Record execution results, then check for TestCases still pending re-verification
-markharness execution record tc-empty-title-001 --milestone v2 --result pass --executor <your-name>
-markharness execution record tc-max-length-001 --milestone v2 --result pass --executor <your-name>
+markharness execution record tc-todo-management-add-todo-add-task-empty-title --milestone v2 --result pass --executor <your-name>
+markharness execution record tc-todo-management-add-todo-add-task-max-length --milestone v2 --result pass --executor <your-name>
 markharness verify pending --from v1 --to v2
 ```
 
-The final `verify pending` detects that both TestCases affected by `v1..v2` (`tc-empty-title-001` / `tc-max-length-001`) already have execution records as of `v2`, and reports 0 `pending` (not-yet-re-executed) items. If you skip both recording steps and run `verify pending` directly, these same two TestCases are instead reported as pending (verified hands-on with the command sequence above).
+The `case_id`s above follow the generator's `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` rule; if you're unsure of the exact id after `generate`, read it from the generated file directly (e.g. `generated/testcases/todo-management/add-todo/add-task/empty-title.yml`).
+
+The final `verify pending` detects that both TestCases affected by `v1..v2` already have execution records as of `v2`, and reports 0 `pending` (not-yet-re-executed) items. If you skip both recording steps and run `verify pending` directly, these same two TestCases are instead reported as pending (verified hands-on with the command sequence above).
 
 See [docs/en/cli-manual.md](./docs/en/cli-manual.md) for the detailed options and output format of each command.
 

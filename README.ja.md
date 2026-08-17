@@ -45,12 +45,14 @@ markharness changes compute v1 v2
 cat changes/v2.yaml
 
 # 7. 実行結果を記録してから、未再検証のTestCaseを確認する
-markharness execution record tc-empty-title-001 --milestone v2 --result pass --executor <your-name>
-markharness execution record tc-max-length-001 --milestone v2 --result pass --executor <your-name>
+markharness execution record tc-todo-management-add-todo-add-task-empty-title --milestone v2 --result pass --executor <your-name>
+markharness execution record tc-todo-management-add-todo-add-task-max-length --milestone v2 --result pass --executor <your-name>
 markharness verify pending --from v1 --to v2
 ```
 
-最後の `verify pending` は、`v1..v2` で影響を受けた2件のTestCase(`tc-empty-title-001` / `tc-max-length-001`)がいずれも `v2` 時点で実行記録済みであることを検出し、`pending`(未再実行)を0件と報告します。両方のステップを省略して直接 `verify pending` を実行すると、逆にこの2件が pending として出力されます(実際に上のコマンド列で手元確認済み)。
+上記の `case_id` は生成規則 `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` に従います。`generate` 後の正確なIDが分からない場合は、生成されたファイル(例: `generated/testcases/todo-management/add-todo/add-task/empty-title.yml`)を直接読んで確認してください。
+
+最後の `verify pending` は、`v1..v2` で影響を受けた2件のTestCaseがいずれも `v2` 時点で実行記録済みであることを検出し、`pending`(未再実行)を0件と報告します。両方のステップを省略して直接 `verify pending` を実行すると、逆にこの2件が pending として出力されます(実際に上のコマンド列で手元確認済み)。
 
 各コマンドの詳細なオプション・出力形式は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md) を参照してください。
 
