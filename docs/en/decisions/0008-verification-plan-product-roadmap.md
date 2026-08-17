@@ -44,7 +44,7 @@ The following are recorded as boundaries the product will not put at the forefro
 - **Do not make individual TestCase CRUD the primary UI**: TestCase is treated only as an exceptional edit of a derived artifact (consistent with, and unchanged from, the current paper model).
 - **Do not make canonical import the star of the product**: Import/normalize stays an internal foundation and plugin boundary; user-facing messaging always states "keep your existing test assets and build a per-PR Verification Plan."
 - **Do not auto-commit AI proposals**: AI is used only to generate candidate behavior changes, missing tests, and obsolete tests; reflecting them into canonical YAML/files always requires human review and a Git diff.
-- **Do not make a GUI-only DB the source of truth**: The GUI (Stage 3) is a viewer/editor for the Git repository; even if it keeps a search index or cache, that state must be reconstructible from Git.
+- **Do not make a GUI-only DB the source of truth**: The GUI (Stage 3) is a read-only viewer of the Verification Plan derived from the Git repository; even if it keeps a search index or cache, that state must be reconstructible from Git. An editor that changes Git-managed files is outside Stage 3 and requires a separate ADR if its need is confirmed.
 
 ### 4. Stage 4 and Stage 5 are conditional
 
@@ -64,15 +64,81 @@ Based on the proposals in Section 9 of the integrated design document, the follo
 
 **Reduce and redesign**: Generalize the milestone-only UX into a common version range that adds PR base/head as first-class (undertaken in Stage 2). Do not rely solely on human-oriented text output; give stable JSON/schema equal or greater weight (undertaken in Stage 0–1). Consolidate the simple PASS/FAIL display so that it uses, as tracking input, the valid/stale/unknown classification already provided by `verify trace`/`verify pending` (Section 3.7 of the paper).
 
+### 6. Fix the implementation architecture as a modular monolith
+
+Stages 0–3 are implemented as one product in one repository, using a modular monolith with Git as the source of truth. A web server, shared database, resident worker, and microservices are not prerequisites of the Domain Engine. The existing Rust CLI is not rewritten wholesale. Its deterministic generation, Git tree SHA comparison, real-Git fixture tests, `fs_safety`, and reuse of `changes compute` by backfill are retained.
+
+| Module | Responsibility | Main Interface |
+|---|---|---|
+| `KnowledgeWorkspace` | Load and normalize `knowledge/` and `axes/`, validate references and schemas, and build a Knowledge Snapshot | `load`, `validate`, `snapshot`, `apply` |
+| `TestcaseCompiler` | Deterministically generate TestCases and the traceability index from a Snapshot | `compile(snapshot) -> GeneratedArtifacts` |
+| `ChangeAnalyzer` | Compare Feature tree SHAs over arbitrary from/to `CommitRef`s and derive ChangeEvents, impacted TestCases, and `true_divergences` | `compute(from, to, options) -> ChangeSet` |
+| `VerificationEngine` | Derive valid/pending/stale/unknown from ChangeEvents and version-bound execution evidence | `trace(input)`, `pending(input)` |
+| `BackfillCoordinator` | Select unprocessed version ranges, invoke `ChangeAnalyzer`, and record progress in Git notes | `run_once(policy) -> BackfillSummary` |
+
+The CLI, CI summary, and Stage 3 GUI do not reimplement Domain Engine calculations. They express the same result types returned by Application Use Cases through different Presentations. The dependency direction is `Presentation -> Application -> Domain -> Infrastructure`. [decision 0009](./0009-domain-application-infrastructure-layering.md) is authoritative for Module Interfaces, `CommitRef`, `KnowledgeSource`, atomic generated-artifact replacement, and incremental migration; [domain-application-infrastructure-layering-design.md](../design/domain-application-infrastructure-layering-design.md) is authoritative for the detailed design.
+
+### 7. Fix scalability priorities
+
+The first kind of scale improved in Stages 0–3 is not server count, but the number of features, volume of code, number of tests, and number of developers. Stable Interfaces between Domain Modules and Application Use Cases increase locality of change and reuse across CLI, CI, and GUI.
+
+Performance for increasing Knowledge, milestone, and execution counts is improved in the following correctness-preserving order.
+
+1. Share one normalized Knowledge Snapshot within a command.
+2. Use `GitTreeKnowledgeSource` to read historical commits directly from Git trees/blobs.
+3. Add reconstructible Feature, ChangeEvent, and Execution indexes.
+4. Add work limits to `backfill run`.
+5. Based on measurements, add incremental generation or limited parallel processing.
+
+Full generation and verification remain the canonical operations. Incremental processing and indexes are deletable, reconstructible optimizations. Horizontal scaling, a shared database, and a distributed job queue are not introduced until the Stage 5 entry conditions are met. The detailed Phases 1–5 and test strategy are delegated to decision 0009 and its design document.
+
+### 8. Fix the location and distribution of the Stage 3 GUI
+
+The Stage 3 GUI does not begin as a separate product or repository. It is implemented as an independent frontend package in the same repository as markharness. The product remains one, while the Domain Engine, Application, CLI, localhost server, and frontend are separate Modules/packages in code.
+
+```text
+markharness/
+  crates/
+    markharness-domain/
+    markharness-application/
+    markharness-git/
+    markharness-cli/
+    markharness-server/
+  ui/
+  schema/
+  tests/fixtures/
+  tests/golden/
+```
+
+This is a target responsibility layout, not a requirement to split crates immediately in Stage 0. Interfaces and dependency direction are established inside the existing crate first. A Module moves into a workspace crate when independent build, dependency management, or release value exists.
+
+`markharness serve --dir <repository>` is a localhost-only read-only server that supplies versioned read models generated by the Domain Engine and serves static GUI assets. The GUI does not independently calculate ChangeEvents, evidence freshness, or Verification Plan status. It displays the Domain Engine's `valid`/`pending`/`stale`/`unknown` values and their reason/source/confidence.
+
+The public contract is `markharness plan --format json` and its versioned JSON Schema. The Stage 3 localhost HTTP Interface begins as an internal Interface within the same release and initially makes no long-term compatibility promise to external clients. Release builds bundle the frontend's static artifacts with the Rust binary, so users do not need a Node.js environment.
+
+Moving the GUI to a separate repository is reconsidered in a new ADR if any of the following becomes true.
+
+- The GUI and CLI/Domain Engine develop persistently different release cadences.
+- The GUI is owned by an independent team.
+- Compatibility with multiple versions of markharness server becomes necessary.
+- Standalone GUI distribution or hosting, or cross-repository views, becomes necessary.
+- Work begins on the Stage 5 collaborative SaaS with RBAC, SSO, and shared metadata.
+
 ## Consequences
 
 - Making the roadmap's priority order explicit makes it structurally easier to avoid the risk the integrated design document flags, of over-weighting the import/normalize feature.
 - Because Stage 0 fixes the current domain model in an ADR/schema document, the subsequent Stage 1–3 implementations can each be checked for consistency with the current paper model (`ChangeEvent`, `verified_feature_tree_shas`, etc.).
 - Setting explicit entry conditions for Stage 4 and 5 prevents premature investment in a collaborative SaaS that would "undermine the advantage of being Git-native."
+- Sharing the Domain Engine across CLI, CI, and GUI prevents Presentation-specific status models and concentrates change and verification in one place.
+- Starting the Stage 3 GUI as an independent package in the same repository allows the evolving schemas, golden fixtures, and JSON contract from Stages 0–2 to be tested as one change, without preventing a later split when independent-distribution conditions are met.
+- Keeping full generation canonical and treating caches, indexes, and incremental processing as reconstructible optimizations ensures that performance work at larger scale does not replace Git-native correctness.
 - This ADR fixes only the scope and order of Stage 0–3; the detailed canonical schema, Verification Plan JSON contract, and bounded components for each stage are left to a separate design document ([verification-plan-canonical-model-design.md](../design/verification-plan-canonical-model-design.md)).
 
 ## Options considered but not adopted
 
 - **Starting with the GUI (Stage 3) first**: Visualizing Markharness's model-specific concepts is compelling, but building a GUI before the Plan's JSON contract is stable carries a high risk that the GUI acquires its own status model that diverges from the Domain Engine (Section 5.7 of the integrated design document). The canonical model is stabilized, then the Plan, before starting the GUI.
+- **Starting the Stage 3 GUI as a separate repository and independent product**: This separates responsibilities, but prematurely creates synchronization costs for Domain terminology, JSON Schemas, golden fixtures, and release order while Stages 0–2 are still evolving. The GUI starts as an independent frontend package in the same repository and is reconsidered after the public JSON contract matures or Stage 5 requirements are met.
+- **Embedding the GUI directly in the existing CLI Module**: This simplifies single-artifact distribution but concentrates CLI arguments, process exit, presentation, server lifecycle, and frontend asset management in one Module. The product and repository remain single, while CLI, server, and frontend are separate Modules/packages.
+- **Moving canonical state into a shared database**: This helps cross-repository search and SaaS operation, but creates two sources of truth alongside Git in Stages 0–3. A database or SQLite is limited to a read model or index reconstructible from Git.
 - **Implementing an importer for a major TMS such as TestRail as the top priority**: Demand for this is clear, but SaaS-API authentication, pagination, and rate-limit handling cost more to implement than file-based importers (native/JUnit/Gherkin), and would slow down Stage 1's validation speed. The canonical schema is validated with file-based importers first.
 - **Making AI proposals the default information source for the Verification Plan early on**: This would directly improve missing-test discovery accuracy, but making AI the default before there is a comparative evaluation against the baselines (stored trace, derived trace, rule-based gap analysis) would undermine the Plan's reproducibility and explainability. In Stage 2, AI is added as an optional variant, and its differential effect against the baseline is measured.
