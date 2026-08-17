@@ -31,6 +31,11 @@ English version: [docs/en/README.md](../en/README.md)
 
 外部評価レビューへの対応が完了した資料は、判断理由を`decisions/`または論文の変更履歴(Changelog)に転記した上で削除する運用としている(`git log -- docs/`で復元可能)。同じ運用は、単発の不具合修正指示書のように役目が完結した資料にも適用する。
 
+**2026-08-18**：
+
+- `markharness_評価・Related_Work・新規性評価_研究ノート.md` — Related Work・新規性評価に関する外部レビュー(2026-08-17付)。指摘への対応(EBT・Requirements RTS・RBTG/MBT・Trace Link Evolutionの追加、Doorstop/StrictDocの比較追加、novelty claimの慎重化)は統合版.mdの§2.4〜2.9・§1.3・変更履歴に反映済みのため削除。
+- `Markharness_改善・実装検討_統合設計文書.md` — canonical import・PR Verification Plan・GUIの3テーマを統合した実装検討レビュー。採否判断とロードマップは[decisions/0008](./decisions/0008-verification-plan-product-roadmap.md)に、詳細設計は[verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)に転記済みのため削除。
+
 **2026-08-13(2)**：
 
 - `nested-project-dir-git-path-fix-spec.md` — プロジェクトディレクトリがgitリポジトリのサブディレクトリの場合に`execution record`等が失敗する不具合の修正指示書。対応完了(修正・テスト・統合検証済み)に伴い、設計判断(サブディレクトリ配置の正式サポート)と対応内容の要点を[decisions/0006](./decisions/0006-nested-project-directory-support.md)に転記した上で削除。`cli-manual.md`内の参照リンクも同decisionに張り替え済み。

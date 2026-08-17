@@ -31,6 +31,11 @@ All documents except the paper (`git-native-model-for-test-knowledge-management.
 
 Once a document's response to an external evaluation review is complete, the rationale is transcribed into `decisions/` or the paper's Changelog, and the document itself is deleted (recoverable via `git log -- docs/`). The same practice applies to documents whose purpose has been served, such as one-off bug-fix instruction sheets.
 
+**2026-08-18**:
+
+- `markharness_評価・Related_Work・新規性評価_研究ノート.md` — An external review (dated 2026-08-17) on Related Work and novelty assessment. The response to its findings (adding EBT, Requirements RTS, RBTG/MBT, and Trace Link Evolution; adding a comparison against Doorstop/StrictDoc; softening the novelty claim) is reflected in Sections 2.4–2.9 and 1.3, and the Changelog, of the paper, so it was deleted.
+- `Markharness_改善・実装検討_統合設計文書.md` — An implementation-review document integrating three themes: canonical import, the PR Verification Plan, and the GUI. The adoption decisions and roadmap were transcribed into [decisions/0008](./decisions/0008-verification-plan-product-roadmap.md), and the detailed design into [verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md), so it was deleted.
+
 **2026-08-13(2)**:
 
 - `nested-project-dir-git-path-fix-spec.md` — Fix instructions for a bug where `execution record` etc. failed when the project directory was a subdirectory of a git repository. Since the response is complete (fixed, tested, integration-verified), the design decision (formal support for subdirectory placement) and the key points of the response were transcribed into [decisions/0006](./decisions/0006-nested-project-directory-support.md) before deletion. References to it in `cli-manual.md` were also repointed to the same decision.
