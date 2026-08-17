@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (not yet started. This ADR fixes the direction; implementation proceeds in stages per the roadmap in this document).
+Accepted (Stage 0 partially executed. The ChangeEvent golden contract and CLI JSON-contract versioning policy are fixed. Golden datasets for canonical snapshots and plan status will be added with their respective implementations).
 
 ## Context
 

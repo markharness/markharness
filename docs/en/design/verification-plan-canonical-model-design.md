@@ -239,7 +239,15 @@ The essence of this split is that **the Change Engine and Evidence Engine direct
 
 ## 5. What Must Be Fixed in Stage 0 (a Premise of This Document)
 
-This document is the design for Stage 1–2, and presupposes the completion of Stage 0 (turning the fixture into a golden dataset, and defining a versioning policy for the CLI JSON contract) as fixed by [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md). While Stage 0 remains incomplete, this document's schema (Section 2.3) and invariants (Chapter 4) are treated as a provisional proposal subject to change.
+This document is the design for Stage 1–2, and presupposes Stage 0 (golden datasets and a CLI JSON-contract versioning policy) as fixed by [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md). For ChangeEvent, `tests/fixtures/stage0/changes-m1-m2.golden.yml` is the golden contract. Canonical snapshots and plan status are not implemented yet, so their fixtures will be added in the first vertical slice of Stages 1 and 2 respectively.
+
+CLI JSON contracts are versioned as follows:
+
+- Every JSON object newly published as a stable contract must have a top-level integer `schema_version`, starting at `1`.
+- Within one version, field meaning, type, and requiredness do not change. Only optional fields may be added.
+- Removing or renaming a field, changing its type, or changing its meaning increments `schema_version`; readers retain the previous version for at least one minor release. This data-contract rule also applies during the 0.x period.
+- Existing `--json` output is treated as an unversioned legacy contract. It migrates to a versioned envelope when the shared Presenter is introduced in Phase 2; its shape remains unchanged until then.
+- Golden tests normalize environment-dependent values such as timestamps, temporary paths, and commit SHAs, then compare the remaining JSON/YAML document exactly.
 
 ## 6. Options Considered but Not Adopted
 

@@ -97,8 +97,19 @@ pub fn backfill_run(root: &Path, use_cache: bool) -> io::Result<BackfillReport> 
             continue;
         }
 
-        let events =
-            changes::compute_changes(root, from_milestone, to_milestone, use_cache, false)?;
+        let events = changes::compute_changes(
+            root,
+            from_milestone,
+            to_milestone,
+            changes::ChangeOptions {
+                cache: if use_cache {
+                    changes::CachePolicy::Use
+                } else {
+                    changes::CachePolicy::Bypass
+                },
+                impact_source: changes::ImpactSource::HistoricalTree,
+            },
+        )?;
         let changes_dir = root.join("changes");
         replace_file(
             root,

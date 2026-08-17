@@ -1,6 +1,6 @@
 # markharness アーキテクチャ設計:Domain / Application / Infrastructureレイヤー分離
 
-**ステータス**:Proposed(未実装。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
+**ステータス**:Accepted(Phase 1実装済み、Phase 2〜5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
 **関連文書**:[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)、`テスト知識管理のGit-nativeモデル_統合版.md`
 **想定読者**:markharnessの実装者(Phase 1着手時に参照する)
 
@@ -620,9 +620,9 @@ markharnessの主要な実行機会はローカル編集、PR時CI、tag push時
 
 ### Phase 1: 小さなInterface改善
 
-1. `compute_changes`のbool引数を`ChangeOptions`へ置換する。
-2. `changes.rs`内の直接Git呼び出しを`git.rs`へ集約する(trait化はしない、7.1節)。
-3. 既存の動作とCLI契約をCharacterization Testで固定する。
+1. [実装済み] `compute_changes`のbool引数を`ChangeOptions`へ置換する。
+2. [実装済み] `changes.rs`内の直接Git呼び出しを`git.rs`へ集約する(trait化はしない、7.1節)。
+3. [実装済み] 既存の動作とCLI契約をCharacterization Testと`tests/fixtures/stage0/changes-m1-m2.golden.yml`で固定する。
 
 この段階ではディレクトリ構成を変更しない。
 

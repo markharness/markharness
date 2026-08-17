@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Proposed(未着手。本ADRは方向性の決定であり、実装計画は本文中のロードマップの通り段階的に着手する)。
+Accepted(Stage 0は一部実行済み。ChangeEventのgolden contractとCLI JSON契約のversioning方針は確定済み。canonical snapshot・plan statusのgolden datasetは各機能の実装時に追加する)。
 
 ## コンテキスト
 

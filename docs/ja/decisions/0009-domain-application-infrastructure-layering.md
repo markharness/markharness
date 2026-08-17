@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Proposed(未着手。本ADRは方向性とインターフェース設計上の決定であり、詳細設計は[domain-application-infrastructure-layering-design.md](../design/domain-application-infrastructure-layering-design.md)、実装はPhase 1から順に進める)。
+Accepted(Phase 1は2026-08-18に実行済み。`ChangeOptions`導入、`changes.rs`のGit操作集約、CLI golden contractによる既存挙動の固定を完了。Phase 2〜5は未着手)。
 
 ## 背景
 

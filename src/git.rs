@@ -143,6 +143,65 @@ pub fn merge_base(root: &Path, a: &str, b: &str) -> io::Result<String> {
     Ok(raw.trim().to_string())
 }
 
+/// All two-parent merge commits in `from..to`, oldest first.
+pub fn merge_commits_between(root: &Path, from: &str, to: &str) -> io::Result<Vec<String>> {
+    reject_option_like(from)?;
+    reject_option_like(to)?;
+    let range = format!("{from}..{to}");
+    let raw = run_git(
+        root,
+        &[
+            "rev-list",
+            "--parents",
+            "--ancestry-path",
+            "--reverse",
+            &range,
+        ],
+    )?;
+    Ok(raw
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let commit = parts.next()?;
+            (parts.count() == 2).then(|| commit.to_string())
+        })
+        .collect())
+}
+
+/// Materializes `git_ref` as a detached worktree at `destination`.
+pub fn add_detached_worktree(root: &Path, destination: &Path, git_ref: &str) -> io::Result<()> {
+    reject_option_like(git_ref)?;
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["worktree", "add", "--detach", "-q"])
+        .arg(destination)
+        .arg(git_ref)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "git worktree add failed for ref {git_ref}"
+        )))
+    }
+}
+
+/// Best-effort removal used when cleaning up temporary worktrees.
+pub fn remove_worktree(root: &Path, worktree: &Path) -> io::Result<()> {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["worktree", "remove", "--force"])
+        .arg(worktree)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other("git worktree remove failed"))
+    }
+}
+
 /// The committer date (ISO 8601) of the commit `git_ref` points at, used to
 /// order milestones by recency (§4.2).
 pub fn commit_date(root: &Path, git_ref: &str) -> io::Result<String> {

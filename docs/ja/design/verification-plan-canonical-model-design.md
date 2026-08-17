@@ -238,7 +238,15 @@ proposed ── human accepts ── accepted(TestCase作成後、通常のTESTC
 
 ## 5. Stage 0で確定すべき事項(本資料の前提)
 
-本資料はStage 1〜2の設計であり、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)が定めるStage 0(fixture・golden dataset化・CLI JSON contractのversioning方針)の完了を前提とする。Stage 0が未完了の間、本資料のスキーマ(第2.3節)・invariants(第4章)は変更されうる暫定案として扱う。
+本資料はStage 1〜2の設計であり、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)が定めるStage 0(fixture・golden dataset化・CLI JSON contractのversioning方針)の完了を前提とする。ChangeEventについては`tests/fixtures/stage0/changes-m1-m2.golden.yml`をgolden contractとする。canonical snapshotとplan statusは未実装のため、それぞれStage 1・2の最初のvertical sliceでfixtureを追加する。
+
+CLI JSON契約は次の方針でversioningする。
+
+- 新たにstable contractとして公開するJSON objectは、top-levelに整数の`schema_version`を必須とし、初版を`1`とする。
+- 同じversionではフィールドの意味・型・必須性を変更しない。optional fieldの追加のみ許容する。
+- フィールド削除、rename、型変更、意味変更は`schema_version`を増やし、少なくとも1 minor releaseの間は旧versionを読み取れるようにする。0.x期間中もこのデータ契約規則は維持する。
+- 現在の`--json`出力はこの方針以前のunversioned contractとして扱う。Phase 2の共通Presenter導入時にversioned envelopeへ移行し、それまでは形を変更しない。
+- golden testは時刻、一時パス、commit SHAのような環境依存値を正規化したうえで、残りのJSON/YAML全体を完全一致比較する。
 
 ## 6. 検討したが採用しない選択肢
 

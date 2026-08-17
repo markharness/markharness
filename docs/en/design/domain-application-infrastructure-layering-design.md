@@ -1,6 +1,6 @@
 # markharness Architecture Design: Domain / Application / Infrastructure Layering
 
-**Status**: Proposed (not implemented. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
+**Status**: Accepted (Phase 1 implemented; Phases 2–5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
 **Related documents**: [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md), [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md), `git-native-model-for-test-knowledge-management.md`
 **Intended audience**: implementers of markharness (to be referenced when starting Phase 1)
 
@@ -620,9 +620,9 @@ A summary of [decisions/0009](../decisions/0009-domain-application-infrastructur
 
 ### Phase 1: Small Interface Improvements
 
-1. Replace `compute_changes`'s boolean parameters with `ChangeOptions`.
-2. Consolidate direct Git calls in `changes.rs` into `git.rs` (no trait abstraction, Section 7.1).
-3. Pin existing behavior and the CLI contract with characterization tests.
+1. [Implemented] Replace `compute_changes`'s boolean parameters with `ChangeOptions`.
+2. [Implemented] Consolidate direct Git calls in `changes.rs` into `git.rs` (no trait abstraction, Section 7.1).
+3. [Implemented] Pin existing behavior and the CLI contract with characterization tests and `tests/fixtures/stage0/changes-m1-m2.golden.yml`.
 
 Directory layout is unchanged at this stage.
 

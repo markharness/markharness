@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::fs_safety::replace_file;
 use crate::generate;
@@ -65,6 +64,33 @@ pub struct TrueDivergence {
     pub parent_tree_shas: [String; 2],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CachePolicy {
+    Use,
+    Bypass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImpactSource {
+    HistoricalTree,
+    CurrentWorkingTree,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeOptions {
+    pub cache: CachePolicy,
+    pub impact_source: ImpactSource,
+}
+
+impl Default for ChangeOptions {
+    fn default() -> Self {
+        Self {
+            cache: CachePolicy::Use,
+            impact_source: ImpactSource::HistoricalTree,
+        }
+    }
+}
+
 /// For each Feature id, `[tree(P1), tree(P2)]` when `merge_commit` is a
 /// two-parent merge commit and the Feature is a true divergence per
 /// `lineage::classify` (§3.2). Returns an empty map when `merge_commit`
@@ -116,37 +142,7 @@ fn find_merge_commits_in_interval(
     from_milestone: &str,
     to_milestone: &str,
 ) -> io::Result<Vec<String>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args([
-            "rev-list",
-            "--parents",
-            "--ancestry-path",
-            "--reverse",
-            &format!("{from_milestone}..{to_milestone}"),
-        ])
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "git rev-list failed for {from_milestone}..{to_milestone}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    let mut merge_commits = Vec::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let mut parts = line.split_whitespace();
-        let Some(commit) = parts.next() else {
-            continue;
-        };
-        let parent_count = parts.count();
-        if parent_count == 2 {
-            merge_commits.push(commit.to_string());
-        }
-    }
-
-    Ok(merge_commits)
+    git::merge_commits_between(root, from_milestone, to_milestone)
 }
 
 fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
@@ -157,7 +153,7 @@ fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
 /// using the *current* `knowledge/` working tree as the structural
 /// generation graph (§3.2(A): `CONDITION`→`TESTCASE`, does not need version
 /// history — only the version-history side, `derived_from`, does). Legacy
-/// behavior, opted into via `compute_changes`'s `use_current_tree`: recomputing
+/// behavior, opted into via `ImpactSource::CurrentWorkingTree`: recomputing
 /// the same past `from_milestone..to_milestone` interval later can yield a
 /// different `impacted_testcases` set as the working tree keeps changing.
 fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec<String>>> {
@@ -181,30 +177,14 @@ fn historical_testcases_by_feature(
 ) -> io::Result<BTreeMap<String, Vec<String>>> {
     let tmp = tempfile::tempdir()?;
     let worktree_path = tmp.path().join("worktree");
-    let add_status = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["worktree", "add", "--detach", "-q"])
-        .arg(&worktree_path)
-        .arg(milestone)
-        .status()?;
-    if !add_status.success() {
-        return Err(io::Error::other(format!(
-            "git worktree add failed for milestone {milestone}"
-        )));
-    }
+    git::add_detached_worktree(root, &worktree_path, milestone)?;
 
     let testcases = generate::generate_testcases(&worktree_path.join("knowledge"));
 
     // Best-effort cleanup: an orphaned worktree under a soon-to-be-deleted
     // temp dir doesn't leak data, but `git worktree remove` keeps `git
     // worktree list` clean. Not fatal if it fails.
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["worktree", "remove", "--force"])
-        .arg(&worktree_path)
-        .status();
+    let _ = git::remove_worktree(root, &worktree_path);
 
     testcases_by_feature(testcases?)
 }
@@ -230,17 +210,17 @@ fn testcases_by_feature(
 /// are detected even when `feature.yml` itself is untouched.
 ///
 /// `impacted_testcases` is derived from `to_milestone`'s tree by default
-/// (`use_current_tree: false`), so recomputing the same past interval later
-/// is deterministic. Pass `use_current_tree: true` to opt into the legacy
+/// (`ImpactSource::HistoricalTree`), so recomputing the same past interval later
+/// is deterministic. Pass `ImpactSource::CurrentWorkingTree` to opt into the legacy
 /// behavior of reading the current `knowledge/` working tree instead (see
 /// `impacted_testcases_by_feature` / `historical_testcases_by_feature`).
 pub fn compute_changes(
     root: &Path,
     from_milestone: &str,
     to_milestone: &str,
-    use_cache: bool,
-    use_current_tree: bool,
+    options: ChangeOptions,
 ) -> io::Result<Vec<ChangeEvent>> {
+    let use_cache = options.cache == CachePolicy::Use;
     let from_versions = tree_sha_map(id_cache::resolve_feature_versions(
         root,
         from_milestone,
@@ -251,10 +231,9 @@ pub fn compute_changes(
         to_milestone,
         use_cache,
     )?);
-    let impacted = if use_current_tree {
-        impacted_testcases_by_feature(root)?
-    } else {
-        historical_testcases_by_feature(root, to_milestone)?
+    let impacted = match options.impact_source {
+        ImpactSource::HistoricalTree => historical_testcases_by_feature(root, to_milestone)?,
+        ImpactSource::CurrentWorkingTree => impacted_testcases_by_feature(root)?,
     };
     let merge_commits = find_merge_commits_in_interval(root, from_milestone, to_milestone)?;
     let mut true_divergences_by_feature: BTreeMap<String, Vec<TrueDivergence>> = BTreeMap::new();
@@ -500,7 +479,16 @@ mod tests {
         commit_and_tag(dir.path(), "v1", "m1");
         run_git(dir.path(), &["tag", "m2"]);
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         assert!(events.is_empty());
     }
@@ -514,7 +502,16 @@ mod tests {
         write_full_chain(dir.path(), "v2");
         commit_and_tag(dir.path(), "v2", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         assert_eq!(events.len(), 1);
         let event = &events[0];
@@ -555,7 +552,16 @@ mod tests {
         )
         .unwrap();
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         let event = events
             .iter()
@@ -592,7 +598,16 @@ mod tests {
         )
         .unwrap();
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, true).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::CurrentWorkingTree,
+            },
+        )
+        .unwrap();
 
         let event = events
             .iter()
@@ -625,7 +640,16 @@ mod tests {
         .unwrap();
         commit_and_tag(dir.path(), "condition change", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].feature_id, "player-jump");
@@ -641,7 +665,16 @@ mod tests {
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "add feature", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].from_tree_sha, None);
@@ -657,7 +690,16 @@ mod tests {
         fs::remove_dir_all(dir.path().join("knowledge/controls")).unwrap();
         commit_and_tag(dir.path(), "remove feature", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         assert_eq!(events.len(), 1);
         assert!(events[0].from_tree_sha.is_some());
@@ -673,7 +715,16 @@ mod tests {
         write_full_chain(dir.path(), "v2");
         commit_and_tag(dir.path(), "v2", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         assert_eq!(events[0].change_type, None);
     }
@@ -871,7 +922,16 @@ mod tests {
         );
         run_git(dir.path(), &["tag", "m2"]);
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         let event = events
             .iter()
@@ -927,7 +987,16 @@ mod tests {
         run_git(dir.path(), &["commit", "-q", "--no-edit"]);
         run_git(dir.path(), &["tag", "m2"]);
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         let event = events
             .iter()
@@ -944,7 +1013,16 @@ mod tests {
         write_full_chain(dir.path(), "v2");
         commit_and_tag(dir.path(), "v2", "m2");
 
-        let events = compute_changes(dir.path(), "m1", "m2", false, false).unwrap();
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
 
         assert!(events[0].true_divergences.is_empty());
     }
@@ -1066,5 +1144,16 @@ mod tests {
         assert!(matches!(result, Err(AnnotateError::NotFound(id)) if id == "no-such-event"));
         let events = read_changes(dir.path(), "m2").unwrap();
         assert!(events[0].related_events.is_empty());
+    }
+
+    #[test]
+    fn change_options_default_to_cached_historical_impact() {
+        assert_eq!(
+            ChangeOptions::default(),
+            ChangeOptions {
+                cache: CachePolicy::Use,
+                impact_source: ImpactSource::HistoricalTree,
+            }
+        );
     }
 }

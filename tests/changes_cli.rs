@@ -78,6 +78,48 @@ fn init_project_with_two_milestones() -> tempfile::TempDir {
     dir
 }
 
+fn normalize_tree_shas(yaml: &str) -> String {
+    yaml.lines()
+        .map(|line| {
+            if line.trim_start().starts_with("from_tree_sha:")
+                || line.trim_start().starts_with("to_tree_sha:")
+            {
+                let indent = &line[..line.len() - line.trim_start().len()];
+                format!("{indent}{}", line.trim_start().split(':').next().unwrap()) + ": <tree-sha>"
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+#[test]
+fn changes_compute_matches_the_stage0_golden_contract() {
+    let dir = init_project_with_two_milestones();
+    let output = run(&[
+        "changes",
+        "compute",
+        "m1",
+        "m2",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--no-cache",
+    ]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "computed 1 change event(s) into changes/m2.yaml\n"
+    );
+    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+
+    assert_eq!(
+        normalize_tree_shas(&yaml),
+        include_str!("fixtures/stage0/changes-m1-m2.golden.yml")
+    );
+}
+
 #[test]
 fn changes_annotate_sets_change_type_on_the_matching_event() {
     let dir = init_project_with_two_milestones();

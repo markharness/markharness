@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (not yet started. This ADR fixes the direction and interface-level decisions; detailed design lives in [domain-application-infrastructure-layering-design.md](../design/domain-application-infrastructure-layering-design.md), and implementation proceeds in order starting from Phase 1).
+Accepted (Phase 1 was completed on 2026-08-18: `ChangeOptions` was introduced, Git operations were consolidated out of `changes.rs`, and existing behavior was fixed by a CLI golden contract. Phases 2–5 have not started).
 
 ## Context
 

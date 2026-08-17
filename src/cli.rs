@@ -643,7 +643,23 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
-            let events = changes::compute_changes(&root, &from, &to, !no_cache, current_tree)?;
+            let events = changes::compute_changes(
+                &root,
+                &from,
+                &to,
+                changes::ChangeOptions {
+                    cache: if no_cache {
+                        changes::CachePolicy::Bypass
+                    } else {
+                        changes::CachePolicy::Use
+                    },
+                    impact_source: if current_tree {
+                        changes::ImpactSource::CurrentWorkingTree
+                    } else {
+                        changes::ImpactSource::HistoricalTree
+                    },
+                },
+            )?;
             let changes_dir = root.join("changes");
             replace_file(
                 &root,
