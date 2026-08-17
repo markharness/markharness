@@ -13,8 +13,9 @@ English version: [docs/en/README.md](../en/README.md)
    - **[knowledge-apply-cli-spec.md](./design/knowledge-apply-cli-spec.md)** — `knowledge validate`/`apply`(非対話ナレッジ登録)の仕様。
    - **[testcase-generation-design.md](./design/testcase-generation-design.md)** — `generate`(TestCase決定的生成)の仕様。
    - **[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md)** — `verify trace`/`verify pending`(実行結果とChangeEventの自動突合)の仕様。
+   - **[verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)** — (Status: Proposed、未実装)PR Verification Plan生成のためのcanonical model・パイプライン設計。[decisions/0008](./decisions/0008-verification-plan-product-roadmap.md)で決定したロードマップのStage 1〜2に対応。
 5. **[gap-analysis-mh-sample-test-case.md](./gap-analysis-mh-sample-test-case.md)** — 設計と実装の乖離を、ケーススタディ運用リポジトリ`mh-sample-test-case`の実データ(tree SHAベース検知の実地確認、分岐・マージシナリオの検証を含む)で検証した調査資料。参考資料・監査ログの位置づけ。
-6. **[decisions/](./decisions/)** — 外部評価レビュー対応・設計上のトレードオフなど、「なぜそう決めたか」という判断理由の記録。番号順に読むと経緯を追える。単一ディレクトリ・単一の番号連番で管理し、各ファイル冒頭の`## ステータス`セクションでライフサイクル(Proposed/Accepted/Rejected/Deprecated/Superseded、実行途中を表す`Accepted(一部実行済み)`等)を表現する。未確定/一部未実行の文書も別ディレクトリへ移さずここに置く(Michael Nygard「Documenting Architecture Decisions」・MADRの運用に準拠。以前は`docs/internal-notes/`という別ディレクトリに分けていたが、番号空間の分断とパス陳腐化の原因になっていたため廃止し、`decisions/0007`に統合した)。
+6. **[decisions/](./decisions/)** — 外部評価レビュー対応・設計上のトレードオフなど、「なぜそう決めたか」という判断理由の記録。番号順に読むと経緯を追える。単一ディレクトリ・単一の番号連番で管理し、各ファイル冒頭の`## ステータス`セクションでライフサイクル(Proposed/Accepted/Rejected/Deprecated/Superseded、実行途中を表す`Accepted(一部実行済み)`等)を表現する。未確定/一部未実行の文書も別ディレクトリへ移さずここに置く(Michael Nygard「Documenting Architecture Decisions」・MADRの運用に準拠。以前は`docs/internal-notes/`という別ディレクトリに分けていたが、番号空間の分断とパス陳腐化の原因になっていたため廃止し、`decisions/0007`に統合した)。[decisions/0008](./decisions/0008-verification-plan-product-roadmap.md)(Status: Proposed)は、`Markharness_改善・実装検討_統合設計文書.md`のレビューを踏まえた、PR Verification Planを中心とする製品ロードマップの決定。
 
 ## 資料の鮮度について
 
