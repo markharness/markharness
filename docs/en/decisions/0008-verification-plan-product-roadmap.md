@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Stage 0 partially executed. The ChangeEvent golden contract and CLI JSON-contract versioning policy are fixed. Golden datasets for canonical snapshots and plan status will be added with their respective implementations).
+Accepted (Stages 0 and 1 are complete. The canonical snapshot schema, native/JUnit importers, stored/derived origins, version bindings, `import --format json`, and its golden contract are implemented. Stages 2–3 have not started).
 
 ## Context
 

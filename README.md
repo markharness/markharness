@@ -60,7 +60,7 @@ See [docs/en/cli-manual.md](./docs/en/cli-manual.md) for the detailed options an
 
 - **Git tags are a prerequisite for milestones**: `changes compute` / `backfill run` can only treat points that have been `git tag`ged as milestones. Release boundaries cannot be recognized unless a tag is created (the act of tagging itself, per UC4, remains a human decision point that `markharness` does not perform on your behalf).
 - **`git notes` are not automatically synced by push/fetch**: Backfill progress records ([§4.3](./docs/en/git-native-model-for-test-knowledge-management.md)) are stored under `refs/notes/markharness-backfill`, which is outside the scope of ordinary `git push`/`git fetch`. When operating as a team on a shared repository, add `git push origin refs/notes/*` and a corresponding fetch configuration (e.g. `git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'`) for each member and CI environment.
-- **Migration from an existing TMS (TestRail / Xray, etc.) is not implemented**: UC8 (importing from an existing tool) is not implemented. Migration means manually authoring YAML under `knowledge/` (or using `markharness knowledge apply`/`add`). See the list of unimplemented commands in [docs/en/cli-manual.md](./docs/en/cli-manual.md#2-unimplemented-planned-commands) for details.
+- **Canonical import currently supports native knowledge and JUnit XML**: `markharness import --source native|junit --format json` emits a versioned canonical snapshot. TestRail/Xray migration into `knowledge/` remains outside the current scope; use `knowledge apply`/`add` for authoring settled knowledge.
 
 ## Unaddressed items
 

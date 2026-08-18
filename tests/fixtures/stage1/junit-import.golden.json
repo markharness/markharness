@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "artifacts": [
+    {
+      "canonical_id": "junit:test_case:checkout:accepts_card",
+      "source": "junit",
+      "external_id": "checkout:accepts_card",
+      "kind": "test_case",
+      "version": {
+        "canonical_hash": "sha256:f202b66475b26ad906083c91094f6392680ddf742d17b3580baae2d7e7f277d7"
+      },
+      "provenance": {
+        "importer": "junit",
+        "importer_version": "1",
+        "source_locator": "tests/fixtures/stage1/junit.xml"
+      }
+    }
+  ],
+  "relations": [
+    {
+      "from": "junit:test_case:checkout:accepts_card",
+      "relation_type": "verifies",
+      "to": "markharness-native:condition:valid-card",
+      "origin": {
+        "kind": "stored"
+      },
+      "confidence": 1.0
+    }
+  ],
+  "evidence": [
+    {
+      "test_id": "junit:checkout:accepts_card",
+      "result": "pass",
+      "executed_at": "2026-08-18T10:00:00Z",
+      "bound_versions": {
+        "pay": "feature-tree-sha"
+      },
+      "provenance": {
+        "importer": "junit",
+        "importer_version": "1",
+        "source_locator": "tests/fixtures/stage1/junit.xml"
+      }
+    }
+  ]
+}

@@ -1091,6 +1091,16 @@ $ echo $?
 
 ---
 
+### 1.22 `markharness import` — canonical snapshotの生成
+
+```text
+markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
+```
+
+`native`は対象Git refの`knowledge/`をFeature tree SHA付きartifactとderived traceへ正規化する。`junit`はJUnit XMLのTestCaseとPASS/FAIL/SKIPをevidenceへ正規化し、`--bind`で検証対象versionを付与する。JUnitの`markharness.condition` propertyはstored traceになる。出力は`schema_version: 1`を持ち、`schema/canonical_snapshot.schema.json`に従う。入力ファイルや`knowledge/`は変更しない。
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。
@@ -1098,7 +1108,6 @@ $ echo $?
 | #   | ユースケース                 | 想定コマンド(暫定)                                                  | アクター                | 概要                                                                                      |
 | --- | ---------------------------- | ------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
 | UC4 | マイルストーンをタグ付けする | 専用コマンドなし(`git tag <milestone>` を直接使用)                  | Release Manager         | リリースタイミングの意思決定そのものであり、人間の判断ポイント(図3)。                     |
-| UC8 | 既存ツールからインポートする | `markharness import --from <testrail\|xray\|testlink> <file>`(暫定) | Data Migration Operator | 既存TMSのエクスポートファイルを `knowledge/` 構造に変換する(§4.5)。今回の実装スコープ外。 |
 
 これらは現時点で未着手であり、実装順序は別途チェックリスト(`/plan-checklist`)で管理する。
 

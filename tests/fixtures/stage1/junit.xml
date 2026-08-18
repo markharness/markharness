@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="checkout" timestamp="2026-08-18T10:00:00Z">
+  <testcase classname="checkout" name="accepts_card">
+    <properties>
+      <property name="markharness.condition" value="valid-card"/>
+    </properties>
+  </testcase>
+</testsuite>

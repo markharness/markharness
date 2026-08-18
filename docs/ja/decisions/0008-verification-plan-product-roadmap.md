@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(Stage 0は一部実行済み。ChangeEventのgolden contractとCLI JSON契約のversioning方針は確定済み。canonical snapshot・plan statusのgolden datasetは各機能の実装時に追加する)。
+Accepted(Stage 0とStage 1は実行済み。canonical snapshot schema、native/JUnit importer、stored/derived origin、version binding、`import --format json`とgolden contractを実装。Stage 2〜3は未着手)。
 
 ## コンテキスト
 

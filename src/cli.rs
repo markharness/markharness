@@ -37,6 +37,27 @@ pub enum Command {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
+    /// Normalize native knowledge or JUnit evidence into the canonical JSON model
+    Import {
+        /// Input adapter to use
+        #[arg(long, value_enum)]
+        source: ImportSourceArg,
+        /// Input file (required for JUnit; omitted for native knowledge)
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Git revision used by the native adapter
+        #[arg(long, default_value = "HEAD")]
+        git_ref: String,
+        /// Evidence version binding in ARTIFACT_ID=VERSION form (repeatable)
+        #[arg(long, value_name = "ARTIFACT_ID=VERSION")]
+        bind: Vec<String>,
+        /// Stable output representation
+        #[arg(long, value_enum, default_value = "json")]
+        format: ImportFormatArg,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
     /// Manage test knowledge under knowledge/
     #[command(subcommand)]
     Knowledge(KnowledgeCommand),
@@ -78,6 +99,17 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportSourceArg {
+    Native,
+    Junit,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportFormatArg {
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -399,6 +431,51 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 "initialized knowledge/, axes/, generated/, executions/, changes/, schema/ under {}",
                 root.display()
             );
+            Ok(())
+        }
+        Command::Import {
+            source,
+            input,
+            git_ref,
+            bind,
+            format: ImportFormatArg::Json,
+            dir,
+        } => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let bindings = bind
+                .into_iter()
+                .map(|binding| {
+                    binding.split_once('=').map_or_else(
+                        || {
+                            Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("invalid --bind '{binding}'; expected ARTIFACT_ID=VERSION"),
+                            ))
+                        },
+                        |(id, version)| Ok((id.to_string(), version.to_string())),
+                    )
+                })
+                .collect::<io::Result<std::collections::BTreeMap<_, _>>>()?;
+            let outcome = match source {
+                ImportSourceArg::Native => application::import_native(&root, &git_ref)?,
+                ImportSourceArg::Junit => {
+                    let input = input.ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "--input is required when --source junit",
+                        )
+                    })?;
+                    application::import_junit(
+                        &fs::read_to_string(&input)?,
+                        &input.to_string_lossy(),
+                        bindings,
+                    )?
+                }
+            };
+            presentation::emit(JsonPresenter.present(&outcome))?;
             Ok(())
         }
         Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {

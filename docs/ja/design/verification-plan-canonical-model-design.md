@@ -1,6 +1,6 @@
 # PR Verification Plan：Canonical Model と生成パイプライン設計書
 
-**Status**: Proposed(未実装。[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)で決定したStage 1〜2のスコープに対応する設計案)
+**Status**: Accepted(Stage 1実装済み、Stage 2未着手。[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)で決定したStage 1〜2の詳細設計)
 **関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](../テスト知識管理のGit-nativeモデル_統合版.md)(以下「統合版」)、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)、`docs/Markharness_改善・実装検討_統合設計文書.md`(以下「設計検討文書」)
 **対象読者**：`markharness`の実装者(Stage 1: canonical import model、Stage 2: PR Verification Plan着手時に参照する)
 
@@ -49,7 +49,7 @@ version_identity(A,v) = git_oid                      # source が Git 管理下�
 - `git_oid`：入力がGit管理下にある場合のtree/blob SHA。markharness-nativeのFeatureは常にこれを使う(統合版第3.1節の`resolve_feature_versions`をそのまま流用)。
 - `canonical_hash`：順序・空白・source固有の非意味的フィールドを正規化したcontent hash。SaaS API等、Git管理下にない入力に対して`git_oid`の代替として使う(設計検討文書第3.7節)。
 
-**Stage 1のスコープ限定**：Stage 1で対応するimporter(Markharness native・JUnit)はいずれもファイルベースであり、`canonical_hash`の実装はJUnit importerが生成する正規化済みファイルをコミットしてGit管理下に置くことで`git_oid`に還元できる。SaaS API由来の`canonical_hash`(materializeせずAPIレスポンスから直接算出するケース)は、TestRail importerに着手するStage 4まで実装しない(設計検討文書第3.7節の推奨に従う)。
+**Stage 1のスコープ限定**：Markharness native artifactはGit tree SHAを`git_oid`として使用する。JUnit TestCaseは正規化したlogical identityから`sha256:`形式の`canonical_hash`を決定的に算出し、実行結果は別のEvidenceとして保持する。SaaS APIレスポンス全体の正規化やsource固有fieldの除外規則は、TestRail importerに着手するStage 4まで実装しない。
 
 ### 1.3 stored traceとderived trace
 
@@ -238,7 +238,7 @@ proposed ── human accepts ── accepted(TestCase作成後、通常のTESTC
 
 ## 5. Stage 0で確定すべき事項(本資料の前提)
 
-本資料はStage 1〜2の設計であり、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)が定めるStage 0(fixture・golden dataset化・CLI JSON contractのversioning方針)の完了を前提とする。ChangeEventについては`tests/fixtures/stage0/changes-m1-m2.golden.yml`をgolden contractとする。canonical snapshotとplan statusは未実装のため、それぞれStage 1・2の最初のvertical sliceでfixtureを追加する。
+本資料はStage 1〜2の設計であり、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)が定めるStage 0(fixture・golden dataset化・CLI JSON contractのversioning方針)の完了を前提とする。ChangeEventは`tests/fixtures/stage0/changes-m1-m2.golden.yml`、canonical snapshotは`tests/fixtures/stage1/junit-import.golden.json`をgolden contractとする。plan statusのfixtureはStage 2の最初のvertical sliceで追加する。
 
 CLI JSON契約は次の方針でversioningする。
 

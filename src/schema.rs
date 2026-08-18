@@ -36,6 +36,10 @@ pub const DEFAULT_SCHEMA_FILES: &[(&str, &str)] = &[
         "execution_result.schema.json",
         include_str!("../schema/execution_result.schema.json"),
     ),
+    (
+        "canonical_snapshot.schema.json",
+        include_str!("../schema/canonical_snapshot.schema.json"),
+    ),
 ];
 
 /// Reads and parses `<root>/schema/<file_name>` as a JSON Schema document.

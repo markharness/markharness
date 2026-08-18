@@ -1091,6 +1091,16 @@ $ echo $?
 
 ---
 
+### 1.22 `markharness import` — Emit a canonical snapshot
+
+```text
+markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
+```
+
+`native` normalizes `knowledge/` at the selected Git ref into artifacts carrying Feature tree SHAs and derived traces. `junit` normalizes JUnit XML TestCases and PASS/FAIL/SKIP results into evidence, with `--bind` supplying versions under verification. A JUnit `markharness.condition` property creates a stored trace. Output carries `schema_version: 1` and conforms to `schema/canonical_snapshot.schema.json`. The command does not modify the input or `knowledge/`.
+
+---
+
 ## 2. Unimplemented (Planned) Commands
 
 The following are commands planned for future implementation, based on the use case diagram and use case descriptions in `docs/product-operation.md`. The command names and options are tentative proposals and may change at implementation time.
@@ -1098,7 +1108,6 @@ The following are commands planned for future implementation, based on the use c
 | #   | Use case                                | Planned command (tentative)                                           | Actor                    | Overview                                                                                     |
 | --- | ---------------------------------------- | ----------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
 | UC4 | Tag a milestone                          | No dedicated command (`git tag <milestone>` is used directly)          | Release Manager          | This is the release-timing decision itself, and remains a point of human judgment (Figure 3). |
-| UC8 | Import from an existing tool             | `markharness import --from <testrail\|xray\|testlink> <file>` (tentative) | Data Migration Operator | Converts an export file from an existing TMS into the `knowledge/` structure (§4.5). Out of scope for the current implementation. |
 
 These are currently not yet started; implementation ordering is managed separately via a checklist (`/plan-checklist`).
 

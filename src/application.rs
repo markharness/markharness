@@ -1,12 +1,31 @@
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use crate::canonical;
 use crate::changes::{self, ChangeOptions};
 use crate::fs_safety::{replace_dir_from_staging, replace_file};
 use crate::generate;
 use crate::presentation::CommandOutcome;
 use crate::traceability;
 use crate::verify::{self, PendingError};
+
+pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CommandOutcome> {
+    Ok(CommandOutcome::CanonicalImported(canonical::import_native(
+        root, git_ref,
+    )?))
+}
+
+pub fn import_junit(
+    xml: &str,
+    source_locator: &str,
+    bound_versions: std::collections::BTreeMap<String, String>,
+) -> io::Result<CommandOutcome> {
+    Ok(CommandOutcome::CanonicalImported(canonical::import_junit(
+        xml,
+        source_locator,
+        bound_versions,
+    )?))
+}
 
 fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<PathBuf> {
     if relative_path

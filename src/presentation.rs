@@ -1,9 +1,11 @@
+use crate::canonical::CanonicalSnapshot;
 use crate::verify::PendingReport;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum CommandOutcome {
+    CanonicalImported(CanonicalSnapshot),
     Generated {
         count: usize,
         written: Vec<PathBuf>,
@@ -52,6 +54,16 @@ pub struct JsonPresenter;
 impl Presenter for HumanPresenter {
     fn present(&self, outcome: &CommandOutcome) -> PresentedResult {
         match outcome {
+            CommandOutcome::CanonicalImported(snapshot) => PresentedResult {
+                stdout: format!(
+                    "imported {} artifact(s), {} relation(s), and {} evidence record(s)\n",
+                    snapshot.artifacts.len(),
+                    snapshot.relations.len(),
+                    snapshot.evidence.len()
+                ),
+                stderr: String::new(),
+                exit_code: 0,
+            },
             CommandOutcome::Generated { count, .. } => PresentedResult {
                 stdout: format!("generated {count} testcase(s) into generated/testcases/\n"),
                 stderr: String::new(),
@@ -110,6 +122,15 @@ impl Presenter for HumanPresenter {
 impl Presenter for JsonPresenter {
     fn present(&self, outcome: &CommandOutcome) -> PresentedResult {
         match outcome {
+            CommandOutcome::CanonicalImported(snapshot) => PresentedResult {
+                stdout: format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(snapshot)
+                        .expect("canonical snapshot serialization is infallible")
+                ),
+                stderr: String::new(),
+                exit_code: 0,
+            },
             CommandOutcome::Generated { count, written } => {
                 let written: Vec<String> = written
                     .iter()
