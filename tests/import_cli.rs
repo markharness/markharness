@@ -23,6 +23,8 @@ fn import_junit_emits_a_versioned_json_contract() {
             "pay=tree-sha",
             "--format",
             "json",
+            "--dir",
+            dir.path().to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -59,6 +61,8 @@ fn junit_import_matches_the_stage1_golden_contract() {
             "pay=feature-tree-sha",
             "--format",
             "json",
+            "--dir",
+            ".",
         ])
         .output()
         .unwrap();

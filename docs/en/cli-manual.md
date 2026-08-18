@@ -31,6 +31,7 @@ UC8 (importing from existing tools) has no dedicated directory, since it is assu
 **Behavior**
 
 - For each directory: if it does not exist, create it; if it already exists, do nothing (including leaving its contents untouched) — an idempotent operation. Re-running on an already-initialized project does not error; only the missing directories are additionally created.
+- Creates `.markharness.toml` at the project root (containing only `schema_version = 1`). Every command other than `init` uses this as the marker it searches upward for when `--dir` is omitted, to find its own project root; it is committed to the repository (not added to `.gitignore`). Left untouched if it already exists.
 - On success, prints the created paths to standard output.
 
 **Example**
@@ -59,7 +60,7 @@ markharness knowledge add [--dir <path>]
 
 | Option              | Description                                                                                                    |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `-d, --dir <path>` | Specifies the target project directory (the parent of `knowledge/`). If omitted, targets the current directory. |
+| `-d, --dir <path>` | Specifies the target project directory (the parent of `knowledge/`). If omitted, searches upward from the current directory for `.markharness.toml` and targets the project root it finds. |
 
 **Example (targeting a directory other than the current one)**
 
@@ -257,7 +258,7 @@ markharness knowledge validate --batch <dir> [--json] [-d, --dir <path>]
 | ------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `<draft-file>`     | Path to the draft YAML file. Mutually exclusive with `--batch` (exactly one of the two is required)          |
 | `--batch <dir>`    | Treats every `*.yml` directly under `<dir>` as a draft file and validates them cumulatively in ascending file-name order. See "Batch mode" below |
-| `-d, --dir <path>` | Target project directory (the parent of `knowledge/`). Defaults to the current directory.                    |
+| `-d, --dir <path>` | Target project directory (the parent of `knowledge/`). Defaults to the project root (auto-detected by searching upward from cwd).                    |
 | `--json`           | Print errors/results as single-line JSON. If omitted, prints human-readable text.                             |
 
 **Batch mode (`--batch <dir>`)**: Validates multiple drafts the same cumulative way `knowledge apply --batch` (section 1.4) does — in ascending file-name order, a later draft may reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch would newly create**, the same way it could reuse one an earlier draft actually applied. Unlike `apply --batch`, though, one draft's failure does not stop the run: every file in the batch is checked through to the end before results are reported together (this is the point of the command — surfacing every error before anything is written). A failed draft does not contribute to the cumulative state seen by later drafts (they are checked as though it were never in the batch). With `--json`, any failures print `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` (`errors` for validation errors, `error` for a parse error). Human-readable mode likewise prints every failing file's errors, prefixed with its file name. `{"ok":true}` when every file is valid. Nothing is ever written to the real project directory (internally, `knowledge/` and `axes/` are copied into a temp directory and validated there). If `<dir>` has no `*.yml` files directly under it (including when it only contains `.yaml`-extension drafts), this is an error: exit code 2, with `{"ok":false,"error":"no *.yml files found in batch directory <dir>"}` (same behavior as section 1.4's "Batch mode").
@@ -492,7 +493,7 @@ markharness generate [--json] [-d, --dir <path>]
 - `axis`: a list of viewpoints formed by combining (union, deduplicated and sorted) the `axis` of the `Requirement` / `Feature` / `Behavior` (§3.4 "axis inheritance").
 - The output is serialized with `serde_yaml_ng`, and always produces the same output for the same input (determinism, a prerequisite for diff verification in CI).
 - In addition to `generated/testcases/*.yml`, `generate` also regenerates `generated/traceability-index.json` at the same time (a machine-readable index holding the Requirement → Feature → Behavior → Condition → TestCase correspondence, as pretty-printed JSON via `serde_json`). `markharness verify` (section 1.6) also includes this file in its diff verification.
-- Omitting `--dir` targets the current directory (the same convention every other command follows; `generate` used to be the sole exception, always pinned to the current directory).
+- Omitting `--dir` searches upward from the current directory for `.markharness.toml` and targets the project root it finds (the same convention every other command follows; `generate` used to be the sole exception, always pinned to the current directory).
 - `--json` prints `{"ok":true,"generated":<count>,"written":[<list of written file paths, including traceability-index.json>]}` instead of the human-readable message, so a caller can mechanically reconcile the reported count against the actual written files.
 
 **Example**
@@ -545,7 +546,7 @@ markharness verify [--json] [-d, --dir <path>]
 
 | Option              | Description                                                         |
 | -------------------- | -------------------------------------------------------------------- |
-| `-d, --dir <path>`   | Target project directory. Defaults to the current directory.        |
+| `-d, --dir <path>`   | Target project directory. Defaults to the project root (auto-detected by searching upward from cwd).        |
 | `--json`             | Prints structured JSON instead of the human-readable message (see below). |
 
 **Behavior**
@@ -814,7 +815,7 @@ markharness milestone init <tag> [--json] [-d, --dir <path>]
 | Option              | Description                                                                                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `<tag>`             | (required) The target `git tag` name. Used as-is as the directory name of `executions/<tag>/` (no additional normalization/validation is performed).            |
-| `-d, --dir <path>` | Target project directory (any directory within a git repository; need not be the repository's own root). Defaults to the current directory.                     |
+| `-d, --dir <path>` | Target project directory (any directory within a git repository; need not be the repository's own root). Defaults to the project root (auto-detected by searching upward from cwd).                     |
 | `--json`            | Prints the result as single-line JSON. If omitted, prints human-readable text.                                                                                    |
 
 **Behavior**
@@ -878,7 +879,7 @@ markharness execution record <case_id> --milestone <name> --result <pass|fail|sk
 | `--result <value>`    | (required) One of `pass` / `fail` / `skip`                                                               |
 | `--executor <name>`  | (required) A free-text description of the executor (a person's name, or a CI identifier like `ci-github-actions`) |
 | `--note <text>`       | An optional free-text note                                                                                |
-| `-d, --dir <path>`   | Target project directory. Defaults to the current directory.                                              |
+| `-d, --dir <path>`   | Target project directory. Defaults to the project root (auto-detected by searching upward from cwd).                                              |
 | `--json`              | Prints the result as single-line JSON. If omitted, prints human-readable text.                            |
 
 **Behavior**

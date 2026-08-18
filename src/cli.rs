@@ -21,6 +21,7 @@ use crate::knowledge_edit::{self, EditFlowError};
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::presentation::{self, HumanPresenter, JsonPresenter, Presenter};
+use crate::project_root;
 use crate::server;
 use crate::validate;
 use crate::verify;
@@ -512,10 +513,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             format: ImportFormatArg::Json,
             dir,
         } => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let bindings = bind
                 .into_iter()
                 .map(|binding| {
@@ -557,10 +555,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             evidence,
             dir,
         } => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let canonical_inputs = evidence
                 .iter()
                 .map(|path| {
@@ -593,10 +588,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             head,
             port,
         } => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             server::serve(&root, port, server::DashboardConfig { base, head })
         }
         Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {
@@ -613,10 +605,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             }
         },
         Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             if edit {
                 run_knowledge_add_edit(&root)
             } else {
@@ -632,10 +621,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             dir,
             json,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
 
             if let Some(batch_dir) = batch {
                 return run_knowledge_validate_batch(&root, &batch_dir, json);
@@ -658,10 +644,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             strip_redundant_prefix,
             dry_run,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
 
             if let Some(batch_dir) = batch {
                 return run_knowledge_apply_batch(
@@ -706,10 +689,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             }
         }
         Command::Generate { dir, json } => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let outcome = application::generate_testcases(&root)?;
             let presented = if json {
                 JsonPresenter.present(&outcome)
@@ -720,10 +700,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             Ok(())
         }
         Command::Axes(AxesCommand::List { dir, json }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let entries = axes::list_axes(&root);
             if json {
                 println!("{}", axes_to_json(&entries));
@@ -747,10 +724,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             dir,
             json,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             match axes::add_axis(&root, &id, label.as_deref()) {
                 Ok(path) => {
                     if json {
@@ -777,10 +751,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             }
         }
         Command::Axes(AxesCommand::Prune { delete, dir, json }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let unused = axes::prune(&root, delete)?;
             if json {
                 println!("{}", axes_prune_result_to_json(&unused, delete));
@@ -798,19 +769,13 @@ pub fn run(cli: Cli) -> io::Result<()> {
             Ok(())
         }
         Command::Cache(CacheCommand::Rebuild { dir }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             id_cache::rebuild_cache(&root)?;
             println!("removed .markharness-cache/ under {}", root.display());
             Ok(())
         }
         Command::Cache(CacheCommand::Index { dir, git_ref }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let paths = derived_index::rebuild_indexes(&root, &git_ref)?;
             println!("rebuilt {}", paths.features.display());
             println!("rebuilt {}", paths.change_events.display());
@@ -824,10 +789,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             no_cache,
             current_tree,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let outcome = application::compute_changes(
                 &root,
                 &from,
@@ -854,10 +816,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             related,
             dir,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             // Validate up front (before any write) so a typo'd `--related`
             // id can't leave `change_type` written while `related_events`
             // isn't: the whole command either writes everything or nothing.
@@ -884,10 +843,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             }
         }
         Command::Changes(ChangesCommand::Lineage { commit, dir, json }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             match lineage::compute_lineage(&root, &commit) {
                 Ok(entries) => {
                     if json {
@@ -918,10 +874,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             max_pairs,
             time_budget,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let report = backfill::backfill_run_with_policy(
                 &root,
                 backfill::BackfillPolicy {
@@ -944,10 +897,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             Ok(())
         }
         Command::Milestone(MilestoneCommand::Init { tag, dir, json }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             match milestone::milestone_init(&root, &tag) {
                 Ok(MilestoneInitOutcome::Created) => {
                     if json {
@@ -986,10 +936,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             dir,
             json,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let args = RecordArgs {
                 milestone: &milestone,
                 case_id: &case_id,
@@ -1028,10 +975,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             }
         }
         Command::Validate { dir, json } => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let issues = validate::validate_all(&root)?;
             if issues.is_empty() {
                 if json {
@@ -1056,10 +1000,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             json,
             command: None,
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let diffs = verify::diff_generated_testcases(&root)?;
             if json {
                 println!("{}", verify_diffs_to_json(&diffs));
@@ -1091,10 +1032,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }),
             ..
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             match verify::trace(&root, &case_id, &milestone) {
                 Ok(result) => {
                     if json {
@@ -1145,10 +1083,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }),
             ..
         }) => {
-            let root = match dir {
-                Some(dir) => dir,
-                None => env::current_dir()?,
-            };
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let range = match (&from, &to) {
                 (Some(from), Some(to)) => Some((from.as_str(), to.as_str())),
                 _ => None,

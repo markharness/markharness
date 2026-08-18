@@ -31,6 +31,18 @@ pub fn run_init(root: &Path) -> io::Result<()> {
     ensure_gitignore(root)?;
     ensure_default_schemas(root)?;
     ensure_gitkeep_in_empty_dirs(root)?;
+    ensure_project_root_marker(root)?;
+    Ok(())
+}
+
+/// プロジェクトルートの目印(`crate::project_root::MARKER_FILE`)を作成する。
+/// 既に存在する場合は上書きしない(再initでのカスタム内容の保持、および
+/// 冪等性のため)。
+fn ensure_project_root_marker(root: &Path) -> io::Result<()> {
+    let path = root.join(crate::project_root::MARKER_FILE);
+    if !path.exists() {
+        replace_file(root, &path, b"schema_version = 1\n")?;
+    }
     Ok(())
 }
 
@@ -134,6 +146,30 @@ mod tests {
         for name in SUBDIRS {
             assert!(dir.path().join(name).is_dir());
         }
+    }
+
+    #[test]
+    fn creates_a_project_root_marker_with_schema_version() {
+        let dir = tempfile::tempdir().unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        let content =
+            fs::read_to_string(dir.path().join(crate::project_root::MARKER_FILE)).unwrap();
+        assert!(content.contains("schema_version = 1"));
+    }
+
+    #[test]
+    fn does_not_overwrite_an_existing_marker_on_reinit() {
+        let dir = tempfile::tempdir().unwrap();
+        run_init(dir.path()).unwrap();
+        let marker_path = dir.path().join(crate::project_root::MARKER_FILE);
+        fs::write(&marker_path, "schema_version = 1\ncustomized = true\n").unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        let content = fs::read_to_string(&marker_path).unwrap();
+        assert!(content.contains("customized = true"));
     }
 
     #[test]

@@ -68,7 +68,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
     let output = Command::new(env!("CARGO_BIN_EXE_markharness"))
         .current_dir(repo.path())
         .args([
-            "plan", "--base", "HEAD~1", "--head", "HEAD", "--format", "json",
+            "plan", "--base", "HEAD~1", "--head", "HEAD", "--format", "json", "--dir", ".",
         ])
         .output()
         .unwrap();
@@ -101,7 +101,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
     let verified = Command::new(env!("CARGO_BIN_EXE_markharness"))
         .current_dir(repo.path())
         .args([
-            "plan", "--base", "HEAD~1", "--head", "HEAD", "--format", "json",
+            "plan", "--base", "HEAD~1", "--head", "HEAD", "--format", "json", "--dir", ".",
         ])
         .output()
         .unwrap();
@@ -155,6 +155,8 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
             "json",
             "--evidence",
             imported.to_str().unwrap(),
+            "--dir",
+            ".",
         ])
         .output()
         .unwrap();

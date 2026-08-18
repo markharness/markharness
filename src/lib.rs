@@ -28,6 +28,7 @@ pub mod lineage;
 pub mod milestone;
 pub mod plan;
 pub mod presentation;
+pub mod project_root;
 pub mod schema;
 pub mod server;
 pub mod traceability;
