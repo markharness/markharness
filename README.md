@@ -44,6 +44,9 @@ markharness milestone init v2
 markharness changes compute v1 v2
 cat changes/v2.yaml
 
+# Build the same range as a reviewable, versioned Verification Plan
+markharness plan --base v1 --head v2 --format json
+
 # 7. Record execution results, then check for TestCases still pending re-verification
 markharness execution record tc-todo-management-add-todo-add-task-empty-title --milestone v2 --result pass --executor <your-name>
 markharness execution record tc-todo-management-add-todo-add-task-max-length --milestone v2 --result pass --executor <your-name>

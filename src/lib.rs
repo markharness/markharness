@@ -24,6 +24,7 @@ pub mod knowledge_draft;
 pub mod knowledge_edit;
 pub mod lineage;
 pub mod milestone;
+pub mod plan;
 pub mod presentation;
 pub mod schema;
 pub mod traceability;

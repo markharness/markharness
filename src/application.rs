@@ -5,6 +5,7 @@ use crate::canonical;
 use crate::changes::{self, ChangeOptions};
 use crate::fs_safety::{replace_dir_from_staging, replace_file};
 use crate::generate;
+use crate::plan::{self, PlanEvidence, PlanInput};
 use crate::presentation::CommandOutcome;
 use crate::traceability;
 use crate::verify::{self, PendingError};
@@ -25,6 +26,79 @@ pub fn import_junit(
         source_locator,
         bound_versions,
     )?))
+}
+
+pub fn build_verification_plan(
+    root: &Path,
+    base: &str,
+    head: &str,
+    canonical_inputs: &[canonical::CanonicalSnapshot],
+) -> io::Result<CommandOutcome> {
+    let analyzer = changes::ChangeAnalyzer::new(root);
+    let changes = analyzer.compute(
+        &changes::CommitRef::commit(base),
+        &changes::CommitRef::commit(head),
+        ChangeOptions::default(),
+    )?;
+    let mut evidence: Vec<PlanEvidence> = crate::execution::read_all_results(root)?
+        .into_iter()
+        .map(|entry| PlanEvidence {
+            test_id: entry.case_id,
+            result: match entry.result.as_str() {
+                "pass" => canonical::EvidenceResult::Pass,
+                "fail" => canonical::EvidenceResult::Fail,
+                _ => canonical::EvidenceResult::Skip,
+            },
+            executed_at: Some(entry.executed_at),
+            bound_versions: entry.verified_feature_tree_shas,
+        })
+        .collect();
+    evidence.extend(canonical_inputs.iter().flat_map(|snapshot| {
+        snapshot.evidence.iter().map(|item| PlanEvidence {
+            test_id: item.test_id.clone(),
+            result: item.result,
+            executed_at: item.executed_at.clone(),
+            bound_versions: item.bound_versions.clone(),
+        })
+    }));
+
+    let native = canonical::import_native(root, head)?;
+    let mut condition_features = std::collections::BTreeMap::new();
+    for change in &changes {
+        for case_id in &change.impacted_testcases {
+            let native_test_id = format!("markharness-native:test_case:{case_id}");
+            for relation in native.relations.iter().filter(|relation| {
+                relation.from == native_test_id
+                    && relation.origin.kind == canonical::RelationOriginKind::Derived
+            }) {
+                condition_features.insert(relation.to.clone(), change.feature_id.clone());
+            }
+        }
+    }
+    let stored_traces = canonical_inputs
+        .iter()
+        .flat_map(|snapshot| &snapshot.relations)
+        .filter(|relation| relation.origin.kind == canonical::RelationOriginKind::Stored)
+        .filter_map(|relation| {
+            condition_features.get(&relation.to).map(|feature_id| {
+                let test_id = relation
+                    .from
+                    .strip_prefix("junit:test_case:")
+                    .map_or_else(|| relation.from.clone(), |id| format!("junit:{id}"));
+                plan::StoredTrace {
+                    test_id,
+                    feature_id: feature_id.clone(),
+                }
+            })
+        })
+        .collect();
+    Ok(CommandOutcome::PlanBuilt(plan::build_plan(PlanInput {
+        base: base.to_string(),
+        head: head.to_string(),
+        changes,
+        evidence,
+        stored_traces,
+    })))
 }
 
 fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<PathBuf> {

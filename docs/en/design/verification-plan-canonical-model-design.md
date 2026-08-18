@@ -1,6 +1,6 @@
 # PR Verification Plan: Canonical Model and Generation Pipeline Design
 
-**Status**: Accepted (Stage 1 implemented; Stage 2 not started. Detailed design for the Stage 1–2 scope decided in [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md))
+**Status**: Implemented (Stages 1–2 complete. Detailed design of canonical import and Verification Plans decided in [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md))
 **Related documents**: [git-native-model-for-test-knowledge-management.md](../git-native-model-for-test-knowledge-management.md) (hereafter "the paper"), [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md), `docs/Markharness_改善・実装検討_統合設計文書.md` (hereafter "the design-review document")
 **Intended audience**: implementers of `markharness` (to be referenced when starting Stage 1: the canonical import model, and Stage 2: the PR Verification Plan)
 
@@ -239,7 +239,7 @@ The essence of this split is that **the Change Engine and Evidence Engine direct
 
 ## 5. What Must Be Fixed in Stage 0 (a Premise of This Document)
 
-This document is the design for Stage 1–2, and presupposes Stage 0 (golden datasets and a CLI JSON-contract versioning policy) as fixed by [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md). `tests/fixtures/stage0/changes-m1-m2.golden.yml` is the ChangeEvent golden contract, and `tests/fixtures/stage1/junit-import.golden.json` is the canonical-snapshot golden contract. The plan-status fixture will be added in Stage 2's first vertical slice.
+This document is the design for Stages 1–2 and presupposes Stage 0. `tests/fixtures/stage0/changes-m1-m2.golden.yml` is the ChangeEvent golden contract, `tests/fixtures/stage1/junit-import.golden.json` is the canonical-snapshot contract, and `tests/fixtures/stage2/verification-plan.golden.json` is the Plan contract. Comparison with `historical-pr.json` reproduces precision/recall for rule-based proposals.
 
 CLI JSON contracts are versioned as follows:
 

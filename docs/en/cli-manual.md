@@ -1101,6 +1101,16 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
+### 1.23 `markharness plan` — Build a PR Verification Plan
+
+```text
+markharness plan --base <git-ref> --head <git-ref> --format json [--evidence <canonical.json>]... [--output <path>] [-d, --dir <path>]
+```
+
+Compares Feature tree SHAs across arbitrary base/head refs and emits changed Features, affected tests from stored/derived traces, `passed`/`failed`/`pending`/`stale` status from version-bound evidence, and rule-based proposals for changed Features without traces. Repeat `--evidence` for canonical snapshots emitted by `import`. The JSON contract is `schema_version: 1` under `schema/verification_plan.schema.json`. Exit code is 1 for failures, 2 for pending/stale/unreviewed proposals, and 0 when all required tests are verified.
+
+---
+
 ## 2. Unimplemented (Planned) Commands
 
 The following are commands planned for future implementation, based on the use case diagram and use case descriptions in `docs/product-operation.md`. The command names and options are tentative proposals and may change at implementation time.

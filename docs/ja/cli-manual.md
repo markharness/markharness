@@ -1101,6 +1101,16 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
+### 1.23 `markharness plan` — PR Verification Planの生成
+
+```text
+markharness plan --base <git-ref> --head <git-ref> --format json [--evidence <canonical.json>]... [--output <path>] [-d, --dir <path>]
+```
+
+任意のbase/head間でFeature tree SHAを比較し、変更Feature、stored/derived traceから得た影響Test、version binding済みevidenceの`passed`/`failed`/`pending`/`stale`、traceが無い変更Featureへのrule-based proposalを出力する。`--evidence`には`import`が出力したcanonical snapshotを複数指定できる。JSON契約は`schema/verification_plan.schema.json`の`schema_version: 1`。failedがあれば終了コード1、pending/stale/未承認proposalがあれば2、すべて検証済みなら0を返す。
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。

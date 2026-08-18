@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{generate, git, id_cache};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
     Feature,
@@ -40,7 +40,7 @@ pub struct CanonicalArtifact {
     pub provenance: Provenance,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationOriginKind {
     Stored,

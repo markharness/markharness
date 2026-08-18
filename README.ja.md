@@ -44,6 +44,9 @@ markharness milestone init v2
 markharness changes compute v1 v2
 cat changes/v2.yaml
 
+# 同じ変更区間をレビュー可能なversioned Verification Planとして生成
+markharness plan --base v1 --head v2 --format json
+
 # 7. 実行結果を記録してから、未再検証のTestCaseを確認する
 markharness execution record tc-todo-management-add-todo-add-task-empty-title --milestone v2 --result pass --executor <your-name>
 markharness execution record tc-todo-management-add-todo-add-task-max-length --milestone v2 --result pass --executor <your-name>

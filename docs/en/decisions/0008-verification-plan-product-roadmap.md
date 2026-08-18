@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Stages 0 and 1 are complete. The canonical snapshot schema, native/JUnit importers, stored/derived origins, version bindings, `import --format json`, and its golden contract are implemented. Stages 2–3 have not started).
+Accepted (Stages 0–2 are complete. Stage 2 implemented base/head Verification Plans, stored/derived traces, evidence status, a rule-based gap baseline, an optional proposal-adapter boundary, and historical-PR evaluation. Stage 3 has not started).
 
 ## Context
 

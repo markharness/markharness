@@ -1,0 +1,45 @@
+{
+  "input": {
+    "base": "base-commit",
+    "head": "head-commit",
+    "changes": [
+      {
+        "event_id": "checkout--base--head",
+        "feature_id": "checkout",
+        "from_milestone": "base-commit",
+        "to_milestone": "head-commit",
+        "from_tree_sha": "checkout-old",
+        "to_tree_sha": "checkout-new",
+        "impacted_testcases": ["tc-checkout"],
+        "change_type": null,
+        "true_divergences": [],
+        "related_events": []
+      },
+      {
+        "event_id": "search--base--head",
+        "feature_id": "search",
+        "from_milestone": "base-commit",
+        "to_milestone": "head-commit",
+        "from_tree_sha": "search-old",
+        "to_tree_sha": "search-new",
+        "impacted_testcases": [],
+        "change_type": null,
+        "true_divergences": [],
+        "related_events": []
+      }
+    ],
+    "evidence": [
+      {
+        "test_id": "tc-checkout",
+        "result": "pass",
+        "executed_at": "2026-08-18T10:00:00Z",
+        "bound_versions": { "checkout": "checkout-new" }
+      }
+    ],
+    "stored_traces": []
+  },
+  "human_required_tests": [
+    "new-test:search:missing-coverage",
+    "new-test:search:unicode"
+  ]
+}

@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(Stage 0とStage 1は実行済み。canonical snapshot schema、native/JUnit importer、stored/derived origin、version binding、`import --format json`とgolden contractを実装。Stage 2〜3は未着手)。
+Accepted(Stage 0〜2は実行済み。Stage 2ではbase/head Verification Plan、stored/derived trace、evidence status、rule-based gap、optional proposal adapter、履歴PR評価を実装。Stage 3は未着手)。
 
 ## コンテキスト
 

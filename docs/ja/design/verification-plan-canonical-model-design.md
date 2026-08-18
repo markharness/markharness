@@ -1,6 +1,6 @@
 # PR Verification Plan：Canonical Model と生成パイプライン設計書
 
-**Status**: Accepted(Stage 1実装済み、Stage 2未着手。[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)で決定したStage 1〜2の詳細設計)
+**Status**: Implemented(Stage 1〜2実装済み。[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)で決定したcanonical importとVerification Planの詳細設計)
 **関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](../テスト知識管理のGit-nativeモデル_統合版.md)(以下「統合版」)、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)、`docs/Markharness_改善・実装検討_統合設計文書.md`(以下「設計検討文書」)
 **対象読者**：`markharness`の実装者(Stage 1: canonical import model、Stage 2: PR Verification Plan着手時に参照する)
 
@@ -238,7 +238,7 @@ proposed ── human accepts ── accepted(TestCase作成後、通常のTESTC
 
 ## 5. Stage 0で確定すべき事項(本資料の前提)
 
-本資料はStage 1〜2の設計であり、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)が定めるStage 0(fixture・golden dataset化・CLI JSON contractのversioning方針)の完了を前提とする。ChangeEventは`tests/fixtures/stage0/changes-m1-m2.golden.yml`、canonical snapshotは`tests/fixtures/stage1/junit-import.golden.json`をgolden contractとする。plan statusのfixtureはStage 2の最初のvertical sliceで追加する。
+本資料はStage 1〜2の設計であり、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)が定めるStage 0を前提とする。ChangeEventは`tests/fixtures/stage0/changes-m1-m2.golden.yml`、canonical snapshotは`tests/fixtures/stage1/junit-import.golden.json`、Planは`tests/fixtures/stage2/verification-plan.golden.json`をgolden contractとする。`historical-pr.json`との比較でrule-based proposalのprecision/recallを再現する。
 
 CLI JSON契約は次の方針でversioningする。
 

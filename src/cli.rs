@@ -58,6 +58,27 @@ pub enum Command {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
+    /// Build a reviewable verification plan for an arbitrary Git base/head range
+    Plan {
+        /// Earlier Git revision (for example a PR base)
+        #[arg(long)]
+        base: String,
+        /// Later Git revision (for example a PR head)
+        #[arg(long)]
+        head: String,
+        /// Stable output representation
+        #[arg(long, value_enum, default_value = "json")]
+        format: ImportFormatArg,
+        /// Write the JSON plan to a file instead of standard output
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Canonical snapshot containing imported stored traces/evidence (repeatable)
+        #[arg(long, value_name = "CANONICAL_JSON")]
+        evidence: Vec<PathBuf>,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
     /// Manage test knowledge under knowledge/
     #[command(subcommand)]
     Knowledge(KnowledgeCommand),
@@ -477,6 +498,44 @@ pub fn run(cli: Cli) -> io::Result<()> {
             };
             presentation::emit(JsonPresenter.present(&outcome))?;
             Ok(())
+        }
+        Command::Plan {
+            base,
+            head,
+            format: ImportFormatArg::Json,
+            output,
+            evidence,
+            dir,
+        } => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let canonical_inputs = evidence
+                .iter()
+                .map(|path| {
+                    serde_json::from_str(&fs::read_to_string(path)?)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+                })
+                .collect::<io::Result<Vec<_>>>()?;
+            let outcome =
+                application::build_verification_plan(&root, &base, &head, &canonical_inputs)?;
+            let presented = JsonPresenter.present(&outcome);
+            if let Some(output) = output {
+                let output = if output.is_absolute() {
+                    output
+                } else {
+                    root.join(output)
+                };
+                crate::fs_safety::replace_file(&root, &output, presented.stdout.as_bytes())?;
+                presentation::emit(presentation::PresentedResult {
+                    stdout: String::new(),
+                    stderr: presented.stderr,
+                    exit_code: presented.exit_code,
+                })
+            } else {
+                presentation::emit(presented)
+            }
         }
         Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {
             Some(out) => match knowledge_edit::write_scaffold(&out) {

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "base": "base-commit",
+  "head": "head-commit",
+  "summary": {
+    "changed_features": 2,
+    "affected_tests": 1,
+    "new_tests": 1,
+    "obsolete_tests": 0,
+    "passed": 1,
+    "pending": 0,
+    "failed": 0,
+    "stale_evidence": 0
+  },
+  "changed_features": [
+    {
+      "id": "checkout",
+      "from_tree_sha": "checkout-old",
+      "to_tree_sha": "checkout-new",
+      "confidence": 1.0
+    },
+    {
+      "id": "search",
+      "from_tree_sha": "search-old",
+      "to_tree_sha": "search-new",
+      "confidence": 1.0
+    }
+  ],
+  "affected_existing_tests": [
+    {
+      "id": "tc-checkout",
+      "feature_id": "checkout",
+      "reason": "affected by feature change checkout--base--head",
+      "origin": "derived",
+      "status": "passed"
+    }
+  ],
+  "new_required_tests": [
+    {
+      "proposal_id": "new-test:search:missing-coverage",
+      "feature_id": "search",
+      "behavior": "verify changed feature search",
+      "reason": "changed feature has no stored or derived test trace",
+      "confidence": 1.0,
+      "decision": "proposed"
+    }
+  ],
+  "obsolete_tests": []
+}

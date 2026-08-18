@@ -79,6 +79,32 @@ pub struct ExecutionEntry {
     pub verified_feature_tree_shas: BTreeMap<String, String>,
 }
 
+pub fn read_all_results(root: &Path) -> io::Result<Vec<ExecutionEntry>> {
+    let executions = root.join("executions");
+    let Ok(entries) = fs::read_dir(executions) else {
+        return Ok(Vec::new());
+    };
+    let mut paths: Vec<_> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("results.yml"))
+        .filter(|path| path.is_file())
+        .collect();
+    paths.sort();
+    let mut results = Vec::new();
+    for path in paths {
+        let content = fs::read_to_string(path)?;
+        let mut entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        results.append(&mut entries);
+    }
+    results.sort_by(|a, b| {
+        a.executed_at
+            .cmp(&b.executed_at)
+            .then(a.case_id.cmp(&b.case_id))
+    });
+    Ok(results)
+}
+
 /// Days since the Unix epoch (1970-01-01) to a (year, month, day) civil
 /// date, per Howard Hinnant's `civil_from_days` algorithm (public domain,
 /// http://howardhinnant.github.io/date_algorithms.html). Avoids pulling in
