@@ -246,7 +246,7 @@ CLI JSON contracts are versioned as follows:
 - Every JSON object newly published as a stable contract must have a top-level integer `schema_version`, starting at `1`.
 - Within one version, field meaning, type, and requiredness do not change. Only optional fields may be added.
 - Removing or renaming a field, changing its type, or changing its meaning increments `schema_version`; readers retain the previous version for at least one minor release. This data-contract rule also applies during the 0.x period.
-- Existing `--json` output is treated as an unversioned legacy contract. It migrates to a versioned envelope when the shared Presenter is introduced in Phase 2; its shape remains unchanged until then.
+- `generate` and `verify pending`, migrated to the shared Presenter in Phase 2, return a versioned envelope with `schema_version: 1`. JSON output from commands not yet migrated remains an unversioned legacy contract and does not change shape until its Presenter migration.
 - Golden tests normalize environment-dependent values such as timestamps, temporary paths, and commit SHAs, then compare the remaining JSON/YAML document exactly.
 
 ## 6. Options Considered but Not Adopted

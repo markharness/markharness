@@ -1,6 +1,6 @@
 # markharness Architecture Design: Domain / Application / Infrastructure Layering
 
-**Status**: Accepted (Phase 1 implemented; Phases 2–5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
+**Status**: Accepted (Phases 1–2 implemented; Phases 3–5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
 **Related documents**: [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md), [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md), `git-native-model-for-test-knowledge-management.md`
 **Intended audience**: implementers of markharness (to be referenced when starting Phase 1)
 
@@ -628,10 +628,10 @@ Directory layout is unchanged at this stage.
 
 ### Phase 2: Separating CLI Responsibilities
 
-1. Introduce `CommandOutcome`.
-2. Move `std::process::exit` from the CLI to the Presenter.
-3. Split the human-readable Presenter from the JSON Presenter.
-4. Extract Application Use Cases from `generate`, `changes compute`, and `verify pending`.
+1. [Implemented] Introduce `CommandOutcome`.
+2. [Implemented] Move output and exit-code decisions for the three target commands to the Presenter.
+3. [Implemented] Split the human-readable Presenter from the JSON Presenter.
+4. [Implemented] Extract Application Use Cases from `generate`, `changes compute`, and `verify pending`.
 
 ### Phase 3: Atomicity of Generated-Artifact Updates
 

@@ -5,6 +5,7 @@
 #![warn(clippy::disallowed_methods)]
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
+pub mod application;
 pub mod axes;
 pub mod backfill;
 pub mod changes;
@@ -22,6 +23,7 @@ pub mod knowledge_draft;
 pub mod knowledge_edit;
 pub mod lineage;
 pub mod milestone;
+pub mod presentation;
 pub mod schema;
 pub mod traceability;
 pub mod validate;

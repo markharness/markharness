@@ -245,7 +245,7 @@ CLI JSON契約は次の方針でversioningする。
 - 新たにstable contractとして公開するJSON objectは、top-levelに整数の`schema_version`を必須とし、初版を`1`とする。
 - 同じversionではフィールドの意味・型・必須性を変更しない。optional fieldの追加のみ許容する。
 - フィールド削除、rename、型変更、意味変更は`schema_version`を増やし、少なくとも1 minor releaseの間は旧versionを読み取れるようにする。0.x期間中もこのデータ契約規則は維持する。
-- 現在の`--json`出力はこの方針以前のunversioned contractとして扱う。Phase 2の共通Presenter導入時にversioned envelopeへ移行し、それまでは形を変更しない。
+- Phase 2で共通Presenterへ移行した`generate`・`verify pending`は`schema_version: 1`のversioned envelopeを返す。未移行コマンドの`--json`出力はunversioned legacy contractとして扱い、各Presenter移行までは形を変更しない。
 - golden testは時刻、一時パス、commit SHAのような環境依存値を正規化したうえで、残りのJSON/YAML全体を完全一致比較する。
 
 ## 6. 検討したが採用しない選択肢

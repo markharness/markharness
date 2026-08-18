@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(Phase 1は2026-08-18に実行済み。`ChangeOptions`導入、`changes.rs`のGit操作集約、CLI golden contractによる既存挙動の固定を完了。Phase 2〜5は未着手)。
+Accepted(Phase 1〜2は2026-08-18に実行済み。型付き変更計算・Git操作集約に加え、`generate`・`changes compute`・`verify pending`のApplication Use Case抽出、`CommandOutcome`、Human/JSON Presenterを実装。Phase 3〜5は未着手)。
 
 ## 背景
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Phase 1 was completed on 2026-08-18: `ChangeOptions` was introduced, Git operations were consolidated out of `changes.rs`, and existing behavior was fixed by a CLI golden contract. Phases 2–5 have not started).
+Accepted (Phases 1–2 were completed on 2026-08-18. In addition to typed change options and Git-operation consolidation, Application Use Cases for `generate`, `changes compute`, and `verify pending`, `CommandOutcome`, and Human/JSON Presenters are implemented. Phases 3–5 have not started).
 
 ## Context
 

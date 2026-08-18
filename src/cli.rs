@@ -5,12 +5,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process;
 
+use crate::application;
 use crate::axes;
 use crate::backfill;
 use crate::changes;
 use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
-use crate::fs_safety::{remove_dir_all_no_follow, replace_file};
-use crate::generate;
 use crate::id_cache;
 use crate::init;
 use crate::interactive;
@@ -19,7 +18,7 @@ use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
-use crate::traceability;
+use crate::presentation::{self, HumanPresenter, JsonPresenter, Presenter};
 use crate::validate;
 use crate::verify;
 
@@ -513,36 +512,13 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
-            let testcases = generate::generate_testcases(&root.join("knowledge"))?;
-            let testcases_dir = root.join("generated").join("testcases");
-            remove_dir_all_no_follow(&root, &testcases_dir)?;
-            std::fs::create_dir_all(&testcases_dir)?;
-            let mut written = Vec::new();
-            for testcase in &testcases {
-                let testcase_path = safe_testcase_path(&testcases_dir, &testcase.relative_path())?;
-                replace_file(
-                    &root,
-                    &testcase_path,
-                    generate::serialize_testcase(testcase).as_bytes(),
-                )?;
-                written.push(testcase_path);
-            }
-            let index = traceability::build_index(&testcases);
-            let index_path = root.join("generated").join("traceability-index.json");
-            replace_file(
-                &root,
-                &index_path,
-                traceability::serialize_index(&index).as_bytes(),
-            )?;
-            written.push(index_path);
-            if json {
-                println!("{}", generate_result_to_json(testcases.len(), &written));
+            let outcome = application::generate_testcases(&root)?;
+            let presented = if json {
+                JsonPresenter.present(&outcome)
             } else {
-                println!(
-                    "generated {} testcase(s) into generated/testcases/",
-                    testcases.len()
-                );
-            }
+                HumanPresenter.present(&outcome)
+            };
+            presentation::emit(presented)?;
             Ok(())
         }
         Command::Axes(AxesCommand::List { dir, json }) => {
@@ -643,7 +619,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
-            let events = changes::compute_changes(
+            let outcome = application::compute_changes(
                 &root,
                 &from,
                 &to,
@@ -660,16 +636,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     },
                 },
             )?;
-            let changes_dir = root.join("changes");
-            replace_file(
-                &root,
-                &changes_dir.join(format!("{to}.yaml")),
-                changes::serialize_changes(&events).as_bytes(),
-            )?;
-            println!(
-                "computed {} change event(s) into changes/{to}.yaml",
-                events.len()
-            );
+            presentation::emit(HumanPresenter.present(&outcome))?;
             Ok(())
         }
         Command::Changes(ChangesCommand::Annotate {
@@ -962,68 +929,29 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 (Some(from), Some(to)) => Some((from.as_str(), to.as_str())),
                 _ => None,
             };
-            match verify::pending(&root, range, !no_cache) {
-                Ok(report) => {
-                    if json {
-                        println!(
-                            "{}",
-                            serde_json::to_string(&report)
-                                .expect("PendingReport serialization is infallible")
-                        );
+            match application::verify_pending(&root, range, !no_cache, fail_on_pending) {
+                Ok(outcome) => {
+                    let presented = if json {
+                        JsonPresenter.present(&outcome)
                     } else {
-                        println!("pending (再実行なし):");
-                        if report.pending.is_empty() {
-                            println!("  (なし)");
-                        } else {
-                            for entry in &report.pending {
-                                println!(
-                                    "  - {}  ({} の変更 {} の影響、未実行)",
-                                    entry.case_id, entry.feature_id, entry.event_id
-                                );
-                            }
-                        }
-                        println!();
-                        println!("stale (影響範囲がさらに変更済み):");
-                        if report.stale.is_empty() {
-                            println!("  (なし)");
-                        } else {
-                            for entry in &report.stale {
-                                let current = match &entry.current_event {
-                                    Some(c) => c.event_id.clone(),
-                                    None => "(不明)".to_string(),
-                                };
-                                println!(
-                                    "  - {}  ({} の変更 {} は陳腐化、現在の確認対象は {})",
-                                    entry.case_id,
-                                    entry.feature_id,
-                                    entry.original_event_id,
-                                    current
-                                );
-                            }
-                        }
-                    }
-                    if fail_on_pending && !report.pending.is_empty() {
-                        std::process::exit(1);
-                    }
-                    Ok(())
+                        HumanPresenter.present(&outcome)
+                    };
+                    presentation::emit(presented)
                 }
-                Err(verify::PendingError::NoMilestonePair) => {
-                    eprintln!(
-                        "error: --from/--to omitted and fewer than two milestones exist to pair."
-                    );
-                    std::process::exit(2);
-                }
+                Err(verify::PendingError::NoMilestonePair) => presentation::error(
+                    "error: --from/--to omitted and fewer than two milestones exist to pair.\n"
+                        .to_string(),
+                    2,
+                ),
                 Err(verify::PendingError::MilestoneNotFound) => {
-                    eprintln!("error: --from/--to milestone not found.");
-                    std::process::exit(2);
+                    presentation::error("error: --from/--to milestone not found.\n".to_string(), 2)
                 }
-                Err(verify::PendingError::InvalidRange) => {
-                    eprintln!("error: --to must be strictly newer than --from.");
-                    std::process::exit(2);
-                }
+                Err(verify::PendingError::InvalidRange) => presentation::error(
+                    "error: --to must be strictly newer than --from.\n".to_string(),
+                    2,
+                ),
                 Err(verify::PendingError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
+                    presentation::error(format!("error: filesystem error: {e}\n"), 3)
                 }
             }
         }
@@ -1495,29 +1423,6 @@ fn verify_diffs_to_json(diffs: &[verify::DiffEntry]) -> String {
     )
 }
 
-/// Joins `testcases_dir` and a testcase's `relative_path()` (the
-/// `{requirement}/{feature}/{behavior}/{condition}.yml` mirror of
-/// `knowledge/`), refusing any result that would escape `testcases_dir` via
-/// a `..`/root/prefix component. Defense in depth: `generate::generate_testcases`
-/// already rejects non-slug requirement/feature/behavior/condition ids, but
-/// this guards the write site itself against any other source of a
-/// malformed relative path.
-fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<PathBuf> {
-    for component in relative_path.components() {
-        if !matches!(component, std::path::Component::Normal(_)) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "refusing to write testcase outside {}: {}",
-                    testcases_dir.display(),
-                    relative_path.display()
-                ),
-            ));
-        }
-    }
-    Ok(testcases_dir.join(relative_path))
-}
-
 fn written_paths_to_json(written_paths: &[PathBuf]) -> String {
     let paths: Vec<String> = written_paths
         .iter()
@@ -1529,22 +1434,6 @@ fn written_paths_to_json(written_paths: &[PathBuf]) -> String {
         })
         .collect();
     format!("{{\"ok\":true,\"written\":[{}]}}", paths.join(","))
-}
-
-fn generate_result_to_json(generated: usize, written: &[PathBuf]) -> String {
-    let paths: Vec<String> = written
-        .iter()
-        .map(|p| {
-            format!(
-                "\"{}\"",
-                json_escape(&p.to_string_lossy().replace('\\', "/"))
-            )
-        })
-        .collect();
-    format!(
-        "{{\"ok\":true,\"generated\":{generated},\"written\":[{}]}}",
-        paths.join(",")
-    )
 }
 
 #[cfg(test)]
@@ -1559,29 +1448,6 @@ mod tests {
 
         let err = result.expect_err("--version should short-circuit with an error");
         assert_eq!(err.kind(), ErrorKind::DisplayVersion);
-    }
-
-    #[test]
-    fn safe_testcase_path_joins_a_nested_relative_path() {
-        let testcases_dir = PathBuf::from("generated/testcases");
-        let relative_path = PathBuf::from("req-todo/todo/todo-add-task/ground.yml");
-
-        let path = safe_testcase_path(&testcases_dir, &relative_path).unwrap();
-
-        assert_eq!(path, testcases_dir.join(&relative_path));
-    }
-
-    #[test]
-    fn safe_testcase_path_rejects_a_relative_path_escaping_the_testcases_dir() {
-        let testcases_dir = PathBuf::from("generated/testcases");
-        let relative_path = PathBuf::from("../../../../evil.yml");
-
-        let result = safe_testcase_path(&testcases_dir, &relative_path);
-
-        assert!(
-            result.is_err(),
-            "expected an error for a relative_path escaping testcases_dir, got: {result:?}"
-        );
     }
 
     #[test]

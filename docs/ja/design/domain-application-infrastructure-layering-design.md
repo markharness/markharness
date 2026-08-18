@@ -1,6 +1,6 @@
 # markharness アーキテクチャ設計:Domain / Application / Infrastructureレイヤー分離
 
-**ステータス**:Accepted(Phase 1実装済み、Phase 2〜5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
+**ステータス**:Accepted(Phase 1〜2実装済み、Phase 3〜5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
 **関連文書**:[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)、`テスト知識管理のGit-nativeモデル_統合版.md`
 **想定読者**:markharnessの実装者(Phase 1着手時に参照する)
 
@@ -628,10 +628,10 @@ markharnessの主要な実行機会はローカル編集、PR時CI、tag push時
 
 ### Phase 2: CLIの責務分離
 
-1. `CommandOutcome`を導入する。
-2. CLIから`std::process::exit`をPresenterへ移す。
-3. 人間向けPresenterとJSON Presenterを分ける。
-4. `generate`、`changes compute`、`verify pending`からApplication Use Caseを抽出する。
+1. [実装済み] `CommandOutcome`を導入する。
+2. [実装済み] 対象3コマンドの終了コード決定と出力をPresenterへ移す。
+3. [実装済み] 人間向けPresenterとJSON Presenterを分ける。
+4. [実装済み] `generate`、`changes compute`、`verify pending`からApplication Use Caseを抽出する。
 
 ### Phase 3: 生成物更新の原子性
 
