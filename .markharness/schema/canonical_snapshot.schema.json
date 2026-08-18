@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.dev/schema/canonical_snapshot.schema.json",
+  "title": "Markharness Canonical Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifacts", "relations", "evidence"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "relations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relation" }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence" }
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "git_oid": { "type": "string", "minLength": 1 },
+        "canonical_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      },
+      "oneOf": [
+        { "required": ["git_oid"] },
+        { "required": ["canonical_hash"] }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["importer", "importer_version", "source_locator"],
+      "properties": {
+        "importer": { "type": "string", "minLength": 1 },
+        "importer_version": { "type": "string", "minLength": 1 },
+        "source_locator": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical_id", "source", "external_id", "kind", "version", "provenance"],
+      "properties": {
+        "canonical_id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "external_id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "enum": ["feature", "condition", "test_case"]
+        },
+        "version": { "$ref": "#/$defs/version" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["stored", "derived"] },
+        "rule": { "type": "string", "minLength": 1 },
+        "rule_version": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "derived" } } },
+          "then": { "required": ["rule", "rule_version"] }
+        }
+      ]
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "relation_type", "to", "origin", "confidence"],
+      "properties": {
+        "from": { "type": "string", "minLength": 1 },
+        "relation_type": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "origin": { "$ref": "#/$defs/origin" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test_id", "result", "executed_at", "bound_versions", "provenance"],
+      "properties": {
+        "test_id": { "type": "string", "minLength": 1 },
+        "result": { "enum": ["pass", "fail", "skip"] },
+        "executed_at": { "type": ["string", "null"] },
+        "bound_versions": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    }
+  }
+}

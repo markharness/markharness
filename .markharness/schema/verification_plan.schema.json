@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.dev/schema/verification_plan.schema.json",
+  "title": "Markharness Verification Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "base", "head", "summary", "changed_features", "affected_existing_tests", "new_required_tests", "obsolete_tests"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "base": { "type": "string", "minLength": 1 },
+    "head": { "type": "string", "minLength": 1 },
+    "summary": { "$ref": "#/$defs/summary" },
+    "changed_features": { "type": "array", "items": { "$ref": "#/$defs/changed_feature" } },
+    "affected_existing_tests": { "type": "array", "items": { "$ref": "#/$defs/affected_test" } },
+    "new_required_tests": { "type": "array", "items": { "$ref": "#/$defs/proposal" } },
+    "obsolete_tests": { "type": "array", "items": { "type": "object" } }
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changed_features", "affected_tests", "new_tests", "obsolete_tests", "passed", "pending", "failed", "stale_evidence"],
+      "properties": {
+        "changed_features": { "type": "integer", "minimum": 0 },
+        "affected_tests": { "type": "integer", "minimum": 0 },
+        "new_tests": { "type": "integer", "minimum": 0 },
+        "obsolete_tests": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "pending": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "stale_evidence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "changed_feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "from_tree_sha", "to_tree_sha", "confidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "from_tree_sha": { "type": ["string", "null"] },
+        "to_tree_sha": { "type": ["string", "null"] },
+        "confidence": { "const": 1.0 }
+      }
+    },
+    "affected_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "feature_id", "reason", "origin", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "feature_id": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "origin": { "enum": ["stored", "derived"] },
+        "status": { "enum": ["passed", "failed", "pending", "stale"] }
+      }
+    },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposal_id", "feature_id", "behavior", "reason", "confidence", "decision"],
+      "properties": {
+        "proposal_id": { "type": "string", "minLength": 1 },
+        "feature_id": { "type": "string", "minLength": 1 },
+        "behavior": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "decision": { "enum": ["proposed", "accepted", "rejected", "deferred"] }
+      }
+    }
+  }
+}

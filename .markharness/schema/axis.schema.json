@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.com/schema/axis.schema.json",
+  "title": "AxisEntry",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "label": { "type": "string" }
+  },
+  "required": ["id"],
+  "additionalProperties": false
+}
