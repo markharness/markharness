@@ -115,8 +115,8 @@ fn indent_block_scalar(text: &str, indent: &str) -> String {
 
 pub fn serialize_requirement(requirement: &Requirement) -> String {
     let mut out = format!(
-        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
-        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
+        // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
+        // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
         "id: {}\nlabel: {}\naxis: {}\n",
         requirement.id,
         requirement.label,
@@ -131,8 +131,8 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
 
 pub fn serialize_feature(feature: &Feature) -> String {
     let mut out = format!(
-        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
-        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
+        // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
+        // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
         "id: {}\nrequirement: {}\nlabel: {}\naxis: {}\n",
         feature.id,
         feature.requirement,
@@ -151,8 +151,8 @@ pub fn serialize_feature(feature: &Feature) -> String {
 
 pub fn serialize_behavior(behavior: &Behavior) -> String {
     let mut out = format!(
-        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
-        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
+        // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
+        // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
         "id: {}\nfeature: {}\nlabel: {}\naxis: {}\ndescription: |\n",
         behavior.id,
         behavior.feature,
@@ -165,8 +165,8 @@ pub fn serialize_behavior(behavior: &Behavior) -> String {
 
 pub fn serialize_condition(condition: &Condition) -> String {
     let mut out = format!(
-        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
-        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
+        // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
+        // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
         "id: {}\nbehavior: {}\nlabel: {}\ndescription: |\n",
         condition.id, condition.behavior, condition.label
     );

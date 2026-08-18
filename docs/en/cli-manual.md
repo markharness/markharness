@@ -306,6 +306,7 @@ expected:
 | `redundant_prefix`           | `condition.id` starts with `{behavior.id}-` (when `--strip-redundant-prefix` is not given to `knowledge apply`; see 1.4)  |
 | `conflicting_existing_value` | When reusing an existing id, the specified `label`/`axis`/`description` does not match the existing file's value          |
 | `parent_not_found`           | The parent reference recorded in an existing file (e.g., `requirement:` in `feature.yml`) contradicts the draft's chain    |
+| `multiline_label`            | `label` on `requirement`/`feature`/`behavior`/`condition` contains a newline (labels are serialized as a single-line plain scalar) |
 
 **Exit codes**
 

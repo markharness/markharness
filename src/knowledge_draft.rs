@@ -90,6 +90,7 @@ pub enum ValidationErrorCode {
     ConflictingExistingValue,
     ParentNotFound,
     UnknownForkedFrom,
+    MultilineLabel,
 }
 
 impl ValidationErrorCode {
@@ -103,6 +104,7 @@ impl ValidationErrorCode {
             ValidationErrorCode::ConflictingExistingValue => "conflicting_existing_value",
             ValidationErrorCode::ParentNotFound => "parent_not_found",
             ValidationErrorCode::UnknownForkedFrom => "unknown_forked_from",
+            ValidationErrorCode::MultilineLabel => "multiline_label",
         }
     }
 }
@@ -231,6 +233,18 @@ fn push_invalid_slug(errors: &mut Vec<ValidationError>, path: &str, value: &str)
             message: format!(
                 "\"{value}\" is not a valid slug (lowercase alphanumeric and hyphen only)"
             ),
+            suggestion: None,
+        });
+    }
+}
+
+fn push_multiline_label(errors: &mut Vec<ValidationError>, path: &str, value: &str) {
+    if value.contains('\n') || value.contains('\r') {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::MultilineLabel,
+            path: path.to_string(),
+            value: Some(value.to_string()),
+            message: format!("\"{path}\" must be a single line, but the label contains a newline"),
             suggestion: None,
         });
     }
@@ -400,6 +414,19 @@ pub fn validate_draft(
     push_invalid_slug(&mut errors, "feature.id", &draft.feature.id);
     push_invalid_slug(&mut errors, "behavior.id", &draft.behavior.id);
     push_invalid_slug(&mut errors, "condition.id", &draft.condition.id);
+
+    if let Some(label) = &draft.requirement.label {
+        push_multiline_label(&mut errors, "requirement.label", label);
+    }
+    if let Some(label) = &draft.feature.label {
+        push_multiline_label(&mut errors, "feature.label", label);
+    }
+    if let Some(label) = &draft.behavior.label {
+        push_multiline_label(&mut errors, "behavior.label", label);
+    }
+    if let Some(label) = &draft.condition.label {
+        push_multiline_label(&mut errors, "condition.label", label);
+    }
 
     let requirement_dir = knowledge_root.join(&draft.requirement.id);
     let requirement_path = requirement_dir.join("requirement.yml");
@@ -772,6 +799,66 @@ expected:
             errors
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::InvalidSlug && e.path == "condition.id")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_multiline_label_for_requirement_label() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.requirement.label = Some("line one\nline two".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(errors.iter().any(
+            |e| e.code == ValidationErrorCode::MultilineLabel && e.path == "requirement.label"
+        ));
+    }
+
+    #[test]
+    fn validate_draft_reports_multiline_label_for_feature_label() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.feature.label = Some("line one\nline two".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MultilineLabel
+                    && e.path == "feature.label")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_multiline_label_for_behavior_label() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.behavior.label = Some("line one\nline two".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors.iter().any(
+                |e| e.code == ValidationErrorCode::MultilineLabel && e.path == "behavior.label"
+            )
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_multiline_label_for_condition_label() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.condition.label = Some("line one\nline two".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MultilineLabel
+                    && e.path == "condition.label")
         );
     }
 

@@ -136,8 +136,11 @@ expected:
 | 8 | 既存id再利用時 | 提供された `axis`/`description`/`label` が既存ファイルの値と一致しない場合(§10.2) | `conflicting_existing_value` |
 | 9 | requirement/feature/behavior/condition | 親参照(例: feature.requirement)が実在すること。ドラフト内で新規作成する場合はドラフト自身の値と整合していること | `parent_not_found` |
 | 10 | feature.forked_from | 値が指定されている場合、`knowledge/`配下のいずれかのFeatureの`id`と一致すること(実装時追加。論文§3.1の`forked_from`、本仕様の初版では未記載) | `unknown_forked_from` |
+| 11 | requirement/feature/behavior/condition の label | 改行を含まないこと。labelは単一行のプレーンスカラーとして出力するため、複数行が渡されると出力YAMLが壊れる(実装時追加) | `multiline_label` |
 
 **実装時の追記**：ルール#10(`unknown_forked_from`)は本仕様の初版になかったが、`feature.forked_from`フィールド(`knowledge.rs`)の実装にあわせて`knowledge_draft.rs::feature_id_exists`で追加された。Feature idは`requirement`配下にネストしていてもリポジトリ全体で一意である前提のため、`knowledge/`配下を`requirement`階層をまたいで全探索する。
+
+**実装時の追記**：ルール#11(`multiline_label`)も本仕様の初版になかったが、`knowledge.rs::serialize_requirement`等がlabelをブロックスカラー化せずプレーンスカラーで出力しているため、複数行labelが渡されると出力YAMLが壊れるという既知の制約(TODOコメントとして記録されていた)に対応するため`knowledge_draft.rs::push_multiline_label`で追加された。`description`と異なりlabelは短い識別用ラベルであり複数行を許容する意味的必要性がないため、ブロックスカラー化ではなく`validate_draft`でのfail-fastを選んだ。
 
 **実装時の追記**：ルール#2(`missing_axis`)は、`axes/*.yml` に1件以上axisが登録されている場合は `suggestion` フィールドに登録済みaxis一覧(カンマ区切り、ソート済み)を提示する。1件も登録が無い場合は提示すべき候補が無いため `suggestion` は `null` のままとし、代わりに `message` に `markharness axes add` での登録を促す文言を加える(`knowledge_draft.rs::missing_axis_error`)。`knowledge add --edit`/`knowledge scaffold` が出す空のドラフト雛形(`EDIT_TEMPLATE`)も、以前は `axis: []` としていたが、他の未入力フィールド(`id:`/`label:`)と同じ空スカラー(`axis:`)に変更した——`axis: []` は一見入力済みに見えるにもかかわらず新規エントリでは本ルールに抵触するため、紛らわしい落とし穴だった。
 

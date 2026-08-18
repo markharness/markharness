@@ -306,6 +306,7 @@ expected:
 | `redundant_prefix`           | `condition.id` が `{behavior.id}-` で始まる(`knowledge apply` の `--strip-redundant-prefix` 未指定時。1.4節参照) |
 | `conflicting_existing_value` | 既存id再利用時、指定した `label`/`axis`/`description` が既存ファイルの値と不一致                                 |
 | `parent_not_found`           | 既存ファイルに記録された親参照(例: `feature.yml` の `requirement:`)がドラフトのチェーンと矛盾                    |
+| `multiline_label`            | `requirement`/`feature`/`behavior`/`condition` の `label` に改行が含まれる(labelは単一行のプレーンスカラーとして出力するため) |
 
 **終了コード**
 
