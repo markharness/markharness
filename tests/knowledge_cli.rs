@@ -250,6 +250,76 @@ fn apply_exits_zero_and_writes_files_on_success() {
 }
 
 #[test]
+fn apply_writes_a_multiline_description_that_reparses_and_validates() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init_output.status.success(), "{init_output:?}");
+    fs::write(
+        dir.path().join("axes/gameplay.yml"),
+        "id: gameplay\nlabel: gameplay\n",
+    )
+    .unwrap();
+
+    let draft = "\
+requirement:
+  id: controls
+  label: controls
+  axis: [gameplay]
+
+feature:
+  id: player-jump
+  label: player-jump
+  axis: [gameplay]
+
+behavior:
+  id: jump
+  label: jump
+  axis: [gameplay]
+  description: |
+    line one about foo.js: bar()
+    line two about baz.js: qux()
+
+condition:
+  id: ground
+  label: ground
+  description: Jump from the ground and land
+
+expected:
+  - description: lands safely
+";
+    let draft_path = write_draft(dir.path(), draft);
+
+    let apply_output = run(&[
+        "knowledge",
+        "apply",
+        draft_path.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(apply_output.status.code(), Some(0), "{apply_output:?}");
+
+    let behavior_path = dir
+        .path()
+        .join("knowledge/controls/player-jump/jump/behavior.yml");
+    let written = fs::read_to_string(&behavior_path).unwrap();
+    let behavior = markharness::knowledge::parse_behavior(&written).unwrap();
+    assert_eq!(
+        behavior.description,
+        "line one about foo.js: bar()\nline two about baz.js: qux()\n"
+    );
+
+    let validate_output = run(&["validate", "--dir", dir.path().to_str().unwrap(), "--json"]);
+    assert_eq!(
+        validate_output.status.code(),
+        Some(0),
+        "{validate_output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&validate_output.stdout);
+    assert_eq!(stdout.trim(), "{\"ok\":true}");
+}
+
+#[test]
 fn apply_exits_one_and_writes_nothing_on_validation_failure() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
     let draft = VALID_DRAFT.replace("description: Player presses jump.\n", "");

@@ -98,21 +98,41 @@ fn yaml_flow_array(items: &[String]) -> String {
     format!("[{}]", items.join(", "))
 }
 
+/// `text` の全行に `indent` を付与し、`key: |\n` の後に続けられる形にする。
+/// 空行は `indent` を付けず素の改行にする。CRLF は LF に正規化してから分割する。
+fn indent_block_scalar(text: &str, indent: &str) -> String {
+    text.replace("\r\n", "\n")
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                "\n".to_string()
+            } else {
+                format!("{indent}{line}\n")
+            }
+        })
+        .collect()
+}
+
 pub fn serialize_requirement(requirement: &Requirement) -> String {
     let mut out = format!(
+        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
+        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
         "id: {}\nlabel: {}\naxis: {}\n",
         requirement.id,
         requirement.label,
         yaml_flow_array(&requirement.axis)
     );
     if let Some(description) = &requirement.description {
-        out.push_str(&format!("description: |\n  {description}\n"));
+        out.push_str("description: |\n");
+        out.push_str(&indent_block_scalar(description, "  "));
     }
     out
 }
 
 pub fn serialize_feature(feature: &Feature) -> String {
     let mut out = format!(
+        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
+        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
         "id: {}\nrequirement: {}\nlabel: {}\naxis: {}\n",
         feature.id,
         feature.requirement,
@@ -120,7 +140,8 @@ pub fn serialize_feature(feature: &Feature) -> String {
         yaml_flow_array(&feature.axis)
     );
     if let Some(description) = &feature.description {
-        out.push_str(&format!("description: |\n  {description}\n"));
+        out.push_str("description: |\n");
+        out.push_str(&indent_block_scalar(description, "  "));
     }
     if let Some(forked_from) = &feature.forked_from {
         out.push_str(&format!("forked_from: {forked_from}\n"));
@@ -129,28 +150,37 @@ pub fn serialize_feature(feature: &Feature) -> String {
 }
 
 pub fn serialize_behavior(behavior: &Behavior) -> String {
-    format!(
-        "id: {}\nfeature: {}\nlabel: {}\naxis: {}\ndescription: |\n  {}\n",
+    let mut out = format!(
+        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
+        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
+        "id: {}\nfeature: {}\nlabel: {}\naxis: {}\ndescription: |\n",
         behavior.id,
         behavior.feature,
         behavior.label,
-        yaml_flow_array(&behavior.axis),
-        behavior.description
-    )
+        yaml_flow_array(&behavior.axis)
+    );
+    out.push_str(&indent_block_scalar(&behavior.description, "  "));
+    out
 }
 
 pub fn serialize_condition(condition: &Condition) -> String {
-    format!(
-        "id: {}\nbehavior: {}\nlabel: {}\ndescription: |\n  {}\n",
-        condition.id, condition.behavior, condition.label, condition.description
-    )
+    let mut out = format!(
+        // TODO: label は複数行を想定しないプレーンスカラーで出力しているため、
+        // 複数行 label が入力された場合はここで別種のYAML破損が起きる(スコープ外)。
+        "id: {}\nbehavior: {}\nlabel: {}\ndescription: |\n",
+        condition.id, condition.behavior, condition.label
+    );
+    out.push_str(&indent_block_scalar(&condition.description, "  "));
+    out
 }
 
 pub fn serialize_expected_result(expected: &ExpectedResult) -> String {
-    format!(
-        "id: {}\ncondition: {}\ndescription: |\n  {}\n",
-        expected.id, expected.condition, expected.description
-    )
+    let mut out = format!(
+        "id: {}\ncondition: {}\ndescription: |\n",
+        expected.id, expected.condition
+    );
+    out.push_str(&indent_block_scalar(&expected.description, "  "));
+    out
 }
 
 pub fn strip_redundant_condition_prefix(feature_id: &str, condition_id: &str) -> Option<String> {
@@ -267,6 +297,25 @@ mod tests {
     }
 
     #[test]
+    fn serializes_requirement_with_multiline_description_as_valid_yaml() {
+        let requirement = Requirement {
+            id: "account-management".to_string(),
+            label: "account-management".to_string(),
+            axis: vec!["security".to_string()],
+            description: Some(
+                "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            ),
+            source: None,
+            related_issues: Vec::new(),
+        };
+
+        let yaml = serialize_requirement(&requirement);
+        let reparsed: Requirement = parse_requirement(&yaml).unwrap();
+
+        assert_eq!(reparsed.description, requirement.description);
+    }
+
+    #[test]
     fn parses_feature_yaml() {
         let yaml = "id: player-jump\nrequirement: player-controls\nlabel: player-jump\naxis: [gameplay, animation]\n";
 
@@ -354,6 +403,25 @@ mod tests {
     }
 
     #[test]
+    fn serializes_feature_with_multiline_description_as_valid_yaml() {
+        let feature = Feature {
+            id: "player-jump".to_string(),
+            requirement: "player-controls".to_string(),
+            label: "player-jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: Some(
+                "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            ),
+            forked_from: None,
+        };
+
+        let yaml = serialize_feature(&feature);
+        let reparsed: Feature = parse_feature(&yaml).unwrap();
+
+        assert_eq!(reparsed.description, feature.description);
+    }
+
+    #[test]
     fn parses_feature_yaml_with_forked_from() {
         let yaml = "id: player-double-jump\nrequirement: player-controls\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n";
 
@@ -410,6 +478,22 @@ mod tests {
     }
 
     #[test]
+    fn serializes_behavior_with_multiline_description_as_valid_yaml() {
+        let behavior = Behavior {
+            id: "player-jump-jump".to_string(),
+            feature: "player-jump".to_string(),
+            label: "jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+        };
+
+        let yaml = serialize_behavior(&behavior);
+        let reparsed: Behavior = parse_behavior(&yaml).unwrap();
+
+        assert_eq!(reparsed.description, behavior.description);
+    }
+
+    #[test]
     fn serializes_condition_to_deterministic_yaml() {
         let condition = Condition {
             id: "player-jump-jump-ground".to_string(),
@@ -424,6 +508,21 @@ mod tests {
             yaml,
             "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\n"
         );
+    }
+
+    #[test]
+    fn serializes_condition_with_multiline_description_as_valid_yaml() {
+        let condition = Condition {
+            id: "player-jump-jump-ground".to_string(),
+            behavior: "player-jump-jump".to_string(),
+            label: "ground".to_string(),
+            description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+        };
+
+        let yaml = serialize_condition(&condition);
+        let reparsed: Condition = parse_condition(&yaml).unwrap();
+
+        assert_eq!(reparsed.description, condition.description);
     }
 
     #[test]
@@ -442,6 +541,22 @@ mod tests {
             yaml,
             "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\n"
         );
+    }
+
+    #[test]
+    fn serializes_expected_result_with_multiline_description_as_valid_yaml() {
+        let expected = ExpectedResult {
+            id: "player-jump-jump-ground-001".to_string(),
+            condition: "player-jump-jump-ground".to_string(),
+            description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            generated_by: None,
+            verified_by: None,
+        };
+
+        let yaml = serialize_expected_result(&expected);
+        let reparsed: ExpectedResult = parse_expected_result(&yaml).unwrap();
+
+        assert_eq!(reparsed.description, expected.description);
     }
 
     #[test]
