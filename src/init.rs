@@ -178,6 +178,21 @@ mod tests {
     }
 
     #[test]
+    fn creates_the_marker_under_the_markharness_namespace_not_the_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        assert!(!dir.path().join(".markharness.toml").exists());
+        assert!(
+            dir.path()
+                .join(MARKHARNESS_DIR)
+                .join("config.toml")
+                .is_file()
+        );
+    }
+
+    #[test]
     fn does_not_overwrite_an_existing_marker_on_reinit() {
         let dir = tempfile::tempdir().unwrap();
         run_init(dir.path()).unwrap();

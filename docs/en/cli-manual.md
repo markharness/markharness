@@ -43,7 +43,7 @@ UC8 (importing from existing tools) has no dedicated directory, since it is assu
 **Behavior**
 
 - For each directory: if it does not exist, create it; if it already exists, do nothing (including leaving its contents untouched) — an idempotent operation. Re-running on an already-initialized project does not error; only the missing directories are additionally created.
-- Creates `.markharness.toml` at the project root (containing only `schema_version = 1`). Every command other than `init` uses this as the marker it searches upward for when `--dir` is omitted, to find its own project root; it is committed to the repository (not added to `.gitignore`). Left untouched if it already exists.
+- Creates `.markharness/config.toml` (containing only `schema_version = 1`). Every command other than `init` uses this as the marker to find its own project root: it searches upward for it when `--dir` is omitted, and validates it's present even when `--dir` is explicit (exiting with a `markharness init`-guidance error if not found). It is committed to the repository (not added to `.gitignore`). Left untouched if it already exists.
 - On success, prints the created paths to standard output.
 
 **Example**
@@ -72,7 +72,7 @@ markharness knowledge add [--dir <path>]
 
 | Option              | Description                                                                                                    |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `-d, --dir <path>` | Specifies the target project directory (the parent of `.markharness/knowledge/`). If omitted, searches upward from the current directory for `.markharness.toml` and targets the project root it finds. |
+| `-d, --dir <path>` | Specifies the target project directory (the parent of `.markharness/knowledge/`); its `.markharness/config.toml` presence is validated. If omitted, searches upward from the current directory for `.markharness/config.toml` and targets the project root it finds. |
 
 **Example (targeting a directory other than the current one)**
 
@@ -506,7 +506,7 @@ markharness generate [--json] [-d, --dir <path>]
 - `axis`: a list of viewpoints formed by combining (union, deduplicated and sorted) the `axis` of the `Requirement` / `Feature` / `Behavior` (§3.4 "axis inheritance").
 - The output is serialized with `serde_yaml_ng`, and always produces the same output for the same input (determinism, a prerequisite for diff verification in CI).
 - In addition to `.markharness/generated/testcases/*.yml`, `generate` also regenerates `.markharness/generated/traceability-index.json` at the same time (a machine-readable index holding the Requirement → Feature → Behavior → Condition → TestCase correspondence, as pretty-printed JSON via `serde_json`). `markharness verify` (section 1.6) also includes this file in its diff verification.
-- Omitting `--dir` searches upward from the current directory for `.markharness.toml` and targets the project root it finds (the same convention every other command follows; `generate` used to be the sole exception, always pinned to the current directory).
+- Omitting `--dir` searches upward from the current directory for `.markharness/config.toml` and targets the project root it finds (the same convention every other command follows; `generate` used to be the sole exception, always pinned to the current directory).
 - `--json` prints `{"ok":true,"generated":<count>,"written":[<list of written file paths, including traceability-index.json>]}` instead of the human-readable message, so a caller can mechanically reconcile the reported count against the actual written files.
 
 **Example**

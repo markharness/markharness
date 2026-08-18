@@ -30,6 +30,11 @@ fn write_knowledge(root: &Path, condition_description: &str) {
     let base = root.join(".markharness/knowledge/shop/checkout/pay/valid-card");
     std::fs::create_dir_all(base.join("expected")).unwrap();
     std::fs::write(
+        root.join(".markharness/config.toml"),
+        "schema_version = 1\n",
+    )
+    .unwrap();
+    std::fs::write(
         root.join(".markharness/knowledge/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )

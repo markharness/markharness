@@ -52,8 +52,8 @@ generated/testcases/   # <requirement>/<feature>/<behavior>/<condition>.yml、`m
 ### Phase 0 — ツールが使えることを確認する
 
 1. `markharness --version`(または `--help`)を実行する。コマンドが見つからない場合は処理を止め、ユーザーに次を伝える: まず `markharness` をビルド/インストールする必要がある(そのリポジトリから `cargo install --path .`、またはビルド済みバイナリを使う)、あるいは本当に別のツールを意図していないか確認する。出力を捏造したり、確認なしに先へ進んだりしないこと。
-2. 対象ディレクトリに `knowledge/`・`axes/`・`schema/` が既に存在するか(=そこで `markharness init` が実行済みか)を確認する。いずれか欠けていれば、先に `markharness init --dir <target>` を実行する — 必要なサブディレクトリと、`markharness validate` が必要とするデフォルトの `schema/*.schema.json`、プロジェクトルート目印 `.markharness.toml` を作成する(既存のものには一切手を加えない)。
-3. `init` 済みのプロジェクト配下(`.markharness.toml` が祖先ディレクトリにあるところ)であれば、以降の各コマンドは `--dir` を省略してもそこまで遡ってプロジェクトルートを自動検出する。複数プロジェクトを並行して扱う場合や、カレントディレクトリがプロジェクト外の場合は明示的に `--dir <target>` を指定する。
+2. 対象ディレクトリに `knowledge/`・`axes/`・`schema/` が既に存在するか(=そこで `markharness init` が実行済みか)を確認する。いずれか欠けていれば、先に `markharness init --dir <target>` を実行する — 必要なサブディレクトリと、`markharness validate` が必要とするデフォルトの `schema/*.schema.json`、プロジェクトルート目印 `.markharness/config.toml` を作成する(既存のものには一切手を加えない)。
+3. `init` 済みのプロジェクト配下(`.markharness/config.toml` が祖先ディレクトリにあるところ)であれば、以降の各コマンドは `--dir` を省略してもそこまで遡ってプロジェクトルートを自動検出する。複数プロジェクトを並行して扱う場合や、カレントディレクトリがプロジェクト外の場合は明示的に `--dir <target>` を指定する。
 4. 全くの新規プロジェクトでは `axes/` が空なので、使う予定のある axis は*すべて*、ドラフト作成前に(Phase 2 で)新規作成する必要がある — 頼れる既存レジストリは存在しない。
 
 ### Phase 1 — スコープ確認

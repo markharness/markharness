@@ -26,6 +26,11 @@ fn setup_root_with_axes(axis_ids: &[&str]) -> tempfile::TempDir {
             .join("knowledge"),
     )
     .unwrap();
+    fs::write(
+        dir.path().join(markharness::project_root::MARKER_FILE),
+        "schema_version = 1\n",
+    )
+    .unwrap();
     fs::create_dir_all(
         dir.path()
             .join(markharness::project_root::MARKHARNESS_DIR)

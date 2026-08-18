@@ -515,7 +515,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
             format: ImportFormatArg::Json,
             dir,
         } => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
             let bindings = bind
                 .into_iter()
                 .map(|binding| {
@@ -531,7 +530,10 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 })
                 .collect::<io::Result<std::collections::BTreeMap<_, _>>>()?;
             let outcome = match source {
-                ImportSourceArg::Native => application::import_native(&root, &git_ref)?,
+                ImportSourceArg::Native => {
+                    let root = project_root::resolve(dir, &env::current_dir()?)?;
+                    application::import_native(&root, &git_ref)?
+                }
                 ImportSourceArg::Junit => {
                     let input = input.ok_or_else(|| {
                         io::Error::new(
