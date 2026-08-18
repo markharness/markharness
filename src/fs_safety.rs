@@ -93,6 +93,41 @@ pub fn replace_file(root: &Path, target: &Path, content: &[u8]) -> io::Result<()
     rename_result
 }
 
+/// Replaces a managed directory with a fully prepared staging directory.
+/// If installing the staging directory fails after the old directory was
+/// moved aside, the old directory is restored before returning the error.
+pub fn replace_dir_from_staging(root: &Path, staging: &Path, target: &Path) -> io::Result<()> {
+    ensure_no_symlink_ancestor(root, staging)?;
+    ensure_no_symlink_ancestor(root, target)?;
+
+    let backup = target.with_file_name(format!(
+        ".{}.backup-{}",
+        target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("managed-dir"),
+        std::process::id()
+    ));
+    if backup.exists() {
+        remove_dir_all_no_follow(root, &backup)?;
+    }
+
+    let had_target = target.exists();
+    if had_target {
+        fs::rename(target, &backup)?;
+    }
+    if let Err(error) = fs::rename(staging, target) {
+        if had_target {
+            let _ = fs::rename(&backup, target);
+        }
+        return Err(error);
+    }
+    if had_target {
+        remove_dir_all_no_follow(root, &backup)?;
+    }
+    Ok(())
+}
+
 /// Removes the single file at `target`, refusing to follow a symlink/junction
 /// at `target` itself or any of its ancestors. A missing `target` is treated
 /// as success (removal is idempotent), mirroring `remove_dir_all_no_follow`.

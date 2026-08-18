@@ -1,6 +1,6 @@
 # markharness Architecture Design: Domain / Application / Infrastructure Layering
 
-**Status**: Accepted (Phases 1–2 implemented; Phases 3–5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
+**Status**: Accepted (Phases 1–3 implemented; Phases 4–5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
 **Related documents**: [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md), [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md), `git-native-model-for-test-knowledge-management.md`
 **Intended audience**: implementers of markharness (to be referenced when starting Phase 1)
 
@@ -635,9 +635,9 @@ Directory layout is unchanged at this stage.
 
 ### Phase 3: Atomicity of Generated-Artifact Updates
 
-1. Generate TestCases and the traceability index entirely into a temp area.
-2. Reflect into `generated/` only after success.
-3. Add a test confirming existing generated artifacts are kept on mid-way failure.
+1. [Implemented] Generate TestCases and the traceability index entirely into a temp area.
+2. [Implemented] Install them into `generated/` only after success using a backup-assisted directory switch.
+3. [Implemented] Add a test confirming existing generated artifacts are kept on mid-way failure.
 
 ### Phase 4: Knowledge Snapshot and a Pure Domain
 

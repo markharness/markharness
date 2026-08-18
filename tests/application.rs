@@ -38,6 +38,26 @@ fn generate_use_case_writes_artifacts_and_returns_an_outcome() {
 }
 
 #[test]
+fn generate_use_case_preserves_existing_artifacts_when_staging_fails() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("generated/testcases")).unwrap();
+    std::fs::write(
+        root.path().join("generated/testcases/existing.yml"),
+        "existing\n",
+    )
+    .unwrap();
+    std::fs::create_dir(root.path().join("generated/traceability-index.json")).unwrap();
+
+    let result = application::generate_testcases(root.path());
+
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("generated/testcases/existing.yml")).unwrap(),
+        "existing\n"
+    );
+}
+
+#[test]
 fn compute_changes_use_case_writes_change_events_and_returns_an_outcome() {
     let root = tempfile::tempdir().unwrap();
     run_git(root.path(), &["init", "-q"]);

@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::changes::{self, ChangeOptions};
-use crate::fs_safety::{remove_dir_all_no_follow, replace_file};
+use crate::fs_safety::{replace_dir_from_staging, replace_file};
 use crate::generate;
 use crate::presentation::CommandOutcome;
 use crate::traceability;
@@ -27,27 +27,47 @@ fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<
 
 pub fn generate_testcases(root: &Path) -> io::Result<CommandOutcome> {
     let testcases = generate::generate_testcases(&root.join("knowledge"))?;
-    let testcases_dir = root.join("generated/testcases");
-    remove_dir_all_no_follow(root, &testcases_dir)?;
+    let generated_dir = root.join("generated");
+    let existing_index = generated_dir.join("traceability-index.json");
+    if existing_index.exists() && !existing_index.is_file() {
+        return Err(io::Error::other(format!(
+            "expected {} to be a file",
+            existing_index.display()
+        )));
+    }
+
+    let staging_parent = tempfile::Builder::new()
+        .prefix(".markharness-generate-")
+        .tempdir_in(root)?;
+    let staging_generated = staging_parent.path().join("generated");
+    let testcases_dir = staging_generated.join("testcases");
     std::fs::create_dir_all(&testcases_dir)?;
-    let mut written = Vec::new();
     for testcase in &testcases {
         let testcase_path = safe_testcase_path(&testcases_dir, &testcase.relative_path())?;
         replace_file(
-            root,
+            staging_parent.path(),
             &testcase_path,
             generate::serialize_testcase(testcase).as_bytes(),
         )?;
-        written.push(testcase_path);
     }
     let index = traceability::build_index(&testcases);
-    let index_path = root.join("generated/traceability-index.json");
+    let staged_index = staging_generated.join("traceability-index.json");
     replace_file(
-        root,
-        &index_path,
+        staging_parent.path(),
+        &staged_index,
         traceability::serialize_index(&index).as_bytes(),
     )?;
-    written.push(index_path);
+    replace_dir_from_staging(root, &staging_generated, &generated_dir)?;
+
+    let mut written: Vec<PathBuf> = testcases
+        .iter()
+        .map(|testcase| {
+            generated_dir
+                .join("testcases")
+                .join(testcase.relative_path())
+        })
+        .collect();
+    written.push(generated_dir.join("traceability-index.json"));
     Ok(CommandOutcome::Generated {
         count: testcases.len(),
         written,

@@ -1,6 +1,6 @@
 # markharness アーキテクチャ設計:Domain / Application / Infrastructureレイヤー分離
 
-**ステータス**:Accepted(Phase 1〜2実装済み、Phase 3〜5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
+**ステータス**:Accepted(Phase 1〜3実装済み、Phase 4〜5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
 **関連文書**:[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)、`テスト知識管理のGit-nativeモデル_統合版.md`
 **想定読者**:markharnessの実装者(Phase 1着手時に参照する)
 
@@ -635,9 +635,9 @@ markharnessの主要な実行機会はローカル編集、PR時CI、tag push時
 
 ### Phase 3: 生成物更新の原子性
 
-1. TestCaseとtraceability indexを一時領域へ全生成する。
-2. 成功後に`generated/`へ反映する。
-3. 途中失敗時に既存生成物が保持されるテストを追加する。
+1. [実装済み] TestCaseとtraceability indexを一時領域へ全生成する。
+2. [実装済み] 成功後にbackup付きdirectory switchで`generated/`へ反映する。
+3. [実装済み] 途中失敗時に既存生成物が保持されるテストを追加する。
 
 ### Phase 4: Knowledge Snapshotと純粋Domain
 
