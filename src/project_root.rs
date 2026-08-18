@@ -16,12 +16,18 @@ pub fn find_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-/// `--dir` が明示されていればそれをそのまま(探索せず)ルートとして使い、
-/// 省略されていれば `cwd` から `find_root` で上位探索する。
+/// `--dir` が明示されていれば(探索はせず)`cwd` を基準に絶対パス化して
+/// ルートとして使い、省略されていれば `cwd` から `find_root` で上位探索する。
 /// どちらでもルートが定まらない場合は `markharness init` を促すエラーを返す。
+///
+/// `--dir` を絶対パス化するのは `git -C` や `cargo --manifest-path` と同じ
+/// 一般的な作法に合わせるため。相対パスのまま保持すると、内部で独自に
+/// 絶対パス化する処理(例: `tempfile::Builder::tempdir_in` は相対な base を
+/// `env::current_dir()` に結合してから使う)との間でパスの絶対/相対が食い違い、
+/// `fs_safety::ensure_no_symlink_ancestor` の `strip_prefix` 比較が失敗する。
 pub fn resolve(explicit: Option<PathBuf>, cwd: &Path) -> io::Result<PathBuf> {
     match explicit {
-        Some(dir) => Ok(dir),
+        Some(dir) => Ok(cwd.join(dir)),
         None => find_root(cwd).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -44,7 +50,33 @@ mod tests {
 
         let resolved = resolve(Some(PathBuf::from("some/explicit/path")), dir.path()).unwrap();
 
-        assert_eq!(resolved, PathBuf::from("some/explicit/path"));
+        assert_eq!(resolved, dir.path().join("some/explicit/path"));
+    }
+
+    #[test]
+    fn resolve_joins_a_relative_explicit_dir_with_cwd() {
+        // A relative `--dir` must be resolved against `cwd` immediately,
+        // matching the convention of `git -C`, `cargo --manifest-path`, etc.
+        // Otherwise code downstream that independently absolutizes paths
+        // (e.g. `tempfile::Builder::tempdir_in`, which joins a relative base
+        // onto `env::current_dir()`) ends up comparing an absolute path
+        // against this still-relative root and fails a `strip_prefix` check.
+        let dir = tempfile::tempdir().unwrap();
+
+        let resolved = resolve(Some(PathBuf::from("nested/dir")), dir.path()).unwrap();
+
+        assert!(resolved.is_absolute());
+        assert_eq!(resolved, dir.path().join("nested/dir"));
+    }
+
+    #[test]
+    fn resolve_leaves_an_absolute_explicit_dir_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let explicit = dir.path().join("already/absolute");
+
+        let resolved = resolve(Some(explicit.clone()), dir.path()).unwrap();
+
+        assert_eq!(resolved, explicit);
     }
 
     #[test]

@@ -52,8 +52,9 @@ generated/testcases/   # <requirement>/<feature>/<behavior>/<condition>.yml、`m
 ### Phase 0 — ツールが使えることを確認する
 
 1. `markharness --version`(または `--help`)を実行する。コマンドが見つからない場合は処理を止め、ユーザーに次を伝える: まず `markharness` をビルド/インストールする必要がある(そのリポジトリから `cargo install --path .`、またはビルド済みバイナリを使う)、あるいは本当に別のツールを意図していないか確認する。出力を捏造したり、確認なしに先へ進んだりしないこと。
-2. 対象ディレクトリに `knowledge/`・`axes/`・`schema/` が既に存在するか(=そこで `markharness init` が実行済みか)を確認する。いずれか欠けていれば、先に `markharness init --dir <target>` を実行する — 必要なサブディレクトリと、`markharness validate` が必要とするデフォルトの `schema/*.schema.json` を作成する(既存のものには一切手を加えない)。
-3. 全くの新規プロジェクトでは `axes/` が空なので、使う予定のある axis は*すべて*、ドラフト作成前に(Phase 2 で)新規作成する必要がある — 頼れる既存レジストリは存在しない。
+2. 対象ディレクトリに `knowledge/`・`axes/`・`schema/` が既に存在するか(=そこで `markharness init` が実行済みか)を確認する。いずれか欠けていれば、先に `markharness init --dir <target>` を実行する — 必要なサブディレクトリと、`markharness validate` が必要とするデフォルトの `schema/*.schema.json`、プロジェクトルート目印 `.markharness.toml` を作成する(既存のものには一切手を加えない)。
+3. `init` 済みのプロジェクト配下(`.markharness.toml` が祖先ディレクトリにあるところ)であれば、以降の各コマンドは `--dir` を省略してもそこまで遡ってプロジェクトルートを自動検出する。複数プロジェクトを並行して扱う場合や、カレントディレクトリがプロジェクト外の場合は明示的に `--dir <target>` を指定する。
+4. 全くの新規プロジェクトでは `axes/` が空なので、使う予定のある axis は*すべて*、ドラフト作成前に(Phase 2 で)新規作成する必要がある — 頼れる既存レジストリは存在しない。
 
 ### Phase 1 — スコープ確認
 
@@ -75,7 +76,7 @@ generated/testcases/   # <requirement>/<feature>/<behavior>/<condition>.yml、`m
 ### Phase 3 — axis を確認する
 
 1. `markharness axes list --json` を実行し、登録済みの `axes/*.yml` エントリを確認する。
-2. *新規*の requirement/feature/behavior で使う予定の `axis` 値はすべて事前に登録されている必要がある(`markharness knowledge validate` は未登録の axis を `unknown_axis` として拒否し、最も近い候補を提示する)。必要な axis が存在しない場合は、続行前に `id:`/`label:` を持つ `axes/<id>.yml` を作成する — `markharness` に `axes add` サブコマンドはない。
+2. *新規*の requirement/feature/behavior で使う予定の `axis` 値はすべて事前に登録されている必要がある(`markharness knowledge validate` は未登録の axis を `unknown_axis` として拒否し、最も近い候補を提示する)。必要な axis が存在しない場合は、続行前に `markharness axes add <id> [--label <label>]` で登録する(`--label` 省略時は `id` がそのまま label になる。既に存在する id を指定するとエラーになる)。
 
 ### Phase 4 — ドラフト作成・検証・適用(Condition ごとに繰り返す)
 
@@ -109,10 +110,10 @@ Phase 2 で特定した各 Condition について:
        # 同じ Behavior 内でのみ一意であればよい —
        # 詳細は下記「Condition id の一意性」参照
      label: <label>
-     description: <このパスを引き起こす具体的な入力/状態 — file:line を明記>
+     description: <このパスを引き起こす具体的な入力/状態 — ファイルパスと関数/メソッド名で出所を明記(行番号は書かない。理由は「原則」参照)>
 
    expected:
-     - description: <観測可能な結果。コードから読み取る — file:line を明記>
+     - description: <観測可能な結果。コードから読み取る — ファイルパスと関数/メソッド名で出所を明記(行番号は書かない)>
    ```
 
    既に存在し変更のない階層では `label`/`axis`/`description` を省略する — 矛盾する値を渡すと `conflicting_existing_value` で検証に失敗する。
@@ -123,7 +124,7 @@ Phase 2 で特定した各 Condition について:
 3. 適用: `markharness knowledge apply <draft-file> --json`(`--strip-redundant-prefix` は、意図的に `behavior-` プレフィックス付きの `condition.id` を剥がしたい場合のみ追加する)。
 4. 対応するチェックリストのステップを完了にする。
 
-複数の Condition をまとめて処理する場合は、ドラフトファイルを1つのディレクトリに集め、`markharness knowledge validate --batch <dir> --json`(または同じチェックを行う `markharness knowledge apply --batch <dir> --dry-run --json`)で一括検証してから `markharness knowledge apply --batch <dir> --json` を実行してもよい。ファイルはディレクトリ内のファイル名順に適用され、後続のドラフトは同じバッチ内で先行するドラフトが作成した Requirement/Feature/Behavior を参照できる。`apply --batch`(`--dry-run` なし)が途中のファイルで失敗した場合、その回の呼び出しで書き込み済みのファイルも含めてすべてロールバックされる(バッチ全体が不可分)。
+複数の Condition をまとめて処理する場合は、ドラフトファイルを1つのディレクトリに集め、`markharness knowledge validate --batch <dir> --json`(または同じチェックを行う `markharness knowledge apply --batch <dir> --dry-run --json`)で一括検証してから `markharness knowledge apply --batch <dir> --json` を実行してもよい。`--batch <dir>` は直下の `*.yml` ファイルのみを対象にする(`.yaml` 拡張子のファイルは無視され、該当ファイルが1つもなければ exit code 2 で失敗する)。ファイルはディレクトリ内のファイル名順に適用され、後続のドラフトは同じバッチ内で先行するドラフトが作成した Requirement/Feature/Behavior を参照できる(例: `01-xxx.yml`、`02-xxx.yml` のように命名して順序を制御する)。`apply --batch`(`--dry-run` なし)が途中のファイルで失敗した場合、その回の呼び出しで書き込み済みのファイルも含めてすべてロールバックされる(バッチ全体が不可分)。
 
 ### Phase 5 — 生成
 
@@ -136,12 +137,12 @@ Phase 2 で特定した各 Condition について:
 
 ### Phase 6 — 完了処理
 
-1. チェックリストファイルに `## Summary` セクションを追加する: どの Feature/Behavior/Condition を追加したか、それぞれがどのコード(file:line)に遡れるか。
+1. チェックリストファイルに `## Summary` セクションを追加する: どの Feature/Behavior/Condition を追加したか、それぞれがどのコード(ファイルパス・関数/メソッド名)に遡れるか。行番号は挙げない(理由は「原則」参照)。
 2. どの `generated/testcases/*.yml` が新規/変更されたかをユーザーに報告し、コードの意図が曖昧でスキップせざるを得なかった箇所があればそれも伝える。
 
 ## 原則
 
-- すべての Condition/ExpectedResult は、その出所となったコードを明記すること — 推測によるテスト知識は作らない。
+- すべての Condition/ExpectedResult は、その出所となったコードを明記すること — 推測によるテスト知識は作らない。ただし出所の明記は「ファイルパス + 関数/メソッド/分岐名」までにとどめ、行番号のようにリファクタリングや無関係な変更で頻繁にズレる情報は description に含めない — 記載しても実装が変わるたびに陳腐化し、`knowledge/` の維持コストを増やすだけで検証可能性を高めない。
 - `generated/testcases/*.yml` を手編集しないこと。これは派生出力である。`knowledge/` 配下のみを(`apply` 経由で)書き、残りは `markharness generate` に生成させる。
 - 大きなドラフト1つより、小さなドラフト(Condition ごとに1つ)を複数作る方を優先する — 検証と修正が段階的に行いやすい。
 - Condition の結果がコードだけでは完全に決まらない外部状態(I/O・並行性・設定)に依存する場合は、単一の決定的な結果を断定するのではなく、その旨を description に記載する。
