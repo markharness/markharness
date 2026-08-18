@@ -67,7 +67,9 @@ pub fn rebuild_indexes(root: &Path, git_ref: &str) -> io::Result<IndexPaths> {
     };
 
     let mut by_feature: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let changes_dir = root.join("changes");
+    let changes_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("changes");
     let mut change_paths: Vec<PathBuf> = fs::read_dir(&changes_dir)
         .into_iter()
         .flatten()

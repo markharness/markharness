@@ -17,7 +17,7 @@ pub struct AxisEntry {
 /// Reads `root/axes/*.yml` and returns entries sorted by id. Returns an
 /// empty list when `axes/` is missing (mirrors `knowledge_draft::load_axis_registry`).
 pub fn list_axes(root: &Path) -> Vec<AxisEntry> {
-    let axes_dir = root.join("axes");
+    let axes_dir = root.join(crate::project_root::MARKHARNESS_DIR).join("axes");
     let Ok(entries) = fs::read_dir(&axes_dir) else {
         return Vec::new();
     };
@@ -38,7 +38,10 @@ pub fn list_axes(root: &Path) -> Vec<AxisEntry> {
 /// `knowledge_apply::apply_draft`). Creates `axes/` if it does not exist yet.
 /// Used by `knowledge add --edit`'s axis auto-registration.
 pub fn create_axis(root: &Path, id: &str) -> io::Result<PathBuf> {
-    let path = root.join("axes").join(format!("{id}.yml"));
+    let path = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("axes")
+        .join(format!("{id}.yml"));
     replace_file(root, &path, format!("id: {id}\nlabel: {id}\n").as_bytes())?;
     Ok(path)
 }
@@ -74,7 +77,10 @@ pub fn add_axis(root: &Path, id: &str, label: Option<&str>) -> Result<PathBuf, A
     if !is_valid_slug(id) {
         return Err(AddAxisError::InvalidId);
     }
-    let path = root.join("axes").join(format!("{id}.yml"));
+    let path = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("axes")
+        .join(format!("{id}.yml"));
     if path.is_file() {
         return Err(AddAxisError::AlreadyExists);
     }
@@ -132,7 +138,11 @@ fn collect_referenced_axes_into(dir: &Path, out: &mut HashSet<String>) {
 /// `requirement`/`feature`/`behavior`'s `axis:` list anywhere under
 /// `knowledge/`, sorted by id.
 pub fn find_unused(root: &Path) -> Vec<String> {
-    let referenced = collect_referenced_axes(&root.join("knowledge"));
+    let referenced = collect_referenced_axes(
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    );
     let mut unused: Vec<String> = list_axes(root)
         .into_iter()
         .map(|entry| entry.id)
@@ -148,7 +158,10 @@ pub fn prune(root: &Path, delete: bool) -> io::Result<Vec<String>> {
     let unused = find_unused(root);
     if delete {
         for id in &unused {
-            let path = root.join("axes").join(format!("{id}.yml"));
+            let path = root
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes")
+                .join(format!("{id}.yml"));
             remove_file_no_follow(root, &path)?;
         }
     }
@@ -162,9 +175,14 @@ mod tests {
     #[test]
     fn find_unused_reports_an_axis_referenced_by_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("axes/orphan.yml"),
+            dir.path().join(".markharness/axes/orphan.yml"),
             "id: orphan\nlabel: orphan\n",
         )
         .unwrap();
@@ -177,13 +195,18 @@ mod tests {
     #[test]
     fn find_unused_excludes_an_axis_referenced_by_a_requirement() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("axes/gameplay.yml"),
+            dir.path().join(".markharness/axes/gameplay.yml"),
             "id: gameplay\nlabel: gameplay\n",
         )
         .unwrap();
-        let requirement_dir = dir.path().join("knowledge/controls");
+        let requirement_dir = dir.path().join(".markharness/knowledge/controls");
         fs::create_dir_all(&requirement_dir).unwrap();
         fs::write(
             requirement_dir.join("requirement.yml"),
@@ -199,9 +222,14 @@ mod tests {
     #[test]
     fn prune_without_delete_reports_unused_axes_but_leaves_files_in_place() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("axes/orphan.yml"),
+            dir.path().join(".markharness/axes/orphan.yml"),
             "id: orphan\nlabel: orphan\n",
         )
         .unwrap();
@@ -209,24 +237,29 @@ mod tests {
         let pruned = prune(dir.path(), false).unwrap();
 
         assert_eq!(pruned, vec!["orphan".to_string()]);
-        assert!(dir.path().join("axes/orphan.yml").exists());
+        assert!(dir.path().join(".markharness/axes/orphan.yml").exists());
     }
 
     #[test]
     fn prune_with_delete_removes_only_the_unused_axis_files() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("axes/orphan.yml"),
+            dir.path().join(".markharness/axes/orphan.yml"),
             "id: orphan\nlabel: orphan\n",
         )
         .unwrap();
         fs::write(
-            dir.path().join("axes/gameplay.yml"),
+            dir.path().join(".markharness/axes/gameplay.yml"),
             "id: gameplay\nlabel: gameplay\n",
         )
         .unwrap();
-        let requirement_dir = dir.path().join("knowledge/controls");
+        let requirement_dir = dir.path().join(".markharness/knowledge/controls");
         fs::create_dir_all(&requirement_dir).unwrap();
         fs::write(
             requirement_dir.join("requirement.yml"),
@@ -237,9 +270,9 @@ mod tests {
         let pruned = prune(dir.path(), true).unwrap();
 
         assert_eq!(pruned, vec!["orphan".to_string()]);
-        assert!(!dir.path().join("axes/orphan.yml").exists());
+        assert!(!dir.path().join(".markharness/axes/orphan.yml").exists());
         assert!(
-            dir.path().join("axes/gameplay.yml").exists(),
+            dir.path().join(".markharness/axes/gameplay.yml").exists(),
             "an axis still referenced by a requirement must not be deleted"
         );
     }
@@ -256,7 +289,10 @@ mod tests {
     #[test]
     fn lists_axes_sorted_by_id() {
         let dir = tempfile::tempdir().unwrap();
-        let axes_dir = dir.path().join("axes");
+        let axes_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("axes");
         fs::create_dir_all(&axes_dir).unwrap();
         fs::write(
             axes_dir.join("network.yml"),
@@ -289,7 +325,10 @@ mod tests {
     #[test]
     fn axis_without_label_field_defaults_to_none() {
         let dir = tempfile::tempdir().unwrap();
-        let axes_dir = dir.path().join("axes");
+        let axes_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("axes");
         fs::create_dir_all(&axes_dir).unwrap();
         fs::write(axes_dir.join("ai.yml"), "id: ai\n").unwrap();
 
@@ -307,12 +346,17 @@ mod tests {
     #[test]
     fn create_axis_writes_id_and_label_defaulted_to_id() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("axes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes"),
+        )
+        .unwrap();
 
         create_axis(dir.path(), "state").unwrap();
 
         assert_eq!(
-            fs::read_to_string(dir.path().join("axes/state.yml")).unwrap(),
+            fs::read_to_string(dir.path().join(".markharness/axes/state.yml")).unwrap(),
             "id: state\nlabel: state\n"
         );
     }
@@ -323,7 +367,7 @@ mod tests {
 
         create_axis(dir.path(), "state").unwrap();
 
-        assert!(dir.path().join("axes/state.yml").is_file());
+        assert!(dir.path().join(".markharness/axes/state.yml").is_file());
     }
 
     #[test]
@@ -342,7 +386,13 @@ mod tests {
 
         let path = add_axis(dir.path(), "state", None).unwrap();
 
-        assert_eq!(path, dir.path().join("axes").join("state.yml"));
+        assert_eq!(
+            path,
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes")
+                .join("state.yml")
+        );
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "id: state\nlabel: state\n"
@@ -367,7 +417,7 @@ mod tests {
 
         add_axis(dir.path(), "state", None).unwrap();
 
-        assert!(dir.path().join("axes/state.yml").is_file());
+        assert!(dir.path().join(".markharness/axes/state.yml").is_file());
     }
 
     #[test]
@@ -380,7 +430,7 @@ mod tests {
         assert!(matches!(result, Err(AddAxisError::AlreadyExists)));
         // The pre-existing file must be left untouched, not overwritten.
         assert_eq!(
-            fs::read_to_string(dir.path().join("axes/state.yml")).unwrap(),
+            fs::read_to_string(dir.path().join(".markharness/axes/state.yml")).unwrap(),
             "id: state\nlabel: state\n"
         );
     }
@@ -392,6 +442,11 @@ mod tests {
         let result = add_axis(dir.path(), "../../evil", None);
 
         assert!(matches!(result, Err(AddAxisError::InvalidId)));
-        assert!(!dir.path().join("axes").exists());
+        assert!(
+            !dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes")
+                .exists()
+        );
     }
 }

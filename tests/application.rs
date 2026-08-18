@@ -29,10 +29,14 @@ fn generate_use_case_writes_artifacts_and_returns_an_outcome() {
         outcome,
         CommandOutcome::Generated { count: 0, .. }
     ));
-    assert!(root.path().join("generated/testcases").is_dir());
     assert!(
         root.path()
-            .join("generated/traceability-index.json")
+            .join(".markharness/generated/testcases")
+            .is_dir()
+    );
+    assert!(
+        root.path()
+            .join(".markharness/generated/traceability-index.json")
             .is_file()
     );
 }
@@ -40,19 +44,28 @@ fn generate_use_case_writes_artifacts_and_returns_an_outcome() {
 #[test]
 fn generate_use_case_preserves_existing_artifacts_when_staging_fails() {
     let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(root.path().join("generated/testcases")).unwrap();
+    std::fs::create_dir_all(root.path().join(".markharness/generated/testcases")).unwrap();
     std::fs::write(
-        root.path().join("generated/testcases/existing.yml"),
+        root.path()
+            .join(".markharness/generated/testcases/existing.yml"),
         "existing\n",
     )
     .unwrap();
-    std::fs::create_dir(root.path().join("generated/traceability-index.json")).unwrap();
+    std::fs::create_dir(
+        root.path()
+            .join(".markharness/generated/traceability-index.json"),
+    )
+    .unwrap();
 
     let result = application::generate_testcases(root.path());
 
     assert!(result.is_err());
     assert_eq!(
-        std::fs::read_to_string(root.path().join("generated/testcases/existing.yml")).unwrap(),
+        std::fs::read_to_string(
+            root.path()
+                .join(".markharness/generated/testcases/existing.yml")
+        )
+        .unwrap(),
         "existing\n"
     );
 }
@@ -90,7 +103,7 @@ fn compute_changes_use_case_writes_change_events_and_returns_an_outcome() {
             to: "m2".to_string(),
         }
     );
-    assert!(root.path().join("changes/m2.yaml").is_file());
+    assert!(root.path().join(".markharness/changes/m2.yaml").is_file());
 }
 
 #[test]

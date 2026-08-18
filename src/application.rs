@@ -133,9 +133,15 @@ fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<
 }
 
 pub fn generate_testcases(root: &Path) -> io::Result<CommandOutcome> {
-    let snapshot = generate::load_knowledge_snapshot(&root.join("knowledge"))?;
+    let snapshot = generate::load_knowledge_snapshot(
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    )?;
     let testcases = generate::compile_testcases(&snapshot);
-    let generated_dir = root.join("generated");
+    let generated_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("generated");
     let existing_index = generated_dir.join("traceability-index.json");
     if existing_index.exists() && !existing_index.is_file() {
         return Err(io::Error::other(format!(
@@ -147,7 +153,10 @@ pub fn generate_testcases(root: &Path) -> io::Result<CommandOutcome> {
     let staging_parent = tempfile::Builder::new()
         .prefix(".markharness-generate-")
         .tempdir_in(root)?;
-    let staging_generated = staging_parent.path().join("generated");
+    let staging_generated = staging_parent
+        .path()
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("generated");
     let testcases_dir = staging_generated.join("testcases");
     std::fs::create_dir_all(&testcases_dir)?;
     for testcase in &testcases {
@@ -191,7 +200,10 @@ pub fn compute_changes(
     let events = changes::compute_changes(root, from, to, options)?;
     replace_file(
         root,
-        &root.join("changes").join(format!("{to}.yaml")),
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes")
+            .join(format!("{to}.yaml")),
         changes::serialize_changes(&events).as_bytes(),
     )?;
     Ok(CommandOutcome::ChangesComputed {

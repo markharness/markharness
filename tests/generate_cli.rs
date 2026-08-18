@@ -44,6 +44,7 @@ fn link_dir(link: &Path, target: &Path) {
 
 fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, condition: &str) {
     let dir = root
+        .join(markharness::project_root::MARKHARNESS_DIR)
         .join("knowledge")
         .join(requirement)
         .join(feature)
@@ -51,14 +52,16 @@ fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, co
         .join(condition);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        root.join("knowledge")
+        root.join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
             .join(requirement)
             .join("requirement.yml"),
         format!("id: {requirement}\nlabel: {requirement}\naxis: [ui]\n"),
     )
     .unwrap();
     std::fs::write(
-        root.join("knowledge")
+        root.join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
             .join(requirement)
             .join(feature)
             .join("feature.yml"),
@@ -112,7 +115,7 @@ fn generate_accepts_a_dir_option_targeting_a_directory_other_than_cwd() {
     );
     assert!(
         root.path()
-            .join("generated/testcases/req-one/feature-a/behavior-a/ground.yml")
+            .join(".markharness/generated/testcases/req-one/feature-a/behavior-a/ground.yml")
             .is_file()
     );
 }
@@ -188,10 +191,10 @@ fn generate_does_not_lose_testcases_when_the_same_condition_id_is_reused_under_d
 
     let first = root
         .path()
-        .join("generated/testcases/req-one/feature-a/behavior-a/shared-id.yml");
+        .join(".markharness/generated/testcases/req-one/feature-a/behavior-a/shared-id.yml");
     let second = root
         .path()
-        .join("generated/testcases/req-two/feature-b/behavior-b/shared-id.yml");
+        .join(".markharness/generated/testcases/req-two/feature-b/behavior-b/shared-id.yml");
     assert!(first.is_file(), "expected {} to exist", first.display());
     assert!(second.is_file(), "expected {} to exist", second.display());
 }
@@ -207,7 +210,10 @@ fn generate_refuses_to_follow_a_symlinked_generated_dir() {
     std::fs::create_dir_all(&victim_dir).unwrap();
     std::fs::write(victim_dir.join("do-not-delete.txt"), "victim").unwrap();
 
-    let generated_dir = root.path().join("generated");
+    let generated_dir = root
+        .path()
+        .join(markharness::project_root::MARKHARNESS_DIR)
+        .join("generated");
     if generated_dir.is_dir() {
         std::fs::remove_dir_all(&generated_dir).unwrap();
     }

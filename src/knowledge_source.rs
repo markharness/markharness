@@ -46,12 +46,16 @@ impl<'a> GitTreeKnowledgeSource<'a> {
 impl KnowledgeSource for GitTreeKnowledgeSource<'_> {
     fn load_snapshot(&self) -> io::Result<KnowledgeSnapshot> {
         let staging = tempfile::tempdir()?;
-        for entry in git::ls_tree_recursive(self.repository_root, self.git_ref, "knowledge")? {
+        for entry in git::ls_tree_recursive(
+            self.repository_root,
+            self.git_ref,
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )? {
             if entry.kind != ObjectKind::Blob {
                 continue;
             }
             let relative = Path::new(&entry.path);
-            if !relative.starts_with("knowledge")
+            if !relative.starts_with(crate::project_root::KNOWLEDGE_PATH_IN_REPO)
                 || relative
                     .components()
                     .any(|component| !matches!(component, Component::Normal(_)))
@@ -65,6 +69,11 @@ impl KnowledgeSource for GitTreeKnowledgeSource<'_> {
             let content = git::show_blob_by_sha(self.repository_root, &entry.sha)?;
             replace_file(staging.path(), &target, content.as_bytes())?;
         }
-        generate::load_knowledge_snapshot(&staging.path().join("knowledge"))
+        generate::load_knowledge_snapshot(
+            &staging
+                .path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
     }
 }

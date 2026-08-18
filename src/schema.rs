@@ -48,7 +48,11 @@ pub const DEFAULT_SCHEMA_FILES: &[(&str, &str)] = &[
 
 /// Reads and parses `<root>/schema/<file_name>` as a JSON Schema document.
 pub fn load_schema(root: &Path, file_name: &str) -> io::Result<serde_json::Value> {
-    let content = fs::read_to_string(root.join("schema").join(file_name))?;
+    let content = fs::read_to_string(
+        root.join(crate::project_root::MARKHARNESS_DIR)
+            .join("schema")
+            .join(file_name),
+    )?;
     serde_json::from_str(&content).map_err(io::Error::other)
 }
 
@@ -185,9 +189,14 @@ expected:
     #[test]
     fn load_schema_reads_and_parses_a_project_schema_file() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("schema")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("schema"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("schema/feature.schema.json"),
+            dir.path().join(".markharness/schema/feature.schema.json"),
             r#"{"type": "object"}"#,
         )
         .unwrap();

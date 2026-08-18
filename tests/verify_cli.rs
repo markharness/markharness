@@ -52,15 +52,15 @@ fn commit_all_with_date(root: &Path, message: &str, hour_offset: u32) {
 /// (`generate::generate_testcases` derives `case_id` as
 /// `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}`).
 fn write_full_chain(root: &Path, label: &str) {
-    let dir = root.join("knowledge/req-todo/todo-edit/edit-existing-todo");
+    let dir = root.join(".markharness/knowledge/req-todo/todo-edit/edit-existing-todo");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        root.join("knowledge/req-todo/requirement.yml"),
+        root.join(".markharness/knowledge/req-todo/requirement.yml"),
         "id: req-todo\nlabel: req-todo\naxis: [ui]\n",
     )
     .unwrap();
     std::fs::write(
-        root.join("knowledge/req-todo/todo-edit/feature.yml"),
+        root.join(".markharness/knowledge/req-todo/todo-edit/feature.yml"),
         format!("id: todo-edit\nrequirement: req-todo\nlabel: {label}\naxis: [ui]\n"),
     )
     .unwrap();
@@ -126,7 +126,7 @@ fn init_project_with_pending_change() -> tempfile::TempDir {
     assert!(
         dir.path()
             .join(
-                "generated/testcases/req-todo/todo-edit/edit-existing-todo/edit-existing-todo.yml"
+                ".markharness/generated/testcases/req-todo/todo-edit/edit-existing-todo/edit-existing-todo.yml"
             )
             .is_file()
     );
@@ -141,7 +141,8 @@ fn init_project_with_pending_change() -> tempfile::TempDir {
         "--no-cache",
     ]);
     assert!(compute.status.success(), "{compute:?}");
-    let changes_content = std::fs::read_to_string(dir.path().join("changes/test2.yaml")).unwrap();
+    let changes_content =
+        std::fs::read_to_string(dir.path().join(".markharness/changes/test2.yaml")).unwrap();
     assert!(
         changes_content.contains("tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo"),
         "expected changes/test2.yaml to impact tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo, got:\n{changes_content}"

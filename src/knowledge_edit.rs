@@ -240,7 +240,10 @@ mod tests {
         crate::init::run_init(dir.path()).unwrap();
         for id in axis_ids {
             fs::write(
-                dir.path().join("axes").join(format!("{id}.yml")),
+                dir.path()
+                    .join(crate::project_root::MARKHARNESS_DIR)
+                    .join("axes")
+                    .join(format!("{id}.yml")),
                 format!("id: {id}\nlabel: {id}\n"),
             )
             .unwrap();
@@ -420,7 +423,7 @@ expected:
         assert_eq!(call_count.get(), 1);
         assert!(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
                 .exists()
         );
         assert!(!result.written_paths.is_empty());
@@ -470,7 +473,7 @@ expected:
 
         assert_eq!(call_count.get(), 1);
         assert_eq!(
-            fs::read_to_string(dir.path().join("axes/gameplay.yml")).unwrap(),
+            fs::read_to_string(dir.path().join(".markharness/axes/gameplay.yml")).unwrap(),
             "id: gameplay\nlabel: gameplay\n"
         );
         let output = String::from_utf8(writer).unwrap();
@@ -498,7 +501,7 @@ expected:
         run_edit_loop(dir.path(), &tmp_path, editor, &mut writer).unwrap();
 
         assert_eq!(call_count.get(), 2);
-        assert!(!dir.path().join("axes/validaton.yml").exists());
+        assert!(!dir.path().join(".markharness/axes/validaton.yml").exists());
         let output = String::from_utf8(writer).unwrap();
         assert!(output.contains("unknown_axis"));
         assert!(
@@ -528,8 +531,8 @@ expected:
         run_edit_loop(dir.path(), &tmp_path, editor, &mut writer).unwrap();
 
         assert_eq!(call_count.get(), 2);
-        assert!(dir.path().join("axes/state.yml").is_file());
-        assert!(!dir.path().join("axes/validaton.yml").exists());
+        assert!(dir.path().join(".markharness/axes/state.yml").is_file());
+        assert!(!dir.path().join(".markharness/axes/validaton.yml").exists());
     }
 
     #[test]
@@ -554,7 +557,7 @@ expected:
         // ever written; assert on content instead to prove "UI" itself was
         // never auto-created as-is.
         assert_eq!(
-            fs::read_to_string(dir.path().join("axes/ui.yml")).unwrap(),
+            fs::read_to_string(dir.path().join(".markharness/axes/ui.yml")).unwrap(),
             "id: ui\nlabel: ui\n"
         );
         let output = String::from_utf8(writer).unwrap();

@@ -80,7 +80,9 @@ pub struct ExecutionEntry {
 }
 
 pub fn read_all_results(root: &Path) -> io::Result<Vec<ExecutionEntry>> {
-    let executions = root.join("executions");
+    let executions = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("executions");
     let Ok(entries) = fs::read_dir(executions) else {
         return Ok(Vec::new());
     };
@@ -144,7 +146,10 @@ fn iso8601_utc_now() -> String {
 /// filename alone can't be used — and even the full relative path is only a
 /// mirror of `knowledge/`, not itself the identity being searched for).
 fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<MinimalTestCase>> {
-    let testcases_dir = root.join("generated").join("testcases");
+    let testcases_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("generated")
+        .join("testcases");
     for relative_path in crate::generate::list_files_recursive(&testcases_dir)? {
         if relative_path.extension().and_then(|e| e.to_str()) != Some("yml") {
             continue;
@@ -184,6 +189,7 @@ fn read_existing_entries(results_path: &Path) -> io::Result<Vec<ExecutionEntry>>
 
 pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordError> {
     let milestone_path = root
+        .join(crate::project_root::MARKHARNESS_DIR)
         .join("executions")
         .join(args.milestone)
         .join("milestone.yml");
@@ -203,6 +209,7 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordErro
     }
 
     let results_path = root
+        .join(crate::project_root::MARKHARNESS_DIR)
         .join("executions")
         .join(args.milestone)
         .join("results.yml");
@@ -231,7 +238,7 @@ mod tests {
     #[test]
     fn record_execution_errors_when_milestone_does_not_exist() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("generated/testcases")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/generated/testcases")).unwrap();
 
         let args = RecordArgs {
             milestone: "m1",
@@ -248,9 +255,13 @@ mod tests {
     #[test]
     fn record_execution_errors_when_case_id_does_not_exist() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
-        fs::write(dir.path().join("executions/m1/milestone.yml"), "id: m1\n").unwrap();
-        fs::create_dir_all(dir.path().join("generated/testcases")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/executions/m1/milestone.yml"),
+            "id: m1\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/generated/testcases")).unwrap();
 
         let args = RecordArgs {
             milestone: "m1",
@@ -266,11 +277,17 @@ mod tests {
 
     #[cfg(unix)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::os::unix::fs::symlink(target, link).unwrap();
     }
 
     #[cfg(windows)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         let status = std::process::Command::new("cmd")
             .args(["/c", "mklink", "/j"])
             .arg(link)
@@ -287,7 +304,11 @@ mod tests {
         write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
         let outside = tempfile::tempdir().unwrap();
         fs::write(outside.path().join("milestone.yml"), "id: m1\n").unwrap();
-        let milestone_dir = dir.path().join("executions").join("m1");
+        let milestone_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("executions")
+            .join("m1");
         fs::remove_dir_all(&milestone_dir).unwrap();
         link_dir(&milestone_dir, outside.path());
 
@@ -330,17 +351,24 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
-        let feature_dir = dir.path().join("knowledge/controls").join(feature_id);
+        let feature_dir = dir
+            .path()
+            .join(".markharness/knowledge/controls")
+            .join(feature_id);
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
             format!("id: {feature_id}\nrequirement: controls\nlabel: {feature_id}\naxis: []\n"),
         )
         .unwrap();
-        fs::create_dir_all(dir.path().join(format!("executions/{milestone}"))).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(format!(".markharness/executions/{milestone}")),
+        )
+        .unwrap();
         fs::write(
             dir.path()
-                .join(format!("executions/{milestone}/milestone.yml")),
+                .join(format!(".markharness/executions/{milestone}/milestone.yml")),
             format!("id: {milestone}\n"),
         )
         .unwrap();
@@ -356,7 +384,7 @@ mod tests {
         case_id: &str,
         feature_id: &str,
     ) {
-        let dir = root.join("generated/testcases");
+        let dir = root.join(".markharness/generated/testcases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{condition_id}.yml")),
@@ -390,7 +418,8 @@ mod tests {
         )
         .unwrap();
 
-        let content = fs::read_to_string(dir.path().join("executions/m1/results.yml")).unwrap();
+        let content =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
         let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
         assert_eq!(
             entries[0].verified_feature_tree_shas.get("player-jump"),
@@ -412,7 +441,8 @@ mod tests {
         };
         record_execution(dir.path(), &args).unwrap();
 
-        let content = fs::read_to_string(dir.path().join("executions/m1/results.yml")).unwrap();
+        let content =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
         assert!(content.contains("case_id: tc-ground-001"));
         assert!(content.contains("result: pass"));
         assert!(content.contains("executor: yamada"));
@@ -447,7 +477,8 @@ mod tests {
         )
         .unwrap();
 
-        let content = fs::read_to_string(dir.path().join("executions/m1/results.yml")).unwrap();
+        let content =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
         let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].case_id, "tc-ground-001");

@@ -20,11 +20,24 @@ fn run(args: &[&str]) -> Output {
 
 fn setup_root_with_axes(axis_ids: &[&str]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(dir.path().join("knowledge")).unwrap();
-    fs::create_dir_all(dir.path().join("axes")).unwrap();
+    fs::create_dir_all(
+        dir.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    )
+    .unwrap();
+    fs::create_dir_all(
+        dir.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("axes"),
+    )
+    .unwrap();
     for id in axis_ids {
         fs::write(
-            dir.path().join("axes").join(format!("{id}.yml")),
+            dir.path()
+                .join(markharness::project_root::MARKHARNESS_DIR)
+                .join("axes")
+                .join(format!("{id}.yml")),
             format!("id: {id}\nlabel: {id}\n"),
         )
         .unwrap();
@@ -244,7 +257,7 @@ fn apply_exits_zero_and_writes_files_on_success() {
     assert!(stdout.contains("\"written\":["), "{stdout}");
     assert!(
         dir.path()
-            .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
             .exists()
     );
 }
@@ -255,7 +268,7 @@ fn apply_writes_a_multiline_description_that_reparses_and_validates() {
     let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
     assert!(init_output.status.success(), "{init_output:?}");
     fs::write(
-        dir.path().join("axes/gameplay.yml"),
+        dir.path().join(".markharness/axes/gameplay.yml"),
         "id: gameplay\nlabel: gameplay\n",
     )
     .unwrap();
@@ -301,7 +314,7 @@ expected:
 
     let behavior_path = dir
         .path()
-        .join("knowledge/controls/player-jump/jump/behavior.yml");
+        .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml");
     let written = fs::read_to_string(&behavior_path).unwrap();
     let behavior = markharness::knowledge::parse_behavior(&written).unwrap();
     assert_eq!(
@@ -334,7 +347,7 @@ fn apply_exits_one_and_writes_nothing_on_validation_failure() {
     ]);
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(!dir.path().join("knowledge/controls").exists());
+    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
 }
 
 #[test]
@@ -355,7 +368,7 @@ fn apply_dry_run_validates_only_and_writes_nothing() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "{\"ok\":true}");
-    assert!(!dir.path().join("knowledge/controls").exists());
+    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
 }
 
 const SECOND_CONDITION_REUSING_PARENT: &str = "\
@@ -404,12 +417,12 @@ fn apply_batch_applies_every_draft_in_file_name_order() {
     assert!(stdout.contains("\"ok\":true"), "{stdout}");
     assert!(
         dir.path()
-            .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
             .exists()
     );
     assert!(
         dir.path()
-            .join("knowledge/controls/player-jump/jump/air/condition.yml")
+            .join(".markharness/knowledge/controls/player-jump/jump/air/condition.yml")
             .exists()
     );
 }
@@ -454,7 +467,7 @@ condition:
     assert!(stderr.contains("02-air.yml"), "{stderr}");
     assert!(
         !dir.path()
-            .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
             .exists(),
         "the first draft's files must be rolled back when the second draft is invalid"
     );
@@ -509,7 +522,7 @@ fn apply_batch_dry_run_validates_only_and_writes_nothing() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "{\"ok\":true}");
-    assert!(!dir.path().join("knowledge/controls").exists());
+    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
 }
 
 #[test]
@@ -532,7 +545,7 @@ fn validate_batch_exits_zero_and_writes_nothing_for_a_valid_batch() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "{\"ok\":true}");
-    assert!(!dir.path().join("knowledge/controls").exists());
+    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
 }
 
 #[test]
@@ -612,7 +625,7 @@ fn apply_batch_dry_run_json_reports_every_failing_file_not_just_the_first() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"file\":\"01-broken.yml\""), "{stdout}");
     assert!(stdout.contains("\"file\":\"02-invalid.yml\""), "{stdout}");
-    assert!(!dir.path().join("knowledge/controls").exists());
+    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
 }
 
 #[test]
@@ -661,7 +674,7 @@ fn apply_batch_json_reports_error_when_the_directory_has_no_yml_files() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"ok\":false"), "{stdout}");
     assert!(stdout.contains("\"error\":"), "{stdout}");
-    assert!(!dir.path().join("knowledge/controls").exists());
+    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
 }
 
 #[test]
@@ -741,7 +754,7 @@ fn apply_strip_redundant_prefix_strips_condition_id_and_succeeds() {
     assert_eq!(output.status.code(), Some(0));
     assert!(
         dir.path()
-            .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
             .exists()
     );
 }

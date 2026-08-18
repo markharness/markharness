@@ -3,11 +3,14 @@ use std::io;
 use std::path::Path;
 
 use crate::fs_safety::replace_file;
+use crate::project_root::MARKHARNESS_DIR;
 
 /// UC1〜UC8を支える物理ディレクトリ構成(論文 §3.5)。
 /// knowledge=UC1/UC1b, axes=UC1, generated=UC2/UC3, executions=UC4,
 /// changes=UC5/UC6, schema=UC7。
 /// UC8(既存ツールからのインポート)は専用ディレクトリを持たず knowledge/ に書き込む。
+/// いずれも `MARKHARNESS_DIR`(`.markharness/`)配下に置き、既存プロジェクトの
+/// トップレベル名前空間(`knowledge/`、`schema/`等)との衝突を避ける。
 const SUBDIRS: [&str; 6] = [
     "knowledge",
     "axes",
@@ -19,11 +22,15 @@ const SUBDIRS: [&str; 6] = [
 
 /// `markharness init` が管理する .gitignore エントリ。
 /// .markharness-cache/ は id解決キャッシュ(§3.3)で非コミット・毎プロジェクト再構築のため対象。
+/// `.markharness/` 本体(knowledge/axes/generated/executions/changes/schema)は
+/// git-native モデルの核であり、証跡としてコミットする対象なのでここには含めない。
+/// 誤って `.markharness/` ごと ignore しないよう注意すること。
 const GITIGNORE_ENTRIES: [&str; 1] = [".markharness-cache/"];
 
 pub fn run_init(root: &Path) -> io::Result<()> {
+    let markharness_root = root.join(MARKHARNESS_DIR);
     for name in SUBDIRS {
-        let dir = root.join(name);
+        let dir = markharness_root.join(name);
         if !dir.exists() {
             fs::create_dir_all(&dir)?;
         }
@@ -52,8 +59,9 @@ fn ensure_project_root_marker(root: &Path) -> io::Result<()> {
 /// subdirectory that is still empty after the rest of `init` has run, so
 /// the full UC1-UC8 directory layout is actually committable.
 fn ensure_gitkeep_in_empty_dirs(root: &Path) -> io::Result<()> {
+    let markharness_root = root.join(MARKHARNESS_DIR);
     for name in SUBDIRS {
-        let dir = root.join(name);
+        let dir = markharness_root.join(name);
         let is_empty = fs::read_dir(&dir)?.next().is_none();
         if is_empty {
             replace_file(root, &dir.join(".gitkeep"), b"")?;
@@ -66,7 +74,7 @@ fn ensure_gitkeep_in_empty_dirs(root: &Path) -> io::Result<()> {
 /// by `markharness validate`, without overwriting a file a project has
 /// already customized.
 fn ensure_default_schemas(root: &Path) -> io::Result<()> {
-    let schema_dir = root.join("schema");
+    let schema_dir = root.join(MARKHARNESS_DIR).join("schema");
     for (name, content) in crate::schema::DEFAULT_SCHEMA_FILES {
         let path = schema_dir.join(name);
         if !path.exists() {
@@ -116,21 +124,31 @@ mod tests {
         run_init(dir.path()).unwrap();
 
         for name in SUBDIRS {
-            assert!(dir.path().join(name).is_dir(), "{name} should be created");
+            assert!(
+                dir.path().join(MARKHARNESS_DIR).join(name).is_dir(),
+                "{name} should be created"
+            );
         }
     }
 
     #[test]
     fn creates_missing_directories_when_some_already_exist() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("knowledge")).unwrap();
-        let marker = dir.path().join("knowledge").join("marker.txt");
+        fs::create_dir_all(dir.path().join(MARKHARNESS_DIR).join("knowledge")).unwrap();
+        let marker = dir
+            .path()
+            .join(MARKHARNESS_DIR)
+            .join("knowledge")
+            .join("marker.txt");
         fs::write(&marker, "keep me").unwrap();
 
         run_init(dir.path()).unwrap();
 
         for name in SUBDIRS {
-            assert!(dir.path().join(name).is_dir(), "{name} should be created");
+            assert!(
+                dir.path().join(MARKHARNESS_DIR).join(name).is_dir(),
+                "{name} should be created"
+            );
         }
         assert_eq!(fs::read_to_string(&marker).unwrap(), "keep me");
     }
@@ -144,7 +162,7 @@ mod tests {
 
         assert!(result.is_ok());
         for name in SUBDIRS {
-            assert!(dir.path().join(name).is_dir());
+            assert!(dir.path().join(MARKHARNESS_DIR).join(name).is_dir());
         }
     }
 
@@ -202,7 +220,11 @@ mod tests {
 
         for (name, _) in crate::schema::DEFAULT_SCHEMA_FILES {
             assert!(
-                dir.path().join("schema").join(name).is_file(),
+                dir.path()
+                    .join(MARKHARNESS_DIR)
+                    .join("schema")
+                    .join(name)
+                    .is_file(),
                 "{name} should be created under schema/"
             );
         }
@@ -211,17 +233,14 @@ mod tests {
     #[test]
     fn does_not_overwrite_a_customized_schema_file() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("schema")).unwrap();
-        fs::write(
-            dir.path().join("schema/feature.schema.json"),
-            "custom content",
-        )
-        .unwrap();
+        let schema_dir = dir.path().join(MARKHARNESS_DIR).join("schema");
+        fs::create_dir_all(&schema_dir).unwrap();
+        fs::write(schema_dir.join("feature.schema.json"), "custom content").unwrap();
 
         run_init(dir.path()).unwrap();
 
         assert_eq!(
-            fs::read_to_string(dir.path().join("schema/feature.schema.json")).unwrap(),
+            fs::read_to_string(schema_dir.join("feature.schema.json")).unwrap(),
             "custom content"
         );
     }
@@ -241,12 +260,20 @@ mod tests {
 
         for name in ["knowledge", "axes", "generated", "executions", "changes"] {
             assert!(
-                dir.path().join(name).join(".gitkeep").is_file(),
+                dir.path()
+                    .join(MARKHARNESS_DIR)
+                    .join(name)
+                    .join(".gitkeep")
+                    .is_file(),
                 "{name} should contain a .gitkeep placeholder"
             );
         }
         assert!(
-            !dir.path().join("schema").join(".gitkeep").exists(),
+            !dir.path()
+                .join(MARKHARNESS_DIR)
+                .join("schema")
+                .join(".gitkeep")
+                .exists(),
             "schema/ already has real files and needs no placeholder"
         );
     }
@@ -254,16 +281,24 @@ mod tests {
     #[test]
     fn does_not_add_gitkeep_to_a_directory_that_already_has_content() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::create_dir_all(dir.path().join(MARKHARNESS_DIR).join("knowledge/req/feat")).unwrap();
         fs::write(
-            dir.path().join("knowledge/req/feat/feature.yml"),
+            dir.path()
+                .join(MARKHARNESS_DIR)
+                .join("knowledge/req/feat/feature.yml"),
             "id: feat\n",
         )
         .unwrap();
 
         run_init(dir.path()).unwrap();
 
-        assert!(!dir.path().join("knowledge").join(".gitkeep").exists());
+        assert!(
+            !dir.path()
+                .join(MARKHARNESS_DIR)
+                .join("knowledge")
+                .join(".gitkeep")
+                .exists()
+        );
     }
 
     #[test]

@@ -20,20 +20,20 @@ fn git(root: &Path, args: &[&str]) {
 }
 
 fn write_chain(root: &Path, description: &str) {
-    let base = root.join("knowledge/shop/checkout/pay/card");
+    let base = root.join(".markharness/knowledge/shop/checkout/pay/card");
     std::fs::create_dir_all(base.join("expected")).unwrap();
     std::fs::write(
-        root.join("knowledge/shop/requirement.yml"),
+        root.join(".markharness/knowledge/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join("knowledge/shop/checkout/feature.yml"),
+        root.join(".markharness/knowledge/shop/checkout/feature.yml"),
         "id: checkout\nrequirement: shop\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join("knowledge/shop/checkout/pay/behavior.yml"),
+        root.join(".markharness/knowledge/shop/checkout/pay/behavior.yml"),
         "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\n",
     )
     .unwrap();
@@ -60,9 +60,13 @@ fn working_tree_and_git_tree_adapters_load_the_same_snapshot_interface() {
     git(repo.path(), &["commit", "-qm", "base"]);
     write_chain(repo.path(), "Working tree card.");
 
-    let working = WorkingTreeKnowledgeSource::new(repo.path().join("knowledge"))
-        .load_snapshot()
-        .unwrap();
+    let working = WorkingTreeKnowledgeSource::new(
+        repo.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    )
+    .load_snapshot()
+    .unwrap();
     let historical = GitTreeKnowledgeSource::new(repo.path(), "HEAD")
         .load_snapshot()
         .unwrap();

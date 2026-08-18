@@ -484,7 +484,9 @@ pub enum KnowledgeCommand {
 fn handle_annotate_error(e: changes::AnnotateError) -> io::Result<()> {
     match e {
         changes::AnnotateError::NotFound(id) => {
-            eprintln!("error: no ChangeEvent with event_id '{id}' found under changes/");
+            eprintln!(
+                "error: no ChangeEvent with event_id '{id}' found under .markharness/changes/"
+            );
             process::exit(3);
         }
         changes::AnnotateError::Io(e) => Err(e),
@@ -500,7 +502,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             };
             init::run_init(&root)?;
             println!(
-                "initialized knowledge/, axes/, generated/, executions/, changes/, schema/ under {}",
+                "initialized .markharness/{{knowledge,axes,generated,executions,changes,schema}}/ under {}",
                 root.display()
             );
             Ok(())
@@ -705,7 +707,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             if json {
                 println!("{}", axes_to_json(&entries));
             } else if entries.is_empty() {
-                println!("no axes registered under axes/");
+                println!("no axes registered under .markharness/axes/");
             } else {
                 for entry in &entries {
                     match &entry.label {
@@ -741,7 +743,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     std::process::exit(2);
                 }
                 Err(axes::AddAxisError::AlreadyExists) => {
-                    eprintln!("error: axis '{id}' already exists under axes/");
+                    eprintln!("error: axis '{id}' already exists under .markharness/axes/");
                     std::process::exit(2);
                 }
                 Err(axes::AddAxisError::Io(e)) => {
@@ -756,11 +758,11 @@ pub fn run(cli: Cli) -> io::Result<()> {
             if json {
                 println!("{}", axes_prune_result_to_json(&unused, delete));
             } else if unused.is_empty() {
-                println!("no unused axes found under axes/");
+                println!("no unused axes found under .markharness/axes/");
             } else {
                 for id in &unused {
                     if delete {
-                        println!("deleted axes/{id}.yml (unused)");
+                        println!("deleted .markharness/axes/{id}.yml (unused)");
                     } else {
                         println!("{id} (unused)");
                     }
@@ -884,7 +886,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 },
             )?;
             for to_milestone in &report.processed {
-                println!("backfilled changes/{to_milestone}.yaml");
+                println!("backfilled .markharness/changes/{to_milestone}.yaml");
             }
             println!(
                 "backfill: {} processed, {} already up to date",
@@ -903,7 +905,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     if json {
                         println!("{{\"ok\":true,\"status\":\"created\"}}");
                     } else {
-                        println!("initialized executions/{tag}/milestone.yml");
+                        println!("initialized .markharness/executions/{tag}/milestone.yml");
                     }
                     Ok(())
                 }
@@ -911,7 +913,9 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     if json {
                         println!("{{\"ok\":true,\"status\":\"already_initialized\"}}");
                     } else {
-                        println!("executions/{tag}/milestone.yml is already initialized");
+                        println!(
+                            ".markharness/executions/{tag}/milestone.yml is already initialized"
+                        );
                     }
                     Ok(())
                 }
@@ -950,7 +954,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                         println!("{{\"ok\":true}}");
                     } else {
                         println!(
-                            "recorded {} for {case_id} into executions/{milestone}/results.yml",
+                            "recorded {} for {case_id} into .markharness/executions/{milestone}/results.yml",
                             args.result.as_str()
                         );
                     }
@@ -964,7 +968,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
                 Err(RecordError::CaseNotFound) => {
                     eprintln!(
-                        "error: case_id '{case_id}' not found in generated/testcases/. Run `markharness generate` first."
+                        "error: case_id '{case_id}' not found in .markharness/generated/testcases/. Run `markharness generate` first."
                     );
                     std::process::exit(2);
                 }
@@ -981,7 +985,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 if json {
                     println!("{{\"ok\":true}}");
                 } else {
-                    println!("knowledge/ and axes/ are valid");
+                    println!(".markharness/knowledge/ and .markharness/axes/ are valid");
                 }
                 Ok(())
             } else {
@@ -1005,7 +1009,9 @@ pub fn run(cli: Cli) -> io::Result<()> {
             if json {
                 println!("{}", verify_diffs_to_json(&diffs));
             } else if diffs.is_empty() {
-                println!("generated/testcases/ is up to date with knowledge/");
+                println!(
+                    ".markharness/generated/testcases/ is up to date with .markharness/knowledge/"
+                );
             } else {
                 for diff in &diffs {
                     let label = match diff.kind {
@@ -1013,7 +1019,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                         verify::DiffKind::Removed => "removed",
                         verify::DiffKind::Changed => "changed",
                     };
-                    println!("{label}: generated/{}", diff.file_name);
+                    println!("{label}: .markharness/generated/{}", diff.file_name);
                 }
             }
             if diffs.is_empty() {
@@ -1987,7 +1993,7 @@ mod tests {
         run(cli).unwrap();
 
         assert_eq!(
-            fs::read_to_string(dir.path().join("axes/state.yml")).unwrap(),
+            fs::read_to_string(dir.path().join(".markharness/axes/state.yml")).unwrap(),
             "id: state\nlabel: state\n"
         );
     }
@@ -2250,7 +2256,11 @@ mod tests {
 
         run(cli).unwrap();
 
-        assert!(dir.path().join("executions/m1/milestone.yml").is_file());
+        assert!(
+            dir.path()
+                .join(".markharness/executions/m1/milestone.yml")
+                .is_file()
+        );
     }
 
     #[test]
@@ -2277,7 +2287,9 @@ mod tests {
         ]);
         run(cli_again).unwrap();
 
-        let content = fs::read_to_string(dir.path().join("executions/m1/milestone.yml")).unwrap();
+        let content =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/milestone.yml"))
+                .unwrap();
         assert_eq!(content, "id: m1\n");
     }
 
@@ -2287,7 +2299,7 @@ mod tests {
         case_id: &str,
         feature_id: &str,
     ) {
-        let dir = root.join("generated/testcases");
+        let dir = root.join(".markharness/generated/testcases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{condition_id}.yml")),
@@ -2299,15 +2311,23 @@ mod tests {
     #[test]
     fn execution_record_writes_results_yml_when_milestone_and_case_exist() {
         let dir = init_git_repo_for_test();
-        fs::create_dir_all(dir.path().join("knowledge/controls/player-jump")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump"),
+        )
+        .unwrap();
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: []\n",
         )
         .unwrap();
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
-        fs::write(dir.path().join("executions/m1/milestone.yml"), "id: m1\n").unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/executions/m1/milestone.yml"),
+            "id: m1\n",
+        )
+        .unwrap();
         run_git_for_test(dir.path(), &["add", "-A"]);
         run_git_for_test(dir.path(), &["commit", "-q", "-m", "add feature"]);
         run_git_for_test(dir.path(), &["tag", "m1"]);
@@ -2329,7 +2349,8 @@ mod tests {
 
         run(cli).unwrap();
 
-        let content = fs::read_to_string(dir.path().join("executions/m1/results.yml")).unwrap();
+        let content =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
         assert!(content.contains("case_id: tc-ground-001"));
     }
 
@@ -2341,12 +2362,42 @@ mod tests {
 
         run(cli).unwrap();
 
-        assert!(target.join("knowledge").is_dir());
-        assert!(target.join("axes").is_dir());
-        assert!(target.join("generated").is_dir());
-        assert!(target.join("executions").is_dir());
-        assert!(target.join("changes").is_dir());
-        assert!(target.join("schema").is_dir());
+        assert!(
+            target
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge")
+                .is_dir()
+        );
+        assert!(
+            target
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("axes")
+                .is_dir()
+        );
+        assert!(
+            target
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("generated")
+                .is_dir()
+        );
+        assert!(
+            target
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("executions")
+                .is_dir()
+        );
+        assert!(
+            target
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes")
+                .is_dir()
+        );
+        assert!(
+            target
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("schema")
+                .is_dir()
+        );
         assert!(!target.join("tools").exists());
     }
 }

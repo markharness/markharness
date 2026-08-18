@@ -2,7 +2,9 @@
 
 日本語版 / Japanese version: [README.ja.md](./README.ja.md)
 
-A Git-native management CLI (Rust) for test knowledge (Feature / Condition / ExpectedResult) that uses Git itself as the backend. It deterministically generates `TestCase`s from test knowledge hand-written as YAML under `knowledge/`, and automatically computes `ChangeEvent`s (a diff log of each Feature's version history — not a persistently queryable graph) by comparing Git tree SHAs between milestone tags. This main-lineage computation (`changes compute`) only looks at the tree diff between two milestones, so it does not depend on branching workflow (merge/squash/rebase); however, the secondary feature that audits the branching itself (`changes lineage`, `true_divergences`) assumes merge commits are preserved, so it does not work under a squash/rebase workflow (see [docs/en/cli-manual.md](./docs/en/cli-manual.md) §1.11/1.16 for details).
+A Git-native management CLI (Rust) for test knowledge (Feature / Condition / ExpectedResult) that uses Git itself as the backend. It deterministically generates `TestCase`s from test knowledge hand-written as YAML under `.markharness/knowledge/`, and automatically computes `ChangeEvent`s (a diff log of each Feature's version history — not a persistently queryable graph) by comparing Git tree SHAs between milestone tags. This main-lineage computation (`changes compute`) only looks at the tree diff between two milestones, so it does not depend on branching workflow (merge/squash/rebase); however, the secondary feature that audits the branching itself (`changes lineage`, `true_divergences`) assumes merge commits are preserved, so it does not work under a squash/rebase workflow (see [docs/en/cli-manual.md](./docs/en/cli-manual.md) §1.11/1.16 for details).
+
+All files markharness manages live under the single `.markharness/` namespace (`knowledge/`, `axes/`, `generated/`, `executions/`, `changes/`, `schema/`), so they don't collide with a pre-existing top-level `knowledge/` or `schema/` in the host project. Everything under `.markharness/` is meant to be committed — including `generated/` and `executions/`, which serve as an audit trail in this Git-native model — except `.markharness-cache/` (the id-resolution cache), which `markharness init` adds to `.gitignore`.
 
 For the design background, see [docs/en/git-native-model-for-test-knowledge-management.md](./docs/en/git-native-model-for-test-knowledge-management.md); for product details, see [docs/en/product-operation.md](./docs/en/product-operation.md). For how to contribute, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
@@ -17,14 +19,14 @@ A complete set of sample knowledge data is at [examples/todo-minimal/](./example
 mkdir my-todo-project && cd my-todo-project
 git init
 
-# 2. markharness init — creates knowledge/ / axes/ / generated/ / executions/ / changes/ / schema/
+# 2. markharness init — creates .markharness/{knowledge,axes,generated,executions,changes,schema}/
 markharness init
 
 # 3. Register knowledge — use the axis registry and draft YAML from examples/todo-minimal/
-cp -r <path to your markharness clone>/examples/todo-minimal/axes .
+cp -r <path to your markharness clone>/examples/todo-minimal/axes .markharness/
 markharness knowledge apply <path to your markharness clone>/examples/todo-minimal/draft-v1.yml
 
-# 4. Generate — deterministically generate TestCase from knowledge/
+# 4. Generate — deterministically generate TestCase from .markharness/knowledge/
 markharness generate
 
 # 5. Milestone (git tag) — tag the first release point
@@ -42,7 +44,7 @@ markharness milestone init v2
 
 # 6. changes compute — automatically compute the ChangeEvent between v1..v2
 markharness changes compute v1 v2
-cat changes/v2.yaml
+cat .markharness/changes/v2.yaml
 
 # Build the same range as a reviewable, versioned Verification Plan
 markharness plan --base v1 --head v2 --format json
@@ -56,7 +58,7 @@ markharness execution record tc-todo-management-add-todo-add-task-max-length --m
 markharness verify pending --from v1 --to v2
 ```
 
-The `case_id`s above follow the generator's `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` rule; if you're unsure of the exact id after `generate`, read it from the generated file directly (e.g. `generated/testcases/todo-management/add-todo/add-task/empty-title.yml`).
+The `case_id`s above follow the generator's `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` rule; if you're unsure of the exact id after `generate`, read it from the generated file directly (e.g. `.markharness/generated/testcases/todo-management/add-todo/add-task/empty-title.yml`).
 
 The final `verify pending` detects that both TestCases affected by `v1..v2` already have execution records as of `v2`, and reports 0 `pending` (not-yet-re-executed) items. If you skip both recording steps and run `verify pending` directly, these same two TestCases are instead reported as pending (verified hands-on with the command sequence above).
 
@@ -66,7 +68,7 @@ See [docs/en/cli-manual.md](./docs/en/cli-manual.md) for the detailed options an
 
 - **Git tags are a prerequisite for milestones**: `changes compute` / `backfill run` can only treat points that have been `git tag`ged as milestones. Release boundaries cannot be recognized unless a tag is created (the act of tagging itself, per UC4, remains a human decision point that `markharness` does not perform on your behalf).
 - **`git notes` are not automatically synced by push/fetch**: Backfill progress records ([§4.3](./docs/en/git-native-model-for-test-knowledge-management.md)) are stored under `refs/notes/markharness-backfill`, which is outside the scope of ordinary `git push`/`git fetch`. When operating as a team on a shared repository, add `git push origin refs/notes/*` and a corresponding fetch configuration (e.g. `git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'`) for each member and CI environment.
-- **Canonical import currently supports native knowledge and JUnit XML**: `markharness import --source native|junit --format json` emits a versioned canonical snapshot. TestRail/Xray migration into `knowledge/` remains outside the current scope; use `knowledge apply`/`add` for authoring settled knowledge.
+- **Canonical import currently supports native knowledge and JUnit XML**: `markharness import --source native|junit --format json` emits a versioned canonical snapshot. TestRail/Xray migration into `.markharness/knowledge/` remains outside the current scope; use `knowledge apply`/`add` for authoring settled knowledge.
 
 ## Unaddressed items
 
@@ -76,7 +78,7 @@ See [docs/en/git-native-model-for-test-knowledge-management.md §3.6 Summary of 
 - The id-resolution cache's `canonicalization_rule_version` / `id_index_schema_version` — currently fixed values; an actual revision workflow is unverified.
 - Rewriting the `id:` field in `feature.yml` breaks tracking as the same Feature (unlike a directory rename), severing version history. There is currently no migration procedure or alias mechanism (see [decisions/0004](./docs/en/decisions/0004-feature-id-change-migration.md) for the discussion).
 - A general-purpose, independent id↔path index layer (e.g. tracking an id change that doesn't change the path) — not implemented.
-- `verify trace` / `verify pending` are not applied retroactively to existing execution records predating their introduction (those without `verified_feature_tree_shas`) — treated as "unknown". `executions/*/results.yml` is JSON-Schema-validated (`schema/execution_result.schema.json`).
+- `verify trace` / `verify pending` are not applied retroactively to existing execution records predating their introduction (those without `verified_feature_tree_shas`) — treated as "unknown". `.markharness/executions/*/results.yml` is JSON-Schema-validated (`.markharness/schema/execution_result.schema.json`).
 - `markharness backfill run` — not a resident daemon; designed to process one pass of unprocessed pairs per invocation and then exit (intended to be invoked repeatedly, e.g. from CI).
 
 ## Development

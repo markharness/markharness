@@ -27,7 +27,10 @@ pub fn milestone_init(root: &Path, tag: &str) -> Result<MilestoneInitOutcome, Mi
         return Err(MilestoneInitError::TagNotFound);
     }
 
-    let milestone_dir = root.join("executions").join(tag);
+    let milestone_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("executions")
+        .join(tag);
     let milestone_path = milestone_dir.join("milestone.yml");
     if milestone_path.is_file() {
         return Ok(MilestoneInitOutcome::AlreadyInitialized);
@@ -68,11 +71,17 @@ mod tests {
 
     #[cfg(unix)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::os::unix::fs::symlink(target, link).unwrap();
     }
 
     #[cfg(windows)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         let status = Command::new("cmd")
             .args(["/c", "mklink", "/j"])
             .arg(link)
@@ -90,7 +99,12 @@ mod tests {
         commit_all(dir.path(), "init");
         run_git(dir.path(), &["tag", "m1"]);
         let outside = tempfile::tempdir().unwrap();
-        link_dir(&dir.path().join("executions"), outside.path());
+        link_dir(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("executions"),
+            outside.path(),
+        );
 
         let result = milestone_init(dir.path(), "m1");
 
@@ -119,7 +133,9 @@ mod tests {
         let result = milestone_init(dir.path(), "m1");
 
         assert_eq!(result.unwrap(), MilestoneInitOutcome::Created);
-        let written = fs::read_to_string(dir.path().join("executions/m1/milestone.yml")).unwrap();
+        let written =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/milestone.yml"))
+                .unwrap();
         assert_eq!(written, "id: m1\n");
     }
 
@@ -129,7 +145,7 @@ mod tests {
         fs::write(dir.path().join("README.md"), "hello\n").unwrap();
         commit_all(dir.path(), "init");
         run_git(dir.path(), &["tag", "m1"]);
-        let milestone_path = dir.path().join("executions/m1/milestone.yml");
+        let milestone_path = dir.path().join(".markharness/executions/m1/milestone.yml");
         fs::create_dir_all(milestone_path.parent().unwrap()).unwrap();
         fs::write(&milestone_path, "id: m1\nlabel: hand-edited\n").unwrap();
 

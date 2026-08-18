@@ -4,6 +4,19 @@ use std::path::{Path, PathBuf};
 /// `init`(`src/init.rs`)が作成するプロジェクトルートの目印。
 pub const MARKER_FILE: &str = ".markharness.toml";
 
+/// markharness が管理するディレクトリ群(knowledge/axes/generated/executions/
+/// changes/schema)を集約する名前空間。既存プロジェクトへの導入時にトップ
+/// レベルの汎用的な名前(`knowledge/`、`schema/`等)が既存ディレクトリと衝突
+/// するのを避けるため、単一のドットディレクトリ配下にまとめる。
+/// 中身は `.markharness-cache/`(id解決キャッシュ)を除きコミット対象。
+pub const MARKHARNESS_DIR: &str = ".markharness";
+
+/// `knowledge/`(`MARKHARNESS_DIR` 配下)へのリポジトリ相対パス。`git ls-tree`
+/// 等の pathspec は `Path::join` を使わず生文字列で渡すため、`MARKHARNESS_DIR`
+/// と別に持つ。値を変更する際は両者を一致させること(Rust の `const` は
+/// 文字列連結ができないため手動同期が必要)。
+pub const KNOWLEDGE_PATH_IN_REPO: &str = ".markharness/knowledge";
+
 /// `start` からファイルシステムルートまで遡り、`MARKER_FILE` を持つ
 /// 最も近い祖先ディレクトリ(nested projectでは最も内側のプロジェクト)を返す。
 pub fn find_root(start: &Path) -> Option<PathBuf> {
@@ -43,6 +56,19 @@ pub fn resolve(explicit: Option<PathBuf>, cwd: &Path) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markharness_dir_is_a_single_dot_directory_namespace() {
+        assert_eq!(MARKHARNESS_DIR, ".markharness");
+    }
+
+    #[test]
+    fn knowledge_path_in_repo_stays_in_sync_with_markharness_dir() {
+        assert_eq!(
+            KNOWLEDGE_PATH_IN_REPO,
+            format!("{MARKHARNESS_DIR}/knowledge")
+        );
+    }
 
     #[test]
     fn resolve_returns_explicit_dir_without_searching() {

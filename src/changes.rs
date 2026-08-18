@@ -208,7 +208,10 @@ fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
 /// the same past `from_milestone..to_milestone` interval later can yield a
 /// different `impacted_testcases` set as the working tree keeps changing.
 fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec<String>>> {
-    let source = WorkingTreeKnowledgeSource::new(root.join("knowledge"));
+    let source = WorkingTreeKnowledgeSource::new(
+        root.join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    );
     testcases_by_feature(generate::compile_testcases(&source.load_snapshot()?))
 }
 
@@ -341,7 +344,10 @@ pub fn serialize_changes(events: &[ChangeEvent]) -> String {
 /// is `milestone`, written by `compute_changes`/`serialize_changes`).
 /// Returns an empty list if the file doesn't exist, rather than an error.
 pub fn read_changes(root: &Path, milestone: &str) -> io::Result<Vec<ChangeEvent>> {
-    let path = root.join("changes").join(format!("{milestone}.yaml"));
+    let path = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("changes")
+        .join(format!("{milestone}.yaml"));
     if !path.is_file() {
         return Ok(Vec::new());
     }
@@ -392,7 +398,9 @@ pub fn annotate_change_type(
 }
 
 fn changes_yaml_paths(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let changes_dir = root.join("changes");
+    let changes_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("changes");
     let mut entries: Vec<PathBuf> = fs::read_dir(&changes_dir)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
@@ -513,20 +521,20 @@ mod tests {
     }
 
     fn write_full_chain(root: &Path, label: &str) {
-        let base = root.join("knowledge/controls/player-jump/jump/ground");
+        let base = root.join(".markharness/knowledge/controls/player-jump/jump/ground");
         fs::create_dir_all(&base).unwrap();
         fs::write(
-            root.join("knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
-            root.join("knowledge/controls/player-jump/feature.yml"),
+            root.join(".markharness/knowledge/controls/player-jump/feature.yml"),
             format!("id: player-jump\nrequirement: controls\nlabel: {label}\naxis: [gameplay]\n"),
         )
         .unwrap();
         fs::write(
-            root.join("knowledge/controls/player-jump/jump/behavior.yml"),
+            root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
             "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n",
         )
         .unwrap();
@@ -615,7 +623,9 @@ mod tests {
         // after m2 was tagged: a second Condition/ExpectedResult under the
         // same Feature. Recomputing the m1..m2 interval later must not pick
         // this up under the default (historical) mode.
-        let air = dir.path().join("knowledge/controls/player-jump/jump/air");
+        let air = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/jump/air");
         fs::create_dir_all(&air).unwrap();
         fs::write(
             air.join("condition.yml"),
@@ -661,7 +671,9 @@ mod tests {
         // Same later, uncommitted addition as the historical-mode test
         // above, but this time the opt-in current-tree mode must reflect it
         // (legacy behavior, preserved for backward compatibility).
-        let air = dir.path().join("knowledge/controls/player-jump/jump/air");
+        let air = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/jump/air");
         fs::create_dir_all(&air).unwrap();
         fs::write(
             air.join("condition.yml"),
@@ -711,7 +723,7 @@ mod tests {
         // byte-for-byte identical between m1 and m2.
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/ground/condition.yml"),
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
             "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from a moving platform.\n",
         )
         .unwrap();
@@ -735,7 +747,12 @@ mod tests {
     #[test]
     fn reports_added_event_when_feature_did_not_exist_at_from_milestone() {
         let dir = init_repo();
-        fs::create_dir_all(dir.path().join("knowledge")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
         fs::write(dir.path().join("README.md"), "empty\n").unwrap();
         commit_and_tag(dir.path(), "empty", "m1");
 
@@ -764,7 +781,7 @@ mod tests {
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "v1", "m1");
 
-        fs::remove_dir_all(dir.path().join("knowledge/controls")).unwrap();
+        fs::remove_dir_all(dir.path().join(".markharness/knowledge/controls")).unwrap();
         commit_and_tag(dir.path(), "remove feature", "m2");
 
         let events = compute_changes(
@@ -832,9 +849,14 @@ mod tests {
     #[test]
     fn read_changes_defaults_change_type_to_none_for_files_written_before_the_field_existed() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n",
         )
         .unwrap();
@@ -868,7 +890,12 @@ mod tests {
     #[test]
     fn read_changes_returns_events_written_by_serialize_changes() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         let events = vec![ChangeEvent {
             event_id: "player-jump--m1--m2".to_string(),
             feature_id: "player-jump".to_string(),
@@ -882,7 +909,7 @@ mod tests {
             related_events: Vec::new(),
         }];
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&events),
         )
         .unwrap();
@@ -919,9 +946,14 @@ mod tests {
     #[test]
     fn annotate_change_type_sets_the_field_on_the_matching_event() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&[sample_event("player-jump--m1--m2")]),
         )
         .unwrap();
@@ -935,9 +967,14 @@ mod tests {
     #[test]
     fn annotate_change_type_preserves_other_events_in_the_same_file() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&[
                 sample_event("player-jump--m1--m2"),
                 sample_event("other-feature--m1--m2"),
@@ -958,14 +995,19 @@ mod tests {
     #[test]
     fn annotate_change_type_searches_across_multiple_changes_files() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&[sample_event("player-jump--m1--m2")]),
         )
         .unwrap();
         fs::write(
-            dir.path().join("changes/m3.yaml"),
+            dir.path().join(".markharness/changes/m3.yaml"),
             serialize_changes(&[sample_event("player-jump--m2--m3")]),
         )
         .unwrap();
@@ -1032,7 +1074,10 @@ mod tests {
         commit_and_tag(dir.path(), "base", "m1");
         run_git(dir.path(), &["branch", "feature"]);
 
-        run_git(dir.path(), &["rm", "-rq", "knowledge/controls/player-jump"]);
+        run_git(
+            dir.path(),
+            &["rm", "-rq", ".markharness/knowledge/controls/player-jump"],
+        );
         commit_and_tag(dir.path(), "delete on main", "main-tip");
 
         run_git(dir.path(), &["checkout", "-q", "feature"]);
@@ -1057,7 +1102,7 @@ mod tests {
                 "checkout",
                 "feature",
                 "--",
-                "knowledge/controls/player-jump",
+                ".markharness/knowledge/controls/player-jump",
             ],
         );
         run_git(dir.path(), &["add", "-A"]);
@@ -1107,9 +1152,14 @@ mod tests {
     #[test]
     fn annotate_change_type_errors_when_event_id_does_not_exist() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&[sample_event("player-jump--m1--m2")]),
         )
         .unwrap();
@@ -1139,9 +1189,14 @@ mod tests {
     #[test]
     fn read_changes_defaults_related_events_to_empty_for_files_written_before_the_field_existed() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n",
         )
         .unwrap();
@@ -1154,9 +1209,14 @@ mod tests {
     #[test]
     fn annotate_related_events_appends_ids_on_the_matching_event() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&[
                 sample_event("player-jump--m1--m2"),
                 sample_event("other-feature--m1--m2"),
@@ -1190,9 +1250,14 @@ mod tests {
     #[test]
     fn annotate_related_events_errors_when_the_target_event_id_does_not_exist() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&[sample_event("player-jump--m1--m2")]),
         )
         .unwrap();
@@ -1205,9 +1270,14 @@ mod tests {
     #[test]
     fn annotate_related_events_errors_when_a_related_event_id_does_not_exist() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("changes")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("changes/m2.yaml"),
+            dir.path().join(".markharness/changes/m2.yaml"),
             serialize_changes(&[sample_event("player-jump--m1--m2")]),
         )
         .unwrap();

@@ -58,5 +58,9 @@ fn milestone_init_exits_two_when_tag_does_not_exist() {
         stderr.contains("git tag m1"),
         "expected guidance to create the tag, got: {stderr}"
     );
-    assert!(!dir.path().join("executions/m1/milestone.yml").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/executions/m1/milestone.yml")
+            .exists()
+    );
 }

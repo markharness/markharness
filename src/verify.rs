@@ -53,14 +53,23 @@ fn read_existing_testcases(generated_dir: &Path) -> io::Result<BTreeMap<String, 
 /// Regenerates testcases from `root/knowledge` and compares them against the
 /// committed files in `root/generated/testcases/`, without writing anything.
 pub fn diff_generated_testcases(root: &Path) -> io::Result<Vec<DiffEntry>> {
-    let testcases = generate_testcases(&root.join("knowledge"))?;
+    let testcases = generate_testcases(
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    )?;
     let mut expected: BTreeMap<String, String> = BTreeMap::new();
     for testcase in &testcases {
         let key = to_diff_key(&testcase.relative_path());
         expected.insert(key, serialize_testcase(testcase));
     }
 
-    let existing = read_existing_testcases(&root.join("generated").join("testcases"))?;
+    let existing = read_existing_testcases(
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated")
+            .join("testcases"),
+    )?;
 
     let mut diffs = Vec::new();
     for (file_name, content) in &expected {
@@ -87,7 +96,10 @@ pub fn diff_generated_testcases(root: &Path) -> io::Result<Vec<DiffEntry>> {
 
     let index = build_index(&testcases);
     let expected_index_json = serialize_index(&index);
-    let index_path = root.join("generated").join("traceability-index.json");
+    let index_path = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("generated")
+        .join("traceability-index.json");
     match fs::read_to_string(&index_path) {
         Err(_) => diffs.push(DiffEntry {
             file_name: "traceability-index.json".to_string(),
@@ -147,7 +159,11 @@ impl From<io::Error> for TraceError {
 }
 
 fn read_results(root: &Path, milestone: &str) -> io::Result<Vec<ExecutionEntry>> {
-    let path = root.join("executions").join(milestone).join("results.yml");
+    let path = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("executions")
+        .join(milestone)
+        .join("results.yml");
     if !path.is_file() {
         return Ok(Vec::new());
     }
@@ -159,7 +175,9 @@ fn read_results(root: &Path, milestone: &str) -> io::Result<Vec<ExecutionEntry>>
 /// `to_milestone` file (a Feature's blob can have last changed several
 /// milestones before the one being traced).
 fn read_all_changes(root: &Path) -> io::Result<Vec<crate::changes::ChangeEvent>> {
-    let changes_dir = root.join("changes");
+    let changes_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("changes");
     let Ok(entries) = fs::read_dir(&changes_dir) else {
         return Ok(Vec::new());
     };
@@ -438,20 +456,21 @@ mod tests {
     use std::fs;
 
     fn write_knowledge_todo_add_task(root: &Path) {
-        let dir = root.join("knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
+        let dir = root
+            .join(".markharness/knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            root.join("knowledge/req-todo/requirement.yml"),
+            root.join(".markharness/knowledge/req-todo/requirement.yml"),
             "id: req-todo\nlabel: req-todo\naxis: [ui]\n",
         )
         .unwrap();
         fs::write(
-            root.join("knowledge/req-todo/todo/feature.yml"),
+            root.join(".markharness/knowledge/req-todo/todo/feature.yml"),
             "id: todo\nrequirement: req-todo\nlabel: todo\naxis: [ui]\n",
         )
         .unwrap();
         fs::write(
-            root.join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
+            root.join(".markharness/knowledge/req-todo/todo/todo-add-task/behavior.yml"),
             "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\n",
         )
         .unwrap();
@@ -472,10 +491,15 @@ mod tests {
     /// regeneration from `root/knowledge`, so tests can isolate the
     /// testcases-file diff behavior from the index-file diff behavior.
     fn write_matching_index(root: &Path) {
-        let testcases = generate_testcases(&root.join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &root
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
         let index = build_index(&testcases);
         fs::write(
-            root.join("generated/traceability-index.json"),
+            root.join(".markharness/generated/traceability-index.json"),
             serialize_index(&index),
         )
         .unwrap();
@@ -517,8 +541,13 @@ mod tests {
         crate::init::run_init(dir.path()).unwrap();
         write_knowledge_todo_add_task(dir.path());
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
-        let testcases_dir = dir.path().join("generated/testcases");
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+        let testcases_dir = dir.path().join(".markharness/generated/testcases");
         for testcase in &testcases {
             let path = testcases_dir.join(testcase.relative_path());
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -539,7 +568,7 @@ mod tests {
 
         let testcases_dir = dir
             .path()
-            .join("generated/testcases/req-todo/todo/todo-add-task");
+            .join(".markharness/generated/testcases/req-todo/todo/todo-add-task");
         fs::create_dir_all(&testcases_dir).unwrap();
         fs::write(
             testcases_dir.join("todo-add-task-empty-input.yml"),
@@ -567,7 +596,7 @@ mod tests {
 
         let testcases_dir = dir
             .path()
-            .join("generated/testcases/req-todo/todo/todo-add-task");
+            .join(".markharness/generated/testcases/req-todo/todo/todo-add-task");
         fs::create_dir_all(&testcases_dir).unwrap();
         fs::write(testcases_dir.join("stale-condition.yml"), "stale content\n").unwrap();
         write_matching_index(dir.path());
@@ -588,8 +617,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_knowledge_todo_add_task(dir.path());
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
-        let testcases_dir = dir.path().join("generated/testcases");
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+        let testcases_dir = dir.path().join(".markharness/generated/testcases");
         for testcase in &testcases {
             let path = testcases_dir.join(testcase.relative_path());
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -612,15 +646,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_knowledge_todo_add_task(dir.path());
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
-        let testcases_dir = dir.path().join("generated/testcases");
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+        let testcases_dir = dir.path().join(".markharness/generated/testcases");
         for testcase in &testcases {
             let path = testcases_dir.join(testcase.relative_path());
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, serialize_testcase(testcase)).unwrap();
         }
         fs::write(
-            dir.path().join("generated/traceability-index.json"),
+            dir.path()
+                .join(".markharness/generated/traceability-index.json"),
             "{\"testcases\":[]}",
         )
         .unwrap();
@@ -637,13 +677,18 @@ mod tests {
     }
 
     fn write_results(root: &Path, milestone: &str, yaml: &str) {
-        let dir = root.join("executions").join(milestone);
+        let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("executions")
+            .join(milestone);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("results.yml"), yaml).unwrap();
     }
 
     fn write_changes(root: &Path, to_milestone: &str, yaml: &str) {
-        let dir = root.join("changes");
+        let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(format!("{to_milestone}.yaml")), yaml).unwrap();
     }
@@ -659,9 +704,15 @@ mod tests {
     }
 
     fn commit_and_tag_milestone(root: &Path, milestone: &str, hour_offset: u32) {
-        fs::create_dir_all(root.join("executions").join(milestone)).unwrap();
+        fs::create_dir_all(
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("executions")
+                .join(milestone),
+        )
+        .unwrap();
         fs::write(
-            root.join("executions")
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("executions")
                 .join(milestone)
                 .join("milestone.yml"),
             format!("id: {milestone}\n"),
@@ -682,7 +733,7 @@ mod tests {
     }
 
     fn write_feature(root: &Path, label: &str) {
-        let dir = root.join("knowledge/req-todo/todo-edit");
+        let dir = root.join(".markharness/knowledge/req-todo/todo-edit");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("feature.yml"),

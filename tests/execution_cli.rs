@@ -25,7 +25,7 @@ fn init_project() -> tempfile::TempDir {
 }
 
 fn write_generated_testcase(root: &Path, condition_id: &str, case_id: &str) {
-    let dir = root.join("generated/testcases");
+    let dir = root.join(".markharness/generated/testcases");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join(format!("{condition_id}.yml")),
@@ -35,7 +35,10 @@ fn write_generated_testcase(root: &Path, condition_id: &str, case_id: &str) {
 }
 
 fn write_milestone(root: &Path, milestone: &str) {
-    let dir = root.join("executions").join(milestone);
+    let dir = root
+        .join(markharness::project_root::MARKHARNESS_DIR)
+        .join("executions")
+        .join(milestone);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("milestone.yml"), format!("id: {milestone}\n")).unwrap();
 }
@@ -65,7 +68,11 @@ fn execution_record_exits_two_when_milestone_does_not_exist() {
         stderr.contains("milestone 'm1' not found"),
         "unexpected stderr: {stderr}"
     );
-    assert!(!dir.path().join("executions/m1/results.yml").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/executions/m1/results.yml")
+            .exists()
+    );
 }
 
 #[test]
@@ -93,5 +100,9 @@ fn execution_record_exits_two_when_case_id_does_not_exist() {
         stderr.contains("case_id 'tc-does-not-exist-001' not found"),
         "unexpected stderr: {stderr}"
     );
-    assert!(!dir.path().join("executions/m1/results.yml").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/executions/m1/results.yml")
+            .exists()
+    );
 }

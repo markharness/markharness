@@ -23,7 +23,7 @@ fn resolves_the_project_root_from_a_nested_subdirectory_without_dir_flag() {
     let init_output = run_in(dir.path(), &["init", "--dir", "."]);
     assert!(init_output.status.success());
 
-    let nested = dir.path().join("knowledge/some/nested/place");
+    let nested = dir.path().join(".markharness/knowledge/some/nested/place");
     std::fs::create_dir_all(&nested).unwrap();
 
     let output = run_in(&nested, &["axes", "list", "--json"]);

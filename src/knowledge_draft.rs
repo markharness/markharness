@@ -124,7 +124,7 @@ struct AxisEntry {
 }
 
 pub fn load_axis_registry(root: &Path) -> HashSet<String> {
-    let axes_dir = root.join("axes");
+    let axes_dir = root.join(crate::project_root::MARKHARNESS_DIR).join("axes");
     let Ok(entries) = fs::read_dir(&axes_dir) else {
         return HashSet::new();
     };
@@ -408,7 +408,9 @@ pub fn validate_draft(
 ) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let axis_registry = load_axis_registry(root);
-    let knowledge_root = root.join("knowledge");
+    let knowledge_root = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge");
 
     push_invalid_slug(&mut errors, "requirement.id", &draft.requirement.id);
     push_invalid_slug(&mut errors, "feature.id", &draft.feature.id);
@@ -731,7 +733,10 @@ expected:
     #[test]
     fn load_axis_registry_reads_ids_from_axes_yml_files() {
         let dir = tempfile::tempdir().unwrap();
-        let axes_dir = dir.path().join("axes");
+        let axes_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("axes");
         fs::create_dir_all(&axes_dir).unwrap();
         fs::write(
             axes_dir.join("gameplay.yml"),
@@ -756,10 +761,18 @@ expected:
     fn setup_root_with_axes(axis_ids: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        fs::create_dir_all(dir.path().join("knowledge")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
         for id in axis_ids {
             fs::write(
-                dir.path().join("axes").join(format!("{id}.yml")),
+                dir.path()
+                    .join(crate::project_root::MARKHARNESS_DIR)
+                    .join("axes")
+                    .join(format!("{id}.yml")),
                 format!("id: {id}\nlabel: {id}\n"),
             )
             .unwrap();
@@ -1037,29 +1050,30 @@ expected:
         // whose literal name still carries the redundant prefix.
         fs::create_dir_all(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/jump-ground"),
+                .join(".markharness/knowledge/controls/player-jump/jump/jump-ground"),
         )
         .unwrap();
         fs::write(
-            dir.path().join("knowledge/controls/requirement.yml"),
+            dir.path()
+                .join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/behavior.yml"),
+                .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
             "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/jump-ground/condition.yml"),
+                .join(".markharness/knowledge/controls/player-jump/jump/jump-ground/condition.yml"),
             "id: jump-ground\nbehavior: jump\nlabel: jump-ground\ndescription: |\n  legacy\n",
         )
         .unwrap();
@@ -1082,15 +1096,20 @@ expected:
     #[test]
     fn validate_draft_reports_parent_not_found_when_existing_feature_has_different_requirement() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        fs::create_dir_all(dir.path().join("knowledge/controls/player-jump")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("knowledge/controls/requirement.yml"),
+            dir.path()
+                .join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: some-other-requirement\nlabel: player-jump\naxis: [gameplay, animation]\n",
         )
         .unwrap();
@@ -1128,15 +1147,20 @@ expected:
     #[test]
     fn validate_draft_allows_forked_from_when_referenced_feature_exists() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        fs::create_dir_all(dir.path().join("knowledge/controls/player-jump")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump"),
+        )
+        .unwrap();
         fs::write(
-            dir.path().join("knowledge/controls/requirement.yml"),
+            dir.path()
+                .join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n",
         )
         .unwrap();
@@ -1156,9 +1180,10 @@ expected:
     #[test]
     fn validate_draft_reports_conflicting_existing_value_when_label_differs() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        fs::create_dir_all(dir.path().join("knowledge/controls")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls")).unwrap();
         fs::write(
-            dir.path().join("knowledge/controls/requirement.yml"),
+            dir.path()
+                .join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
@@ -1180,9 +1205,10 @@ expected:
     #[test]
     fn validate_draft_succeeds_when_existing_id_reused_with_omitted_fields() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        fs::create_dir_all(dir.path().join("knowledge/controls")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls")).unwrap();
         fs::write(
-            dir.path().join("knowledge/controls/requirement.yml"),
+            dir.path()
+                .join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();

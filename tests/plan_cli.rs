@@ -27,20 +27,20 @@ fn git_output(root: &Path, args: &[&str]) -> String {
 }
 
 fn write_knowledge(root: &Path, condition_description: &str) {
-    let base = root.join("knowledge/shop/checkout/pay/valid-card");
+    let base = root.join(".markharness/knowledge/shop/checkout/pay/valid-card");
     std::fs::create_dir_all(base.join("expected")).unwrap();
     std::fs::write(
-        root.join("knowledge/shop/requirement.yml"),
+        root.join(".markharness/knowledge/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join("knowledge/shop/checkout/feature.yml"),
+        root.join(".markharness/knowledge/shop/checkout/feature.yml"),
         "id: checkout\nrequirement: shop\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join("knowledge/shop/checkout/pay/behavior.yml"),
+        root.join(".markharness/knowledge/shop/checkout/pay/behavior.yml"),
         "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\n",
     )
     .unwrap();
@@ -89,10 +89,13 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         .validate(&plan)
         .unwrap();
 
-    let tree_sha = git_output(repo.path(), &["rev-parse", "HEAD:knowledge/shop/checkout"]);
-    std::fs::create_dir_all(repo.path().join("executions/ci")).unwrap();
+    let tree_sha = git_output(
+        repo.path(),
+        &["rev-parse", "HEAD:.markharness/knowledge/shop/checkout"],
+    );
+    std::fs::create_dir_all(repo.path().join(".markharness/executions/ci")).unwrap();
     std::fs::write(
-        repo.path().join("executions/ci/results.yml"),
+        repo.path().join(".markharness/executions/ci/results.yml"),
         format!(
             "- case_id: tc-shop-checkout-pay-valid-card\n  result: pass\n  executor: ci\n  executed_at: 2026-08-18T10:00:00Z\n  verified_feature_tree_shas:\n    checkout: {tree_sha}\n"
         ),

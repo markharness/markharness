@@ -44,7 +44,9 @@ pub fn apply_draft(
         return Err(ApplyError::Validation(errors));
     }
 
-    let knowledge_root = root.join("knowledge");
+    let knowledge_root = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge");
 
     let requirement_dir = knowledge_root.join(&draft.requirement.id);
     let requirement_path = requirement_dir.join("requirement.yml");
@@ -340,8 +342,22 @@ pub fn validate_batch(
     options: &ValidateOptions,
 ) -> io::Result<BatchValidateResult> {
     let scratch = tempfile::tempdir()?;
-    copy_dir_if_exists(&root.join("knowledge"), &scratch.path().join("knowledge"))?;
-    copy_dir_if_exists(&root.join("axes"), &scratch.path().join("axes"))?;
+    copy_dir_if_exists(
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+        &scratch
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    )?;
+    copy_dir_if_exists(
+        &root.join(crate::project_root::MARKHARNESS_DIR).join("axes"),
+        &scratch
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("axes"),
+    )?;
 
     let apply_options = ApplyOptions {
         strip_redundant_prefix: options.strip_redundant_prefix,
@@ -439,7 +455,10 @@ expected:
         crate::init::run_init(dir.path()).unwrap();
         for id in axis_ids {
             fs::write(
-                dir.path().join("axes").join(format!("{id}.yml")),
+                dir.path()
+                    .join(crate::project_root::MARKHARNESS_DIR)
+                    .join("axes")
+                    .join(format!("{id}.yml")),
                 format!("id: {id}\nlabel: {id}\n"),
             )
             .unwrap();
@@ -461,11 +480,17 @@ expected:
 
     #[cfg(unix)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::os::unix::fs::symlink(target, link).unwrap();
     }
 
     #[cfg(windows)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         let status = std::process::Command::new("cmd")
             .args(["/c", "mklink", "/j"])
             .arg(link)
@@ -481,7 +506,10 @@ expected:
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let draft = parse_draft(FULL_DRAFT_YAML).unwrap();
         let outside = tempfile::tempdir().unwrap();
-        let knowledge_dir = dir.path().join("knowledge");
+        let knowledge_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge");
         fs::remove_dir_all(&knowledge_dir).unwrap();
         link_dir(&knowledge_dir, outside.path());
 
@@ -505,19 +533,21 @@ expected:
         let result = apply_draft(dir.path(), &draft, &no_strip()).unwrap();
 
         assert_eq!(result.written_paths.len(), 5);
-        assert!(
-            result
-                .written_paths
-                .contains(&PathBuf::from("knowledge/controls/requirement.yml"))
-        );
+        assert!(result.written_paths.contains(&PathBuf::from(
+            ".markharness/knowledge/controls/requirement.yml"
+        )));
         assert_eq!(
-            fs::read_to_string(dir.path().join("knowledge/controls/requirement.yml")).unwrap(),
+            fs::read_to_string(
+                dir.path()
+                    .join(".markharness/knowledge/controls/requirement.yml")
+            )
+            .unwrap(),
             "id: controls\nlabel: controls\naxis: [gameplay]\n"
         );
         assert_eq!(
             fs::read_to_string(
                 dir.path()
-                    .join("knowledge/controls/player-jump/feature.yml")
+                    .join(".markharness/knowledge/controls/player-jump/feature.yml")
             )
             .unwrap(),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n"
@@ -525,7 +555,7 @@ expected:
         assert_eq!(
             fs::read_to_string(
                 dir.path()
-                    .join("knowledge/controls/player-jump/jump/behavior.yml")
+                    .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml")
             )
             .unwrap(),
             "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
@@ -533,15 +563,16 @@ expected:
         assert_eq!(
             fs::read_to_string(
                 dir.path()
-                    .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+                    .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
             )
             .unwrap(),
             "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\n"
         );
         assert_eq!(
             fs::read_to_string(
-                dir.path()
-                    .join("knowledge/controls/player-jump/jump/ground/expected/001.yml")
+                dir.path().join(
+                    ".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"
+                )
             )
             .unwrap(),
             "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
@@ -557,7 +588,7 @@ expected:
         let result = apply_draft(dir.path(), &draft, &no_strip());
 
         assert!(matches!(result, Err(ApplyError::Validation(_))));
-        assert!(!dir.path().join("knowledge/controls").exists());
+        assert!(!dir.path().join(".markharness/knowledge/controls").exists());
     }
 
     #[test]
@@ -588,8 +619,9 @@ expected:
         assert_eq!(result.written_paths.len(), 1);
         assert_eq!(
             fs::read_to_string(
-                dir.path()
-                    .join("knowledge/controls/player-jump/jump/ground/expected/002.yml")
+                dir.path().join(
+                    ".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml"
+                )
             )
             .unwrap(),
             "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
@@ -637,16 +669,18 @@ expected:
         assert_eq!(expected_paths.len(), 2);
         assert_eq!(
             fs::read_to_string(
-                dir.path()
-                    .join("knowledge/controls/player-jump/jump/ground/expected/001.yml")
+                dir.path().join(
+                    ".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"
+                )
             )
             .unwrap(),
             "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
         );
         assert_eq!(
             fs::read_to_string(
-                dir.path()
-                    .join("knowledge/controls/player-jump/jump/ground/expected/002.yml")
+                dir.path().join(
+                    ".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml"
+                )
             )
             .unwrap(),
             "id: ground-002\ncondition: ground\ndescription: |\n  takes fall damage if height > 3m\n"
@@ -670,12 +704,12 @@ expected:
 
         assert!(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
                 .exists()
         );
         assert!(
             !dir.path()
-                .join("knowledge/controls/player-jump/jump/jump-ground")
+                .join(".markharness/knowledge/controls/player-jump/jump/jump-ground")
                 .exists()
         );
         assert!(
@@ -728,12 +762,12 @@ expected:
         assert_eq!(result.written_paths.len(), 7); // 5 from the first draft + 2 (condition.yml, expected/001.yml) from the second
         assert!(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
                 .is_file()
         );
         assert!(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/air/condition.yml")
+                .join(".markharness/knowledge/controls/player-jump/jump/air/condition.yml")
                 .is_file()
         );
     }
@@ -794,7 +828,7 @@ condition:
         ));
         assert!(
             !dir.path()
-                .join("knowledge/controls/requirement.yml")
+                .join(".markharness/knowledge/controls/requirement.yml")
                 .exists(),
             "the first draft's files must be rolled back when the second draft is invalid"
         );
@@ -819,7 +853,7 @@ condition:
         ));
         assert!(
             !dir.path()
-                .join("knowledge/controls/requirement.yml")
+                .join(".markharness/knowledge/controls/requirement.yml")
                 .exists(),
             "the first draft's files must be rolled back when the second draft fails to parse"
         );
@@ -838,7 +872,7 @@ condition:
         assert_eq!(result.results.len(), 1);
         assert!(result.results[0].error.is_none());
         assert!(
-            !dir.path().join("knowledge/controls").exists(),
+            !dir.path().join(".markharness/knowledge/controls").exists(),
             "validate_batch must not write into the real root"
         );
     }

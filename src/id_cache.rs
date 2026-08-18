@@ -63,7 +63,7 @@ struct CacheKey {
 
 fn compute_cache_key(root: &Path, git_ref: &str) -> io::Result<CacheKey> {
     Ok(CacheKey {
-        tree_sha: git::tree_sha(root, git_ref, "knowledge")?,
+        tree_sha: git::tree_sha(root, git_ref, crate::project_root::KNOWLEDGE_PATH_IN_REPO)?,
         canonicalization_rule_version: CANONICALIZATION_RULE_VERSION.to_string(),
         id_index_schema_version: ID_INDEX_SCHEMA_VERSION.to_string(),
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -116,7 +116,8 @@ pub fn resolve_feature_versions(
         return Ok(cache_file.entries);
     }
 
-    let tree_entries = git::ls_tree_recursive(root, git_ref, "knowledge")?;
+    let tree_entries =
+        git::ls_tree_recursive(root, git_ref, crate::project_root::KNOWLEDGE_PATH_IN_REPO)?;
 
     let mut by_id: BTreeMap<String, FeatureVersion> = BTreeMap::new();
     for entry in &tree_entries {
@@ -194,6 +195,7 @@ mod tests {
         run_git(dir.path(), &["config", "user.name", "Test"]);
         let feature_dir = dir
             .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge")
             .join(requirement_id)
             .join(feature_id);
@@ -219,8 +221,12 @@ mod tests {
     fn resolves_feature_id_from_yaml_id_field_even_after_directory_rename() {
         let dir = init_repo_with_feature("player-jump", "controls");
 
-        let old_dir = dir.path().join("knowledge/controls/player-jump");
-        let new_dir = dir.path().join("knowledge/controls/player-jump-renamed");
+        let old_dir = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump");
+        let new_dir = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump-renamed");
         fs::rename(&old_dir, &new_dir).unwrap();
         run_git(dir.path(), &["add", "-A"]);
         run_git(dir.path(), &["commit", "-q", "-m", "rename directory"]);
@@ -230,7 +236,10 @@ mod tests {
 
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].id, "player-jump");
-        assert_eq!(versions[0].path, "knowledge/controls/player-jump-renamed");
+        assert_eq!(
+            versions[0].path,
+            ".markharness/knowledge/controls/player-jump-renamed"
+        );
     }
 
     /// Two Feature directories whose `feature.yml` both declare the same
@@ -240,7 +249,9 @@ mod tests {
     fn errors_when_two_feature_directories_declare_the_same_id() {
         let dir = init_repo_with_feature("player-jump", "controls");
 
-        let dup_dir = dir.path().join("knowledge/controls/player-jump-duplicate");
+        let dup_dir = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump-duplicate");
         fs::create_dir_all(&dup_dir).unwrap();
         fs::write(
             dup_dir.join("feature.yml"),
@@ -264,7 +275,10 @@ mod tests {
 
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].id, "player-jump");
-        assert_eq!(versions[0].path, "knowledge/controls/player-jump");
+        assert_eq!(
+            versions[0].path,
+            ".markharness/knowledge/controls/player-jump"
+        );
         assert_eq!(versions[0].tree_sha.len(), 40);
     }
 
@@ -275,7 +289,7 @@ mod tests {
 
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
@@ -297,7 +311,9 @@ mod tests {
         let dir = init_repo_with_feature("player-jump", "controls");
         let first = resolve_feature_versions(dir.path(), "m1", false).unwrap();
 
-        let behavior_dir = dir.path().join("knowledge/controls/player-jump/jump");
+        let behavior_dir = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/jump");
         fs::create_dir_all(&behavior_dir).unwrap();
         fs::write(
             behavior_dir.join("behavior.yml"),
@@ -362,7 +378,7 @@ mod tests {
         // rather than recomputing via `git ls-tree`.
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();

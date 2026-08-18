@@ -118,10 +118,10 @@ mod tests {
     }
 
     fn write_feature(root: &Path, label: &str) {
-        let dir = root.join("knowledge/controls/player-jump");
+        let dir = root.join(".markharness/knowledge/controls/player-jump");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            root.join("knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: []\n",
         )
         .unwrap();

@@ -93,12 +93,16 @@ impl Presenter for HumanPresenter {
                 exit_code: plan_exit_code(plan),
             },
             CommandOutcome::Generated { count, .. } => PresentedResult {
-                stdout: format!("generated {count} testcase(s) into generated/testcases/\n"),
+                stdout: format!(
+                    "generated {count} testcase(s) into .markharness/generated/testcases/\n"
+                ),
                 stderr: String::new(),
                 exit_code: 0,
             },
             CommandOutcome::ChangesComputed { count, to } => PresentedResult {
-                stdout: format!("computed {count} change event(s) into changes/{to}.yaml\n"),
+                stdout: format!(
+                    "computed {count} change event(s) into .markharness/changes/{to}.yaml\n"
+                ),
                 stderr: String::new(),
                 exit_code: 0,
             },

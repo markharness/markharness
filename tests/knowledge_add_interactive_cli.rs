@@ -55,7 +55,7 @@ fn knowledge_add_writes_full_chain_from_stdin_prompts() {
 
     let expected_path = dir
         .path()
-        .join("knowledge/controls/player-jump/jump/ground/expected/001.yml");
+        .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
     assert_eq!(
         std::fs::read_to_string(expected_path).unwrap(),
         "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"

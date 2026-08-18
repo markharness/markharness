@@ -386,43 +386,55 @@ mod tests {
     #[test]
     fn ls_tree_recursive_lists_blobs_under_path_at_ref() {
         let dir = init_repo();
-        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
         fs::write(
-            dir.path().join("knowledge/req/feat/feature.yml"),
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
             "id: feat\n",
         )
         .unwrap();
         commit_all(dir.path(), "add feature");
         run_git(dir.path(), &["tag", "m1"]).unwrap();
 
-        let entries = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
+        let entries = ls_tree_recursive(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
         let blobs: Vec<_> = entries
             .iter()
             .filter(|e| e.kind == ObjectKind::Blob)
             .collect();
 
         assert_eq!(blobs.len(), 1);
-        assert_eq!(blobs[0].path, "knowledge/req/feat/feature.yml");
+        assert_eq!(blobs[0].path, ".markharness/knowledge/req/feat/feature.yml");
         assert_eq!(blobs[0].sha.len(), 40);
     }
 
     #[test]
     fn ls_tree_recursive_also_lists_tree_entries_for_directories() {
         let dir = init_repo();
-        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
         fs::write(
-            dir.path().join("knowledge/req/feat/feature.yml"),
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
             "id: feat\n",
         )
         .unwrap();
         commit_all(dir.path(), "add feature");
         run_git(dir.path(), &["tag", "m1"]).unwrap();
 
-        let entries = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
+        let entries = ls_tree_recursive(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
         let feat_dir = entries
             .iter()
-            .find(|e| e.kind == ObjectKind::Tree && e.path == "knowledge/req/feat")
-            .expect("expected a tree entry for knowledge/req/feat");
+            .find(|e| e.kind == ObjectKind::Tree && e.path == ".markharness/knowledge/req/feat")
+            .expect("expected a tree entry for .markharness/knowledge/req/feat");
 
         assert_eq!(feat_dir.sha.len(), 40);
     }
@@ -434,7 +446,12 @@ mod tests {
         commit_all(dir.path(), "init");
         run_git(dir.path(), &["tag", "m1"]).unwrap();
 
-        let entries = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
+        let entries = ls_tree_recursive(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
 
         assert!(entries.is_empty());
     }
@@ -442,9 +459,10 @@ mod tests {
     #[test]
     fn blob_entry_sha_changes_when_file_content_changes_across_tags() {
         let dir = init_repo();
-        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
         fs::write(
-            dir.path().join("knowledge/req/feat/feature.yml"),
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
             "id: feat\nlabel: v1\n",
         )
         .unwrap();
@@ -452,15 +470,26 @@ mod tests {
         run_git(dir.path(), &["tag", "m1"]).unwrap();
 
         fs::write(
-            dir.path().join("knowledge/req/feat/feature.yml"),
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
             "id: feat\nlabel: v2\n",
         )
         .unwrap();
         commit_all(dir.path(), "v2");
         run_git(dir.path(), &["tag", "m2"]).unwrap();
 
-        let at_m1 = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
-        let at_m2 = ls_tree_recursive(dir.path(), "m2", "knowledge").unwrap();
+        let at_m1 = ls_tree_recursive(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
+        let at_m2 = ls_tree_recursive(
+            dir.path(),
+            "m2",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
         let blob_at = |entries: &[TreeEntry]| {
             entries
                 .iter()
@@ -476,16 +505,22 @@ mod tests {
     #[test]
     fn tree_sha_returns_the_tree_object_sha_for_an_existing_path_at_ref() {
         let dir = init_repo();
-        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
         fs::write(
-            dir.path().join("knowledge/req/feat/feature.yml"),
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
             "id: feat\n",
         )
         .unwrap();
         commit_all(dir.path(), "add feature");
         run_git(dir.path(), &["tag", "m1"]).unwrap();
 
-        let sha = tree_sha(dir.path(), "m1", "knowledge").unwrap();
+        let sha = tree_sha(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
 
         assert_eq!(sha.map(|s| s.len()), Some(40));
     }
@@ -497,7 +532,12 @@ mod tests {
         commit_all(dir.path(), "init");
         run_git(dir.path(), &["tag", "m1"]).unwrap();
 
-        let sha = tree_sha(dir.path(), "m1", "knowledge").unwrap();
+        let sha = tree_sha(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
 
         assert_eq!(sha, None);
     }
@@ -514,9 +554,10 @@ mod tests {
     #[test]
     fn tree_sha_resolves_path_when_root_is_a_subdirectory_of_the_repo() {
         let repo = init_repo();
-        fs::create_dir_all(repo.path().join("sub/knowledge/req/feat")).unwrap();
+        fs::create_dir_all(repo.path().join("sub/.markharness/knowledge/req/feat")).unwrap();
         fs::write(
-            repo.path().join("sub/knowledge/req/feat/feature.yml"),
+            repo.path()
+                .join("sub/.markharness/knowledge/req/feat/feature.yml"),
             "id: feat\n",
         )
         .unwrap();
@@ -524,7 +565,7 @@ mod tests {
         run_git(repo.path(), &["tag", "t1"]).unwrap();
 
         let sub_root = repo.path().join("sub");
-        let sha = tree_sha(&sub_root, "t1", "knowledge").unwrap();
+        let sha = tree_sha(&sub_root, "t1", crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
 
         assert!(sha.is_some());
     }
@@ -532,15 +573,21 @@ mod tests {
     #[test]
     fn show_blob_by_sha_returns_content_of_the_blob() {
         let dir = init_repo();
-        fs::create_dir_all(dir.path().join("knowledge/req/feat")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
         fs::write(
-            dir.path().join("knowledge/req/feat/feature.yml"),
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
             "id: feat\nlabel: v1\n",
         )
         .unwrap();
         commit_all(dir.path(), "add feature");
         run_git(dir.path(), &["tag", "m1"]).unwrap();
-        let entries = ls_tree_recursive(dir.path(), "m1", "knowledge").unwrap();
+        let entries = ls_tree_recursive(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
         let blob = entries.iter().find(|e| e.kind == ObjectKind::Blob).unwrap();
 
         let content = show_blob_by_sha(dir.path(), &blob.sha).unwrap();
@@ -555,16 +602,19 @@ mod tests {
     #[test]
     fn show_blob_by_sha_works_when_root_is_a_subdirectory_of_the_repo() {
         let repo = init_repo();
-        fs::create_dir_all(repo.path().join("sub/knowledge/req/feat")).unwrap();
+        fs::create_dir_all(repo.path().join("sub/.markharness/knowledge/req/feat")).unwrap();
         fs::write(
-            repo.path().join("sub/knowledge/req/feat/feature.yml"),
+            repo.path()
+                .join("sub/.markharness/knowledge/req/feat/feature.yml"),
             "id: feat\n",
         )
         .unwrap();
         commit_all(repo.path(), "add feature");
         run_git(repo.path(), &["tag", "t1"]).unwrap();
         let sub_root = repo.path().join("sub");
-        let entries = ls_tree_recursive(&sub_root, "t1", "knowledge").unwrap();
+        let entries =
+            ls_tree_recursive(&sub_root, "t1", crate::project_root::KNOWLEDGE_PATH_IN_REPO)
+                .unwrap();
         let blob = entries.iter().find(|e| e.kind == ObjectKind::Blob).unwrap();
 
         let content = show_blob_by_sha(&sub_root, &blob.sha).unwrap();

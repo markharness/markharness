@@ -128,7 +128,9 @@ pub fn run_add<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
 ) -> io::Result<()> {
-    let knowledge_root = root.join("knowledge");
+    let knowledge_root = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge");
 
     let requirement_candidates = list_candidate_ids(&knowledge_root, "requirement.yml");
     let (requirement_id, requirement_label) = prompt_id_or_label(
@@ -333,19 +335,21 @@ mod tests {
 
         run_with_input(dir.path(), FULL_INPUT);
 
-        let requirement_path = dir.path().join("knowledge/controls/requirement.yml");
+        let requirement_path = dir
+            .path()
+            .join(".markharness/knowledge/controls/requirement.yml");
         let feature_path = dir
             .path()
-            .join("knowledge/controls/player-jump/feature.yml");
+            .join(".markharness/knowledge/controls/player-jump/feature.yml");
         let behavior_path = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/behavior.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml");
         let condition_path = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/ground/condition.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml");
         let expected_path = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/ground/expected/001.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
 
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
@@ -384,14 +388,14 @@ mod tests {
 
         let feature_path = dir
             .path()
-            .join("knowledge/controls/player-jump/feature.yml");
+            .join(".markharness/knowledge/controls/player-jump/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n"
         );
         let behavior_path = dir
             .path()
-            .join("knowledge/controls/player-jump/air/behavior.yml");
+            .join(".markharness/knowledge/controls/player-jump/air/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
             "id: air\nfeature: player-jump\nlabel: air\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\n"
@@ -412,7 +416,7 @@ mod tests {
 
         let condition_path = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/air/condition.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/air/condition.yml");
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
             "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump while airborne\n"
@@ -433,7 +437,7 @@ mod tests {
 
         let expected_002 = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/ground/expected/002.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
         assert_eq!(
             fs::read_to_string(expected_002).unwrap(),
             "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
@@ -452,7 +456,7 @@ mod tests {
 
         let expected_path = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/ground/expected/001.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
         assert_eq!(
             fs::read_to_string(expected_path).unwrap(),
             "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
@@ -485,7 +489,7 @@ mod tests {
         assert!(output.contains("既存のFeature 'player-jump' を再利用します。"));
         let behavior_path = dir
             .path()
-            .join("knowledge/controls/player-jump/air/behavior.yml");
+            .join(".markharness/knowledge/controls/player-jump/air/behavior.yml");
         assert!(behavior_path.exists());
     }
 
@@ -505,7 +509,7 @@ mod tests {
         assert!(output.contains("既存のBehavior 'jump' を再利用します。"));
         let condition_path = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/space/condition.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/space/condition.yml");
         assert!(condition_path.exists());
     }
 
@@ -525,7 +529,7 @@ mod tests {
         assert!(output.contains("既存のCondition 'ground' を再利用します。"));
         let expected_002 = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/ground/expected/002.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
         assert!(expected_002.exists());
     }
 
@@ -543,7 +547,7 @@ mod tests {
 
         let expected_002 = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/ground/expected/002.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
         assert_eq!(
             fs::read_to_string(expected_002).unwrap(),
             "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
@@ -565,17 +569,17 @@ mod tests {
         ));
         assert!(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/ground/condition.yml")
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
                 .exists()
         );
         assert!(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/ground/expected/001.yml")
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml")
                 .exists()
         );
         assert!(
             !dir.path()
-                .join("knowledge/controls/player-jump/jump/jump-ground")
+                .join(".markharness/knowledge/controls/player-jump/jump/jump-ground")
                 .exists()
         );
     }
@@ -593,7 +597,7 @@ mod tests {
         // literal redundant name directly on disk to simulate pre-existing data.
         let legacy_dir = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/jump-ground");
+            .join(".markharness/knowledge/controls/player-jump/jump/jump-ground");
         fs::create_dir_all(&legacy_dir).unwrap();
         fs::write(
             legacy_dir.join("condition.yml"),
@@ -680,7 +684,7 @@ mod tests {
 
         let feature_path = dir
             .path()
-            .join("knowledge/controls/pureiyaagajanpusuru/feature.yml");
+            .join(".markharness/knowledge/controls/pureiyaagajanpusuru/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
             "id: pureiyaagajanpusuru\nrequirement: controls\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
@@ -700,7 +704,7 @@ mod tests {
 
         let behavior_path = dir
             .path()
-            .join("knowledge/controls/player-jump/pureiyaagajanpusuru/behavior.yml");
+            .join(".markharness/knowledge/controls/player-jump/pureiyaagajanpusuru/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
             "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
@@ -718,9 +722,9 @@ mod tests {
             "controls\nplayer-jump\njump\nプレイヤーがジャンプする\n\nJump animation scenario\nlands on platform\n",
         );
 
-        let condition_path = dir
-            .path()
-            .join("knowledge/controls/player-jump/jump/pureiyaagajanpusuru/condition.yml");
+        let condition_path = dir.path().join(
+            ".markharness/knowledge/controls/player-jump/jump/pureiyaagajanpusuru/condition.yml",
+        );
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
             "id: pureiyaagajanpusuru\nbehavior: jump\nlabel: プレイヤーがジャンプする\ndescription: |\n  Jump animation scenario\n"
@@ -739,14 +743,14 @@ mod tests {
 
         let requirement_path = dir
             .path()
-            .join("knowledge/pureiyaagajanpusuru/requirement.yml");
+            .join(".markharness/knowledge/pureiyaagajanpusuru/requirement.yml");
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
             "id: pureiyaagajanpusuru\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\n"
         );
         let feature_path = dir
             .path()
-            .join("knowledge/pureiyaagajanpusuru/player-jump/feature.yml");
+            .join(".markharness/knowledge/pureiyaagajanpusuru/player-jump/feature.yml");
         assert!(feature_path.exists());
     }
 
@@ -763,14 +767,16 @@ mod tests {
             "controls\nother-feature\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nlanding\nJump while airborne\nlands on platform\n",
         );
 
-        let requirement_path = dir.path().join("knowledge/controls/requirement.yml");
+        let requirement_path = dir
+            .path()
+            .join(".markharness/knowledge/controls/requirement.yml");
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
             "id: controls\nlabel: controls\naxis: [gameplay]\n"
         );
         let feature_path = dir
             .path()
-            .join("knowledge/controls/other-feature/feature.yml");
+            .join(".markharness/knowledge/controls/other-feature/feature.yml");
         assert!(feature_path.exists());
     }
 
@@ -789,7 +795,7 @@ mod tests {
         assert!(output.contains("既存のRequirement 'controls' を再利用します。"));
         let feature_path = dir
             .path()
-            .join("knowledge/controls/air-support/feature.yml");
+            .join(".markharness/knowledge/controls/air-support/feature.yml");
         assert!(feature_path.exists());
     }
 
@@ -824,7 +830,7 @@ mod tests {
 
         let feature_path = dir
             .path()
-            .join("knowledge/controls/pureiyaagajanpusuru/feature.yml");
+            .join(".markharness/knowledge/controls/pureiyaagajanpusuru/feature.yml");
         let before = fs::read_to_string(&feature_path).unwrap();
 
         run_with_input(
@@ -858,7 +864,7 @@ mod tests {
         assert!(output.contains("既存のCondition 'ground' を再利用します。"));
         let expected_002 = dir
             .path()
-            .join("knowledge/controls/player-jump/jump/ground/expected/002.yml");
+            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
         assert!(expected_002.exists());
     }
 }

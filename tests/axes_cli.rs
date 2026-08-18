@@ -37,7 +37,7 @@ fn axes_add_creates_the_axis_file_with_label_defaulted_to_id() {
 
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("axes/state.yml")).unwrap(),
+        std::fs::read_to_string(dir.path().join(".markharness/axes/state.yml")).unwrap(),
         "id: state\nlabel: state\n"
     );
 }
@@ -72,7 +72,7 @@ fn axes_add_json_reports_the_written_path() {
 fn axes_prune_reports_an_unused_axis_and_leaves_it_in_place() {
     let dir = init_project();
     std::fs::write(
-        dir.path().join("axes/orphan.yml"),
+        dir.path().join(".markharness/axes/orphan.yml"),
         "id: orphan\nlabel: orphan\n",
     )
     .unwrap();
@@ -90,14 +90,14 @@ fn axes_prune_reports_an_unused_axis_and_leaves_it_in_place() {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(parsed["axes"], serde_json::json!(["orphan"]));
     assert_eq!(parsed["deleted"], serde_json::json!(false));
-    assert!(dir.path().join("axes/orphan.yml").exists());
+    assert!(dir.path().join(".markharness/axes/orphan.yml").exists());
 }
 
 #[test]
 fn axes_prune_delete_removes_the_unused_axis_file() {
     let dir = init_project();
     std::fs::write(
-        dir.path().join("axes/orphan.yml"),
+        dir.path().join(".markharness/axes/orphan.yml"),
         "id: orphan\nlabel: orphan\n",
     )
     .unwrap();
@@ -116,7 +116,7 @@ fn axes_prune_delete_removes_the_unused_axis_file() {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(parsed["axes"], serde_json::json!(["orphan"]));
     assert_eq!(parsed["deleted"], serde_json::json!(true));
-    assert!(!dir.path().join("axes/orphan.yml").exists());
+    assert!(!dir.path().join(".markharness/axes/orphan.yml").exists());
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn axes_add_exits_two_and_does_not_overwrite_when_the_id_already_exists() {
         "unexpected stderr: {stderr}"
     );
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("axes/state.yml")).unwrap(),
+        std::fs::read_to_string(dir.path().join(".markharness/axes/state.yml")).unwrap(),
         "id: state\nlabel: state\n",
         "the pre-existing axis file must not be overwritten"
     );
@@ -167,7 +167,7 @@ fn axes_add_exits_two_when_the_id_is_not_a_valid_slug() {
     ]);
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
-    assert!(!dir.path().join("axes/evil.yml").exists());
+    assert!(!dir.path().join(".markharness/axes/evil.yml").exists());
 }
 
 #[test]

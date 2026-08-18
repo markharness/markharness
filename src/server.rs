@@ -112,13 +112,16 @@ fn query(target: &str) -> Result<BTreeMap<String, String>, &'static str> {
 
 fn feature_history(root: &Path, git_ref: &str) -> io::Result<FeatureHistory> {
     let mut events_by_feature: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut paths: Vec<_> = fs::read_dir(root.join("changes"))
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("yaml"))
-        .collect();
+    let mut paths: Vec<_> = fs::read_dir(
+        root.join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes"),
+    )
+    .into_iter()
+    .flatten()
+    .filter_map(Result::ok)
+    .map(|entry| entry.path())
+    .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("yaml"))
+    .collect();
     paths.sort();
     for path in paths {
         let events: Vec<changes::ChangeEvent> = serde_yaml_ng::from_str(&fs::read_to_string(path)?)

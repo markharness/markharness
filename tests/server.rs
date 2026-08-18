@@ -26,19 +26,19 @@ fn repository() -> tempfile::TempDir {
     git(dir.path(), &["config", "user.name", "Test"]);
     write(
         dir.path(),
-        "knowledge/checkout/requirement.yml",
+        ".markharness/knowledge/checkout/requirement.yml",
         "id: checkout\nlabel: Checkout\naxis: [commerce]\n",
     );
     write(
         dir.path(),
-        "knowledge/checkout/pay/feature.yml",
+        ".markharness/knowledge/checkout/pay/feature.yml",
         "id: pay\nrequirement: checkout\nlabel: Pay\naxis: [commerce]\n",
     );
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-qm", "base"]);
     write(
         dir.path(),
-        "knowledge/checkout/pay/feature.yml",
+        ".markharness/knowledge/checkout/pay/feature.yml",
         "id: pay\nrequirement: checkout\nlabel: Pay securely\naxis: [commerce]\n",
     );
     git(dir.path(), &["add", "-A"]);

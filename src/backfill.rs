@@ -32,7 +32,9 @@ pub struct BackfillPolicy {
 /// Milestone names are `executions/<name>/milestone.yml` directory names,
 /// which UC4 assumes match a `git tag <name>` (docs/en/cli-manual.md §1.1/UC4).
 pub fn list_milestone_names(root: &Path) -> io::Result<Vec<String>> {
-    let executions_dir = root.join("executions");
+    let executions_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("executions");
     let Ok(entries) = fs::read_dir(&executions_dir) else {
         return Ok(Vec::new());
     };
@@ -143,7 +145,9 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
                 impact_source: changes::ImpactSource::HistoricalTree,
             },
         )?;
-        let changes_dir = root.join("changes");
+        let changes_dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes");
         replace_file(
             root,
             &changes_dir.join(format!("{to_milestone}.yaml")),
@@ -185,10 +189,10 @@ mod tests {
     }
 
     fn write_feature(root: &Path, label: &str) {
-        let dir = root.join("knowledge/controls/player-jump");
+        let dir = root.join(".markharness/knowledge/controls/player-jump");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            root.join("knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
@@ -205,9 +209,15 @@ mod tests {
     /// real commits made back-to-back can otherwise land in the same
     /// wall-clock second.
     fn commit_and_tag_milestone(root: &Path, message: &str, milestone: &str, hour_offset: u32) {
-        fs::create_dir_all(root.join("executions").join(milestone)).unwrap();
+        fs::create_dir_all(
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("executions")
+                .join(milestone),
+        )
+        .unwrap();
         fs::write(
-            root.join("executions")
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("executions")
                 .join(milestone)
                 .join("milestone.yml"),
             format!("id: {milestone}\n"),
@@ -230,9 +240,13 @@ mod tests {
     #[test]
     fn list_milestone_names_only_includes_dirs_with_milestone_yml() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
-        fs::write(dir.path().join("executions/m1/milestone.yml"), "id: m1\n").unwrap();
-        fs::create_dir_all(dir.path().join("executions/not-a-milestone")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/executions/m1/milestone.yml"),
+            "id: m1\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/not-a-milestone")).unwrap();
 
         let names = list_milestone_names(dir.path()).unwrap();
 
@@ -253,9 +267,9 @@ mod tests {
 
         assert_eq!(report.processed, vec!["m3".to_string(), "m2".to_string()]);
         assert!(report.skipped.is_empty());
-        assert!(dir.path().join("changes/m2.yaml").is_file());
-        assert!(dir.path().join("changes/m3.yaml").is_file());
-        assert!(!dir.path().join("changes/m1.yaml").exists());
+        assert!(dir.path().join(".markharness/changes/m2.yaml").is_file());
+        assert!(dir.path().join(".markharness/changes/m3.yaml").is_file());
+        assert!(!dir.path().join(".markharness/changes/m1.yaml").exists());
     }
 
     #[test]
@@ -329,7 +343,7 @@ mod tests {
 
         assert!(report.processed.is_empty());
         assert!(report.stopped_by_limit);
-        assert!(!dir.path().join("changes/m2.yaml").exists());
+        assert!(!dir.path().join(".markharness/changes/m2.yaml").exists());
     }
 
     /// Regression test for the README's canonical demo, which fails with

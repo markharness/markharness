@@ -86,7 +86,7 @@ fn check_axis_tags(
         .filter(|tag| !known_axes.contains(*tag))
         .map(|tag| ValidationIssue {
             path: rel(root, file_path),
-            message: format!("axis '{tag}' is not registered under axes/"),
+            message: format!("axis '{tag}' is not registered under .markharness/axes/"),
         })
         .collect()
 }
@@ -99,7 +99,9 @@ fn check_axis_tags(
 /// no retroactive backfill, treated as "unknown" by `verify trace`/`verify
 /// pending` rather than rejected here).
 fn validate_executions(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Result<()> {
-    let executions_dir = root.join("executions");
+    let executions_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("executions");
     if !executions_dir.is_dir() {
         return Ok(());
     }
@@ -125,9 +127,13 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
         .into_iter()
         .map(|a| a.id)
         .collect();
-    let known_feature_ids = collect_feature_ids(&root.join("knowledge"))?;
+    let known_feature_ids = collect_feature_ids(
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    )?;
 
-    let axes_dir = root.join("axes");
+    let axes_dir = root.join(crate::project_root::MARKHARNESS_DIR).join("axes");
     if axes_dir.is_dir() {
         let mut axis_files: Vec<_> = fs::read_dir(&axes_dir)?
             .filter_map(|e| e.ok())
@@ -140,7 +146,9 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
         }
     }
 
-    let knowledge_root = root.join("knowledge");
+    let knowledge_root = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge");
     for requirement_dir in sorted_subdirs(&knowledge_root)? {
         let requirement_path = requirement_dir.join("requirement.yml");
         if !requirement_path.is_file() {
@@ -243,27 +251,27 @@ mod tests {
     }
 
     fn write_valid_tree(root: &Path) {
-        fs::create_dir_all(root.join("axes")).unwrap();
+        fs::create_dir_all(root.join(crate::project_root::MARKHARNESS_DIR).join("axes")).unwrap();
         fs::write(
-            root.join("axes/gameplay.yml"),
+            root.join(".markharness/axes/gameplay.yml"),
             "id: gameplay\nlabel: Gameplay\n",
         )
         .unwrap();
 
-        let base = root.join("knowledge/controls/player-jump/jump/ground");
+        let base = root.join(".markharness/knowledge/controls/player-jump/jump/ground");
         fs::create_dir_all(&base).unwrap();
         fs::write(
-            root.join("knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
-            root.join("knowledge/controls/player-jump/feature.yml"),
+            root.join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
-            root.join("knowledge/controls/player-jump/jump/behavior.yml"),
+            root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
             "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n",
         )
         .unwrap();
@@ -298,7 +306,7 @@ mod tests {
         write_valid_tree(dir.path());
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/jump/ground/condition.yml"),
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
             "id: ../../../../evil\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\n",
         )
         .unwrap();
@@ -320,7 +328,7 @@ mod tests {
         write_valid_tree(dir.path());
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
@@ -342,7 +350,7 @@ mod tests {
         write_valid_tree(dir.path());
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [not-registered]\n",
         )
         .unwrap();
@@ -361,7 +369,7 @@ mod tests {
         init_project(dir.path());
         write_valid_tree(dir.path());
         fs::write(
-            dir.path().join("knowledge/controls/player-jump/feature.yml"),
+            dir.path().join(".markharness/knowledge/controls/player-jump/feature.yml"),
             "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\nforked_from: no-such-feature\n",
         )
         .unwrap();
@@ -379,9 +387,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
         fs::write(
-            dir.path().join("executions/m1/results.yml"),
+            dir.path().join(".markharness/executions/m1/results.yml"),
             "- case_id: tc-ground-001\n  result: pass\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n  verified_feature_tree_shas:\n    player-jump: 1a2b3c\n",
         )
         .unwrap();
@@ -396,9 +404,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
         fs::write(
-            dir.path().join("executions/m1/results.yml"),
+            dir.path().join(".markharness/executions/m1/results.yml"),
             "- case_id: tc-ground-001\n  result: pass\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n",
         )
         .unwrap();
@@ -413,9 +421,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join("executions/m1")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
         fs::write(
-            dir.path().join("executions/m1/results.yml"),
+            dir.path().join(".markharness/executions/m1/results.yml"),
             "- case_id: tc-ground-001\n  result: bogus\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n",
         )
         .unwrap();
@@ -435,10 +443,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join("knowledge/controls/player-double-jump")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-double-jump"),
+        )
+        .unwrap();
         fs::write(
             dir.path()
-                .join("knowledge/controls/player-double-jump/feature.yml"),
+                .join(".markharness/knowledge/controls/player-double-jump/feature.yml"),
             "id: player-double-jump\nrequirement: controls\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n",
         )
         .unwrap();

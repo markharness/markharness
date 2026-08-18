@@ -480,7 +480,10 @@ mod tests {
     }
 
     fn write_requirement(root: &std::path::Path, requirement: &str, axis: &[&str]) {
-        let dir = root.join("knowledge").join(requirement);
+        let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
+            .join(requirement);
         fs::create_dir_all(&dir).unwrap();
         let axis_line = axis.join(", ");
         fs::write(
@@ -491,7 +494,11 @@ mod tests {
     }
 
     fn write_feature(root: &std::path::Path, requirement: &str, feature: &str, axis: &[&str]) {
-        let dir = root.join("knowledge").join(requirement).join(feature);
+        let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
+            .join(requirement)
+            .join(feature);
         fs::create_dir_all(&dir).unwrap();
         let axis_line = axis.join(", ");
         fs::write(
@@ -511,6 +518,7 @@ mod tests {
         description: &str,
     ) {
         let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge")
             .join(requirement)
             .join(feature)
@@ -534,6 +542,7 @@ mod tests {
         description: &str,
     ) {
         let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge")
             .join(requirement)
             .join(feature)
@@ -561,6 +570,7 @@ mod tests {
         description: &str,
     ) {
         let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge")
             .join(requirement)
             .join(feature)
@@ -593,6 +603,7 @@ mod tests {
         // the directory it lives in.
         let condition_dir = dir
             .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge")
             .join("req-todo")
             .join("todo")
@@ -615,7 +626,11 @@ mod tests {
             "Shows a validation error.",
         );
 
-        let result = generate_testcases(&dir.path().join("knowledge"));
+        let result = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        );
 
         assert!(
             result.is_err(),
@@ -628,7 +643,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
 
         assert!(testcases.is_empty());
     }
@@ -665,7 +685,12 @@ mod tests {
             "Shows a validation error.",
         );
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
 
         assert_eq!(testcases.len(), 1);
         let tc = &testcases[0];
@@ -728,7 +753,12 @@ mod tests {
             "completedAt is recorded.",
         );
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
 
         assert_eq!(testcases.len(), 1);
         let tc = &testcases[0];
@@ -812,7 +842,12 @@ mod tests {
             "Deals damage.",
         );
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
 
         assert_eq!(testcases.len(), 2);
         assert_eq!(
@@ -847,7 +882,12 @@ mod tests {
             "Title is empty.",
         );
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
 
         assert!(testcases.is_empty());
     }
@@ -859,7 +899,12 @@ mod tests {
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
 
         assert!(testcases.is_empty());
     }
@@ -896,16 +941,24 @@ mod tests {
             "Shows a validation error.",
         );
 
-        let first: Vec<String> = generate_testcases(&dir.path().join("knowledge"))
-            .unwrap()
-            .iter()
-            .map(serialize_testcase)
-            .collect();
-        let second: Vec<String> = generate_testcases(&dir.path().join("knowledge"))
-            .unwrap()
-            .iter()
-            .map(serialize_testcase)
-            .collect();
+        let first: Vec<String> = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap()
+        .iter()
+        .map(serialize_testcase)
+        .collect();
+        let second: Vec<String> = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap()
+        .iter()
+        .map(serialize_testcase)
+        .collect();
 
         assert_eq!(first, second);
     }
@@ -970,7 +1023,12 @@ mod tests {
             "Shows a validation error.",
         );
 
-        let testcases = generate_testcases(&dir.path().join("knowledge")).unwrap();
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
 
         // write_behavior always uses axis [ui]; combined with requirement's
         // [security, ui] and feature's [ui, data], duplicates must collapse.
@@ -1010,7 +1068,11 @@ mod tests {
     fn generate_testcases_rejects_a_requirement_with_path_traversal_id() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        let requirement_dir = dir.path().join("knowledge").join("req-todo");
+        let requirement_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
+            .join("req-todo");
         fs::create_dir_all(&requirement_dir).unwrap();
         fs::write(
             requirement_dir.join("requirement.yml"),
@@ -1018,7 +1080,11 @@ mod tests {
         )
         .unwrap();
 
-        let result = generate_testcases(&dir.path().join("knowledge"));
+        let result = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        );
 
         assert!(
             result.is_err(),
@@ -1031,7 +1097,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
-        let feature_dir = dir.path().join("knowledge/req-todo/todo");
+        let feature_dir = dir.path().join(".markharness/knowledge/req-todo/todo");
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
@@ -1039,7 +1105,11 @@ mod tests {
         )
         .unwrap();
 
-        let result = generate_testcases(&dir.path().join("knowledge"));
+        let result = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        );
 
         assert!(
             result.is_err(),
@@ -1053,7 +1123,9 @@ mod tests {
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
-        let behavior_dir = dir.path().join("knowledge/req-todo/todo/todo-add-task");
+        let behavior_dir = dir
+            .path()
+            .join(".markharness/knowledge/req-todo/todo/todo-add-task");
         fs::create_dir_all(&behavior_dir).unwrap();
         fs::write(
             behavior_dir.join("behavior.yml"),
@@ -1061,7 +1133,11 @@ mod tests {
         )
         .unwrap();
 
-        let result = generate_testcases(&dir.path().join("knowledge"));
+        let result = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        );
 
         assert!(
             result.is_err(),

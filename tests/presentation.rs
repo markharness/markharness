@@ -12,7 +12,7 @@ fn human_presenter_renders_generated_outcome_without_side_effects() {
     assert_eq!(
         result,
         PresentedResult {
-            stdout: "generated 2 testcase(s) into generated/testcases/\n".to_string(),
+            stdout: "generated 2 testcase(s) into .markharness/generated/testcases/\n".to_string(),
             stderr: String::new(),
             exit_code: 0,
         }

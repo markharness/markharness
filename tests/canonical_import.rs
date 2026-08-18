@@ -90,20 +90,25 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
     git(repo.path(), &["init", "-q", "-b", "main"]);
     git(repo.path(), &["config", "user.email", "test@example.com"]);
     git(repo.path(), &["config", "user.name", "Test"]);
-    let base = repo.path().join("knowledge/checkout/pay/card/valid-card");
+    let base = repo
+        .path()
+        .join(".markharness/knowledge/checkout/pay/card/valid-card");
     fs::create_dir_all(base.join("expected")).unwrap();
     fs::write(
-        repo.path().join("knowledge/checkout/requirement.yml"),
+        repo.path()
+            .join(".markharness/knowledge/checkout/requirement.yml"),
         "id: checkout\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     fs::write(
-        repo.path().join("knowledge/checkout/pay/feature.yml"),
+        repo.path()
+            .join(".markharness/knowledge/checkout/pay/feature.yml"),
         "id: pay\nrequirement: checkout\nlabel: Pay\naxis: []\n",
     )
     .unwrap();
     fs::write(
-        repo.path().join("knowledge/checkout/pay/card/behavior.yml"),
+        repo.path()
+            .join(".markharness/knowledge/checkout/pay/card/behavior.yml"),
         "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\n",
     )
     .unwrap();

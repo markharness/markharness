@@ -28,10 +28,10 @@ fn run_git(root: &Path, args: &[&str]) {
 }
 
 fn write_feature(root: &Path, label: &str) {
-    let dir = root.join("knowledge/controls/player-jump");
+    let dir = root.join(".markharness/knowledge/controls/player-jump");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        root.join("knowledge/controls/requirement.yml"),
+        root.join(".markharness/knowledge/controls/requirement.yml"),
         "id: controls\nlabel: controls\naxis: [gameplay]\n",
     )
     .unwrap();
@@ -110,9 +110,9 @@ fn changes_compute_matches_the_stage0_golden_contract() {
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "computed 1 change event(s) into changes/m2.yaml\n"
+        "computed 1 change event(s) into .markharness/changes/m2.yaml\n"
     );
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m2.yaml")).unwrap();
 
     assert_eq!(
         normalize_tree_shas(&yaml),
@@ -139,7 +139,7 @@ fn changes_annotate_sets_change_type_on_the_matching_event() {
         "changes annotate failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m2.yaml")).unwrap();
     assert!(
         yaml.contains("change_type: spec_change"),
         "expected change_type in: {yaml}"
@@ -204,7 +204,7 @@ fn changes_annotate_related_sets_related_events_on_the_matching_event() {
         "changes annotate --related failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m3.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m3.yaml")).unwrap();
     assert!(
         yaml.contains("related_events:\n  - player-jump--m1--m2"),
         "expected related_events in: {yaml}"
@@ -245,7 +245,7 @@ fn changes_annotate_related_sets_related_events_without_requiring_type() {
         "changes annotate --related (no --type) failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m3.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m3.yaml")).unwrap();
     assert!(
         yaml.contains("related_events:\n  - player-jump--m1--m2"),
         "expected related_events in: {yaml}"
@@ -312,7 +312,7 @@ fn changes_annotate_does_not_write_change_type_when_related_event_id_does_not_ex
     ]);
 
     assert_eq!(output.status.code(), Some(3));
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m2.yaml")).unwrap();
     assert!(
         !yaml.contains("change_type: spec_change"),
         "change_type should not have been written on failure: {yaml}"
@@ -367,7 +367,7 @@ fn changes_compute_records_both_parent_tree_shas_when_to_milestone_is_a_true_div
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m2.yaml")).unwrap();
     assert!(
         yaml.contains("true_divergences:"),
         "expected true_divergences in: {yaml}"
@@ -430,7 +430,7 @@ fn changes_compute_records_both_parent_tree_shas_when_merge_occurs_within_the_mi
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m2.yaml")).unwrap();
     assert!(
         yaml.contains("true_divergences:"),
         "expected true_divergences in: {yaml}"
@@ -506,7 +506,7 @@ fn changes_compute_records_a_true_divergence_entry_for_each_merge_when_the_inter
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let yaml = std::fs::read_to_string(dir.path().join("changes/m2.yaml")).unwrap();
+    let yaml = std::fs::read_to_string(dir.path().join(".markharness/changes/m2.yaml")).unwrap();
     let merge_commit_count = yaml.matches("merge_commit:").count();
     assert_eq!(
         merge_commit_count, 2,

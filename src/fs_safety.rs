@@ -112,6 +112,13 @@ pub fn replace_dir_from_staging(root: &Path, staging: &Path, target: &Path) -> i
         remove_dir_all_no_follow(root, &backup)?;
     }
 
+    // `fs::rename`'s destination requires an existing parent directory (unlike
+    // `replace_file`, which callers may invoke before `target`'s ancestor
+    // directories — e.g. `.markharness/` itself — have ever been created).
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
     let had_target = target.exists();
     if had_target {
         fs::rename(target, &backup)?;
@@ -220,11 +227,17 @@ mod tests {
 
     #[cfg(unix)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::os::unix::fs::symlink(target, link).unwrap();
     }
 
     #[cfg(windows)]
     fn link_dir(link: &Path, target: &Path) {
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         let status = std::process::Command::new("cmd")
             .args(["/c", "mklink", "/j"])
             .arg(link)
@@ -239,7 +252,11 @@ mod tests {
     fn allows_a_target_with_no_symlink_ancestors() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let target = root.join("generated").join("testcases").join("ground.yml");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated")
+            .join("testcases")
+            .join("ground.yml");
 
         assert!(ensure_no_symlink_ancestor(root, &target).is_ok());
     }
@@ -249,7 +266,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let outside = tempfile::tempdir().unwrap();
-        let link = root.join("generated");
+        let link = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated");
         link_dir(&link, outside.path());
         let target = link.join("testcases").join("ground.yml");
 
@@ -266,7 +285,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let outside = tempfile::tempdir().unwrap();
-        let target = root.join("generated");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated");
         link_dir(&target, outside.path());
 
         let result = ensure_no_symlink_ancestor(root, &target);
@@ -358,7 +379,11 @@ mod tests {
     fn replace_file_creates_the_file_and_its_parent_dir_when_none_exist() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let target = root.join("executions").join("m1").join("results.yml");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("executions")
+            .join("m1")
+            .join("results.yml");
 
         replace_file(root, &target, b"id: m1\n").unwrap();
 
@@ -369,7 +394,10 @@ mod tests {
     fn replace_file_overwrites_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let target = root.join("changes").join("m2.yaml");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes")
+            .join("m2.yaml");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(&target, "old content").unwrap();
 
@@ -383,8 +411,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let outside = tempfile::tempdir().unwrap();
-        link_dir(&root.join("changes"), outside.path());
-        let target = root.join("changes").join("m2.yaml");
+        link_dir(
+            &root
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+            outside.path(),
+        );
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes")
+            .join("m2.yaml");
 
         let result = replace_file(root, &target, b"payload");
 
@@ -397,7 +433,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let outside = tempfile::tempdir().unwrap();
-        let target = root.join("changes").join("m2.yaml");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes")
+            .join("m2.yaml");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         link_dir(&target.with_file_name("m2.yaml.tmp"), outside.path());
 
@@ -412,7 +451,10 @@ mod tests {
     fn replace_file_succeeds_despite_a_stale_tmp_file_left_by_a_previous_failed_run() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let target = root.join("changes").join("m2.yaml");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("changes")
+            .join("m2.yaml");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(target.with_file_name("m2.yaml.tmp"), "stale leftover").unwrap();
 
@@ -425,7 +467,10 @@ mod tests {
     fn remove_file_no_follow_removes_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let target = root.join("axes").join("unused.yml");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("axes")
+            .join("unused.yml");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(&target, "id: unused\nlabel: unused\n").unwrap();
 
@@ -438,7 +483,10 @@ mod tests {
     fn remove_file_no_follow_treats_a_missing_file_as_success() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let target = root.join("axes").join("missing.yml");
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("axes")
+            .join("missing.yml");
 
         assert!(remove_file_no_follow(root, &target).is_ok());
     }

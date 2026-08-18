@@ -152,7 +152,11 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
     let temporary = tempfile::tempdir()?;
     let worktree = temporary.path().join("snapshot");
     git::add_detached_worktree(root, &worktree, git_ref)?;
-    let loaded = generate::load_knowledge_snapshot(&worktree.join("knowledge"));
+    let loaded = generate::load_knowledge_snapshot(
+        &worktree
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    );
     let _ = git::remove_worktree(root, &worktree);
     let knowledge = loaded?;
     let testcases = generate::compile_testcases(&knowledge);
