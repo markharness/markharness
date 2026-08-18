@@ -1,4 +1,0 @@
-id: single-parent-001
-condition: single-parent
-description: |
-  存在する Feature を single_parent として出力する。src/cli.rs:704-715; src/lineage.rs:35-56

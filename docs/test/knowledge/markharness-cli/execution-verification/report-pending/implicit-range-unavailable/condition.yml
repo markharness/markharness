@@ -1,5 +1,0 @@
-id: implicit-range-unavailable
-behavior: report-pending
-label: --from/--to を省略し、マイルストーンが2件未満である。src/cli.rs:929-1004
-description: |
-  --from/--to を省略し、マイルストーンが2件未満である。src/cli.rs:929-1004

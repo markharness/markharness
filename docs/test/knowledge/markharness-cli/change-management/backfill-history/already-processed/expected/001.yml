@@ -1,4 +1,0 @@
-id: already-processed-001
-condition: already-processed
-description: |
-  再計算せず skipped として数え、既存結果を保つ。src/backfill.rs:76-83,113-121

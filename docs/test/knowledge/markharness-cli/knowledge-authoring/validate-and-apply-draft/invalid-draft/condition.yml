@@ -1,5 +1,0 @@
-id: invalid-draft
-behavior: validate-and-apply-draft
-label: slug、必須説明、axis または親参照に検証エラーがあるドラフトを指定する。src/knowledge_draft.rs:390-602
-description: |
-  slug、必須説明、axis または親参照に検証エラーがあるドラフトを指定する。src/knowledge_draft.rs:390-602

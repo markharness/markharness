@@ -1,4 +1,0 @@
-id: existing-files-001
-condition: existing-files
-description: |
-  不足する構成だけを作成し、既存内容を上書きしない。src/init.rs:24-56

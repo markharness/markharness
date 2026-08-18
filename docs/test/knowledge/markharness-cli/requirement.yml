@@ -1,5 +1,0 @@
-id: markharness-cli
-label: markharness CLI
-axis: [cli, validation, persistence, git, safety]
-description: |
-  src/cli.rs の公開 CLI が提供する、Git-native テスト知識管理機能。

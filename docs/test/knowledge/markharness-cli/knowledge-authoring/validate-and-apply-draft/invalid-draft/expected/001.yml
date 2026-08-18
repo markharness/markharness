@@ -1,4 +1,0 @@
-id: invalid-draft-001
-condition: invalid-draft
-description: |
-  エラー一覧を報告し、知識ファイルを書き込まない。src/cli.rs:462-465,493-499; src/knowledge_apply.rs:34-55

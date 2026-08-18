@@ -1,5 +1,0 @@
-id: empty-registry
-behavior: manage-axes
-label: axes list を空のレジストリに対して実行する。src/cli.rs:540-561
-description: |
-  axes list を空のレジストリに対して実行する。src/cli.rs:540-561

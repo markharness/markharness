@@ -1,5 +1,0 @@
-id: knowledge-present
-behavior: generate-testcases
-label: 有効な Condition と ExpectedResult が knowledge/ に存在する。src/cli.rs:508-538; src/generate.rs:182-264
-description: |
-  有効な Condition と ExpectedResult が knowledge/ に存在する。src/cli.rs:508-538; src/generate.rs:182-264

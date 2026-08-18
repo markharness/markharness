@@ -1,4 +1,0 @@
-id: implicit-range-unavailable-001
-condition: implicit-range-unavailable
-description: |
-  pair を作れない旨を表示して終了コード2にする。src/cli.rs:987-992; src/verify.rs:266-293

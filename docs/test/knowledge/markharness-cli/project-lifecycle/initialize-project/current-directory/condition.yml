@@ -1,5 +1,0 @@
-id: current-directory
-behavior: initialize-project
-label: --dir を省略する。src/cli.rs:393-397
-description: |
-  --dir を省略する。src/cli.rs:393-397

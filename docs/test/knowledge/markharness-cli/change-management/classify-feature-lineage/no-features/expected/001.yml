@@ -1,4 +1,0 @@
-id: no-features-001
-condition: no-features
-description: |
-  no Features found と表示する。src/cli.rs:705-707

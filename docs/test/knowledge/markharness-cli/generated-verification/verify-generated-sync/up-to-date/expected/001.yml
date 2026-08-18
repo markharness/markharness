@@ -1,4 +1,0 @@
-id: up-to-date-001
-condition: up-to-date
-description: |
-  up to date と報告し、成功する。src/cli.rs:855-873; src/verify.rs:55-181

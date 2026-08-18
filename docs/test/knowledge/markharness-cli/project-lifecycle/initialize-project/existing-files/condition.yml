@@ -1,5 +1,0 @@
-id: existing-files
-behavior: initialize-project
-label: 初期化先に既存の管理ディレクトリまたはファイルがある。src/init.rs:24-56
-description: |
-  初期化先に既存の管理ディレクトリまたはファイルがある。src/init.rs:24-56

@@ -1,6 +1,0 @@
-id: testcase-generation
-requirement: markharness-cli
-label: TestCase generation
-axis: [cli, validation, persistence, git, safety]
-description: |
-  TestCase generation に関する利用者向け CLI 機能。

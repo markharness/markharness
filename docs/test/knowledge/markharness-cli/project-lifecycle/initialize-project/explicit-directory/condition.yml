@@ -1,5 +1,0 @@
-id: explicit-directory
-behavior: initialize-project
-label: --dir で対象ディレクトリを指定する。src/cli.rs:392-398
-description: |
-  --dir で対象ディレクトリを指定する。src/cli.rs:392-398

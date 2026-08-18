@@ -1,4 +1,0 @@
-id: added-removed-or-changed-001
-condition: added-removed-or-changed
-description: |
-  差分を added、removed、changed に分類して出力し、終了コード1にする。src/cli.rs:857-874

@@ -1,4 +1,0 @@
-id: stale-generated-files-001
-condition: stale-generated-files
-description: |
-  生成先を安全に再作成するため、古い派生ファイルは残らない。src/cli.rs:514-528; src/fs_safety.rs:116-143

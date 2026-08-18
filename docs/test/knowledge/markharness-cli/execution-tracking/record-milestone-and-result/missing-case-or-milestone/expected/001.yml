@@ -1,4 +1,0 @@
-id: missing-case-or-milestone-001
-condition: missing-case-or-milestone
-description: |
-  該当する前提不足を表示して終了コード2にし、実行結果を記録しない。src/cli.rs:807-817

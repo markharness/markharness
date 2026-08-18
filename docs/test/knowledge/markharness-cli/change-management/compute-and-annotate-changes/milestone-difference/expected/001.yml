@@ -1,4 +1,0 @@
-id: milestone-difference-001
-condition: milestone-difference
-description: |
-  Feature tree SHA の差から ChangeEvent を算出し changes/<to>.yaml に保存する。src/cli.rs:643-651; src/changes.rs:237-302

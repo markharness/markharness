@@ -1,4 +1,0 @@
-id: empty-registry-001
-condition: empty-registry
-description: |
-  no axes registered under axes/ と表示する。src/cli.rs:548-551

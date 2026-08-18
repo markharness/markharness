@@ -1,5 +1,0 @@
-id: missing-tag
-behavior: record-milestone-and-result
-label: milestone init に存在しない Git tag を指定する。src/cli.rs:742-772
-description: |
-  milestone init に存在しない Git tag を指定する。src/cli.rs:742-772

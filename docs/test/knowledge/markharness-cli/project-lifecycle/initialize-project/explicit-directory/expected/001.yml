@@ -1,4 +1,0 @@
-id: explicit-directory-001
-condition: explicit-directory
-description: |
-  指定先に knowledge/、axes/、generated/、executions/、changes/、schema/ を初期化し、初期化メッセージを出力する。src/cli.rs:398-404; src/init.rs:24-56

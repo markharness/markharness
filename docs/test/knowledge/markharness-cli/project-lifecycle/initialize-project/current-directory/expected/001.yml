@@ -1,4 +1,0 @@
-id: current-directory-001
-condition: current-directory
-description: |
-  現在の作業ディレクトリを初期化対象として使用する。src/cli.rs:393-398

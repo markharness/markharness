@@ -1,5 +1,0 @@
-id: verified-blobs
-behavior: trace-execution
-label: 指定 case_id と milestone の実行記録に verified_feature_tree_shas がある。src/cli.rs:876-928
-description: |
-  指定 case_id と milestone の実行記録に verified_feature_tree_shas がある。src/cli.rs:876-928

@@ -1,6 +1,0 @@
-id: validate-repository
-feature: repository-validation
-label: Validate repository
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Validate repository を CLI から実行する。

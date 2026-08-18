@@ -1,5 +1,0 @@
-id: single-parent
-behavior: classify-feature-lineage
-label: changes lineage に単一親 commit を指定する。src/lineage.rs:58-137
-description: |
-  changes lineage に単一親 commit を指定する。src/lineage.rs:58-137

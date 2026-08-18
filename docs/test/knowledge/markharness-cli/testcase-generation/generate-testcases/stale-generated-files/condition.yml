@@ -1,5 +1,0 @@
-id: stale-generated-files
-behavior: generate-testcases
-label: generated/testcases/ に現在の knowledge/ から生成されない古いファイルがある。src/cli.rs:514-516
-description: |
-  generated/testcases/ に現在の knowledge/ から生成されない古いファイルがある。src/cli.rs:514-516

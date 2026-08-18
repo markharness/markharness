@@ -1,6 +1,0 @@
-id: generate-testcases
-feature: testcase-generation
-label: Generate TestCases
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Generate TestCases を CLI から実行する。

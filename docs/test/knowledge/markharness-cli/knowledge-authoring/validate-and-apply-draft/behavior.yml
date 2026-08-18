@@ -1,6 +1,0 @@
-id: validate-and-apply-draft
-feature: knowledge-authoring
-label: Validate and apply draft
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Validate and apply draft を CLI から実行する。

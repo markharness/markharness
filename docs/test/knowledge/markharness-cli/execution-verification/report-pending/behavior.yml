@@ -1,6 +1,0 @@
-id: report-pending
-feature: execution-verification
-label: Report pending verification
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Report pending verification を CLI から実行する。

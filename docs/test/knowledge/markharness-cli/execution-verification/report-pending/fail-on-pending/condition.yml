@@ -1,5 +1,0 @@
-id: fail-on-pending
-behavior: report-pending
-label: pending が存在する状態で --fail-on-pending を指定する。src/cli.rs:981-984
-description: |
-  pending が存在する状態で --fail-on-pending を指定する。src/cli.rs:981-984

@@ -1,6 +1,0 @@
-id: generated-verification
-requirement: markharness-cli
-label: Generated verification
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Generated verification に関する利用者向け CLI 機能。

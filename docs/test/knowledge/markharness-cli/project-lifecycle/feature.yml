@@ -1,6 +1,0 @@
-id: project-lifecycle
-requirement: markharness-cli
-label: Project lifecycle
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Project lifecycle に関する利用者向け CLI 機能。

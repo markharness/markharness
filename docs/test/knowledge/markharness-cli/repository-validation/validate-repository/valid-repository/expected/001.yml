@@ -1,4 +1,0 @@
-id: valid-repository-001
-condition: valid-repository
-description: |
-  valid メッセージまたは {ok:true} を出力して成功する。src/cli.rs:829-835; src/validate.rs:122-183

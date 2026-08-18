@@ -1,6 +1,0 @@
-id: axis-registry
-requirement: markharness-cli
-label: Axis registry
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Axis registry に関する利用者向け CLI 機能。

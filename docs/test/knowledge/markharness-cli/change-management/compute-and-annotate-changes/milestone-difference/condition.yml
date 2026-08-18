@@ -1,5 +1,0 @@
-id: milestone-difference
-behavior: compute-and-annotate-changes
-label: 異なる2つの Git マイルストーンを changes compute の from/to に指定する。src/cli.rs:632-653
-description: |
-  異なる2つの Git マイルストーンを changes compute の from/to に指定する。src/cli.rs:632-653

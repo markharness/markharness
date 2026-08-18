@@ -1,6 +1,0 @@
-id: knowledge-authoring
-requirement: markharness-cli
-label: Knowledge authoring
-axis: [cli, validation, persistence, git, safety]
-description: |
-  Knowledge authoring に関する利用者向け CLI 機能。

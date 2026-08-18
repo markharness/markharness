@@ -1,5 +1,0 @@
-id: dry-run
-behavior: validate-and-apply-draft
-label: knowledge apply に --dry-run を指定する。src/cli.rs:477-488
-description: |
-  knowledge apply に --dry-run を指定する。src/cli.rs:477-488
