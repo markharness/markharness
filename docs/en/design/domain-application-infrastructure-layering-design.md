@@ -1,6 +1,6 @@
 # markharness Architecture Design: Domain / Application / Infrastructure Layering
 
-**Status**: Accepted (Phases 1–3 implemented; Phases 4–5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
+**Status**: Accepted (Phases 1–4 implemented; Phase 5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
 **Related documents**: [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md), [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md), `git-native-model-for-test-knowledge-management.md`
 **Intended audience**: implementers of markharness (to be referenced when starting Phase 1)
 
@@ -641,11 +641,11 @@ Directory layout is unchanged at this stage.
 
 ### Phase 4: Knowledge Snapshot and a Pure Domain
 
-1. Introduce `KnowledgeSnapshot`.
-2. Separate TestcaseCompiler from the filesystem.
-3. Separate Verification's Data Loader from the Engine.
-4. Finalize `ChangeAnalyzer` on the `CommitRef` basis (Section 4.3).
-5. Reorganize directories into Domain/Application/Infrastructure as needed (Chapter 8).
+1. [Implemented] Introduce `KnowledgeSnapshot`.
+2. [Implemented] Separate TestcaseCompiler from the filesystem.
+3. [Implemented] Separate a pure `Current`/`Pending`/`Stale`/`Unknown` evaluator from Verification's loading logic.
+4. [Implemented] Finalize `ChangeAnalyzer` on the `CommitRef` basis (Section 4.3).
+5. [Implemented] Keep the physical layout for now because the responsibility seams are clear within the existing modules.
 
 ### Phase 5: Large-Repository Optimization
 

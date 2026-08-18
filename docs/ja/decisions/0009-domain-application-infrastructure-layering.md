@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(Phase 1〜3は2026-08-18に実行済み。型付き変更計算、Application/Presenter分離に加え、`generate`のTestCase群とtraceability indexをstaging後にbackup付きで切り替えるtransactional updateを実装。Phase 4〜5は未着手)。
+Accepted(Phase 1〜4は2026-08-18に実行済み。Phase 4では`KnowledgeSnapshot`と純粋なTestcaseCompiler、Verification状態判定、`CommitRef`ベースの`ChangeAnalyzer`を導入。Phase 5は未着手)。
 
 ## 背景
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Phases 1–3 were completed on 2026-08-18. In addition to typed change computation and Application/Presenter separation, `generate` now stages TestCases and the traceability index and installs them with a backup-assisted transactional directory switch. Phases 4–5 have not started).
+Accepted (Phases 1–4 were completed on 2026-08-18. Phase 4 introduced `KnowledgeSnapshot`, a pure TestcaseCompiler and verification-state evaluator, and a `CommitRef`-based `ChangeAnalyzer`. Phase 5 has not started).
 
 ## Context
 

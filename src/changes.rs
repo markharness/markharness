@@ -91,6 +91,54 @@ impl Default for ChangeOptions {
     }
 }
 
+/// A named release milestone or an arbitrary Git commit-ish accepted by
+/// the change analyzer. Keeping the kind explicit lets application policy
+/// require milestones while lower-level analysis can operate on commits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitRef {
+    Milestone(String),
+    Commit(String),
+}
+
+impl CommitRef {
+    pub fn milestone(value: impl Into<String>) -> Self {
+        Self::Milestone(value.into())
+    }
+
+    pub fn commit(value: impl Into<String>) -> Self {
+        Self::Commit(value.into())
+    }
+
+    pub fn as_git_ref(&self) -> &str {
+        match self {
+            Self::Milestone(value) | Self::Commit(value) => value,
+        }
+    }
+
+    pub fn is_milestone(&self) -> bool {
+        matches!(self, Self::Milestone(_))
+    }
+}
+
+pub struct ChangeAnalyzer<'a> {
+    root: &'a Path,
+}
+
+impl<'a> ChangeAnalyzer<'a> {
+    pub fn new(root: &'a Path) -> Self {
+        Self { root }
+    }
+
+    pub fn compute(
+        &self,
+        from: &CommitRef,
+        to: &CommitRef,
+        options: ChangeOptions,
+    ) -> io::Result<Vec<ChangeEvent>> {
+        compute_changes_between_refs(self.root, from.as_git_ref(), to.as_git_ref(), options)
+    }
+}
+
 /// For each Feature id, `[tree(P1), tree(P2)]` when `merge_commit` is a
 /// two-parent merge commit and the Feature is a true divergence per
 /// `lineage::classify` (§3.2). Returns an empty map when `merge_commit`
@@ -215,6 +263,19 @@ fn testcases_by_feature(
 /// behavior of reading the current `knowledge/` working tree instead (see
 /// `impacted_testcases_by_feature` / `historical_testcases_by_feature`).
 pub fn compute_changes(
+    root: &Path,
+    from_milestone: &str,
+    to_milestone: &str,
+    options: ChangeOptions,
+) -> io::Result<Vec<ChangeEvent>> {
+    ChangeAnalyzer::new(root).compute(
+        &CommitRef::milestone(from_milestone),
+        &CommitRef::milestone(to_milestone),
+        options,
+    )
+}
+
+fn compute_changes_between_refs(
     root: &Path,
     from_milestone: &str,
     to_milestone: &str,
@@ -433,6 +494,30 @@ mod tests {
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
         dir
+    }
+
+    #[test]
+    fn change_analyzer_accepts_arbitrary_commit_refs() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "Jump");
+        run_git(dir.path(), &["add", "."]);
+        run_git(dir.path(), &["commit", "-qm", "base"]);
+        write_full_chain(dir.path(), "Higher jump");
+        run_git(dir.path(), &["add", "."]);
+        run_git(dir.path(), &["commit", "-qm", "head"]);
+
+        let events = ChangeAnalyzer::new(dir.path())
+            .compute(
+                &CommitRef::commit("HEAD~1"),
+                &CommitRef::commit("HEAD"),
+                ChangeOptions::default(),
+            )
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].feature_id, "player-jump");
+        assert_eq!(events[0].from_milestone, "HEAD~1");
+        assert_eq!(events[0].to_milestone, "HEAD");
     }
 
     fn write_full_chain(root: &Path, label: &str) {

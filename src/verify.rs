@@ -105,7 +105,7 @@ pub fn diff_generated_testcases(root: &Path) -> io::Result<Vec<DiffEntry>> {
 }
 
 /// Which ChangeEvent a `verified_feature_tree_shas` entry reflects (§3.1 Q1).
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ReflectedChange {
     pub event_id: String,
     pub from_milestone: String,
@@ -240,6 +240,40 @@ pub struct PendingReport {
     pub stale: Vec<StaleEntry>,
 }
 
+/// Filesystem-independent input for deciding whether an impacted testcase
+/// still needs verification. The loader resolves Git and execution data;
+/// the engine below only compares values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingCandidate {
+    pub case_id: String,
+    pub feature_id: String,
+    pub original_event_id: String,
+    pub target_tree_sha: Option<String>,
+    pub current_tree_sha: Option<String>,
+    pub current_event: Option<ReflectedChange>,
+    pub reexecuted: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationStatus {
+    Current,
+    Pending,
+    Stale,
+    Unknown,
+}
+
+pub fn evaluate_pending_candidate(candidate: &PendingCandidate) -> VerificationStatus {
+    if candidate.reexecuted {
+        VerificationStatus::Current
+    } else if candidate.current_tree_sha.is_none() {
+        VerificationStatus::Unknown
+    } else if candidate.current_tree_sha == candidate.target_tree_sha {
+        VerificationStatus::Pending
+    } else {
+        VerificationStatus::Stale
+    }
+}
+
 #[derive(Debug)]
 pub enum PendingError {
     /// `range` was `None` and fewer than two milestones exist to pair.
@@ -317,9 +351,7 @@ pub fn pending(
 
     let mut report = PendingReport::default();
     for (case_id, event) in impacted {
-        if was_reexecuted(root, at_or_after_to, &case_id, &event)? {
-            continue;
-        }
+        let reexecuted = was_reexecuted(root, at_or_after_to, &case_id, &event)?;
 
         let current_tree_sha = match current_milestone {
             Some(m) => id_cache::resolve_feature_versions(root, m, use_cache)?
@@ -329,32 +361,51 @@ pub fn pending(
             None => None,
         };
 
-        if current_tree_sha == event.to_tree_sha {
-            report.pending.push(PendingEntry {
-                case_id,
-                feature_id: event.feature_id,
-                event_id: event.event_id,
-            });
-        } else {
-            let current_event = current_tree_sha.as_ref().and_then(|current_tree_sha| {
-                all_changes
-                    .iter()
-                    .find(|e| {
-                        e.feature_id == event.feature_id
-                            && e.to_tree_sha.as_ref() == Some(current_tree_sha)
-                    })
-                    .map(|e| ReflectedChange {
-                        event_id: e.event_id.clone(),
-                        from_milestone: e.from_milestone.clone(),
-                        to_milestone: e.to_milestone.clone(),
-                    })
-            });
-            report.stale.push(StaleEntry {
-                case_id,
-                feature_id: event.feature_id,
-                original_event_id: event.event_id,
-                current_event,
-            });
+        let current_event = current_tree_sha.as_ref().and_then(|current_tree_sha| {
+            all_changes
+                .iter()
+                .find(|e| {
+                    e.feature_id == event.feature_id
+                        && e.to_tree_sha.as_ref() == Some(current_tree_sha)
+                })
+                .map(|e| ReflectedChange {
+                    event_id: e.event_id.clone(),
+                    from_milestone: e.from_milestone.clone(),
+                    to_milestone: e.to_milestone.clone(),
+                })
+        });
+        let candidate = PendingCandidate {
+            case_id,
+            feature_id: event.feature_id,
+            original_event_id: event.event_id,
+            target_tree_sha: event.to_tree_sha,
+            current_tree_sha,
+            current_event,
+            reexecuted,
+        };
+
+        match evaluate_pending_candidate(&candidate) {
+            VerificationStatus::Current => {}
+            VerificationStatus::Pending => report.pending.push(PendingEntry {
+                case_id: candidate.case_id,
+                feature_id: candidate.feature_id,
+                event_id: candidate.original_event_id,
+            }),
+            VerificationStatus::Unknown if candidate.target_tree_sha.is_none() => {
+                report.pending.push(PendingEntry {
+                    case_id: candidate.case_id,
+                    feature_id: candidate.feature_id,
+                    event_id: candidate.original_event_id,
+                });
+            }
+            VerificationStatus::Stale | VerificationStatus::Unknown => {
+                report.stale.push(StaleEntry {
+                    case_id: candidate.case_id,
+                    feature_id: candidate.feature_id,
+                    original_event_id: candidate.original_event_id,
+                    current_event: candidate.current_event,
+                });
+            }
         }
     }
 

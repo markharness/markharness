@@ -26,7 +26,8 @@ fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<
 }
 
 pub fn generate_testcases(root: &Path) -> io::Result<CommandOutcome> {
-    let testcases = generate::generate_testcases(&root.join("knowledge"))?;
+    let snapshot = generate::load_knowledge_snapshot(&root.join("knowledge"))?;
+    let testcases = generate::compile_testcases(&snapshot);
     let generated_dir = root.join("generated");
     let existing_index = generated_dir.join("traceability-index.json");
     if existing_index.exists() && !existing_index.is_file() {

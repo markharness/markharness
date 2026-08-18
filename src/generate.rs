@@ -30,6 +30,31 @@ pub struct TestCase {
     pub axis: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectedSnapshot {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeCaseSnapshot {
+    pub requirement_id: String,
+    pub requirement_axis: Vec<String>,
+    pub feature_id: String,
+    pub feature_axis: Vec<String>,
+    pub behavior_id: String,
+    pub behavior_description: String,
+    pub behavior_axis: Vec<String>,
+    pub condition_id: String,
+    pub condition_description: String,
+    pub expected: Vec<ExpectedSnapshot>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnowledgeSnapshot {
+    pub cases: Vec<KnowledgeCaseSnapshot>,
+}
+
 /// Deduplicates and sorts axis values from multiple hierarchy levels into one
 /// deterministic list, independent of input order or duplication.
 fn union_axis(sources: &[&[String]]) -> Vec<String> {
@@ -179,8 +204,8 @@ fn require_valid_slug(source_path: &Path, field: &str, id: &str) -> io::Result<(
     ))
 }
 
-pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
-    let mut testcases = Vec::new();
+pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSnapshot> {
+    let mut cases = Vec::new();
 
     for requirement_dir in sorted_subdirs(knowledge_root)? {
         let requirement_path = requirement_dir.join("requirement.yml");
@@ -226,42 +251,72 @@ pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
                         continue;
                     }
 
-                    let mut expected_results = Vec::new();
-                    let mut expected_texts = Vec::new();
+                    let mut expected = Vec::new();
                     for expected_path in &expected_paths {
-                        let expected =
-                            parse_expected_result(&fs::read_to_string(expected_path)?)
-                                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                        expected_results.push(expected.id);
-                        expected_texts.push(expected.description);
+                        let parsed = parse_expected_result(&fs::read_to_string(expected_path)?)
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                        expected.push(ExpectedSnapshot {
+                            id: parsed.id,
+                            description: parsed.description,
+                        });
                     }
 
-                    let axis = union_axis(&[&requirement.axis, &feature.axis, &behavior.axis]);
-
-                    testcases.push(TestCase {
-                        case_id: format!(
-                            "tc-{}-{}-{}-{}",
-                            requirement.id, feature.id, behavior.id, condition.id
-                        ),
-                        generated_from: GeneratedFrom {
-                            requirement: requirement.id.clone(),
-                            feature: feature.id.clone(),
-                            behavior: behavior.id.clone(),
-                            condition: condition.id.clone(),
-                            expected_results,
-                        },
-                        title: condition.description,
-                        steps: vec![behavior.description.clone()],
-                        expected: expected_texts,
-                        axis,
+                    cases.push(KnowledgeCaseSnapshot {
+                        requirement_id: requirement.id.clone(),
+                        requirement_axis: requirement.axis.clone(),
+                        feature_id: feature.id.clone(),
+                        feature_axis: feature.axis.clone(),
+                        behavior_id: behavior.id.clone(),
+                        behavior_description: behavior.description.clone(),
+                        behavior_axis: behavior.axis.clone(),
+                        condition_id: condition.id,
+                        condition_description: condition.description,
+                        expected,
                     });
                 }
             }
         }
     }
 
+    Ok(KnowledgeSnapshot { cases })
+}
+
+pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
+    let mut testcases: Vec<TestCase> = snapshot
+        .cases
+        .iter()
+        .map(|case| TestCase {
+            case_id: format!(
+                "tc-{}-{}-{}-{}",
+                case.requirement_id, case.feature_id, case.behavior_id, case.condition_id
+            ),
+            generated_from: GeneratedFrom {
+                requirement: case.requirement_id.clone(),
+                feature: case.feature_id.clone(),
+                behavior: case.behavior_id.clone(),
+                condition: case.condition_id.clone(),
+                expected_results: case.expected.iter().map(|item| item.id.clone()).collect(),
+            },
+            title: case.condition_description.clone(),
+            steps: vec![case.behavior_description.clone()],
+            expected: case
+                .expected
+                .iter()
+                .map(|item| item.description.clone())
+                .collect(),
+            axis: union_axis(&[
+                &case.requirement_axis,
+                &case.feature_axis,
+                &case.behavior_axis,
+            ]),
+        })
+        .collect();
     testcases.sort_by(|a, b| a.case_id.cmp(&b.case_id));
-    Ok(testcases)
+    testcases
+}
+
+pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
+    Ok(compile_testcases(&load_knowledge_snapshot(knowledge_root)?))
 }
 
 pub fn serialize_testcase(testcase: &TestCase) -> String {

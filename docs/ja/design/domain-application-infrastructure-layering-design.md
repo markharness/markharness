@@ -1,6 +1,6 @@
 # markharness アーキテクチャ設計:Domain / Application / Infrastructureレイヤー分離
 
-**ステータス**:Accepted(Phase 1〜3実装済み、Phase 4〜5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
+**ステータス**:Accepted(Phase 1〜4実装済み、Phase 5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
 **関連文書**:[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)、`テスト知識管理のGit-nativeモデル_統合版.md`
 **想定読者**:markharnessの実装者(Phase 1着手時に参照する)
 
@@ -641,11 +641,11 @@ markharnessの主要な実行機会はローカル編集、PR時CI、tag push時
 
 ### Phase 4: Knowledge Snapshotと純粋Domain
 
-1. `KnowledgeSnapshot`を導入する。
-2. TestcaseCompilerをファイルシステムから分離する。
-3. VerificationのData LoaderとEngineを分離する。
-4. `ChangeAnalyzer`を`CommitRef`ベースで確定させる(4.3節)。
-5. 必要に応じてDomain/Application/Infrastructureへディレクトリを再編する(8章)。
+1. [実装済み] `KnowledgeSnapshot`を導入する。
+2. [実装済み] TestcaseCompilerをファイルシステムから分離する。
+3. [実装済み] Verificationの読み込み処理から、`Current`/`Pending`/`Stale`/`Unknown`を返す純粋な状態判定を分離する。
+4. [実装済み] `ChangeAnalyzer`を`CommitRef`ベースで確定させる(4.3節)。
+5. [実装済み] 現段階では責務境界が既存Module内で明確なため、物理ディレクトリの再編は行わない。
 
 ### Phase 5: 大規模リポジトリ最適化
 
