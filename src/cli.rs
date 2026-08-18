@@ -4,11 +4,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::time::Duration;
 
 use crate::application;
 use crate::axes;
 use crate::backfill;
 use crate::changes;
+use crate::derived_index;
 use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
 use crate::id_cache;
 use crate::init;
@@ -253,6 +255,12 @@ pub enum BackfillCommand {
         /// Recompute Feature blob SHAs directly via `git ls-tree` instead of using .markharness-cache/
         #[arg(long)]
         no_cache: bool,
+        /// Stop after processing this many new milestone pairs
+        #[arg(long)]
+        max_pairs: Option<usize>,
+        /// Stop before starting a new pair when this duration is exhausted (e.g. 30s, 5m, 1h)
+        #[arg(long, value_parser = parse_duration)]
+        time_budget: Option<Duration>,
     },
 }
 
@@ -329,6 +337,32 @@ pub enum CacheCommand {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
+    /// Rebuild read-optimized indexes from canonical Git and repository data
+    Index {
+        /// Git revision used to index Features
+        #[arg(long = "ref", default_value = "HEAD")]
+        git_ref: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+}
+
+fn parse_duration(value: &str) -> Result<Duration, String> {
+    let split = value
+        .find(|character: char| !character.is_ascii_digit())
+        .ok_or_else(|| "duration requires a unit: ms, s, m, or h".to_string())?;
+    let (amount, unit) = value.split_at(split);
+    let amount: u64 = amount
+        .parse()
+        .map_err(|_| "duration amount must be a non-negative integer".to_string())?;
+    match unit {
+        "ms" => Ok(Duration::from_millis(amount)),
+        "s" => Ok(Duration::from_secs(amount)),
+        "m" => Ok(Duration::from_secs(amount.saturating_mul(60))),
+        "h" => Ok(Duration::from_secs(amount.saturating_mul(3600))),
+        _ => Err("duration unit must be ms, s, m, or h".to_string()),
+    }
 }
 
 #[derive(Subcommand)]
@@ -744,6 +778,17 @@ pub fn run(cli: Cli) -> io::Result<()> {
             println!("removed .markharness-cache/ under {}", root.display());
             Ok(())
         }
+        Command::Cache(CacheCommand::Index { dir, git_ref }) => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            let paths = derived_index::rebuild_indexes(&root, &git_ref)?;
+            println!("rebuilt {}", paths.features.display());
+            println!("rebuilt {}", paths.change_events.display());
+            println!("rebuilt {}", paths.executions.display());
+            Ok(())
+        }
         Command::Changes(ChangesCommand::Compute {
             from,
             to,
@@ -839,12 +884,24 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Backfill(BackfillCommand::Run { dir, no_cache }) => {
+        Command::Backfill(BackfillCommand::Run {
+            dir,
+            no_cache,
+            max_pairs,
+            time_budget,
+        }) => {
             let root = match dir {
                 Some(dir) => dir,
                 None => env::current_dir()?,
             };
-            let report = backfill::backfill_run(&root, !no_cache)?;
+            let report = backfill::backfill_run_with_policy(
+                &root,
+                backfill::BackfillPolicy {
+                    use_cache: !no_cache,
+                    max_pairs,
+                    time_budget,
+                },
+            )?;
             for to_milestone in &report.processed {
                 println!("backfilled changes/{to_milestone}.yaml");
             }
@@ -853,6 +910,9 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 report.processed.len(),
                 report.skipped.len()
             );
+            if report.stopped_by_limit {
+                println!("backfill stopped at the configured limit");
+            }
             Ok(())
         }
         Command::Milestone(MilestoneCommand::Init { tag, dir, json }) => {
@@ -1982,6 +2042,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_cache_index_with_git_ref() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "cache",
+            "index",
+            "--ref",
+            "v2",
+            "--dir",
+            "sample",
+        ]);
+
+        match cli.command {
+            Command::Cache(CacheCommand::Index { dir, git_ref }) => {
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert_eq!(git_ref, "v2");
+            }
+            _ => panic!("expected Cache Index command"),
+        }
+    }
+
+    #[test]
     fn cache_rebuild_is_a_no_op_when_cache_dir_missing() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
@@ -2101,12 +2182,23 @@ mod tests {
             "--dir",
             "sample",
             "--no-cache",
+            "--max-pairs",
+            "7",
+            "--time-budget",
+            "5m",
         ]);
 
         match cli.command {
-            Command::Backfill(BackfillCommand::Run { dir, no_cache }) => {
+            Command::Backfill(BackfillCommand::Run {
+                dir,
+                no_cache,
+                max_pairs,
+                time_budget,
+            }) => {
                 assert_eq!(dir, Some(PathBuf::from("sample")));
                 assert!(no_cache);
+                assert_eq!(max_pairs, Some(7));
+                assert_eq!(time_budget, Some(std::time::Duration::from_secs(300)));
             }
             _ => panic!("expected Backfill Run command"),
         }

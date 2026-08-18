@@ -1,6 +1,6 @@
 # markharness アーキテクチャ設計:Domain / Application / Infrastructureレイヤー分離
 
-**ステータス**:Accepted(Phase 1〜4実装済み、Phase 5未着手。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
+**ステータス**:Accepted(Phase 1〜5実装済み。[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)で決定した方向性の詳細設計)
 **関連文書**:[decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md)、[decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)、`テスト知識管理のGit-nativeモデル_統合版.md`
 **想定読者**:markharnessの実装者(Phase 1着手時に参照する)
 
@@ -649,11 +649,11 @@ markharnessの主要な実行機会はローカル編集、PR時CI、tag push時
 
 ### Phase 5: 大規模リポジトリ最適化
 
-1. `KnowledgeSource`を導入する。
-2. `GitTreeKnowledgeSource`で一時worktreeを置き換える。
-3. Feature、ChangeEvent、Executionの再構築可能な索引を追加する。
-4. Backfillに処理量制限を追加する。
-5. 計測結果に基づき増分生成または限定的な並列処理を導入する。
+1. [実装済み] `KnowledgeSource`とworking tree/Git treeのAdapterを導入する。
+2. [実装済み] `GitTreeKnowledgeSource`によるblob直読で一時worktreeを置き換える。
+3. [実装済み] Feature、ChangeEvent、ExecutionのJSON索引を`.markharness-cache/index/`へ再構築可能な派生物として追加する。
+4. [実装済み] Backfillに`--max-pairs`と`--time-budget`を追加する。
+5. [判断済み] 現時点では増分生成・並列処理を導入しない。ボトルネックを示す計測結果がなく、全生成を正準動作として維持する。Git tree直読と処理量制限を導入した状態で今後計測し、必要性が確認された場合のみ追加する。
 
 ## 13. 採用しない設計
 

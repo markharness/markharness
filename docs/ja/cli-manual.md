@@ -700,6 +700,8 @@ $ markharness cache rebuild
 removed .markharness-cache/ under /path/to/project
 ```
 
+読み取り最適化用の派生索引は`markharness cache index [--ref <git-ref>] [-d, --dir <path>]`で再構築できる。既定の`HEAD`を対象に`.markharness-cache/index/`へFeature、ChangeEvent、ExecutionのJSON索引を生成する。索引は正準データではなく、削除後も同じ入力から決定的に再生成できる。
+
 **ユースケース対応**: UC7「idキャッシュを破棄・再構築する」(`docs/product-operation.md`)。id解決の不整合が疑われる場合のフェイルセーフ。
 
 **Featureの`id:`を変更した場合の注意(利用者向け、論文§3.3)**: Feature idは各`feature.yml`の`id:`フィールドを正準ソースとして追跡する。`id:`の値そのものを書き換えると、ツールから見て「元のFeatureが削除され、新しいidのFeatureが追加された」扱いになり、`changes compute`は過去のマイルストーンとの`derived_from`関係を復元できない(版履歴が断絶する)。Featureディレクトリの**リネーム**(パス変更)は`id:`が変わらない限り追跡対象内だが、`id:`自体の変更に対する移行手順(旧id→新idのエイリアス記録等)は本CLIには無く、現状は「`id:`を変更しない」運用を利用者側で徹底する必要がある。検討状況は[decisions/0004](./decisions/0004-feature-id-change-migration.md)を参照。
@@ -724,7 +726,7 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 
 - Feature単位で `from_blob`/`to_blob` を比較し、一致すれば何もしない。片方にのみ存在すれば追加/削除、両方に存在し値が異なれば変更として `ChangeEvent` を1件生成する。
 - `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.5節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4も参照)。
-  - **既定(`--current-tree`未指定)**：`to-milestone`タグが指す`knowledge/`ツリー(一時`git worktree`に展開)から構築する。同じ区間を後日再計算しても常に同じ結果になる。
+  - **既定(`--current-tree`未指定)**：`to-milestone`タグが指す`knowledge/`ツリーをGit blobから直接読み込んで構築する。同じ区間を後日再計算しても常に同じ結果になる。
   - **`--current-tree`指定時**：現在の作業ツリーの`knowledge/`から構築する(従来動作)。作業ツリーが変化し続ける限り、同じ区間の再計算結果も変わりうる。
 - `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.16節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.11節)。
@@ -772,7 +774,7 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 ### 1.13 `markharness backfill run` — 過去マイルストーンの一括処理(UC6: バックフィルを非同期実行する)
 
 ```text
-markharness backfill run [--no-cache] [-d, --dir <path>]
+markharness backfill run [--no-cache] [--max-pairs <count>] [--time-budget <duration>] [-d, --dir <path>]
 ```
 
 **用途**: `executions/*/milestone.yml` が存在するマイルストーンを対象に、対応する git tag のコミット日時(committer date)で新しい順に並べ、隣接する2マイルストーンごとに `changes compute`(1.12節)相当の処理を実行して `changes/<milestone>.yaml` を生成する。1回の実行で全ペアを処理し終了する(常駐デーモンではない。CI等からの定期実行を想定)。
@@ -782,6 +784,8 @@ markharness backfill run [--no-cache] [-d, --dir <path>]
 - 最も古いマイルストーンは比較対象がないためスキップされる。
 - 各マイルストーン(to側)の処理完了は `git notes --ref=markharness-backfill` に記録され、次回実行時に同じペアは再計算されずスキップされる(§4.3)。
 - `--no-cache` を指定しない場合、`changes compute` と同じ `.markharness-cache/` を共有する。
+- `--max-pairs`は1回の実行で新規処理するペア数を制限する。既処理としてスキップしたペアは件数に含めない。
+- `--time-budget`は未処理ペアの開始前に時間予算を判定する。単位は`ms`、`s`、`m`、`h`(例: `30s`、`5m`)。ペア処理中の強制中断は行わない。
 
 対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.12節と同じく解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
 

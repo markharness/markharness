@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Phases 1–4 were completed on 2026-08-18. Phase 4 introduced `KnowledgeSnapshot`, a pure TestcaseCompiler and verification-state evaluator, and a `CommitRef`-based `ChangeAnalyzer`. Phase 5 has not started).
+Accepted (Phases 1–5 were completed on 2026-08-18. Phase 5 introduced `KnowledgeSource`, direct Git-tree loading, reconstructible indexes, and Backfill throughput limits).
 
 ## Context
 

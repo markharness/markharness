@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(Phase 1〜4は2026-08-18に実行済み。Phase 4では`KnowledgeSnapshot`と純粋なTestcaseCompiler、Verification状態判定、`CommitRef`ベースの`ChangeAnalyzer`を導入。Phase 5は未着手)。
+Accepted(Phase 1〜5は2026-08-18に実行済み。Phase 5では`KnowledgeSource`、Git tree直読、再構築可能索引、Backfill処理量制限を導入した)。
 
 ## 背景
 

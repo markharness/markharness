@@ -700,6 +700,8 @@ $ markharness cache rebuild
 removed .markharness-cache/ under /path/to/project
 ```
 
+Read-optimized derivative indexes can be rebuilt with `markharness cache index [--ref <git-ref>] [-d, --dir <path>]`. It generates Feature, ChangeEvent, and Execution JSON indexes under `.markharness-cache/index/`, using `HEAD` by default. They are not canonical data and can be deterministically regenerated after deletion.
+
 **Use case mapping**: UC7 "discard/rebuild the id cache" (`docs/product-operation.md`). A fail-safe for cases where id-resolution inconsistency is suspected.
 
 **Note when changing a Feature's `id:` (for users, paper §3.3)**: The Feature id is tracked using the `id:` field of each `feature.yml` as the canonical source. If the value of `id:` itself is rewritten, the tool treats this as "the original Feature was deleted and a Feature with a new id was added," and `changes compute` cannot recover the `derived_from` relationship with past milestones (the version history is broken). **Renaming** a Feature directory (a path change) remains trackable as long as `id:` does not change, but this CLI has no migration procedure for a change to `id:` itself (such as recording an old-id→new-id alias); currently, users must strictly follow the practice of "never change `id:`." See [decisions/0004](./decisions/0004-feature-id-change-migration.md) for the status of consideration.
@@ -724,7 +726,7 @@ The target project directory (`-d`/`--dir`, the parent of `knowledge/`) may be a
 
 - For each Feature, compares `from_blob`/`to_blob`; if they match, nothing happens. If it exists in only one, it is an addition/deletion; if it exists in both with differing values, it is a change, and one `ChangeEvent` is generated.
 - `impacted_testcases` lists the `TestCase.case_id`s originating from the changed Feature, enumerated from the same generation graph as `generate` (section 1.5) (the structural generation graph of §3.2(A); version history is not used). Which point in time's `knowledge/` this generation graph is built from splits into two modes as of 2026-08 (as of 2026-08-12; see also [change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4).
-  - **Default (`--current-tree` not given)**: Built from the `knowledge/` tree pointed to by the `to-milestone` tag (expanded into a temporary `git worktree`). Recomputing the same interval later always yields the same result.
+  - **Default (`--current-tree` not given)**: Built by loading the `knowledge/` tree pointed to by the `to-milestone` tag directly from Git blobs. Recomputing the same interval later always yields the same result.
   - **When `--current-tree` is given**: Built from `knowledge/` in the current working tree (legacy behavior). As long as the working tree keeps changing, recomputation results for the same interval can also change.
 - `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.16) (§3.5).
 - Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.11), keyed by content-addressing.
@@ -772,7 +774,7 @@ The target project directory (`-d`/`--dir`, the parent of `knowledge/`) may be a
 ### 1.13 `markharness backfill run` — Batch processing of past milestones (UC6: run backfill asynchronously)
 
 ```text
-markharness backfill run [--no-cache] [-d, --dir <path>]
+markharness backfill run [--no-cache] [--max-pairs <count>] [--time-budget <duration>] [-d, --dir <path>]
 ```
 
 **Purpose**: Targets the milestones for which `executions/*/milestone.yml` exists, orders them newest-first by the commit date (committer date) of the corresponding git tag, and runs processing equivalent to `changes compute` (section 1.12) for each pair of adjacent milestones, generating `changes/<milestone>.yaml`. A single run processes all pairs and then exits (it is not a resident daemon; intended for periodic execution from CI, etc.).
@@ -782,6 +784,8 @@ markharness backfill run [--no-cache] [-d, --dir <path>]
 - The oldest milestone has nothing to compare against, so it is skipped.
 - Completion of processing for each milestone (the "to" side) is recorded in `git notes --ref=markharness-backfill`; on the next run, the same pair is not recomputed and is skipped (§4.3).
 - Unless `--no-cache` is given, it shares the same `.markharness-cache/` as `changes compute`.
+- `--max-pairs` limits newly processed pairs per run; already-processed skipped pairs do not consume the limit.
+- `--time-budget` checks the remaining budget before starting each unprocessed pair. Units are `ms`, `s`, `m`, and `h` (for example `30s` or `5m`). It does not interrupt a pair in progress.
 
 The constraint for when the target project directory (`-d`/`--dir`) is a subdirectory of the git repository is resolved the same way as in section 1.12 ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
 

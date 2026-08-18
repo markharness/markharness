@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use crate::changes;
 use crate::fs_safety::replace_file;
@@ -17,6 +18,15 @@ pub struct BackfillReport {
     pub processed: Vec<String>,
     /// to-milestone names for pairs already backfilled in a previous run.
     pub skipped: Vec<String>,
+    /// True when a pair or time limit left at least one unprocessed pair.
+    pub stopped_by_limit: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackfillPolicy {
+    pub use_cache: bool,
+    pub max_pairs: Option<usize>,
+    pub time_budget: Option<Duration>,
 }
 
 /// Milestone names are `executions/<name>/milestone.yml` directory names,
@@ -84,8 +94,20 @@ fn already_processed(root: &Path, to_milestone: &str) -> bool {
 /// re-invoke (e.g. from CI on a schedule) since already-processed pairs are
 /// skipped via `git notes` (§4.3).
 pub fn backfill_run(root: &Path, use_cache: bool) -> io::Result<BackfillReport> {
+    backfill_run_with_policy(
+        root,
+        BackfillPolicy {
+            use_cache,
+            max_pairs: None,
+            time_budget: None,
+        },
+    )
+}
+
+pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Result<BackfillReport> {
     let names = list_milestone_names(root)?;
     let ordered = order_by_recency(root, names);
+    let started_at = Instant::now();
 
     let mut report = BackfillReport::default();
     for pair in ordered.windows(2) {
@@ -97,12 +119,23 @@ pub fn backfill_run(root: &Path, use_cache: bool) -> io::Result<BackfillReport> 
             continue;
         }
 
+        let pair_limit_reached = policy
+            .max_pairs
+            .is_some_and(|limit| report.processed.len() >= limit);
+        let time_limit_reached = policy
+            .time_budget
+            .is_some_and(|budget| started_at.elapsed() >= budget);
+        if pair_limit_reached || time_limit_reached {
+            report.stopped_by_limit = true;
+            break;
+        }
+
         let events = changes::compute_changes(
             root,
             from_milestone,
             to_milestone,
             changes::ChangeOptions {
-                cache: if use_cache {
+                cache: if policy.use_cache {
                     changes::CachePolicy::Use
                 } else {
                     changes::CachePolicy::Bypass
@@ -250,6 +283,53 @@ mod tests {
 
         assert!(report.processed.is_empty());
         assert!(report.skipped.is_empty());
+    }
+
+    #[test]
+    fn backfill_policy_limits_newly_processed_pairs_without_counting_skips() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1");
+        commit_and_tag_milestone(dir.path(), "v1", "m1", 1);
+        write_feature(dir.path(), "v2");
+        commit_and_tag_milestone(dir.path(), "v2", "m2", 2);
+        write_feature(dir.path(), "v3");
+        commit_and_tag_milestone(dir.path(), "v3", "m3", 3);
+
+        let policy = BackfillPolicy {
+            use_cache: false,
+            max_pairs: Some(1),
+            time_budget: None,
+        };
+        let first = backfill_run_with_policy(dir.path(), policy).unwrap();
+        let second = backfill_run_with_policy(dir.path(), policy).unwrap();
+
+        assert_eq!(first.processed, vec!["m3".to_string()]);
+        assert!(first.stopped_by_limit);
+        assert_eq!(second.skipped, vec!["m3".to_string()]);
+        assert_eq!(second.processed, vec!["m2".to_string()]);
+    }
+
+    #[test]
+    fn zero_time_budget_stops_before_writing() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1");
+        commit_and_tag_milestone(dir.path(), "v1", "m1", 1);
+        write_feature(dir.path(), "v2");
+        commit_and_tag_milestone(dir.path(), "v2", "m2", 2);
+
+        let report = backfill_run_with_policy(
+            dir.path(),
+            BackfillPolicy {
+                use_cache: false,
+                max_pairs: None,
+                time_budget: Some(std::time::Duration::ZERO),
+            },
+        )
+        .unwrap();
+
+        assert!(report.processed.is_empty());
+        assert!(report.stopped_by_limit);
+        assert!(!dir.path().join("changes/m2.yaml").exists());
     }
 
     /// Regression test for the README's canonical demo, which fails with

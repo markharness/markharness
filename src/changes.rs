@@ -8,6 +8,9 @@ use crate::fs_safety::replace_file;
 use crate::generate;
 use crate::git;
 use crate::id_cache::{self, FeatureVersion};
+use crate::knowledge_source::{
+    GitTreeKnowledgeSource, KnowledgeSource, WorkingTreeKnowledgeSource,
+};
 use crate::lineage::{self, LineageKind};
 
 /// The kind of change a human attaches to a `ChangeEvent` after the fact
@@ -205,7 +208,8 @@ fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
 /// the same past `from_milestone..to_milestone` interval later can yield a
 /// different `impacted_testcases` set as the working tree keeps changing.
 fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec<String>>> {
-    testcases_by_feature(generate::generate_testcases(&root.join("knowledge"))?)
+    let source = WorkingTreeKnowledgeSource::new(root.join("knowledge"));
+    testcases_by_feature(generate::compile_testcases(&source.load_snapshot()?))
 }
 
 /// Maps each Feature id to the `case_id`s of testcases generated from it, as
@@ -215,26 +219,14 @@ fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec
 /// `impacted_testcases`, because it's derived from `to_milestone`'s
 /// committed tree rather than whatever `knowledge/` looks like right now.
 ///
-/// `knowledge/` at `milestone` is materialized into a temporary `git
-/// worktree` (rather than reading each blob individually) so the existing
-/// `generate::generate_testcases` filesystem-walking logic can be reused
-/// unchanged.
+/// `knowledge/` at `milestone` is read through `GitTreeKnowledgeSource`,
+/// avoiding a temporary Git worktree and its repository metadata updates.
 fn historical_testcases_by_feature(
     root: &Path,
     milestone: &str,
 ) -> io::Result<BTreeMap<String, Vec<String>>> {
-    let tmp = tempfile::tempdir()?;
-    let worktree_path = tmp.path().join("worktree");
-    git::add_detached_worktree(root, &worktree_path, milestone)?;
-
-    let testcases = generate::generate_testcases(&worktree_path.join("knowledge"));
-
-    // Best-effort cleanup: an orphaned worktree under a soon-to-be-deleted
-    // temp dir doesn't leak data, but `git worktree remove` keeps `git
-    // worktree list` clean. Not fatal if it fails.
-    let _ = git::remove_worktree(root, &worktree_path);
-
-    testcases_by_feature(testcases?)
+    let source = GitTreeKnowledgeSource::new(root, milestone);
+    testcases_by_feature(generate::compile_testcases(&source.load_snapshot()?))
 }
 
 fn testcases_by_feature(

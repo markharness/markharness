@@ -1,6 +1,6 @@
 # markharness Architecture Design: Domain / Application / Infrastructure Layering
 
-**Status**: Accepted (Phases 1–4 implemented; Phase 5 not started. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
+**Status**: Accepted (Phases 1–5 implemented. Detailed design for the direction decided in [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md))
 **Related documents**: [decisions/0009](../decisions/0009-domain-application-infrastructure-layering.md), [decisions/0008](../decisions/0008-verification-plan-product-roadmap.md), `git-native-model-for-test-knowledge-management.md`
 **Intended audience**: implementers of markharness (to be referenced when starting Phase 1)
 
@@ -649,11 +649,11 @@ Directory layout is unchanged at this stage.
 
 ### Phase 5: Large-Repository Optimization
 
-1. Introduce `KnowledgeSource`.
-2. Replace temporary worktrees with `GitTreeKnowledgeSource`.
-3. Add reconstructible indexes for Feature, ChangeEvent, and Execution.
-4. Add throughput limits to Backfill.
-5. Introduce incremental generation or limited parallelism based on measurement results.
+1. [Implemented] Introduce `KnowledgeSource` with working-tree and Git-tree adapters.
+2. [Implemented] Replace temporary worktrees with direct blob loading through `GitTreeKnowledgeSource`.
+3. [Implemented] Add JSON indexes for Feature, ChangeEvent, and Execution under `.markharness-cache/index/` as reconstructible derivatives.
+4. [Implemented] Add `--max-pairs` and `--time-budget` to Backfill.
+5. [Decided] Do not introduce incremental generation or parallelism yet. No measurement demonstrates a bottleneck, so full generation remains canonical. Measure after direct Git-tree loading and throughput limits are in use, and add either optimization only when evidence warrants it.
 
 ## 13. Designs Not Adopted
 
