@@ -1,0 +1,8 @@
+{
+  "name": "@markharness/dashboard",
+  "private": true,
+  "version": "0.3.0",
+  "scripts": {
+    "check": "node --check app.js"
+  }
+}

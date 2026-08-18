@@ -21,6 +21,7 @@ use crate::knowledge_edit::{self, EditFlowError};
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::presentation::{self, HumanPresenter, JsonPresenter, Presenter};
+use crate::server;
 use crate::validate;
 use crate::verify;
 
@@ -80,6 +81,21 @@ pub enum Command {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
+    },
+    /// Open a localhost-only, read-only release verification dashboard
+    Serve {
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Earlier Git revision shown when the dashboard opens
+        #[arg(long, default_value = "HEAD~1")]
+        base: String,
+        /// Later Git revision shown when the dashboard opens
+        #[arg(long, default_value = "HEAD")]
+        head: String,
+        /// Localhost TCP port
+        #[arg(long, default_value_t = 8787)]
+        port: u16,
     },
     /// Manage test knowledge under knowledge/
     #[command(subcommand)]
@@ -570,6 +586,18 @@ pub fn run(cli: Cli) -> io::Result<()> {
             } else {
                 presentation::emit(presented)
             }
+        }
+        Command::Serve {
+            dir,
+            base,
+            head,
+            port,
+        } => {
+            let root = match dir {
+                Some(dir) => dir,
+                None => env::current_dir()?,
+            };
+            server::serve(&root, port, server::DashboardConfig { base, head })
         }
         Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {
             Some(out) => match knowledge_edit::write_scaffold(&out) {
@@ -2038,6 +2066,37 @@ mod tests {
                 assert_eq!(dir, Some(PathBuf::from("sample")))
             }
             _ => panic!("expected Cache Rebuild command"),
+        }
+    }
+
+    #[test]
+    fn parses_serve_with_local_dashboard_options() {
+        let cli = Cli::parse_from([
+            "markharness",
+            "serve",
+            "--dir",
+            "sample",
+            "--base",
+            "main",
+            "--head",
+            "feature",
+            "--port",
+            "9000",
+        ]);
+
+        match cli.command {
+            Command::Serve {
+                dir,
+                base,
+                head,
+                port,
+            } => {
+                assert_eq!(dir, Some(PathBuf::from("sample")));
+                assert_eq!(base, "main");
+                assert_eq!(head, "feature");
+                assert_eq!(port, 9000);
+            }
+            _ => panic!("expected Serve command"),
         }
     }
 

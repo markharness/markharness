@@ -34,6 +34,20 @@ pub fn build_verification_plan(
     head: &str,
     canonical_inputs: &[canonical::CanonicalSnapshot],
 ) -> io::Result<CommandOutcome> {
+    Ok(CommandOutcome::PlanBuilt(build_verification_plan_value(
+        root,
+        base,
+        head,
+        canonical_inputs,
+    )?))
+}
+
+pub fn build_verification_plan_value(
+    root: &Path,
+    base: &str,
+    head: &str,
+    canonical_inputs: &[canonical::CanonicalSnapshot],
+) -> io::Result<plan::VerificationPlan> {
     let analyzer = changes::ChangeAnalyzer::new(root);
     let changes = analyzer.compute(
         &changes::CommitRef::commit(base),
@@ -92,13 +106,13 @@ pub fn build_verification_plan(
             })
         })
         .collect();
-    Ok(CommandOutcome::PlanBuilt(plan::build_plan(PlanInput {
+    Ok(plan::build_plan(PlanInput {
         base: base.to_string(),
         head: head.to_string(),
         changes,
         evidence,
         stored_traces,
-    })))
+    }))
 }
 
 fn safe_testcase_path(testcases_dir: &Path, relative_path: &Path) -> io::Result<PathBuf> {

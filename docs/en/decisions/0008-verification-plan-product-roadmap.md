@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Stages 0–2 are complete. Stage 2 implemented base/head Verification Plans, stored/derived traces, evidence status, a rule-based gap baseline, an optional proposal-adapter boundary, and historical-PR evaluation. Stage 3 has not started).
+Accepted (Stages 0–3 were completed on 2026-08-18. Stage 3 implemented a localhost-only read-only Release Verification Dashboard, Feature History, and frontend assets embedded in the Rust binary).
 
 ## Context
 

@@ -29,6 +29,7 @@ pub mod milestone;
 pub mod plan;
 pub mod presentation;
 pub mod schema;
+pub mod server;
 pub mod traceability;
 pub mod validate;
 pub mod verify;

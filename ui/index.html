@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Markharness · Release Verification</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="brand" href="/" aria-label="Markharness dashboard home">
+        <span class="brand-mark">M</span><span>MARKHARNESS</span>
+      </a>
+      <span class="local-badge">LOCAL · READ ONLY</span>
+    </header>
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">RELEASE VERIFICATION</p>
+          <h1>Know what remains<br />before you ship.</h1>
+          <p class="lede">A reviewable plan derived from the repository. Git stays the source of truth.</p>
+        </div>
+        <form id="range-form" class="range-card">
+          <label>BASE<input id="base" name="base" value="HEAD~1" spellcheck="false" /></label>
+          <span class="range-arrow">→</span>
+          <label>HEAD<input id="head" name="head" value="HEAD" spellcheck="false" /></label>
+          <button type="submit">Refresh plan</button>
+        </form>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+      <section id="summary" class="summary" aria-label="Verification summary"></section>
+
+      <section class="workspace">
+        <article class="panel plan-panel">
+          <div class="panel-heading"><div><p class="eyebrow">PLAN</p><h2>Affected tests</h2></div><span id="range-label"></span></div>
+          <div id="tests" class="test-list"></div>
+        </article>
+        <aside class="panel feature-panel">
+          <div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>Changed features</h2></div></div>
+          <div id="features" class="feature-list"></div>
+        </aside>
+      </section>
+
+      <section class="panel proposals-panel">
+        <div class="panel-heading"><div><p class="eyebrow">GAPS</p><h2>New verification proposed</h2></div><span>REVIEW REQUIRED</span></div>
+        <div id="proposals"></div>
+      </section>
+    </main>
+    <footer>Derived from repository state · No files are modified by this dashboard</footer>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

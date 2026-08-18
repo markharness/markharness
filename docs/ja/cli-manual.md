@@ -1115,6 +1115,16 @@ markharness plan --base <git-ref> --head <git-ref> --format json [--evidence <ca
 
 ---
 
+### 1.24 `markharness serve` — Release Verification Dashboard
+
+```text
+markharness serve [--base <git-ref>] [--head <git-ref>] [--port <port>] [-d, --dir <path>]
+```
+
+`127.0.0.1`だけでread-only dashboardを配信する。既定範囲は`HEAD~1`→`HEAD`、既定portは`8787`。画面はStage 2と同じDomain Engineが返すVerification Planのsummary、影響Testのstatus/reason/origin、rule-based proposalを表示し、Feature History APIはGit tree SHAと既存ChangeEventを返す。GUI独自のstatus計算やGit管理ファイルの編集は行わない。frontend assetsはRustバイナリに同梱されるため、利用時にNode.jsは不要。
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。

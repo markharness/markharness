@@ -1115,6 +1115,16 @@ Compares Feature tree SHAs across arbitrary base/head refs and emits changed Fea
 
 ---
 
+### 1.24 `markharness serve` — Release Verification Dashboard
+
+```text
+markharness serve [--base <git-ref>] [--head <git-ref>] [--port <port>] [-d, --dir <path>]
+```
+
+Serves a read-only dashboard on `127.0.0.1` only. The default range is `HEAD~1`→`HEAD` and the default port is `8787`. The UI displays the Verification Plan summary, affected-test status/reason/origin, and rule-based proposals returned by the same Stage 2 Domain Engine. Its Feature History API returns Git tree SHAs and existing ChangeEvents. It neither computes a separate GUI status nor edits Git-managed files. Frontend assets are embedded in the Rust binary, so Node.js is not required at runtime.
+
+---
+
 ## 2. Unimplemented (Planned) Commands
 
 The following are commands planned for future implementation, based on the use case diagram and use case descriptions in `docs/product-operation.md`. The command names and options are tentative proposals and may change at implementation time.

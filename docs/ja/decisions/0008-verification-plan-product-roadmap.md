@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(Stage 0〜2は実行済み。Stage 2ではbase/head Verification Plan、stored/derived trace、evidence status、rule-based gap、optional proposal adapter、履歴PR評価を実装。Stage 3は未着手)。
+Accepted(Stage 0〜3は2026-08-18に実行済み。Stage 3ではlocalhost限定のread-only Release Verification Dashboard、Feature History、Rustバイナリへのfrontend同梱を実装)。
 
 ## コンテキスト
 
