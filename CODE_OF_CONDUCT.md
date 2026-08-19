@@ -49,16 +49,21 @@ when an individual is officially representing the community in public spaces.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported through the private reporting channel listed in
-[SECURITY.md](./SECURITY.md); identify the submission as a conduct report.
-Do not include sensitive details in a public issue.
+Do not include sensitive or personally identifying details in a public issue.
+This project does not provide a private channel for conduct reports or an
+independent third-party review or appeal process.
 
-This is a single-maintainer project. Reports are reviewed on a best-effort
-basis as capacity permits, with no guaranteed response timeline. The project
-cannot provide independent adjudication when a report concerns the maintainer;
-in that situation, reporters may also use GitHub's platform-level reporting
-tools or disengage from the project.
+If content or behavior on GitHub violates GitHub's Terms of Service or platform
+policies, report it directly to GitHub by following GitHub's
+[Reporting abuse or spam][github-reporting] instructions. GitHub determines
+these reports under its own policies; this process is separate from project
+enforcement.
+
+This is a single-maintainer project. Conduct visible in project spaces is
+addressed by the maintainer on a best-effort basis as capacity permits, with no
+guaranteed response timeline. If the concern involves the maintainer or cannot
+be handled safely through the available public channels, the project cannot
+offer independent adjudication; participants may disengage from the project.
 
 ## Attribution
 
@@ -68,3 +73,4 @@ version 2.1, available at
 
 [homepage]: https://www.contributor-covenant.org
 [v2.1]: https://www.contributor-covenant.org/version/2/1/code_of_conduct.html
+[github-reporting]: https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam
