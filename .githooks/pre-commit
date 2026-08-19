@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+branch=$(git symbolic-ref --quiet --short HEAD || true)
+
+if [ "$branch" = "main" ]; then
+  echo "コミットを拒否しました: mainブランチへの直接コミットは禁止されています。" >&2
+  echo "作業ブランチを作成してください: git switch -c <branch-name>" >&2
+  exit 1
+fi

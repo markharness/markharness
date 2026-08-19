@@ -40,13 +40,20 @@ Thumbs.db
 # directories/files that are purely template/agent plumbing, never `docs/`,
 # `.github/workflows/`, `.github/ISSUE_TEMPLATE/`, or `.github/PULL_REQUEST_TEMPLATE.md`,
 # which are real project infrastructure.
-CLAUDE.md
-PROJECT.md
 .claude/
 .github/copilot-instructions.md
 .github/instructions/
 .github/prompts/
 .github/skills/
+
+# Shared AI workflow entry points. Keep the rest of the local agent-template
+# plumbing private, but distribute the GitHub Flow policy to Codex/Copilot.
+!.github/
+.github/*
+!.github/copilot-instructions.md
+!.github/instructions/
+.github/instructions/*
+!.github/instructions/github-flow.instructions.md
 
 # In-progress task checklists (checklist-workflow.instructions.md). These are
 # working notes for the current task, not a permanent artifact; archive or

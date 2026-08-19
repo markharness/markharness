@@ -14,6 +14,14 @@ cargo build
 
 This project develops `src/` code with Red-Green-Refactor TDD: write a failing test first, make it pass with the minimal change, then refactor. Do not add production code without a covering test.
 
+This repository uses GitHub Flow. Enable the tracked hooks once after cloning:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Create a short-lived working branch before editing, for example with `git switch -c feature/my-change`. Keep it focused, commit there, push the branch, and open a pull request targeting `main`. Merge only after the required checks and review pass. The hook rejects direct commits when the current branch is exactly `main`.
+
 ## Before opening a pull request
 
 All of the following must pass locally (they are also enforced in CI):
