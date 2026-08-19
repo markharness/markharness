@@ -68,7 +68,7 @@ flowchart LR
 
 ### 1.3 貢献
 
-1. **設計上の中核メカニズム**：(a)Featureの識別子をディレクトリパスではなく`feature.yml`の`id:`フィールドから読み取るパス独立なID解決、(b)比較単位を`feature.yml`単体のblob SHAではなくFeatureディレクトリ全体のtree SHAとすることで、Condition/ExpectedResultのみの変更もfeature.yml非経由で検知する仕組み、(c)`knowledge/`のtree SHAと正規化ルール・スキーマ・ツールの各バージョンを合成した内容アドレス方式のid解決キャッシュ(Gitの`commit-graph`補助キャッシュと同じ設計思想)、の3点を、コミットグラフの祖先探索(`git merge-base`)と組み合わせ、ブランチ運用に依存せずマイルストーン境界で版履歴を導出するモデルの設計(第3章)。ただし「ブランチ運用に依存しない」のは最終tree差分による主系譜(`changes compute`)に限られ、祖先探索を用いるマージの系譜監査(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とする副次機能であり、squash/rebase運用では機能しない(第3.4節・表2)。パスベースの履歴追跡(`git diff`・`git log --follow`等)はディレクトリのリネーム・再配置に弱く、木構造化されたテスト知識の論理的な同一性を保証しないのに対し、本モデルは(a)によってこの制約を回避する。
+1. **設計上の中核メカニズム**：(a)人間向けの可変IDとKnowledge要素の不変な論理Identity(UID)の分離、(b)内容版の比較単位をFeatureディレクトリ全体のtree SHAとすることでCondition/ExpectedResultのみの変更も検知する仕組み、(c)tree SHAと正規化ルール・スキーマ・ツールの各バージョンを合成した内容アドレス方式の非commitキャッシュ、(d)snapshotだけでは意図を復元できないrename等に限定したGit管理のidentity宣言、の4点を組み合わせ、マイルストーン境界で版履歴を導出するモデルの設計(第3章)。UIDは時間をまたぐ論理的同一性、tree SHAは特定時点のcontent versionを担い、内容`ChangeEvent`は2 snapshot差分から引き続き自動導出する。ただしマージの系譜監査はマージコミットの保持を前提とする副次機能である(第3.4節・表2)。この統合モデルは個々の要素の新規性ではなく、Git上の論理Identity、content-addressed version、snapshot差分、version-bound execution evidenceの組合せを評価対象とする。
 2. **実装設計上の特徴**：横断的観点(Axis)を物理ディレクトリ構造から独立させ、木構造を保持したまま多対多関係を表現する構成(第3.5節)。これは一般的なモデリング手法の適用であり、単独の研究的新規性としては主張しない。
 3. 既存の大規模リポジトリへの段階的な導入を狙って設計した、マイルストーン単位の非同期バックフィルアーキテクチャ(第4章)。ただしこの設計が実際の大規模リポジトリでも意図通り機能するかは、本ドラフト時点では実データによる検証(ケーススタディ)を経ていない仮説である(第6章Threats to Validity・第7章Future Work参照)。
 4. 対象組織の実際の現状運用を対照群とし、正解データを当時の成果物から再構成した、実データに基づく評価設計(第5章)。
@@ -79,7 +79,7 @@ flowchart LR
 
 - **研究上**：Markharnessは「世界初のテスト管理方式」の完成を主張するものではなく、test knowledge derivationとversion-aware verificationが複数世代の変更影響識別を改善するかという仮説を検証するためのreference implementationである。現時点では設計・中核機能の実装までであり、有効性は未検証である。
 - **OSSとして**：Git-native / knowledge-firstという設計思想を持つTMSの一選択肢である。Doorstop、StrictDoc、tmt/fmf、GTMや既存TMSを置き換える普遍的な上位方式とは位置づけず、用途と必要な意味論が異なる代替案として提供する。
-- **プロダクトとして**：TestRail等とのfeature parityを目指さず、専用サーバー不要・専用DB不要・Gitをsource of truthとするdeveloper-oriented test managementに焦点を置く。将来GUIを提供する場合も、汎用TMSの画面群の複製ではなく、ChangeEvent、影響TestCase、version-bound evidence、pending/staleを中心としたrelease verification UIを主眼とする。
+- **プロダクトとして**：TestRail等とのfeature parityを目指さず、専用サーバー、外部データベースプロセス、Git外の正準永続化サービスを必要としないdeveloper-oriented test managementに焦点を置く。Gitリポジトリを唯一の永続化境界とし、Knowledge fileとGit管理の軽量identity event storeをリポジトリ内の正準データ、Registryを破棄可能な非commit cacheとする。したがって「専用DB不要」は永続的な構造化ストア自体を持たないという意味ではなく、clone/checkoutだけで全正準入力が揃い、Git外のembedded databaseや別永続化層を正準にしないという意味である。identity event storeはADR 0013のProposed設計であり、本稿時点で未実装である。将来GUIを提供する場合も、汎用TMSの画面群の複製ではなく、ChangeEvent、影響TestCase、version-bound evidence、pending/staleを中心としたrelease verification UIを主眼とする。
 
 **注**：開発者が作業ブランチ上で即座に行える差分照会(第3.2節の構造的生成グラフを使う実装上の利便機能)は、版履歴のChangeEventモデルを使わないため本研究の核心的貢献・RQ1の評価対象には含めない(検討経緯は付録A参照)。
 
@@ -101,7 +101,7 @@ Classification Tree Method(CTM)は、分類木からのテストケース生成�
 
 ### 2.4 イベントベースの変更伝播モデル(Event-Based Traceability)
 
-Cleland-Huang, Chang, Christensen(2003)のEvent-Based Traceability(EBT)は、進化するartifactの変更をeventとして扱い、traceability linkを介してその影響を関係者・依存artifactへ伝播させる枠組みを確立している。したがって「変更イベントから影響artifactを求める」という発想自体は新規ではない。EBTは主にartifactの編集操作(editing operation)の観測を起点として変更を伝播させるのに対し、本モデルはマイルストーン境界の2 snapshot間のtree SHA差分から`ChangeEvent`を事後的・機械的に再構成する(第3.2〜3.4節)。中間の編集操作列を必要とせず、branch/merge/squash/rebaseの経路に依存しない(第3.4節、ただし主系譜`changes compute`に限る点は第1.3節・第3.4節参照)という性質は、operationログの継続的な追跡を前提とするEBTとは異なる設計選択であり、利点(中間操作列への非依存)と欠点(最終状態から消えた一時的変更・編集意図を表せないこと)の双方を伴う。
+Cleland-Huang, Chang, Christensen(2003)のEvent-Based Traceability(EBT)は、進化するartifactの変更をeventとして扱い、traceability linkを介してその影響を関係者・依存artifactへ伝播させる枠組みを確立している。したがって「変更イベントから影響artifactを求める」発想自体は新規ではない。EBTが主にartifactの編集操作(editing operation)の観測を起点に変更を伝播させるのに対し、本モデルの内容`ChangeEvent`はマイルストーン境界の2 snapshot間のtree SHA差分から事後的・機械的に再構成する(第3.2〜3.4節)。通常の内容編集に中間操作列は必要ない。一方、rename・retire・restore等のsnapshotだけでは意図を一意に復元できない同一性操作は、稀なidentity宣言としてGit snapshot内に保持する。これは全編集操作の継続的観測ではなく、ChangeEvent導出の前に論理Identityを解決するcontrol-plane入力である。したがって中間編集経路への非依存性は維持するが、「あらゆる操作宣言が不要」とは主張しない。
 
 ### 2.5 要件ベースの回帰テスト選択(Requirements-Based Regression Test Selection)
 
@@ -157,7 +157,7 @@ Rahimiら(2018)のTrace Link Evolver(TLE)は、連続するソフトウェアver
 本研究が検証対象として提案する差分は、個別の構成要素ではなく、次の性質の**統合**である。
 
 ```text
-Feature集約のcontent-addressed version identity(tree SHA、第3.1〜3.3節)
+不変UIDによる論理IdentityとFeature集約のcontent-addressed version identity(tree SHA、第3.1〜3.3節)
   + 決定論的なTestCase派生(第3.1節)
   + マイルストーンsnapshot差分によるChangeEvent導出(第3.2〜3.4節)
   + 影響TestCaseの導出(第3.5節)
@@ -205,12 +205,17 @@ erDiagram
   CHANGEEVENT }o--|| FEATURE : affects
   CHANGEEVENT ||--o{ TESTCASE : impacts
 
-  REQUIREMENT { string requirement_id PK }
-  FEATURE { string feature_id PK
+  REQUIREMENT { string requirement_uid PK
+                string requirement_id }
+  FEATURE { string feature_uid PK
+            string feature_id
             string label }
-  BEHAVIOR { string behavior_id PK }
-  CONDITION { string condition_id PK }
-  EXPECTEDRESULT { string result_id PK }
+  BEHAVIOR { string behavior_uid PK
+             string behavior_id }
+  CONDITION { string condition_uid PK
+              string condition_id }
+  EXPECTEDRESULT { string result_uid PK
+                   string result_id }
   AXIS { string axis_id PK }
   TESTCASE { string case_id PK }
   TESTEXECUTION { string execution_id PK
@@ -219,7 +224,9 @@ erDiagram
   CHANGEEVENT { string event_id PK }
 ```
 
-`FEATURE`は版番号を人間が手動で管理するフィールド(`version`整数)を持たない。系譜計算に使う識別子は、front matterに書く値ではなく、**Gitのオブジェクトストアが既に保持している識別子**であり、`label`は表示専用(系譜計算には使わない)。この識別子解決はディレクトリ名やパスではなく`feature.yml`の`id:`フィールドを正準ソースとするため(第3.3節)、単純なパスベースの`git log --follow`と異なり、ディレクトリのリネーム・再配置後も同一Featureとして追跡できる。
+`FEATURE`は版番号を人間が手動で管理するフィールド(`version`整数)を持たない。UIDは内容が変わっても維持される論理的同一性を表し、Git tree SHAはその要素の特定時点のcontent versionを表す。可変`id`と`label`は人間向けの表示・CLI解決用であり、系譜の正準キーにしない。Requirement、Feature、Behavior、Condition、ExpectedResultはすべて不変UIDを持ち、親子参照もUIDを使う。これによりpathだけでなくID自体の変更後も同一要素として追跡できる。
+
+rename、retire、restore、release、reissueのように、2つの最終snapshotだけからは同一性に関する意図を一意に復元できない変更だけをidentity宣言としてGit管理する。通常の内容編集はidentity eventにしない。identity eventは要素ごとの因果graphを持ち、通常eventは単一の先行event UID、競合解決eventは複数の先行event UIDを参照してdivergent headをjoinする。順序は時刻やfilenameではなくこの先行参照で決定する。Registryはidentity eventから再構築できる非commit cacheとし、正準情報源にしない。
 
 なお、上記ER図の`derived_from`自己参照エッジは概念上のモデルであり、`FEATURE`エンティティ自体が版ノード・辺を持つ永続的なグラフ構造として実装されているわけではない。実際にはマイルストーン境界ごとに`ChangeEvent`のfrom_tree_sha/to_tree_shaを比較することで、この関係を都度導出する(3.2節)。
 
@@ -244,6 +251,8 @@ flowchart LR
 
 **(B) 版履歴のChangeEventモデル(derived_from、マイルストーン境界で確定)**：同一Featureが前後のマイルストーンでどう変化してきたかを、`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として表す、本研究の核心的なモデル。マイルストーン区間ごとに独立して計算するモデルであり、版ノード・辺を持つ永続的なグラフ構造として保持するわけではない(永続グラフへの拡張は第7章 Future Workを参照)。調査した公開仕様では同じ統合は確認できなかったが、非存在を主張するものではない。RQ1が検証する対象はこちらに限定する。
 
+ここでいう「同一Feature」は人間向けIDの一致ではなく、両snapshotのidentity宣言から同じroot発行eventを持つと検証されたUIDの一致で決める。identity event自体は内容変更の伝播を表さず、`ChangeEvent`を導出する前の同一性解決にだけ使う。
+
 版履歴のChangeEventモデル(B)の導出は以下の通り。
 
 - **tree SHAが担うこと**：Featureディレクトリ内のentry名・mode・参照先objectを含むGit treeに対する、実用上衝突耐性を持つcontent identifier。通常の運用では異なるGit treeを異なるSHAとして識別でき、人間が手動で整数を上げる場合の番号競合を回避できる。ただしハッシュ衝突が数学的に不可能という意味ではなく、SHAだけでは「どのtreeがどのtreeから派生したか」という親子関係もわからない。
@@ -259,11 +268,13 @@ flowchart LR
 
 **統合(2026-08追記)**：`changes compute`は、`from_milestone..to_milestone`の区間全体を`git rev-list --ancestry-path`で走査し、区間内に存在する全ての2親マージコミットそれぞれについて上記の`lineage`判定ロジックを内部で呼び出す。当該Featureがいずれかのマージで`true_divergence`と判定された場合、`ChangeEvent`に新設した`true_divergences: Vec<TrueDivergence>`フィールド(`TrueDivergence`は監査用の`merge_commit`と`parent_tree_shas: [tree(P1), tree(P2)]`を持つ)へ、区間内で発生した順(古い順)に記録する。同一Featureが区間内で複数回真の分岐を起こした場合も、マージごとに1エントリずつ蓄積されるため取りこぼさない。この統合は加算的な変更であり、`changes/*.yaml`の既存レコード(`true_divergences`を持たない)は`#[serde(default)]`によりそのまま読み込める。当初は`to_milestone`タグが直接マージコミットを指す場合のみの部分統合だったが、区間内の任意の位置でのマージを検出できるよう一般化した。
 
-### 3.3 id解決：非コミットキャッシュとキャッシュキー・破棄条件
+### 3.3 Identity解決：Git管理の宣言と非コミットキャッシュ
 
 本節の設計上の中核は、単純なパスベースの`git diff`/`git log --follow`では代替できないパス独立なID解決と、それを実用速度で成立させる内容アドレス方式のキャッシュキー(後述)の組み合わせである。`id`はパスに依存しない設計(第3.5節)のため、「あるコミット時点でid Xのファイルがどのパスにあったか」を知るには、単純には全木走査が必要になり、大規模リポジトリでは計算量が破綻する。かといって、id→パスの対応をコミット対象の単一マニフェストファイルとして持つと、複数ブランチが同時にテスト知識を追加するたびにこのファイルがマージコンフリクトを起こし、Gitの並行開発の強みを殺してしまう。
 
 **対応方針**：Gitが同種の問題(コミットグラフ上の祖先探索の高速化)を`commit-graph`ファイル(バージョン管理対象外の補助キャッシュ)で解決しているのと同じ設計思想を採る。id解決の結果を**コミット対象から外し**、各開発者のローカル環境・各CIランナーが必要に応じて独自に再構築する非コミットキャッシュとして扱う。
+
+UID modeでは、各Knowledge要素のUIDと`.markharness/identity-events/`の限定的なidentity宣言を正準入力にする。各要素の発行eventをrootとし、後続eventは`previous_identity_event_uid`で因果順序を指定する。両snapshotに同じUIDがある場合はroot発行eventと共通eventのcanonical contentの一致を検証し、異なるrootや書換え済みの共通eventをidentity conflictとする。Git commit historyを走査しない2-ref比較が保証するのは選択snapshotの整合性と共通identityの一致までであり、選択snapshotの外側にevent削除・過去改変がないことは別の全履歴監査が検証する。
 
 **キャッシュキーの構成**
 
@@ -289,11 +300,11 @@ cache_key = hash(
 
 読み込み時は格納されているキーが現在の状態と完全に一致するかを検証し、不一致なら静かに再計算する。これにより異なるCIランナー間でキャッシュを共有しても、古い/破損したキャッシュを誤って信頼するリスクを避ける。
 
-**実装状況**：CLI実装の`.markharness-cache/<ref>.json`は、本節で述べた内容アドレス方式キャッシュキー(`tree_sha(knowledge/)` + `canonicalization_rule_version` + `id_index_schema_version` + `tool_version`の合成)を実装している(`src/id_cache.rs`の`CacheKey`/`compute_cache_key`)。読み込み時に格納されているキーを再計算した現在のキーと比較し、不一致なら静かに再計算・上書きする。`tree_sha`は`git rev-parse <ref>:knowledge`で取得し、`tool_version`はビルド時のcrateバージョン(`CARGO_PKG_VERSION`)を用いる。ただし`canonicalization_rule_version`・`id_index_schema_version`は現状固定値"1"で、これらのバージョンを実際に上げる正規化ルール改訂・フォーマット改訂はまだ発生していない。作業ツリーの未コミット変更を`git hash-object`で仮想的にキーへ含める処理、およびCI共有ストレージ側のTTL安全網は未実装(そもそもCLI単体の責務外)である。また、id自体も「idはパスに依存しない」という設計方針に沿って改修され、現状は**feature.ymlの`id:`フィールドを正準ソースとする**(id_cache.rsがディレクトリ名ではなくfeature.ymlの内容を`git show`で読んでidを決定する)。これにより、Featureディレクトリをリネームしても`id:`フィールドが変わらなければ同一Featureとして追跡できる(最小限のリネーム追跡)。同一idを持つ複数のFeatureディレクトリが存在する場合はエラーとして検出する。ただし、id⇔pathの汎用的な独立インデックス層(パス変更を伴わない任意のid変更の追跡等)までは実装しておらず、目標設計の完全な実現ではない(第3.6節)。
+**実装状況**：CLI実装の`.markharness-cache/<ref>.json`は、本節で述べた内容アドレス方式キャッシュキー(`tree_sha(knowledge/)` + `canonicalization_rule_version` + `id_index_schema_version` + `tool_version`の合成)を実装している(`src/id_cache.rs`の`CacheKey`/`compute_cache_key`)。読み込み時に格納されているキーを再計算した現在のキーと比較し、不一致なら静かに再計算・上書きする。`tree_sha`は`git rev-parse <ref>:knowledge`で取得し、`tool_version`はビルド時のcrateバージョン(`CARGO_PKG_VERSION`)を用いる。ただし`canonicalization_rule_version`・`id_index_schema_version`は現状固定値"1"で、これらのバージョンを実際に上げる正規化ルール改訂・フォーマット改訂はまだ発生していない。作業ツリーの未コミット変更を`git hash-object`で仮想的にキーへ含める処理、およびCI共有ストレージ側のTTL安全網は未実装(そもそもCLI単体の責務外)である。現行実装は**feature.ymlの`id:`フィールドを正準ソースとする**(id_cache.rsがディレクトリ名ではなくfeature.ymlの内容を`git show`で読んでidを決定する)ため、`id:`が不変な限りディレクトリリネームに追従し、同一idの重複をエラーにするが、`id:`値自体の変更は追跡しない。従来候補のid⇔path独立indexとalias方式は置き換え済みの代替案であり、このgapを埋める採用設計はADR 0013の不変UID・identity宣言モデルであるが、現在はProposed・未実装である(第3.6節)。
 
 ### 3.4 マイルストーン境界での系譜確定
 
-系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各idについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をid解決経由で比較し、差分があれば`derived_from`関係が成立したとみなして`ChangeEvent`を生成する(実装ではfrom_tree_sha/to_tree_shaとして記録、第3.5節)。
+系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各UIDについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をidentity解決経由で比較し、差分があれば`derived_from`関係が成立したとみなして内容`ChangeEvent`を生成する(実装ではfrom_tree_sha/to_tree_shaとして記録、第3.5節)。identity eventはこの差分結果ではなく、比較前に同一UIDを解決するための入力である。
 
 **主系譜(`changes compute`)とマージ監査(`changes lineage`)でブランチ戦略への依存が異なる点に注意**：この最終tree差分によるChangeEvent生成(主系譜)は、2つのマイルストーンタグが指すtree同士を直接比較するだけであり、その間のコミットグラフの形状(merge commitを残すか、squashで潰すか、rebaseで書き換えるか)に一切依存しない。一方、第3.2節で述べた`git merge-base`祖先探索による系譜監査(`changes lineage`、`true_divergences`)は、マイルストーン区間内に2親を持つマージコミットが実際に存在することを前提とする。squash mergeやfast-forward mergeでは元ブランチの分岐履歴がコミットグラフ上から失われるため、そのマイルストーン区間では`true_divergences`は検出されない(空配列のまま)。つまり「ブランチ戦略に依存しない」という主張が成り立つのは主系譜(tree差分によるChangeEvent生成)に限られ、監査用の`true_divergences`はマージコミットの保持を前提とする副次機能である。
 
@@ -411,7 +422,8 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 | 分類 | 内容 |
 |---|---|
 | 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`expected_result.schema.json`の`generated_by`/`verified_by`フィールド(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーション(`executions/*/results.yml`用の`execution_result.schema.json`を含む)とaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
-| 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。Feature `id:`自体を変更した場合の移行手順・エイリアス機構は未実装であり、現状は運用側で`id:`を変更しないことを前提とする(decisions/0004)。`verify trace`/`verify pending`は導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用しない(3.7節) |
+| 実装済み設計からの簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用しない(3.7節) |
+| Proposed・未実装 | ADR 0013は、従来候補のid⇔path独立indexやalias方式を、不変UID、限定的なidentity宣言、UIDベースの関係、migration manifest、非commitの派生Registryで置き換える。schema version 2公開cutoverまでは現行実装が`feature.yml`の`id:`を同一性として扱い、その変更は履歴を切断する(decisions/0004)。これは現行実装の制約であり、競合する将来設計ではない |
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
 
@@ -550,22 +562,24 @@ flowchart TB
 - 実装上の利便機能(構造的生成グラフに基づくリアルタイム照会、第3.2節(A))の開発者体験・生産性への効果の検証。
 - バックフィルアーキテクチャ(第4章)を実際の大規模リポジトリに適用した場合の性能実測。
 - id解決キャッシュのキー設計(第3.3節)・co-changeノイズ除去基準(第5.4節)を、実装・データ収集を通じて検証・調整すること自体を今後の実証課題とする(`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用を経た検証がまだない)。
-- id⇔pathの汎用的な独立インデックス層の実装(パスを変えないid変更の追跡等、第3.3節で現状は「id=feature.ymlのid:フィールド」への統一に留まると整理した項目)。
+- ADR 0013のschema version 2 identityモデルの実装と評価。全永続Knowledge要素の不変UID、限定的なidentity宣言、UIDベースのTestCase/Execution/ChangeEvent継続性、legacy migration、crash recovery、repository統合時の振る舞いを対象とする。従来候補のid⇔path独立indexとalias方式は並行するFuture Workではなく、置き換え済みの代替案である。
 - 既存TMS(TestRail/Xray等)からのインポータの実装(第3.6節で未実装と整理した項目)。
 - Condition/ExpectedResult差分に基づく候補抽出の精密化。現行実装はFeature単位の保守的な候補抽出であり(第3.5節)、Feature内のどのCondition/ExpectedResultが変わったかまでは絞り込まない。これによる適合率低下の実測は第5章の評価計画で確認する。
 - LLMによる文脈供給・Markdown手順書の自動生成・更新への応用可能性(検討経緯・不採用理由は付録A参照。本研究の評価対象外)。
 - 構造からのテストケース自動生成の網羅率評価、Git粒度分割によるレビュー性向上の検証(検討まとめ第4章の案2・3)。
 - 他ドメイン・他組織での追試による一般化可能性の検証。
-- 版ノード・辺を持つ永続的な版履歴グラフ(Version DAG)としてderived_from関係を明示的に保存・クエリ可能にする拡張。現状はマイルストーン区間ごとに`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として都度導出しており、永続グラフ構造としては保持していない(第3.2節)。
+- 版ノード・辺を持つ永続的な版履歴グラフ(Version DAG)として`derived_from`関係を明示的に保存・クエリ可能にする拡張。これはADR 0013のidentity lifecycle因果graphとは異なる。後者は比較対象の論理的同一性を解決するが、`derived_from`は引き続きマイルストーン区間ごとの`ChangeEvent` tree SHA比較から都度導出するcontent-version関係である(第3.2節)。
 - `generated_by`/`verified_by`(第3.5節)を読む将来のCIゲート(例：`generated_by: llm`かつ`verified_by`未設定の`ExpectedResult`が存在する場合に`markharness verify`が警告する)は未実装。現状は離散的な事実情報を記録するだけで、それを消費するロジックは本研究のスコープ外としている。
 
 ---
 
 ## 8. Conclusion
 
-本研究は、Gitのコンテンツアドレス(tree SHA)・非コミットのid解決キャッシュ・コミットグラフの祖先探索(`git merge-base`)を組み合わせ、マイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。既存研究・ツールにはcontent fingerprint、trace-link freshness、test result traceability等の関連機構が存在する(第2.4〜2.8節)。本モデルはそれらの個別要素の新規性を主張せず、Feature集約version、テスト派生、変更影響、version-bound execution evidence、再検証状態をGit上で統合する設計仮説と、そのreference implementationを提示する。
+本研究は、Git管理の不変な論理Identity(UID)、Gitのcontent-addressed version(tree SHA)、非コミットのidentity解決キャッシュ、コミットグラフの祖先探索(`git merge-base`)を組み合わせ、マイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。通常の内容変更は2 snapshotから事後導出し、snapshotだけで意図を復元できない同一性操作だけをidentity宣言として保持する。既存研究・ツールにはimmutable identifier、event-based traceability、content fingerprint、trace-link freshness、test result traceability等の関連機構が存在する。本モデルはそれらの個別要素の新規性を主張せず、論理Identity、Feature集約version、テスト派生、snapshot差分による変更影響、version-bound execution evidence、再検証状態をGit上で統合する設計仮説として位置づける。
 
 この設計は`markharness`(Rust実装、本リポジトリ)としてリファレンス実装され、`changes compute`によるマイルストーン境界の版履歴自動計算(区間内の任意の位置で発生した全マージへの`lineage`統合を含む、第3.2節「統合(2026-08追記)」)、`changes lineage`による`git merge-base`ベースの分岐監査、`verify trace`/`verify pending`による実行結果との自動突合(第3.7節)を含む中核機能が動作することを確認した。第3.6節にまとめた通り、設計から意図的に簡略化した箇所(id解決キャッシュのバージョン改訂運用が未検証等)と、未実装のまま残した箇所(既存TMSからのインポータ)がある。
+
+ただし、不変UID・identity event・UIDベースのTestCase/Execution/ChangeEvent追跡はADR 0013のProposed設計であり、本稿時点のreference implementationには未実装である。現行実装は`feature.yml` の`id:`が不変な範囲でのみ同一Featureを追跡できる。したがって、UIDモデルの有用性と実装品質は今後の検証対象である。
 
 **本研究の現時点での性質**：本ドラフトは、RQ1(「明示的な版履歴を持つモデルは、複数世代にわたる変更影響識別タスクにおいて既存の複合運用より正答率・所要時間を改善するか」)を検証する**設計提案とリファレンス実装のレポート**であり、第5章に計画した被験者実験による実証的評価は本ドラフト時点では未実施である。したがって、RQ1に対する肯定的な結論を本ドラフトでは主張しない。第3章で述べたモデル構造(版履歴の第一級化)が、既存運用にはない情報(過去世代からの派生関係)をテスターに提供しうるという設計上の期待は成り立つが、これが実際の正答率・所要時間の改善に結びつくかどうかは、第5章の評価計画に沿った被験者実験を経て初めて判断できる。
 
@@ -651,6 +665,11 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 ## 変更履歴(Changelog)
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
+
+- **2026-08-20(3)**：Gitを唯一の永続化境界と定義し、Knowledgeとidentity eventをリポジトリ内の正準データ、Registryを破棄可能なcacheとし、Git外のembedded databaseや永続化サービスを正準にしないことを明記。§3.6で現行実装の制約とADR 0013のProposed設計を分離し、旧id⇔path独立indexのFuture WorkをADR 0013の実装・評価に置換し、identity lifecycle因果graphと将来の永続`derived_from` Version DAGを別概念とした。
+- **2026-08-20(2)**：§1.4の製品ポジショニングを修正。「専用DB不要」を「外部DBプロセス不要」の意味に限定し、Gitで管理された軽量identity event store(ADR 0013、Proposed、本稿時点で未実装)を設計上内蔵する旨を明記した。
+
+- **2026-08-20**：ADR 0013の可変ID/不変UID分離を反映。UIDを論理Identity、tree SHAをcontent versionとして役割分離し、通常の内容`ChangeEvent`は2 snapshot差分から導出する一方、snapshotだけで意図を復元できないrename等のidentity宣言のみをGit管理する二層モデルに改訂。IdentityEvent自体の新規性は主張せず、論理Identity・content-addressed version・snapshot差分・version-bound execution evidenceの統合を設計仮説の中心とした。
 
 - **2026-08-18(3)**：再レビュー指摘に対応。商用TMS比較の未調査項目を「なし」から「未確認」へ変更し、本文に残る非存在断定を限定。§5.4を候補外TestCaseの追加を許すopen-world reviewへ変更。§5.5とConclusionの事前登録状態を「骨格」に修正。tree SHAを数学的に衝突しない識別子とする表現と、実リポジトリで精度確保済みとする表現を修正。旧変更履歴のDoorstop評価は本改訂および2026-08-18(2)で訂正された。
 - **2026-08-18(2)**：レビュー指摘に対応。DoorstopのSHA-256 item fingerprint・reviewed fingerprint・suspect linkをcontent-derived identity/freshnessの先行機構として再評価し、表1と§2.8〜2.9の比較を修正。StrictDocのtest result traceability、tmtのGit ref/Stories/Results等を踏まえて断定を緩和。「原理的に答えられない」「構造的欠落」を、対象運用では複数情報源の手動照合を要するという検証可能な仮説へ修正。§1.4に研究・OSS・プロダクトの三層の位置づけを追加。§5.4のground truth構築から提案モデル自身による選別を除去し、§5.5の固定人数目安をpower analysisへ変更。Conclusionと参考文献を同期更新。
