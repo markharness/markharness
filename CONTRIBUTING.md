@@ -31,7 +31,7 @@ All of the following must pass locally (they are also enforced in CI):
 - [ ] `cargo fmt --check` — formatted
 - [ ] `cargo audit` — no known vulnerabilities
 - [ ] `cargo deny check licenses` — no dependency license outside the allow-list in `deny.toml` (see [Adding a dependency](#adding-a-dependency))
-- [ ] `generated/testcases/*.yml` matches `knowledge/` (`cargo run -- generate` produces no diff)
+- [ ] `.markharness/generated/testcases/*.yml` matches `.markharness/knowledge/` (`cargo run -- generate` produces no diff)
 - [ ] No secrets in code, logs, or commit messages
 
 ## Adding a dependency
