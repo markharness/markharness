@@ -202,7 +202,7 @@ id_history:
 
 ### 6.2 mutation planと論理commit境界
 
-`issued`/`renamed`/`retired`/`restored`/`released`/`reissued`/`resolved`のいずれも、上記手順(intent書き込み→staging→1回のrename)に従う同一の枠組みで扱う。operation種別ごとの違いは、staging配下に書く内容(どのKnowledge YAMLを・どんなidentity eventを書くか)だけであり、commit-point機構自体は共通化する。
+`issued`/`renamed`/`retired`/`restored`/`released`/`reissued`/`resolved`のいずれも、上記手順(intent書き込み→commit-point eventのatomic write→projectionのroll-forward)に従う同一の枠組みで扱う。operation種別ごとの差はreplayから得るprojectionであり、commit-point機構自体は共通化する。project-wide migrationは§12のbatch形式を用いる。永続intentに予定する全issued eventを含め、最初のeventを単一の論理commit pointとして、recoveryが残りを完了する。
 
 ### 6.3 process-kill注入テスト
 
@@ -243,7 +243,9 @@ merge driverを使わない理由:各開発者のローカル環境ごとの個�
 
 ## 12. migrationにおける`recorded_at`
 
-`markharness identity migrate`が既存Feature等へ初期発行eventを付与する際、`recorded_at`はmigrateコマンドを実行したコミットの時刻を一律で使う。`git log --follow`等による実際の初回コミット時刻の遡及推定は行わない。UID導入以前は`id`変更に追従できない(ADR 0013の出発点そのもの)ため、rename前の履歴を`--follow`で正しく遡れる保証がなく、不正確な値を正確であるかのように見せるリスクがある。「本当の作成時刻は不明であり、追跡を始めた時点を記録している」ことを正直に表す。
+`markharness identity migrate`が既存要素へ初期発行eventを付与する際、migration operationのUTC開始時刻を一度だけ取得し、全eventの`recorded_at`へ同じ値を使う。CLIがworking treeの変更を準備する時点では、後にそれを記録するGit commitはまだ存在せず、そのcommit時刻を正直な入力として利用できない。`git log --follow`等による実際の初回commit時刻の遡及推定も行わない。UID導入以前は`id`変更に追従できない(ADR 0013の出発点そのもの)ため、rename前の履歴を`--follow`で正しく遡れる保証がなく、不正確な値を正確であるかのように見せるリスクがある。共通のoperation開始時刻により「本当の作成時刻は不明であり、追跡を始めた時点を記録している」ことを正直に表す。
+
+予定するUID/event割当の全体を、最初のeventがfinal pathへ到達する前に一つの永続batch intentへ記録する。最初のeventをbatch全体の論理commit pointとする。その後にcrashした場合、startup recoveryは通常commandを再開する前に、残る全eventを書き、全Knowledge projectionをroll-forwardする。partial migrationを正規状態として公開しない。`identity migrate --dry-run`はlock、staging、event、Knowledge fileを書かず、予定するUID割当を表示する。
 
 ## 13. 実装順序
 

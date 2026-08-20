@@ -55,7 +55,8 @@
           "enum": ["feature", "condition", "test_case"]
         },
         "version": { "$ref": "#/$defs/version" },
-        "provenance": { "$ref": "#/$defs/provenance" }
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "uid": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
       }
     },
     "origin": {

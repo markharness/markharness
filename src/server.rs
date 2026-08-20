@@ -45,6 +45,10 @@ struct FeatureHistory {
 #[derive(Serialize)]
 struct FeatureHistoryEntry {
     id: String,
+    /// The Feature's immutable identity (ADR 0013), when it has one at
+    /// `git_ref`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uid: Option<String>,
     path: String,
     tree_sha: String,
     change_events: Vec<String>,
@@ -111,6 +115,11 @@ fn query(target: &str) -> Result<BTreeMap<String, String>, &'static str> {
 }
 
 fn feature_history(root: &Path, git_ref: &str) -> io::Result<FeatureHistory> {
+    // Keyed by Feature identity (ADR 0013: `uid` when the ChangeEvent has
+    // one, else `feature_id`), not `feature_id` alone: `changes/*.yaml`
+    // spans every milestone ever recorded, so a Feature renamed partway
+    // through would otherwise strand its earlier events under an id that
+    // no longer matches its current entry below.
     let mut events_by_feature: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut paths: Vec<_> = fs::read_dir(
         root.join(crate::project_root::MARKHARNESS_DIR)
@@ -128,18 +137,22 @@ fn feature_history(root: &Path, git_ref: &str) -> io::Result<FeatureHistory> {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         for event in events {
             events_by_feature
-                .entry(event.feature_id)
+                .entry(event.identity_key().to_string())
                 .or_default()
                 .push(event.event_id);
         }
     }
     let features = id_cache::resolve_feature_versions(root, git_ref, true)?
         .into_iter()
-        .map(|feature| FeatureHistoryEntry {
-            change_events: events_by_feature.remove(&feature.id).unwrap_or_default(),
-            id: feature.id,
-            path: feature.path,
-            tree_sha: feature.tree_sha,
+        .map(|feature| {
+            let identity = id_cache::identity_key(&feature);
+            FeatureHistoryEntry {
+                change_events: events_by_feature.remove(&identity).unwrap_or_default(),
+                id: feature.id,
+                uid: feature.uid,
+                path: feature.path,
+                tree_sha: feature.tree_sha,
+            }
         })
         .collect();
     Ok(FeatureHistory {

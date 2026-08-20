@@ -56,6 +56,7 @@ mod tests {
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
+                feature_uid: None,
                 behavior: "todo-add-task".to_string(),
                 condition: "todo-add-task-empty-input".to_string(),
                 expected_results: vec!["todo-add-task-empty-input-001".to_string()],

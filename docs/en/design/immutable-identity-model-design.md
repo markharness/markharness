@@ -202,7 +202,7 @@ This gives crash recovery a simpler invariant than "one rename commits everythin
 
 ### 6.2 Mutation plans and logical commit boundaries
 
-`issued`, `renamed`, `retired`, `restored`, `released`, `reissued`, and `resolved` all follow the same procedure (write intent → stage → single rename). What differs per operation kind is only the content written to staging (which Knowledge YAML, what identity event); the commit-point mechanism itself is shared.
+`issued`, `renamed`, `retired`, `restored`, `released`, `reissued`, and `resolved` all follow the same procedure (write intent → atomically write the commit-point event → roll projections forward). What differs per operation kind is the projection produced from replay; the commit-point mechanism itself is shared. Project-wide migration uses the batch form described in Section 12: its durable intent contains every planned issuance event, and the first event is the single logical commit point from which recovery completes the remainder.
 
 ### 6.3 Process-kill injection tests
 
@@ -243,7 +243,9 @@ Core paths limited to two-snapshot comparison — `changes compute`, `verify`, a
 
 ## 12. `recorded_at` during migration
 
-When `markharness identity migrate` backfills an initial issuance event for a pre-existing Feature (and so on), `recorded_at` uniformly uses the timestamp of the commit that performs the migration. No attempt is made to retroactively infer the element's true first-commit time via `git log --follow` or similar. Since `id` changes could not be tracked before UID was introduced — the very problem ADR 0013 exists to solve — there is no guarantee that history before a rename can be correctly followed, and an inferred value risks looking more accurate than it is. Using the migration commit's timestamp honestly states: "the true creation time is unknown; this records when tracking began."
+When `markharness identity migrate` backfills initial issuance events for pre-existing elements, it captures the migration operation's UTC start time once and uses that same value as every event's `recorded_at`. The eventual Git commit does not exist while the CLI is preparing the working-tree changes, so its timestamp cannot honestly be used as an input. No attempt is made to retroactively infer the element's true first-commit time via `git log --follow` or similar. Since `id` changes could not be tracked before UID was introduced — the very problem ADR 0013 exists to solve — there is no guarantee that history before a rename can be correctly followed, and an inferred value risks looking more accurate than it is. The shared operation timestamp honestly states: "the true creation time is unknown; this records when tracking began."
+
+The complete set of planned UID/event assignments is written to one durable batch intent before the first event reaches its final path. The first event is the batch's logical commit point. If a crash occurs after that point, startup recovery writes every remaining planned event and rolls every Knowledge projection forward before normal commands resume; partial migration is never exposed as a normal state. `identity migrate --dry-run` reports the planned UID assignments without writing the lock, staging data, events, or Knowledge files.
 
 ## 13. Implementation order
 

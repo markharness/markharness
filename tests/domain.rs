@@ -13,6 +13,7 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             requirement_id: "req".to_string(),
             requirement_axis: vec!["ui".to_string()],
             feature_id: "feature".to_string(),
+            feature_uid: None,
             feature_axis: vec!["workflow".to_string()],
             behavior_id: "behavior".to_string(),
             behavior_description: "perform action".to_string(),

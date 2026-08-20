@@ -72,6 +72,15 @@ pub struct ChangeEvent {
     pub related_events: Vec<String>,
 }
 
+impl ChangeEvent {
+    /// Stable comparison/index key during the mixed legacy/UID migration.
+    /// UID-backed events use their immutable identity; legacy events retain
+    /// their historical id-based behavior.
+    pub fn identity_key(&self) -> &str {
+        self.feature_uid.as_deref().unwrap_or(&self.feature_id)
+    }
+}
+
 /// A single true-divergence merge recorded against a `ChangeEvent`: the
 /// merge commit itself (auditable via `markharness changes lineage
 /// --commit <merge_commit>` or `git show <merge_commit>`) and the two

@@ -13,7 +13,7 @@ use crate::changes;
 use crate::derived_index;
 use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
 use crate::id_cache;
-use crate::identity::{self, ReleaseError, RenameError, ResolveError};
+use crate::identity::{self, MigrateError, ReleaseError, RenameError, ResolveError};
 use crate::init;
 use crate::interactive;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, DraftValidation};
@@ -197,6 +197,18 @@ pub enum IdentityCommand {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
+    },
+    /// Assign a uid to every Feature that doesn't have one yet (design doc §12). Idempotent; Phase 2 scope covers Features only.
+    Migrate {
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+        /// Show planned UID assignments without changing any file
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -1190,6 +1202,71 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     std::process::exit(2);
                 }
                 Err(ReleaseError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+            }
+        }
+        Command::Identity(IdentityCommand::Migrate { dir, json, dry_run }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            let outcome = if dry_run {
+                identity::plan_feature_migration(&root)
+            } else {
+                identity::migrate_features(&root)
+            };
+            match outcome {
+                Ok(report) => {
+                    if json {
+                        let entries: Vec<serde_json::Value> = report
+                            .migrated
+                            .iter()
+                            .map(|m| serde_json::json!({"id": m.id, "uid": m.uid}))
+                            .collect();
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "dry_run": dry_run,
+                                "migrated": entries,
+                                "conflicts": report.conflicts,
+                                "changed_files": report.changed_files
+                            }))
+                            .expect("migrate report serialization is infallible")
+                        );
+                    } else if !report.conflicts.is_empty() {
+                        for conflict in &report.conflicts {
+                            println!("conflict: {conflict}");
+                        }
+                    } else if report.migrated.is_empty() {
+                        println!("no Features needed migration; every Feature already has a uid");
+                    } else {
+                        for feature in &report.migrated {
+                            if dry_run {
+                                println!("would migrate '{}' -> uid {}", feature.id, feature.uid);
+                            } else {
+                                println!("migrated '{}' -> uid {}", feature.id, feature.uid);
+                            }
+                        }
+                        if dry_run {
+                            for path in &report.changed_files {
+                                println!("would change {path}");
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Err(MigrateError::OperationInProgress) => {
+                    eprintln!(
+                        "error: another identity operation is already in progress. Retry shortly."
+                    );
+                    std::process::exit(2);
+                }
+                Err(MigrateError::Conflicts(conflicts)) => {
+                    for conflict in conflicts {
+                        eprintln!("error: {conflict}");
+                    }
+                    std::process::exit(2);
+                }
+                Err(MigrateError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }

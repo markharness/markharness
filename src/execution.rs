@@ -70,11 +70,14 @@ pub struct ExecutionEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub executed_at: String,
-    /// Feature id -> directory tree SHA at `milestone`, for each Feature the
-    /// TestCase's `generated_from.feature` names (§2.1 of the ChangeEvent連動
-    /// 仕様). Filled in automatically by `record_execution`; absent on
-    /// records made before this field existed (no retroactive backfill, per
-    /// §6).
+    /// Feature identity -> directory tree SHA at `milestone`, for each
+    /// Feature the TestCase's `generated_from.feature` names (§2.1 of the
+    /// ChangeEvent連動仕様). The key is the Feature's `uid` (ADR 0013) when
+    /// it has one at `milestone`, else its `feature_id` — matching
+    /// `id_cache::identity_key`'s convention, so a later rename doesn't
+    /// strand entries recorded before it. Filled in automatically by
+    /// `record_execution`; absent on records made before this field
+    /// existed (no retroactive backfill, per §6).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub verified_feature_tree_shas: BTreeMap<String, String>,
 }
@@ -167,19 +170,21 @@ fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<Min
     Ok(None)
 }
 
-/// Resolves the directory tree SHA of `feature_id` at `milestone`, or `None`
-/// if the Feature isn't found at that milestone tag (kept out of the
-/// recorded map rather than failing the whole `execution record`).
+/// Resolves `feature_id`'s identity key (ADR 0013: `uid` when present, else
+/// `feature_id` itself — `id_cache::identity_key`) and directory tree SHA at
+/// `milestone`, or `None` if the Feature isn't found at that milestone tag
+/// (kept out of the recorded map rather than failing the whole
+/// `execution record`).
 fn verified_feature_tree_sha(
     root: &Path,
     milestone: &str,
     feature_id: &str,
-) -> io::Result<Option<String>> {
+) -> io::Result<Option<(String, String)>> {
     let versions = id_cache::resolve_feature_versions(root, milestone, true)?;
-    Ok(versions
-        .into_iter()
-        .find(|v| v.id == feature_id)
-        .map(|v| v.tree_sha))
+    Ok(versions.into_iter().find(|v| v.id == feature_id).map(|v| {
+        let key = id_cache::identity_key(&v);
+        (key, v.tree_sha)
+    }))
 }
 
 fn read_existing_entries(results_path: &Path) -> io::Result<Vec<ExecutionEntry>> {
@@ -205,10 +210,10 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordErro
     };
 
     let mut verified_feature_tree_shas = BTreeMap::new();
-    if let Some(sha) =
+    if let Some((key, sha)) =
         verified_feature_tree_sha(root, args.milestone, &testcase.generated_from.feature)?
     {
-        verified_feature_tree_shas.insert(testcase.generated_from.feature, sha);
+        verified_feature_tree_shas.insert(key, sha);
     }
 
     let results_path = root
@@ -427,6 +432,82 @@ mod tests {
         assert_eq!(
             entries[0].verified_feature_tree_shas.get("player-jump"),
             Some(&expected_sha)
+        );
+    }
+
+    /// Like `init_repo_with_milestone_and_feature`, but the Feature carries
+    /// a `uid` (ADR 0013).
+    fn init_repo_with_milestone_and_uid_feature(
+        feature_id: &str,
+        uid: &str,
+        milestone: &str,
+    ) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q"]);
+        run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+        run_git(dir.path(), &["config", "user.name", "Test"]);
+        let feature_dir = dir
+            .path()
+            .join(".markharness/knowledge/controls")
+            .join(feature_id);
+        fs::create_dir_all(&feature_dir).unwrap();
+        fs::write(
+            feature_dir.join("feature.yml"),
+            format!(
+                "id: {feature_id}\nrequirement: controls\nlabel: {feature_id}\naxis: []\nuid: {uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(format!(".markharness/executions/{milestone}")),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(format!(".markharness/executions/{milestone}/milestone.yml")),
+            format!("id: {milestone}\n"),
+        )
+        .unwrap();
+        run_git(dir.path(), &["add", "-A"]);
+        run_git(dir.path(), &["commit", "-q", "-m", "init"]);
+        run_git(dir.path(), &["tag", milestone]);
+        dir
+    }
+
+    /// ADR 0013: `verified_feature_tree_shas` must key its entries by the
+    /// Feature's `uid` (not `feature_id`), so an entry recorded now survives
+    /// a later rename that preserves the `uid`.
+    #[test]
+    fn record_execution_keys_verified_feature_tree_shas_by_uid_when_the_feature_has_one() {
+        const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let dir = init_repo_with_milestone_and_uid_feature("player-jump", UID, "m1");
+        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
+
+        record_execution(
+            dir.path(),
+            &RecordArgs {
+                milestone: "m1",
+                case_id: "tc-ground-001",
+                result: ExecutionResult::Pass,
+                executor: "yamada",
+                note: None,
+            },
+        )
+        .unwrap();
+
+        let content =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
+        let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
+        assert!(
+            entries[0].verified_feature_tree_shas.contains_key(UID),
+            "expected verified_feature_tree_shas to be keyed by uid, got {:?}",
+            entries[0].verified_feature_tree_shas
+        );
+        assert!(
+            !entries[0]
+                .verified_feature_tree_shas
+                .contains_key("player-jump")
         );
     }
 

@@ -19,5 +19,6 @@ pub use engine::{IdHistoryEntry, ReplayError, ReplayResult, Status, replay};
 pub use entity_kind::{EntityDescriptor, EntityKind, descriptor};
 pub use event::{IdentityEvent, IdentityMutation};
 pub use feature_ops::{
-    ReleaseError, RenameError, ResolveError, release_id, rename_id, resolve_divergence,
+    MigrateError, MigrateReport, MigratedFeature, ReleaseError, RenameError, ResolveError,
+    migrate_features, plan_feature_migration, release_id, rename_id, resolve_divergence,
 };

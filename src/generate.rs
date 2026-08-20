@@ -13,6 +13,13 @@ use crate::knowledge::{
 pub struct GeneratedFrom {
     pub requirement: String,
     pub feature: String,
+    /// The Feature's immutable identity (ADR 0013), when it has one.
+    /// `None` for a Feature that has not been migrated (§10 of the design
+    /// doc: `case_uid` itself needs every one of Requirement/Feature/
+    /// Behavior/Condition/ExpectedResult to carry a `uid`, which isn't the
+    /// case until Phase 3/4 of ADR 0013's migration completes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_uid: Option<String>,
     pub behavior: String,
     pub condition: String,
     pub expected_results: Vec<String>,
@@ -41,6 +48,7 @@ pub struct KnowledgeCaseSnapshot {
     pub requirement_id: String,
     pub requirement_axis: Vec<String>,
     pub feature_id: String,
+    pub feature_uid: Option<String>,
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
     pub behavior_description: String,
@@ -265,6 +273,7 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                         requirement_id: requirement.id.clone(),
                         requirement_axis: requirement.axis.clone(),
                         feature_id: feature.id.clone(),
+                        feature_uid: feature.uid.clone(),
                         feature_axis: feature.axis.clone(),
                         behavior_id: behavior.id.clone(),
                         behavior_description: behavior.description.clone(),
@@ -293,6 +302,7 @@ pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
             generated_from: GeneratedFrom {
                 requirement: case.requirement_id.clone(),
                 feature: case.feature_id.clone(),
+                feature_uid: case.feature_uid.clone(),
                 behavior: case.behavior_id.clone(),
                 condition: case.condition_id.clone(),
                 expected_results: case.expected.iter().map(|item| item.id.clone()).collect(),
@@ -970,6 +980,7 @@ mod tests {
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
+                feature_uid: None,
                 behavior: "todo-add-task".to_string(),
                 condition: "todo-add-task-empty-input".to_string(),
                 expected_results: vec!["todo-add-task-empty-input-001".to_string()],
@@ -989,6 +1000,65 @@ mod tests {
             Some("tc-req-todo-todo-todo-add-task-todo-add-task-empty-input")
         );
         assert_eq!(parsed["generated_from"]["feature"].as_str(), Some("todo"));
+    }
+
+    /// ADR 0013: a Feature's `uid` must propagate into
+    /// `generated_from.feature_uid`, so a consumer of the generated
+    /// TestCase can correlate it with the Feature's identity, not just its
+    /// current `id`.
+    #[test]
+    fn generated_from_carries_the_feature_uid_when_the_feature_has_one() {
+        const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        let feature_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge/req-todo/todo");
+        fs::create_dir_all(&feature_dir).unwrap();
+        fs::write(
+            feature_dir.join("feature.yml"),
+            format!("id: todo\nrequirement: req-todo\nlabel: todo\naxis: []\nuid: {UID}\n"),
+        )
+        .unwrap();
+        write_behavior(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "User adds a task.",
+        );
+        write_condition(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+        );
+        write_expected(
+            dir.path(),
+            "req-todo",
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "001",
+            "todo-add-task-empty-input-001",
+            "Shows a validation error.",
+        );
+
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            testcases[0].generated_from.feature_uid.as_deref(),
+            Some(UID)
+        );
     }
 
     #[test]
@@ -1045,6 +1115,7 @@ mod tests {
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
+                feature_uid: None,
                 behavior: "todo-add-task".to_string(),
                 condition: "todo-add-task-empty-input".to_string(),
                 expected_results: vec!["todo-add-task-empty-input-001".to_string()],

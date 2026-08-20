@@ -129,6 +129,8 @@ pub struct ReflectedChange {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct TraceEntry {
     pub feature_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_uid: Option<String>,
     /// `None` when no ChangeEvent with a matching `to_tree_sha` exists in
     /// `changes/` (e.g. `changes compute`/`backfill` hasn't been run for the
     /// milestone pair where this blob last changed).
@@ -210,17 +212,25 @@ pub fn trace(root: &Path, case_id: &str, milestone: &str) -> Result<TraceResult,
     let all_changes = read_all_changes(root)?;
 
     let mut trace_entries = Vec::new();
-    for (feature_id, tree_sha) in &entry.verified_feature_tree_shas {
-        let reflects_change = all_changes
-            .iter()
-            .find(|e| &e.feature_id == feature_id && e.to_tree_sha.as_deref() == Some(tree_sha))
-            .map(|e| ReflectedChange {
-                event_id: e.event_id.clone(),
-                from_milestone: e.from_milestone.clone(),
-                to_milestone: e.to_milestone.clone(),
-            });
+    for (feature_identity, tree_sha) in &entry.verified_feature_tree_shas {
+        // `feature_identity` is `execution::verified_feature_tree_sha`'s
+        // key (ADR 0013: `uid` when the Feature had one at record time,
+        // else `feature_id`) — match ChangeEvents the same way so a
+        // uid-tagged Feature is found even if `changes compute` later saw
+        // it under a different `feature_id` (post-rename).
+        let matching_event = all_changes.iter().find(|e| {
+            e.identity_key() == feature_identity && e.to_tree_sha.as_deref() == Some(tree_sha)
+        });
+        let reflects_change = matching_event.map(|e| ReflectedChange {
+            event_id: e.event_id.clone(),
+            from_milestone: e.from_milestone.clone(),
+            to_milestone: e.to_milestone.clone(),
+        });
         trace_entries.push(TraceEntry {
-            feature_id: feature_id.clone(),
+            feature_id: matching_event
+                .map(|event| event.feature_id.clone())
+                .unwrap_or_else(|| feature_identity.clone()),
+            feature_uid: matching_event.and_then(|event| event.feature_uid.clone()),
             reflects_change,
         });
     }
@@ -371,11 +381,17 @@ pub fn pending(
     for (case_id, event) in impacted {
         let reexecuted = was_reexecuted(root, at_or_after_to, &case_id, &event)?;
 
+        // ADR 0013: resolve the Feature's current state by identity (`uid`
+        // when the ChangeEvent has one, else `feature_id`) rather than by
+        // `feature_id` alone, so a Feature renamed since this event still
+        // matches its later `uid`-tagged versions and ChangeEvents.
+        let event_identity = event.identity_key().to_string();
         let current_tree_sha = match current_milestone {
-            Some(m) => id_cache::resolve_feature_versions(root, m, use_cache)?
-                .into_iter()
-                .find(|v| v.id == event.feature_id)
-                .map(|v| v.tree_sha),
+            Some(m) => {
+                id_cache::by_identity_key(id_cache::resolve_feature_versions(root, m, use_cache)?)
+                    .get(&event_identity)
+                    .map(|v| v.tree_sha.clone())
+            }
             None => None,
         };
 
@@ -383,7 +399,7 @@ pub fn pending(
             all_changes
                 .iter()
                 .find(|e| {
-                    e.feature_id == event.feature_id
+                    e.identity_key() == event_identity
                         && e.to_tree_sha.as_ref() == Some(current_tree_sha)
                 })
                 .map(|e| ReflectedChange {
@@ -438,11 +454,16 @@ fn was_reexecuted(
     case_id: &str,
     event: &crate::changes::ChangeEvent,
 ) -> io::Result<bool> {
+    // ADR 0013: `verified_feature_tree_shas` is keyed by identity (`uid`
+    // when the Feature has one, else `feature_id` —
+    // `execution::verified_feature_tree_sha`'s convention), so the lookup
+    // key must match the ChangeEvent's own identity the same way.
+    let event_identity = event.identity_key();
     for milestone in milestones {
         let entries = read_results(root, milestone)?;
         if entries.iter().any(|e| {
             e.case_id == case_id
-                && e.verified_feature_tree_shas.get(&event.feature_id) == event.to_tree_sha.as_ref()
+                && e.verified_feature_tree_shas.get(event_identity) == event.to_tree_sha.as_ref()
         }) {
             return Ok(true);
         }
@@ -851,6 +872,114 @@ mod tests {
         assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
+    fn write_feature_with_uid(root: &Path, id: &str, label: &str, uid: &str) {
+        let dir = root.join(".markharness/knowledge/req-todo/todo-edit");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("feature.yml"),
+            format!("id: {id}\nrequirement: req-todo\nlabel: {label}\naxis: []\nuid: {uid}\n"),
+        )
+        .unwrap();
+    }
+
+    /// ADR 0013: when a Feature is renamed (uid preserved) between the
+    /// milestone a ChangeEvent recorded it at and the current milestone,
+    /// `pending` must still resolve the Feature's current tree SHA and
+    /// `current_event` by `uid` — not lose track of it because `feature_id`
+    /// no longer matches.
+    #[test]
+    fn pending_resolves_current_state_by_uid_across_a_rename() {
+        const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q"]);
+        run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+        run_git(dir.path(), &["config", "user.name", "Test"]);
+
+        write_feature_with_uid(dir.path(), "todo-edit", "v1", UID);
+        commit_and_tag_milestone(dir.path(), "test1", 1);
+
+        write_feature_with_uid(dir.path(), "todo-edit", "v2", UID);
+        commit_and_tag_milestone(dir.path(), "test2", 2);
+
+        let tree_sha2 = crate::id_cache::resolve_feature_versions(dir.path(), "test2", false)
+            .unwrap()
+            .into_iter()
+            .find(|v| v.uid.as_deref() == Some(UID))
+            .unwrap()
+            .tree_sha;
+        write_changes(
+            dir.path(),
+            "test2",
+            &format!(
+                "- event_id: todo-edit--test1--test2\n  feature_id: todo-edit\n  feature_uid: {UID}\n  from_milestone: test1\n  to_milestone: test2\n  from_tree_sha: null\n  to_tree_sha: {tree_sha2}\n  impacted_testcases:\n  - tc-edit-existing-todo-001\n"
+            ),
+        );
+
+        // Renamed *and* changed again on the way to test3 — same uid, new
+        // id, so a naive `v.id == event.feature_id` lookup at test3 would
+        // no longer find this Feature at all.
+        write_feature_with_uid(dir.path(), "todo-edit-item", "v3", UID);
+        commit_and_tag_milestone(dir.path(), "test3", 3);
+        let tree_sha3 = crate::id_cache::resolve_feature_versions(dir.path(), "test3", false)
+            .unwrap()
+            .into_iter()
+            .find(|v| v.uid.as_deref() == Some(UID))
+            .unwrap()
+            .tree_sha;
+        write_changes(
+            dir.path(),
+            "test3",
+            &format!(
+                "- event_id: todo-edit-item--test2--test3\n  feature_id: todo-edit-item\n  feature_uid: {UID}\n  from_milestone: test2\n  to_milestone: test3\n  from_tree_sha: {tree_sha2}\n  to_tree_sha: {tree_sha3}\n  impacted_testcases: []\n"
+            ),
+        );
+
+        let report = pending(dir.path(), Some(("test1", "test2")), false).unwrap();
+
+        // The Feature moved on again (renamed + re-edited) before anyone
+        // re-ran the case: `stale`, and — because lookup is uid-based —
+        // `current_event` correctly names the rename's ChangeEvent instead
+        // of coming back `None` for lack of an `id` match.
+        assert!(report.pending.is_empty());
+        assert_eq!(
+            report.stale,
+            vec![StaleEntry {
+                case_id: "tc-edit-existing-todo-001".to_string(),
+                feature_id: "todo-edit".to_string(),
+                original_event_id: "todo-edit--test1--test2".to_string(),
+                current_event: Some(ReflectedChange {
+                    event_id: "todo-edit-item--test2--test3".to_string(),
+                    from_milestone: "test2".to_string(),
+                    to_milestone: "test3".to_string(),
+                }),
+            }],
+            "expected uid-based lookup to find the rename's ChangeEvent, got {report:?}"
+        );
+    }
+
+    #[test]
+    fn trace_keeps_the_display_id_separate_from_the_feature_uid() {
+        const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/m2")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/changes")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/executions/m2/results.yml"),
+            format!("- case_id: tc-1\n  result: pass\n  executor: test\n  executed_at: 2026-08-20T00:00:00Z\n  verified_feature_tree_shas:\n    {UID}: tree-2\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            format!("- event_id: event-1\n  feature_id: renamed-feature\n  feature_uid: {UID}\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: tree-1\n  to_tree_sha: tree-2\n  impacted_testcases: []\n"),
+        )
+        .unwrap();
+
+        let result = trace(dir.path(), "tc-1", "m2").unwrap();
+
+        assert_eq!(result.entries[0].feature_id, "renamed-feature");
+        assert_eq!(result.entries[0].feature_uid.as_deref(), Some(UID));
+    }
+
     #[test]
     fn pending_reports_stale_when_feature_changed_again_after_the_original_change() {
         let (dir, tree_sha2) = init_repo_with_pending_change();
@@ -910,6 +1039,7 @@ mod tests {
             result.entries,
             vec![TraceEntry {
                 feature_id: "todo-edit".to_string(),
+                feature_uid: None,
                 reflects_change: Some(ReflectedChange {
                     event_id: "todo-edit--test1--test2".to_string(),
                     from_milestone: "test1".to_string(),
@@ -943,6 +1073,7 @@ mod tests {
             result.entries,
             vec![TraceEntry {
                 feature_id: "todo-edit".to_string(),
+                feature_uid: None,
                 reflects_change: None,
             }]
         );

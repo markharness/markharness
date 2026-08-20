@@ -107,14 +107,35 @@ fn find_feature_by_uid(root: &Path, uid: &str) -> io::Result<Option<FoundFeature
 /// invocation calls it, which is exactly the point: this step must be
 /// idempotent and safe to redo from just the identity event log.
 fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result<()> {
-    let result = registry::resolve_from_working_tree(root, intent.entity_kind, &intent.entity_uid)?
+    recovery::complete_batch_commits(root, intent)?;
+    if intent.batch_events.is_empty() {
+        return roll_forward_entity(root, intent.entity_kind, &intent.entity_uid);
+    }
+    for event in &intent.batch_events {
+        roll_forward_entity(root, event.entity_kind, &event.entity_uid)?;
+    }
+    Ok(())
+}
+
+fn roll_forward_entity(root: &Path, entity_kind: EntityKind, entity_uid: &str) -> io::Result<()> {
+    let result = registry::resolve_from_working_tree(root, entity_kind, entity_uid)?
         .map_err(|e| io::Error::other(format!("{e:?}")))?;
 
-    if let Some(found) = find_feature_by_uid(root, &intent.entity_uid)?
-        && found.feature.id != result.current_id
+    // A migrate operation's root `Issued` event assigns a `uid` no
+    // `feature.yml` carries yet, so `find_feature_by_uid` can't find it —
+    // fall back to locating it by the id the event just issued/renamed to.
+    let found = match find_feature_by_uid(root, entity_uid)? {
+        Some(found) => Some(found),
+        None => find_feature_by_id(root, &result.current_id)?,
+    };
+
+    if let Some(found) = found
+        && (found.feature.id != result.current_id
+            || found.feature.uid.as_deref() != Some(entity_uid))
     {
         let updated = Feature {
             id: result.current_id,
+            uid: Some(entity_uid.to_string()),
             ..found.feature
         };
         replace_file(
@@ -124,7 +145,7 @@ fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result<()> {
         )?;
     }
 
-    registry::invalidate(root, intent.entity_kind, &intent.entity_uid)
+    registry::invalidate(root, entity_kind, entity_uid)
 }
 
 /// `markharness feature rename-id <old> <new>` (design doc §3, §9):
@@ -385,6 +406,171 @@ fn commit_release(
     roll_forward(root, &intent)?;
     recovery::finish(root, &intent)?;
     Ok(())
+}
+
+/// One Feature `identity migrate` newly assigned a `uid` to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigratedFeature {
+    pub id: String,
+    pub uid: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MigrateReport {
+    pub migrated: Vec<MigratedFeature>,
+    pub conflicts: Vec<String>,
+    pub changed_files: Vec<String>,
+}
+
+struct MigrationPlan {
+    report: MigrateReport,
+    events: Vec<recovery::BatchEvent>,
+}
+
+/// Why `migrate_features` refused to run, or failed partway.
+#[derive(Debug)]
+pub enum MigrateError {
+    /// A concurrent identity operation is genuinely in progress
+    /// (design doc §6.3) — the caller must retry later, not race it.
+    OperationInProgress,
+    Conflicts(Vec<String>),
+    Io(io::Error),
+}
+
+impl From<io::Error> for MigrateError {
+    fn from(e: io::Error) -> Self {
+        MigrateError::Io(e)
+    }
+}
+
+/// `markharness identity migrate` (design doc §12, Phase 2 scope: Feature
+/// only): assigns a fresh `uid` to every Feature in the working tree that
+/// doesn't have one yet, recording each as a root `Issued` identity event.
+/// Idempotent — a Feature that already has a `uid` is left untouched, so
+/// re-running after copy/import/hand-editing introduces new uid-less
+/// Features is safe.
+pub fn migrate_features(root: &Path) -> Result<MigrateReport, MigrateError> {
+    match recovery::run_startup_recovery(root, |intent| roll_forward(root, intent))? {
+        recovery::StartupRecovery::OperationInProgress => {
+            return Err(MigrateError::OperationInProgress);
+        }
+        recovery::StartupRecovery::Recovered(_) => {}
+    }
+
+    let held_lock = lock::IdentityLock::acquire(root)?;
+    let outcome = migrate_all(root);
+    held_lock.release()?;
+    outcome
+}
+
+fn migrate_all(root: &Path) -> Result<MigrateReport, MigrateError> {
+    let plan = build_migration_plan(root)?;
+    if !plan.report.conflicts.is_empty() {
+        return Err(MigrateError::Conflicts(plan.report.conflicts));
+    }
+    if plan.events.is_empty() {
+        return Ok(plan.report);
+    }
+    let intent = recovery::begin_batch(root, plan.events)?;
+    recovery::commit_batch(root, &intent)?;
+    roll_forward(root, &intent)?;
+    recovery::finish(root, &intent)?;
+    Ok(plan.report)
+}
+
+/// Computes the exact UID assignments a migration would make without
+/// writing Knowledge, identity events, locks, or staging state.
+pub fn plan_feature_migration(root: &Path) -> Result<MigrateReport, MigrateError> {
+    Ok(build_migration_plan(root)?.report)
+}
+
+fn build_migration_plan(root: &Path) -> Result<MigrationPlan, MigrateError> {
+    let mut report = MigrateReport::default();
+    let mut events = Vec::new();
+    let recorded_at = iso8601_utc_now();
+    let knowledge_root = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge");
+    let mut features = Vec::new();
+    let mut ids: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut uids: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for requirement_dir in sorted_subdirs(&knowledge_root)? {
+        for feature_dir in sorted_subdirs(&requirement_dir)? {
+            let feature_path = feature_dir.join("feature.yml");
+            if !feature_path.is_file() {
+                continue;
+            }
+            let content = fs::read_to_string(&feature_path)?;
+            let feature = knowledge::parse_feature(&content).map_err(io::Error::other)?;
+            let relative_path = feature_path
+                .strip_prefix(root)
+                .unwrap_or(&feature_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            ids.entry(feature.id.clone())
+                .or_default()
+                .push(relative_path.clone());
+            if let Some(uid) = &feature.uid {
+                uids.entry(uid.clone())
+                    .or_default()
+                    .push(relative_path.clone());
+            }
+            features.push((feature_path, relative_path, feature));
+        }
+    }
+    for (id, paths) in ids.into_iter().filter(|(_, paths)| paths.len() > 1) {
+        report
+            .conflicts
+            .push(format!("duplicate Feature id '{id}': {}", paths.join(", ")));
+    }
+    for (uid, paths) in uids.into_iter().filter(|(_, paths)| paths.len() > 1) {
+        report.conflicts.push(format!(
+            "duplicate Feature uid '{uid}': {}",
+            paths.join(", ")
+        ));
+    }
+    if !report.conflicts.is_empty() {
+        return Ok(MigrationPlan { report, events });
+    }
+    for (_feature_path, relative_path, feature) in features {
+        if feature.uid.is_some() {
+            continue;
+        }
+        let entity_uid = ulid::Ulid::new().to_string();
+        let event_uid = ulid::Ulid::new().to_string();
+        let event = IdentityEvent {
+            identity_event_uid: event_uid.clone(),
+            entity_uid: entity_uid.clone(),
+            entity_kind: EntityKind::Feature,
+            previous_identity_event_uid: None,
+            previous_identity_event_uids: Vec::new(),
+            recorded_at: recorded_at.clone(),
+            mutation: IdentityMutation::Issued {
+                id: feature.id.clone(),
+            },
+        };
+        events.push(recovery::BatchEvent {
+            entity_kind: EntityKind::Feature,
+            entity_uid: entity_uid.clone(),
+            identity_event_uid: event_uid.clone(),
+            event_yaml: serde_yaml_ng::to_string(&event).map_err(io::Error::other)?,
+        });
+        report.changed_files.push(relative_path);
+        report.changed_files.push(
+            recovery::event_file_path(root, EntityKind::Feature, &entity_uid, &event_uid)
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+        report.migrated.push(MigratedFeature {
+            id: feature.id,
+            uid: entity_uid,
+        });
+    }
+    Ok(MigrationPlan { report, events })
 }
 
 #[cfg(test)]
@@ -722,5 +908,161 @@ mod tests {
         assert!(
             matches!(err, ReleaseError::IdNeverUsedByThisEntity { released_id } if released_id == "never-used-id")
         );
+    }
+
+    #[test]
+    fn migrate_features_assigns_a_uid_and_writes_an_issued_event() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", None);
+
+        let report = migrate_features(dir.path()).unwrap();
+
+        assert_eq!(report.migrated.len(), 1);
+        assert_eq!(report.migrated[0].id, "todo-management");
+        assert!(report.conflicts.is_empty());
+        assert_eq!(report.changed_files.len(), 2);
+        let assigned_uid = report.migrated[0].uid.clone();
+
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+        )
+        .unwrap();
+        let feature: Feature = knowledge::parse_feature(&content).unwrap();
+        assert_eq!(feature.uid, Some(assigned_uid.clone()));
+
+        let events =
+            registry::load_events_from_working_tree(dir.path(), EntityKind::Feature, &assigned_uid)
+                .unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].mutation,
+            IdentityMutation::Issued { id } if id == "todo-management"
+        ));
+    }
+
+    #[test]
+    fn migrate_features_is_idempotent_and_skips_an_already_migrated_feature() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", Some(UID));
+        issue_uid(dir.path(), UID, "todo-management");
+
+        let report = migrate_features(dir.path()).unwrap();
+
+        assert!(report.migrated.is_empty());
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+        )
+        .unwrap();
+        let feature: Feature = knowledge::parse_feature(&content).unwrap();
+        assert_eq!(feature.uid, Some(UID.to_string()));
+    }
+
+    #[test]
+    fn migrate_features_only_touches_features_without_a_uid_when_mixed() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", Some(UID));
+        issue_uid(dir.path(), UID, "todo-management");
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/second/feature.yml"),
+            "id: second-feature\nrequirement: controls\nlabel: second-feature\naxis: []\n",
+        )
+        .unwrap();
+
+        let report = migrate_features(dir.path()).unwrap();
+
+        assert_eq!(report.migrated.len(), 1);
+        assert_eq!(report.migrated[0].id, "second-feature");
+    }
+
+    #[test]
+    fn plan_feature_migration_reports_uids_without_modifying_the_project() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", None);
+
+        let report = plan_feature_migration(dir.path()).unwrap();
+
+        assert_eq!(report.migrated.len(), 1);
+        assert_eq!(report.migrated[0].id, "todo-management");
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+        )
+        .unwrap();
+        assert!(!content.contains("uid:"));
+        assert!(!dir.path().join(".markharness/identity-events").exists());
+    }
+
+    #[test]
+    fn plan_feature_migration_reports_duplicate_ids_without_writing() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", None);
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/second/feature.yml"),
+            "id: todo-management\nrequirement: controls\nlabel: duplicate\naxis: []\n",
+        )
+        .unwrap();
+
+        let report = plan_feature_migration(dir.path()).unwrap();
+
+        assert!(report.migrated.is_empty());
+        assert_eq!(report.conflicts.len(), 1);
+        assert!(report.changed_files.is_empty());
+        assert!(!dir.path().join(".markharness/identity-events").exists());
+    }
+
+    #[test]
+    fn migrate_features_rejects_conflicts_before_the_batch_commit_point() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", None);
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/second/feature.yml"),
+            "id: todo-management\nrequirement: controls\nlabel: duplicate\naxis: []\n",
+        )
+        .unwrap();
+
+        let result = migrate_features(dir.path());
+
+        assert!(matches!(result, Err(MigrateError::Conflicts(_))));
+        assert!(!dir.path().join(".markharness/identity-events").exists());
+        assert!(!dir.path().join(".markharness/.identity-staging").exists());
+    }
+
+    #[test]
+    fn one_migration_records_one_operation_timestamp_for_every_feature() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", None);
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/second/feature.yml"),
+            "id: second-feature\nrequirement: controls\nlabel: second-feature\naxis: []\n",
+        )
+        .unwrap();
+
+        let report = migrate_features(dir.path()).unwrap();
+        let recorded_at: std::collections::BTreeSet<String> = report
+            .migrated
+            .iter()
+            .map(|migrated| {
+                registry::load_events_from_working_tree(
+                    dir.path(),
+                    EntityKind::Feature,
+                    &migrated.uid,
+                )
+                .unwrap()[0]
+                    .recorded_at
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(recorded_at.len(), 1);
     }
 }

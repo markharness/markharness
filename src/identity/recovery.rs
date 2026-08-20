@@ -48,6 +48,20 @@ pub struct Intent {
     pub entity_kind: EntityKind,
     pub entity_uid: String,
     pub identity_event_uid: String,
+    /// All events belonging to one project-wide operation. Empty for the
+    /// legacy/single-entity form. The first entry is the logical commit
+    /// point; once it exists, recovery writes every remaining event and
+    /// rolls all projections forward before exposing normal operation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub batch_events: Vec<BatchEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchEvent {
+    pub entity_kind: EntityKind,
+    pub entity_uid: String,
+    pub identity_event_uid: String,
+    pub event_yaml: String,
 }
 
 /// Step 1 (design doc §6.1): durably records intent before anything else
@@ -65,6 +79,29 @@ pub fn begin(
         entity_kind,
         entity_uid: entity_uid.to_string(),
         identity_event_uid: identity_event_uid.to_string(),
+        batch_events: Vec::new(),
+    };
+    let yaml = serde_yaml_ng::to_string(&intent).map_err(io::Error::other)?;
+    replace_file(
+        root,
+        &intent_path(root, &intent.operation_id),
+        yaml.as_bytes(),
+    )?;
+    Ok(intent)
+}
+
+/// Records the complete plan for a multi-entity operation before its
+/// logical commit point. This makes the operation recoverable as a whole.
+pub fn begin_batch(root: &Path, batch_events: Vec<BatchEvent>) -> io::Result<Intent> {
+    let first = batch_events
+        .first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "batch must not be empty"))?;
+    let intent = Intent {
+        operation_id: ulid::Ulid::new().to_string(),
+        entity_kind: first.entity_kind,
+        entity_uid: first.entity_uid.clone(),
+        identity_event_uid: first.identity_event_uid.clone(),
+        batch_events,
     };
     let yaml = serde_yaml_ng::to_string(&intent).map_err(io::Error::other)?;
     replace_file(
@@ -90,6 +127,42 @@ pub fn commit(root: &Path, intent: &Intent, event_yaml: &str) -> io::Result<()> 
         ),
         event_yaml.as_bytes(),
     )
+}
+
+/// Commits a batch in deterministic order. The first event is the single
+/// logical commit point; the durable intent contains enough information
+/// for startup recovery to finish every later event.
+pub fn commit_batch(root: &Path, intent: &Intent) -> io::Result<()> {
+    for event in &intent.batch_events {
+        replace_file(
+            root,
+            &event_file_path(
+                root,
+                event.entity_kind,
+                &event.entity_uid,
+                &event.identity_event_uid,
+            ),
+            event.event_yaml.as_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Idempotently completes event writes after a committed batch was
+/// interrupted. Must only be called after [`is_committed`] is true.
+pub fn complete_batch_commits(root: &Path, intent: &Intent) -> io::Result<()> {
+    for event in &intent.batch_events {
+        let path = event_file_path(
+            root,
+            event.entity_kind,
+            &event.entity_uid,
+            &event.identity_event_uid,
+        );
+        if !path.is_file() {
+            replace_file(root, &path, event.event_yaml.as_bytes())?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether `intent`'s event has reached its final location — the sole
@@ -349,6 +422,37 @@ mod tests {
 
         assert_eq!(outcomes.len(), 2);
         assert_eq!(rolled_forward_for, vec!["uid-committed".to_string()]);
+    }
+
+    #[test]
+    fn recovery_completes_every_event_in_one_committed_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = vec![
+            BatchEvent {
+                entity_kind: EntityKind::Feature,
+                entity_uid: "uid-a".to_string(),
+                identity_event_uid: "event-a".to_string(),
+                event_yaml: "identity_event_uid: event-a\n".to_string(),
+            },
+            BatchEvent {
+                entity_kind: EntityKind::Feature,
+                entity_uid: "uid-b".to_string(),
+                identity_event_uid: "event-b".to_string(),
+                event_yaml: "identity_event_uid: event-b\n".to_string(),
+            },
+        ];
+        let intent = begin_batch(dir.path(), events).unwrap();
+        // Simulate a crash immediately after the first event established
+        // the batch's logical commit point.
+        commit(dir.path(), &intent, "identity_event_uid: event-a\n").unwrap();
+
+        recover_incomplete_operations(dir.path(), |intent| {
+            complete_batch_commits(dir.path(), intent)
+        })
+        .unwrap();
+
+        assert!(event_file_path(dir.path(), EntityKind::Feature, "uid-a", "event-a").is_file());
+        assert!(event_file_path(dir.path(), EntityKind::Feature, "uid-b", "event-b").is_file());
     }
 
     /// Recovery itself must be safe to interrupt and rerun (design doc
