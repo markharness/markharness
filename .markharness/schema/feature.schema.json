@@ -9,7 +9,8 @@
     "label": { "type": "string", "minLength": 1 },
     "axis": { "type": "array", "items": { "type": "string" } },
     "description": { "type": "string" },
-    "forked_from": { "type": ["string", "null"] }
+    "forked_from": { "type": ["string", "null"] },
+    "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
   "required": ["id", "requirement", "label", "axis"],
   "additionalProperties": false

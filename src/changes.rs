@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::fs_safety::replace_file;
 use crate::generate;
 use crate::git;
-use crate::id_cache::{self, FeatureVersion};
+use crate::id_cache::{self, by_identity_key};
 use crate::knowledge_source::{
     GitTreeKnowledgeSource, KnowledgeSource, WorkingTreeKnowledgeSource,
 };
@@ -33,6 +33,21 @@ pub enum ChangeType {
 pub struct ChangeEvent {
     pub event_id: String,
     pub feature_id: String,
+    /// The Feature's immutable identity (ADR 0013,
+    /// design/immutable-identity-model-design.md), when it has one on
+    /// either side of the interval. `None` for a Feature that has not
+    /// been migrated — such a Feature is still tracked, by `feature_id`
+    /// alone, exactly as before ADR 0013.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_uid: Option<String>,
+    /// The Feature's `id:` at `from_milestone`, when it existed there.
+    /// Differs from `feature_id` (which always reflects the *current*,
+    /// `to_milestone`-side id when available) only across a rename.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_id_at_from: Option<String>,
+    /// The Feature's `id:` at `to_milestone`, when it existed there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_id_at_to: Option<String>,
     pub from_milestone: String,
     pub to_milestone: String,
     pub from_tree_sha: Option<String>,
@@ -142,7 +157,8 @@ impl<'a> ChangeAnalyzer<'a> {
     }
 }
 
-/// For each Feature id, `[tree(P1), tree(P2)]` when `merge_commit` is a
+/// For each Feature identity key (ADR 0013: its `uid` when it has one,
+/// else its `id`), `[tree(P1), tree(P2)]` when `merge_commit` is a
 /// two-parent merge commit and the Feature is a true divergence per
 /// `lineage::classify` (§3.2). Returns an empty map when `merge_commit`
 /// isn't itself a two-parent commit (defensive; callers only pass merge
@@ -158,17 +174,18 @@ fn true_divergence_parent_tree_shas(
     };
     let base = git::merge_base(root, p1, p2)?;
 
-    let base_versions = tree_sha_map(id_cache::resolve_feature_versions(root, &base, use_cache)?);
-    let p1_versions = tree_sha_map(id_cache::resolve_feature_versions(root, p1, use_cache)?);
-    let p2_versions = tree_sha_map(id_cache::resolve_feature_versions(root, p2, use_cache)?);
+    let base_versions =
+        by_identity_key(id_cache::resolve_feature_versions(root, &base, use_cache)?);
+    let p1_versions = by_identity_key(id_cache::resolve_feature_versions(root, p1, use_cache)?);
+    let p2_versions = by_identity_key(id_cache::resolve_feature_versions(root, p2, use_cache)?);
 
-    let all_ids: BTreeSet<&String> = p1_versions.keys().chain(p2_versions.keys()).collect();
+    let all_keys: BTreeSet<&String> = p1_versions.keys().chain(p2_versions.keys()).collect();
 
     let mut result = BTreeMap::new();
-    for feature_id in all_ids {
-        let base_sha = base_versions.get(feature_id);
-        let p1_sha = p1_versions.get(feature_id);
-        let p2_sha = p2_versions.get(feature_id);
+    for key in all_keys {
+        let base_sha = base_versions.get(key).map(|v| &v.tree_sha);
+        let p1_sha = p1_versions.get(key).map(|v| &v.tree_sha);
+        let p2_sha = p2_versions.get(key).map(|v| &v.tree_sha);
         // `TrueDivergence` can also occur when one branch deleted the
         // Feature and the other changed it (`p1_sha`/`p2_sha` not both
         // `Some`): there are no two tree SHAs to record in that case, so
@@ -178,7 +195,7 @@ fn true_divergence_parent_tree_shas(
             && lineage::classify(base_sha, Some(p1_sha), Some(p2_sha))
                 == LineageKind::TrueDivergence
         {
-            result.insert(feature_id.clone(), [p1_sha.clone(), p2_sha.clone()]);
+            result.insert(key.clone(), [p1_sha.clone(), p2_sha.clone()]);
         }
     }
     Ok(result)
@@ -194,10 +211,6 @@ fn find_merge_commits_in_interval(
     to_milestone: &str,
 ) -> io::Result<Vec<String>> {
     git::merge_commits_between(root, from_milestone, to_milestone)
-}
-
-fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
-    versions.into_iter().map(|v| (v.id, v.tree_sha)).collect()
 }
 
 /// Maps each Feature id to the `case_id`s of testcases generated from it,
@@ -277,12 +290,12 @@ fn compute_changes_between_refs(
     options: ChangeOptions,
 ) -> io::Result<Vec<ChangeEvent>> {
     let use_cache = options.cache == CachePolicy::Use;
-    let from_versions = tree_sha_map(id_cache::resolve_feature_versions(
+    let from_versions = by_identity_key(id_cache::resolve_feature_versions(
         root,
         from_milestone,
         use_cache,
     )?);
-    let to_versions = tree_sha_map(id_cache::resolve_feature_versions(
+    let to_versions = by_identity_key(id_cache::resolve_feature_versions(
         root,
         to_milestone,
         use_cache,
@@ -292,12 +305,12 @@ fn compute_changes_between_refs(
         ImpactSource::CurrentWorkingTree => impacted_testcases_by_feature(root)?,
     };
     let merge_commits = find_merge_commits_in_interval(root, from_milestone, to_milestone)?;
-    let mut true_divergences_by_feature: BTreeMap<String, Vec<TrueDivergence>> = BTreeMap::new();
+    let mut true_divergences_by_key: BTreeMap<String, Vec<TrueDivergence>> = BTreeMap::new();
     for merge_commit in &merge_commits {
         let divergences = true_divergence_parent_tree_shas(root, merge_commit, use_cache)?;
-        for (feature_id, parent_tree_shas) in divergences {
-            true_divergences_by_feature
-                .entry(feature_id)
+        for (key, parent_tree_shas) in divergences {
+            true_divergences_by_key
+                .entry(key)
                 .or_default()
                 .push(TrueDivergence {
                     merge_commit: merge_commit.clone(),
@@ -306,27 +319,65 @@ fn compute_changes_between_refs(
         }
     }
 
-    let all_ids: BTreeSet<&String> = from_versions.keys().chain(to_versions.keys()).collect();
+    let all_keys: BTreeSet<&String> = from_versions.keys().chain(to_versions.keys()).collect();
 
     let mut events = Vec::new();
-    for feature_id in all_ids {
-        let from_tree_sha = from_versions.get(feature_id).cloned();
-        let to_tree_sha = to_versions.get(feature_id).cloned();
+    for key in all_keys {
+        let from = from_versions.get(key);
+        let to = to_versions.get(key);
+        let from_tree_sha = from.map(|v| v.tree_sha.clone());
+        let to_tree_sha = to.map(|v| v.tree_sha.clone());
         if from_tree_sha == to_tree_sha {
             continue;
         }
-        let true_divergences = true_divergences_by_feature
-            .get(feature_id)
+        let true_divergences = true_divergences_by_key
+            .get(key)
+            .cloned()
+            .unwrap_or_default();
+        let raw_id_at_from = from.map(|v| v.id.clone());
+        let raw_id_at_to = to.map(|v| v.id.clone());
+        // Always the *current* display id when available (design doc
+        // §2): the `to`-side id if the Feature still exists there,
+        // otherwise the last known `from`-side id (a deletion).
+        let feature_id = raw_id_at_to
+            .clone()
+            .or_else(|| raw_id_at_from.clone())
+            .unwrap_or_else(|| key.clone());
+        let feature_uid = to
+            .and_then(|v| v.uid.clone())
+            .or_else(|| from.and_then(|v| v.uid.clone()));
+        // Only surface the per-side ids for a Feature actually
+        // participating in the identity model (has a `uid` somewhere in
+        // this interval, design doc §2) — an un-migrated Feature keeps the
+        // exact pre-ADR-0013 `ChangeEvent` shape, since `feature_id` alone
+        // already carries this information there (no rename can be
+        // detected without a uid, so `_at_from`/`_at_to` would be
+        // redundant noise for every ordinary content-only change).
+        let (feature_id_at_from, feature_id_at_to) = if feature_uid.is_some() {
+            (raw_id_at_from.clone(), raw_id_at_to.clone())
+        } else {
+            (None, None)
+        };
+        // `impacted` is keyed by the literal id text `generate.rs` wrote
+        // into `generated_from.feature` at the relevant tree state
+        // (§2.1), never by uid — look it up by display id, not `key`.
+        let impacted_testcases = raw_id_at_to
+            .as_ref()
+            .or(raw_id_at_from.as_ref())
+            .and_then(|id| impacted.get(id))
             .cloned()
             .unwrap_or_default();
         events.push(ChangeEvent {
             event_id: format!("{feature_id}--{from_milestone}--{to_milestone}"),
-            feature_id: feature_id.clone(),
+            feature_id,
+            feature_uid,
+            feature_id_at_from,
+            feature_id_at_to,
             from_milestone: from_milestone.to_string(),
             to_milestone: to_milestone.to_string(),
             from_tree_sha,
             to_tree_sha,
-            impacted_testcases: impacted.get(feature_id).cloned().unwrap_or_default(),
+            impacted_testcases,
             change_type: None,
             true_divergences,
             related_events: Vec::new(),
@@ -555,6 +606,100 @@ mod tests {
         run_git(root, &["add", "-A"]);
         run_git(root, &["commit", "-q", "-m", message]);
         run_git(root, &["tag", tag]);
+    }
+
+    /// ADR 0013 / Issue #17's core motivating scenario: a Feature whose
+    /// `id:` changes between milestones, but whose `uid:` stays the same,
+    /// must be tracked as a single rename — one `ChangeEvent`, not a
+    /// delete-then-add pair keyed by two different id strings.
+    #[test]
+    fn a_uid_preserving_rename_produces_a_single_change_event_not_a_delete_and_add() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            "id: player-jump\nrequirement: controls\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            "id: player-double-jump\nrequirement: controls\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "rename", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            events.len(),
+            1,
+            "expected exactly one ChangeEvent, got {events:?}"
+        );
+        let event = &events[0];
+        assert_eq!(event.feature_id, "player-double-jump");
+        assert_eq!(
+            event.feature_uid,
+            Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string())
+        );
+        assert_eq!(event.feature_id_at_from, Some("player-jump".to_string()));
+        assert_eq!(
+            event.feature_id_at_to,
+            Some("player-double-jump".to_string())
+        );
+        assert!(event.from_tree_sha.is_some());
+        assert!(event.to_tree_sha.is_some());
+    }
+
+    /// The mixed-mode fallback (design doc §2): a Feature with no `uid`
+    /// anywhere in the interval still gets the pre-ADR-0013 delete+add
+    /// behavior when its `id:` changes, since there is no stable key to
+    /// match old and new by.
+    #[test]
+    fn a_rename_without_uid_still_produces_a_delete_and_add_pair() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            "id: player-double-jump\nrequirement: controls\nlabel: v1\naxis: [gameplay]\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "rename", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            events.len(),
+            2,
+            "expected a delete+add pair, got {events:?}"
+        );
+        let mut ids: Vec<&str> = events.iter().map(|e| e.feature_id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["player-double-jump", "player-jump"]);
     }
 
     #[test]
@@ -828,6 +973,9 @@ mod tests {
         let events = vec![ChangeEvent {
             event_id: "player-jump--m1--m2".to_string(),
             feature_id: "player-jump".to_string(),
+            feature_uid: None,
+            feature_id_at_from: None,
+            feature_id_at_to: None,
             from_milestone: "m1".to_string(),
             to_milestone: "m2".to_string(),
             from_tree_sha: Some("aaa".to_string()),
@@ -871,6 +1019,9 @@ mod tests {
         let events = vec![ChangeEvent {
             event_id: "player-jump--m1--m2".to_string(),
             feature_id: "player-jump".to_string(),
+            feature_uid: None,
+            feature_id_at_from: None,
+            feature_id_at_to: None,
             from_milestone: "m1".to_string(),
             to_milestone: "m2".to_string(),
             from_tree_sha: Some("aaa".to_string()),
@@ -899,6 +1050,9 @@ mod tests {
         let events = vec![ChangeEvent {
             event_id: "player-jump--m1--m2".to_string(),
             feature_id: "player-jump".to_string(),
+            feature_uid: None,
+            feature_id_at_from: None,
+            feature_id_at_to: None,
             from_milestone: "m1".to_string(),
             to_milestone: "m2".to_string(),
             from_tree_sha: Some("aaa".to_string()),
@@ -932,6 +1086,9 @@ mod tests {
         ChangeEvent {
             event_id: event_id.to_string(),
             feature_id: "player-jump".to_string(),
+            feature_uid: None,
+            feature_id_at_from: None,
+            feature_id_at_to: None,
             from_milestone: "m1".to_string(),
             to_milestone: "m2".to_string(),
             from_tree_sha: Some("aaa".to_string()),

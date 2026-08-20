@@ -20,6 +20,13 @@ pub struct FeatureVersion {
     pub id: String,
     pub path: String,
     pub tree_sha: String,
+    /// The Feature's immutable identity (ADR 0013), when it has one.
+    /// `None` for a Feature that predates `identity migrate` or a project
+    /// that hasn't adopted the identity model at all — consumers must
+    /// treat that as "no uid-based identity available yet", not as a
+    /// missing/corrupt value.
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
 fn cache_dir(root: &Path) -> PathBuf {
@@ -148,6 +155,7 @@ pub fn resolve_feature_versions(
                 id: feature.id,
                 path: dir_path.to_string(),
                 tree_sha: dir_entry.sha.clone(),
+                uid: feature.uid,
             },
         );
     }
@@ -171,6 +179,31 @@ pub fn resolve_feature_versions(
 /// は全削除のみで即時再計算はしない設計).
 pub fn rebuild_cache(root: &Path) -> io::Result<()> {
     remove_dir_all_no_follow(root, &cache_dir(root))
+}
+
+/// A Feature's identity key (ADR 0013, design doc §2): its `uid` when it
+/// has one, else its `id`. Un-migrated Features (no `uid` anywhere in the
+/// project) therefore compare exactly as before ADR 0013 — the mixed-mode
+/// fallback for projects that haven't run `identity migrate`. Shared by
+/// every consumer that must match a Feature across two refs (`changes.rs`,
+/// `lineage.rs`, and others as they adopt the identity model), so they
+/// never independently reinvent (and risk diverging on) this rule.
+///
+/// A Feature whose `uid` is present on only one side of a comparison (the
+/// migration-boundary case: it was migrated *during* the interval) is not
+/// specially reconciled here — it appears once under its old `id`-keyed
+/// identity and once under its `uid`-keyed identity, exactly like a
+/// delete-then-add. Resolving that boundary is `identity migrate`'s
+/// migration manifest (design doc §12, Phase 4), not this function.
+pub fn identity_key(version: &FeatureVersion) -> String {
+    version.uid.clone().unwrap_or_else(|| version.id.clone())
+}
+
+pub fn by_identity_key(versions: Vec<FeatureVersion>) -> BTreeMap<String, FeatureVersion> {
+    versions
+        .into_iter()
+        .map(|v| (identity_key(&v), v))
+        .collect()
 }
 
 #[cfg(test)]
@@ -280,6 +313,47 @@ mod tests {
             ".markharness/knowledge/controls/player-jump"
         );
         assert_eq!(versions[0].tree_sha.len(), 40);
+    }
+
+    #[test]
+    fn resolves_feature_id_without_uid_as_none() {
+        let dir = init_repo_with_feature("player-jump", "controls");
+
+        let versions = resolve_feature_versions(dir.path(), "m1", false).unwrap();
+
+        assert_eq!(versions[0].uid, None);
+    }
+
+    /// ADR 0013: once a Feature has been issued a `uid`, `id_cache` must
+    /// surface it so downstream consumers can adopt uid-based identity.
+    #[test]
+    fn resolves_feature_uid_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q"]);
+        run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+        run_git(dir.path(), &["config", "user.name", "Test"]);
+        let feature_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
+            .join("controls")
+            .join("player-jump");
+        fs::create_dir_all(&feature_dir).unwrap();
+        fs::write(
+            feature_dir.join("feature.yml"),
+            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        )
+        .unwrap();
+        run_git(dir.path(), &["add", "-A"]);
+        run_git(dir.path(), &["commit", "-q", "-m", "add feature"]);
+        run_git(dir.path(), &["tag", "m1"]);
+
+        let versions = resolve_feature_versions(dir.path(), "m1", false).unwrap();
+
+        assert_eq!(
+            versions[0].uid,
+            Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string())
+        );
     }
 
     #[test]

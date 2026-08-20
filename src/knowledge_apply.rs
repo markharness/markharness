@@ -108,6 +108,7 @@ pub fn apply_draft(
             axis: draft.feature.axis.clone().unwrap_or_default(),
             description: draft.feature.description.clone(),
             forked_from: draft.feature.forked_from.clone(),
+            uid: None,
         };
         pending.push((feature_path, knowledge::serialize_feature(&feature)));
     }

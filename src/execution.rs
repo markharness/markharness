@@ -125,7 +125,10 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-fn iso8601_utc_now() -> String {
+/// Crate-visible so `identity::feature_ops` (and future identity-event
+/// producers) can stamp `recorded_at` without duplicating this date math
+/// or pulling in a date/time crate.
+pub(crate) fn iso8601_utc_now() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is before the Unix epoch")

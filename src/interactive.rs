@@ -191,6 +191,7 @@ pub fn run_add<R: BufRead, W: Write>(
             axis,
             description: None,
             forked_from: None,
+            uid: None,
         };
         replace_file(root, &feature_path, serialize_feature(&feature).as_bytes())?;
     }

@@ -13,6 +13,7 @@ use crate::changes;
 use crate::derived_index;
 use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
 use crate::id_cache;
+use crate::identity::{self, ReleaseError, RenameError, ResolveError};
 use crate::init;
 use crate::interactive;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, DraftValidation};
@@ -138,6 +139,78 @@ pub enum Command {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+    },
+    /// Manage Feature identity (ADR 0013: rename while preserving the immutable uid)
+    #[command(subcommand)]
+    Feature(FeatureCommand),
+    /// Manage cross-entity-kind identity state (ADR 0013)
+    #[command(subcommand)]
+    Identity(IdentityCommand),
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityKindArg {
+    Requirement,
+    Feature,
+    Behavior,
+    Condition,
+    ExpectedResult,
+}
+
+impl From<EntityKindArg> for crate::identity::EntityKind {
+    fn from(arg: EntityKindArg) -> Self {
+        match arg {
+            EntityKindArg::Requirement => crate::identity::EntityKind::Requirement,
+            EntityKindArg::Feature => crate::identity::EntityKind::Feature,
+            EntityKindArg::Behavior => crate::identity::EntityKind::Behavior,
+            EntityKindArg::Condition => crate::identity::EntityKind::Condition,
+            EntityKindArg::ExpectedResult => crate::identity::EntityKind::ExpectedResult,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum IdentityCommand {
+    /// Explicitly join a branch divergence (two identity events extending the same predecessor, design doc §7)
+    Resolve {
+        /// The kind of entity whose divergence is being resolved
+        #[arg(value_enum)]
+        kind: EntityKindArg,
+        /// The entity's uid
+        uid: String,
+        /// Which divergent head's outcome (id/status) survives
+        #[arg(long)]
+        keep: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+    /// Lift the reuse reservation on a retired entity's former id (design doc §9)
+    Release {
+        /// The kind of the retired entity
+        #[arg(value_enum)]
+        kind: EntityKindArg,
+        /// The retired entity's uid
+        uid: String,
+        /// The former id to release for reuse by a different entity
+        old_id: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum FeatureCommand {
+    /// Change a Feature's `id:` while preserving its immutable `uid` (design doc §3, §9)
+    RenameId {
+        /// The Feature's current id
+        old: String,
+        /// The new id
+        new: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -999,6 +1072,127 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     }
                 }
                 std::process::exit(1);
+            }
+        }
+        Command::Feature(FeatureCommand::RenameId { old, new, dir }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match identity::rename_id(&root, &old, &new) {
+                Ok(()) => {
+                    println!("renamed Feature '{old}' to '{new}' (uid preserved)");
+                    Ok(())
+                }
+                Err(RenameError::FeatureNotFound(id)) => {
+                    eprintln!(
+                        "error: no Feature with id '{id}' found under .markharness/knowledge/"
+                    );
+                    std::process::exit(2);
+                }
+                Err(RenameError::NotMigrated(id)) => {
+                    eprintln!(
+                        "error: Feature '{id}' has no uid yet. Run `markharness identity migrate` first."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RenameError::NewIdAlreadyInUse(id)) => {
+                    eprintln!("error: id '{id}' is already used by another Feature");
+                    std::process::exit(2);
+                }
+                Err(RenameError::OperationInProgress) => {
+                    eprintln!(
+                        "error: another identity operation is already in progress. Retry shortly."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RenameError::ReplayFailed(e)) => {
+                    eprintln!("error: could not resolve the Feature's current identity: {e:?}");
+                    std::process::exit(2);
+                }
+                Err(RenameError::CurrentIdMismatch { expected, actual }) => {
+                    eprintln!(
+                        "error: feature.yml says id '{expected}' but its identity events say '{actual}'. The working tree and identity event log have drifted apart; reconcile manually before renaming."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RenameError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+            }
+        }
+        Command::Identity(IdentityCommand::Resolve {
+            kind,
+            uid,
+            keep,
+            dir,
+        }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match identity::resolve_divergence(&root, kind.into(), &uid, &keep) {
+                Ok(()) => {
+                    println!("resolved divergence for {uid}, keeping {keep}");
+                    Ok(())
+                }
+                Err(ResolveError::NoDivergence) => {
+                    eprintln!("error: '{uid}' has no unresolved branch divergence right now");
+                    std::process::exit(2);
+                }
+                Err(ResolveError::NotADivergentHead {
+                    keep_event_uid,
+                    divergent_head_uids,
+                }) => {
+                    eprintln!(
+                        "error: '{keep_event_uid}' is not one of the divergent heads ({})",
+                        divergent_head_uids.join(", ")
+                    );
+                    std::process::exit(2);
+                }
+                Err(ResolveError::OperationInProgress) => {
+                    eprintln!(
+                        "error: another identity operation is already in progress. Retry shortly."
+                    );
+                    std::process::exit(2);
+                }
+                Err(ResolveError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+            }
+        }
+        Command::Identity(IdentityCommand::Release {
+            kind,
+            uid,
+            old_id,
+            dir,
+        }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match identity::release_id(&root, kind.into(), &uid, &old_id) {
+                Ok(()) => {
+                    println!("released '{old_id}' for reuse (was held by {uid})");
+                    Ok(())
+                }
+                Err(ReleaseError::NotRetired) => {
+                    eprintln!(
+                        "error: '{uid}' is not retired; only a retired entity's former ids can be released"
+                    );
+                    std::process::exit(2);
+                }
+                Err(ReleaseError::IdNeverUsedByThisEntity { released_id }) => {
+                    eprintln!("error: '{released_id}' was never an id held by '{uid}'");
+                    std::process::exit(2);
+                }
+                Err(ReleaseError::OperationInProgress) => {
+                    eprintln!(
+                        "error: another identity operation is already in progress. Retry shortly."
+                    );
+                    std::process::exit(2);
+                }
+                Err(ReleaseError::ReplayFailed(e)) => {
+                    eprintln!("error: could not resolve the entity's current identity: {e:?}");
+                    std::process::exit(2);
+                }
+                Err(ReleaseError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
             }
         }
         Command::Verify(VerifyArgs {

@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 
 use crate::git;
-use crate::id_cache::{self, FeatureVersion};
+use crate::id_cache::{self, by_identity_key};
 
 /// How a Feature's tree SHA behaved across a merge commit's two parents,
 /// relative to their merge-base (§3.2). The audit-only secondary lineage
@@ -26,6 +26,10 @@ pub enum LineageKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeatureLineage {
     pub feature_id: String,
+    /// The Feature's immutable identity (ADR 0013), when it has one at
+    /// any of the three points (base/P1/P2) — `None` for an un-migrated
+    /// Feature, matching `ChangeEvent.feature_uid`'s convention.
+    pub feature_uid: Option<String>,
     pub base_tree_sha: Option<String>,
     pub parent1_tree_sha: Option<String>,
     pub parent2_tree_sha: Option<String>,
@@ -46,15 +50,12 @@ pub(crate) fn classify(
     }
 }
 
-fn tree_sha_map(versions: Vec<FeatureVersion>) -> BTreeMap<String, String> {
-    versions.into_iter().map(|v| (v.id, v.tree_sha)).collect()
-}
-
 /// §3.2's ancestor-search lineage reconstruction for a single merge commit:
 /// finds its two parents (P1/P2) and their merge-base (B) via `git
-/// merge-base`, then classifies every Feature id seen at any of the three
-/// points. Errors if `merge_commit` does not have exactly two parents (i.e.
-/// is not a merge commit).
+/// merge-base`, then classifies every Feature identity (ADR 0013: `uid`
+/// when migrated, else `id`, via `id_cache::identity_key`) seen at any of
+/// the three points. Errors if `merge_commit` does not have exactly two
+/// parents (i.e. is not a merge commit).
 pub fn compute_lineage(root: &Path, merge_commit: &str) -> io::Result<Vec<FeatureLineage>> {
     let parents = git::parents(root, merge_commit)?;
     if parents.len() != 2 {
@@ -66,23 +67,36 @@ pub fn compute_lineage(root: &Path, merge_commit: &str) -> io::Result<Vec<Featur
     let (p1, p2) = (&parents[0], &parents[1]);
     let base = git::merge_base(root, p1, p2)?;
 
-    let base_versions = tree_sha_map(id_cache::resolve_feature_versions(root, &base, false)?);
-    let p1_versions = tree_sha_map(id_cache::resolve_feature_versions(root, p1, false)?);
-    let p2_versions = tree_sha_map(id_cache::resolve_feature_versions(root, p2, false)?);
+    let base_versions = by_identity_key(id_cache::resolve_feature_versions(root, &base, false)?);
+    let p1_versions = by_identity_key(id_cache::resolve_feature_versions(root, p1, false)?);
+    let p2_versions = by_identity_key(id_cache::resolve_feature_versions(root, p2, false)?);
 
-    let all_ids: BTreeSet<&String> = base_versions
+    let all_keys: BTreeSet<&String> = base_versions
         .keys()
         .chain(p1_versions.keys())
         .chain(p2_versions.keys())
         .collect();
 
     let mut result = Vec::new();
-    for feature_id in all_ids {
-        let base_sha = base_versions.get(feature_id);
-        let p1_sha = p1_versions.get(feature_id);
-        let p2_sha = p2_versions.get(feature_id);
+    for key in all_keys {
+        let base_version = base_versions.get(key);
+        let p1_version = p1_versions.get(key);
+        let p2_version = p2_versions.get(key);
+        let base_sha = base_version.map(|v| &v.tree_sha);
+        let p1_sha = p1_version.map(|v| &v.tree_sha);
+        let p2_sha = p2_version.map(|v| &v.tree_sha);
+        let feature_id = p2_version
+            .or(p1_version)
+            .or(base_version)
+            .map(|v| v.id.clone())
+            .unwrap_or_else(|| key.clone());
+        let feature_uid = p2_version
+            .and_then(|v| v.uid.clone())
+            .or_else(|| p1_version.and_then(|v| v.uid.clone()))
+            .or_else(|| base_version.and_then(|v| v.uid.clone()));
         result.push(FeatureLineage {
-            feature_id: feature_id.clone(),
+            feature_id,
+            feature_uid,
             base_tree_sha: base_sha.cloned(),
             parent1_tree_sha: p1_sha.cloned(),
             parent2_tree_sha: p2_sha.cloned(),
@@ -220,6 +234,58 @@ mod tests {
             .find(|l| l.feature_id == "player-jump")
             .unwrap();
 
+        assert_eq!(entry.kind, LineageKind::TrueDivergence);
+    }
+
+    fn write_feature_with_uid(root: &Path, id: &str, label: &str, uid: &str) {
+        let dir = root.join(".markharness/knowledge/controls/player-jump");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            root.join(".markharness/knowledge/controls/requirement.yml"),
+            "id: controls\nlabel: controls\naxis: []\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("feature.yml"),
+            format!("id: {id}\nrequirement: controls\nlabel: {label}\naxis: []\nuid: {uid}\n"),
+        )
+        .unwrap();
+    }
+
+    /// ADR 0013: a Feature renamed on one branch (uid preserved) must
+    /// still be classified by lineage as the *same* Feature, keyed by
+    /// `uid` rather than the now-diverging `id` strings.
+    #[test]
+    fn tracks_a_uid_preserving_rename_across_a_merge_as_the_same_feature() {
+        const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let dir = init_repo();
+        write_feature_with_uid(dir.path(), "player-jump", "base", UID);
+        commit_all(dir.path(), "base");
+        run_git(dir.path(), &["branch", "feature"]);
+
+        write_feature_with_uid(dir.path(), "player-jump", "changed-on-main", UID);
+        commit_all(dir.path(), "on main");
+
+        run_git(dir.path(), &["checkout", "-q", "feature"]);
+        write_feature_with_uid(dir.path(), "player-double-jump", "base", UID);
+        commit_all(dir.path(), "renamed on feature");
+
+        run_git(dir.path(), &["checkout", "-q", "main"]);
+        run_git(
+            dir.path(),
+            &[
+                "merge", "-q", "-m", "merge", "-X", "ours", "--no-ff", "feature",
+            ],
+        );
+
+        let lineage = compute_lineage(dir.path(), "HEAD").unwrap();
+        assert_eq!(
+            lineage.len(),
+            1,
+            "expected a single entry keyed by uid, got {lineage:?}"
+        );
+        let entry = &lineage[0];
+        assert_eq!(entry.feature_uid, Some(UID.to_string()));
         assert_eq!(entry.kind, LineageKind::TrueDivergence);
     }
 

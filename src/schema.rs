@@ -213,4 +213,45 @@ expected:
             assert!(parsed.is_ok(), "{name} is not valid JSON: {content}");
         }
     }
+
+    /// design doc §10: no schema-generation crate is used, so a hand-written
+    /// `feature.schema.json` and the hand-written `Feature` struct
+    /// (`src/knowledge.rs`) are two independent authorities that must be
+    /// kept in sync by hand. This test is the mechanical check that catches
+    /// drift between them (a field added to one but not the other) without
+    /// needing runtime reflection: it serializes a fully-populated `Feature`
+    /// (every `Option` set to `Some`, so every field name appears) and
+    /// compares its key set against the schema's `properties` key set.
+    #[test]
+    fn feature_struct_fields_match_feature_schema_properties() {
+        let feature = crate::knowledge::Feature {
+            id: "player-jump".to_string(),
+            requirement: "player-controls".to_string(),
+            label: "player-jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: Some("d".to_string()),
+            forked_from: Some("player-jump-old".to_string()),
+            uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
+        };
+        let instance = serde_json::to_value(&feature).unwrap();
+        let struct_fields: std::collections::BTreeSet<String> =
+            instance.as_object().unwrap().keys().cloned().collect();
+
+        let (_, schema_content) = DEFAULT_SCHEMA_FILES
+            .iter()
+            .find(|(name, _)| *name == "feature.schema.json")
+            .expect("feature.schema.json must be a registered default schema file");
+        let schema: serde_json::Value = serde_json::from_str(schema_content).unwrap();
+        let schema_fields: std::collections::BTreeSet<String> = schema["properties"]
+            .as_object()
+            .expect("feature.schema.json must declare properties")
+            .keys()
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            struct_fields, schema_fields,
+            "Feature struct fields and feature.schema.json properties have drifted apart"
+        );
+    }
 }

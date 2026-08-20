@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Requirement {
@@ -13,7 +13,7 @@ pub struct Requirement {
     pub related_issues: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Feature {
     pub id: String,
     pub requirement: String,
@@ -24,6 +24,11 @@ pub struct Feature {
     /// 概念的な派生元Feature id(§3.1)。Git履歴に現れないドメイン知識のため手動記述。
     #[serde(default)]
     pub forked_from: Option<String>,
+    /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
+    /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
+    /// プロジェクトや`identity migrate`未実行のFeatureでは`None`(§後方互換)。
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -145,6 +150,9 @@ pub fn serialize_feature(feature: &Feature) -> String {
     }
     if let Some(forked_from) = &feature.forked_from {
         out.push_str(&format!("forked_from: {forked_from}\n"));
+    }
+    if let Some(uid) = &feature.uid {
+        out.push_str(&format!("uid: {uid}\n"));
     }
     out
 }
@@ -373,6 +381,7 @@ mod tests {
             axis: vec!["gameplay".to_string(), "animation".to_string()],
             description: None,
             forked_from: None,
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -392,6 +401,7 @@ mod tests {
             axis: vec!["gameplay".to_string()],
             description: Some("Jump related behaviors.".to_string()),
             forked_from: None,
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -413,6 +423,7 @@ mod tests {
                 "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
             ),
             forked_from: None,
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -449,6 +460,7 @@ mod tests {
             axis: vec!["gameplay".to_string()],
             description: None,
             forked_from: Some("player-jump".to_string()),
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -457,6 +469,51 @@ mod tests {
             yaml,
             "id: player-double-jump\nrequirement: player-controls\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n"
         );
+    }
+
+    /// Backward compatibility (ADR 0013 design doc §2, §11): a `feature.yml`
+    /// written before `uid:` existed has no such key and must still parse,
+    /// with `uid` defaulting to `None` — not an error, and not confused
+    /// with an empty string.
+    #[test]
+    fn parses_feature_yaml_without_uid_as_none() {
+        let feature: Feature = parse_feature(
+            "id: player-jump\nrequirement: player-controls\nlabel: player-jump\naxis: [gameplay]\n",
+        )
+        .unwrap();
+
+        assert_eq!(feature.uid, None);
+    }
+
+    #[test]
+    fn parses_feature_yaml_with_uid() {
+        let yaml = "id: task-management\nrequirement: player-controls\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n";
+
+        let feature: Feature = parse_feature(yaml).unwrap();
+
+        assert_eq!(feature.uid, Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()));
+    }
+
+    #[test]
+    fn serializes_feature_with_uid_when_present() {
+        let feature = Feature {
+            id: "task-management".to_string(),
+            requirement: "player-controls".to_string(),
+            label: "task-management".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: None,
+            forked_from: None,
+            uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
+        };
+
+        let yaml = serialize_feature(&feature);
+
+        assert_eq!(
+            yaml,
+            "id: task-management\nrequirement: player-controls\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+        );
+        let reparsed: Feature = parse_feature(&yaml).unwrap();
+        assert_eq!(reparsed, feature);
     }
 
     #[test]
