@@ -47,14 +47,21 @@ fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_cr
     .unwrap();
     write_feature(dir.path(), "controls", "player-jump", "player-jump", None);
 
-    // 1. migrate: the Feature has no uid yet.
-    let migrate_report = identity::migrate_features(dir.path()).unwrap();
-    assert_eq!(migrate_report.migrated.len(), 1);
-    let uid = migrate_report.migrated[0].uid.clone();
-    assert_eq!(migrate_report.migrated[0].id, "player-jump");
+    // 1. migrate: the Feature has no uid yet (nor does the Requirement
+    // above it — `identity migrate` now covers every EntityKind, so both
+    // get migrated in this one operation).
+    let migrate_report = identity::migrate_entities(dir.path()).unwrap();
+    assert_eq!(migrate_report.migrated.len(), 2);
+    let feature_migration = migrate_report
+        .migrated
+        .iter()
+        .find(|m| m.kind == EntityKind::Feature)
+        .unwrap();
+    let uid = feature_migration.uid.clone();
+    assert_eq!(feature_migration.id, "player-jump");
 
     // Re-running migrate is a no-op now (idempotent, incremental migration).
-    let second_migrate = identity::migrate_features(dir.path()).unwrap();
+    let second_migrate = identity::migrate_entities(dir.path()).unwrap();
     assert!(second_migrate.migrated.is_empty());
 
     // 2. rename: the uid survives an id change.
@@ -167,7 +174,7 @@ fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_cr
     // A later, unrelated command (any identity operation) must run startup
     // recovery first and finish the interrupted rename before doing its
     // own work — never fail or leave the crash unresolved.
-    identity::migrate_features(dir.path()).unwrap();
+    identity::migrate_entities(dir.path()).unwrap();
 
     let recovered = fs::read_to_string(
         dir.path()

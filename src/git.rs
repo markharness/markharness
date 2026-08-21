@@ -124,6 +124,70 @@ pub fn show_blob_by_sha(root: &Path, sha: &str) -> io::Result<String> {
     run_git(root, &["cat-file", "-p", sha])
 }
 
+/// The git blob SHA `path_in_repo` would be given if committed right now
+/// from the working tree, via `git hash-object` — the same content filters
+/// (e.g. line-ending normalization) `git add` would apply, applied without
+/// writing anything to the object database (no `-w`). This is git's own
+/// real object identity for a file's current content, computed the same
+/// way whether `root` is the top of the repository or a linked worktree
+/// (`add_detached_worktree`) checked out from it — used by
+/// `identity::migration_manifest` to capture a legacy (pre-migration)
+/// snapshot's file identity without needing to write it to the object
+/// database or touch the index/staging area.
+pub fn hash_object(root: &Path, path_in_repo: &str) -> io::Result<String> {
+    let raw = run_git(root, &["hash-object", "--", path_in_repo])?;
+    Ok(raw.trim().to_string())
+}
+
+/// The git tree SHA `path_in_repo` (e.g. `.markharness/knowledge`,
+/// repo-relative) would have if the *working tree* were committed right
+/// now — the real tree object `git commit` would create for that exact
+/// subtree, including any uncommitted edits. Computed via a disposable
+/// temporary index (`GIT_INDEX_FILE`) populated from the working tree with
+/// `git add -A`, then `git write-tree --prefix=path_in_repo` against that
+/// temporary index, so the repository's real staging area is never
+/// touched. Unlike [`tree_sha`], which reads a *committed* ref, this
+/// reflects the working tree as it stands right now — used by
+/// `identity::migration_manifest::capture_case_signatures` to capture
+/// `.markharness/knowledge`'s legacy (pre-migration) snapshot identity
+/// before `feature_ops::migrate_all` writes anything, which is not
+/// guaranteed to be committed yet. `write-tree` may write ordinary,
+/// content-addressed loose objects to the object database as a side
+/// effect — the same objects git would create if this content were
+/// actually committed — but never mutates the repository's real index or
+/// `HEAD`. Requires `root` to already be a git repository.
+pub fn write_tree_prefix(root: &Path, path_in_repo: &str) -> io::Result<String> {
+    // The path must not exist yet: git treats a zero-byte file as a
+    // corrupt index ("index file smaller than expected"), but happily
+    // creates a fresh one at a path that doesn't exist at all.
+    let temp_dir = tempfile::tempdir()?;
+    let index_path = temp_dir.path().join("index");
+    let add_status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .env("GIT_INDEX_FILE", &index_path)
+        .args(["add", "-A", "--", path_in_repo])
+        .status()?;
+    if !add_status.success() {
+        return Err(io::Error::other(format!(
+            "git add -A -- {path_in_repo} failed while building a temporary index"
+        )));
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .env("GIT_INDEX_FILE", index_path)
+        .args(["write-tree", &format!("--prefix={path_in_repo}")])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "git write-tree --prefix={path_in_repo} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// The parent commit SHAs of `commit`, in order (empty for a root commit,
 /// one for a normal commit, two for a merge commit), via `git log --format=%P`.
 /// Used by the §3.2 merge-base lineage audit to find a merge commit's P1/P2.
@@ -620,6 +684,133 @@ mod tests {
         let content = show_blob_by_sha(&sub_root, &blob.sha).unwrap();
 
         assert_eq!(content, "id: feat\n");
+    }
+
+    #[test]
+    fn hash_object_matches_the_blob_sha_git_itself_records_once_committed() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\nlabel: v1\n",
+        )
+        .unwrap();
+
+        let before_commit =
+            hash_object(dir.path(), ".markharness/knowledge/req/feat/feature.yml").unwrap();
+
+        commit_all(dir.path(), "add feature");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+        let entries = ls_tree_recursive(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
+        let committed_sha = entries
+            .iter()
+            .find(|e| e.kind == ObjectKind::Blob)
+            .unwrap()
+            .sha
+            .clone();
+
+        assert_eq!(before_commit, committed_sha);
+        assert_eq!(before_commit.len(), 40);
+    }
+
+    #[test]
+    fn hash_object_does_not_write_to_the_object_database() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        fs::write(dir.path().join("untracked.txt"), "not committed\n").unwrap();
+
+        let sha = hash_object(dir.path(), "untracked.txt").unwrap();
+
+        // `git cat-file -e` fails if the object was never written (no `-w`
+        // was passed to `hash-object`), proving this was a pure computation.
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["cat-file", "-e", &sha])
+            .status()
+            .unwrap();
+        assert!(!status.success());
+    }
+
+    #[test]
+    fn write_tree_prefix_reflects_uncommitted_working_tree_content() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\nlabel: v1\n",
+        )
+        .unwrap();
+        commit_all(dir.path(), "v1");
+
+        let before_edit =
+            write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+
+        // Uncommitted edit: the tree SHA must change without a commit.
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\nlabel: v2\n",
+        )
+        .unwrap();
+        let after_edit =
+            write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+
+        assert_eq!(before_edit.len(), 40);
+        assert_ne!(before_edit, after_edit);
+    }
+
+    #[test]
+    fn write_tree_prefix_matches_the_committed_tree_sha_once_actually_committed() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\n",
+        )
+        .unwrap();
+
+        let live =
+            write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+        commit_all(dir.path(), "add feature");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+        let committed = tree_sha(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(live, committed);
+    }
+
+    #[test]
+    fn write_tree_prefix_does_not_touch_the_real_staging_area() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/knowledge/untracked.yml"),
+            "id: x\n",
+        )
+        .unwrap();
+
+        write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+
+        let status = run_git(dir.path(), &["status", "--porcelain"]).unwrap();
+        assert!(
+            status.contains("??"),
+            "the file must still show as untracked in the real index, got: {status}"
+        );
     }
 
     #[test]

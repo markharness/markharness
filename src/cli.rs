@@ -198,7 +198,7 @@ pub enum IdentityCommand {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Assign a uid to every Feature that doesn't have one yet (design doc §12). Idempotent; Phase 2 scope covers Features only.
+    /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Condition/ExpectedResult) that doesn't have one yet (design doc §12). Idempotent.
     Migrate {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -1210,9 +1210,9 @@ pub fn run(cli: Cli) -> io::Result<()> {
         Command::Identity(IdentityCommand::Migrate { dir, json, dry_run }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let outcome = if dry_run {
-                identity::plan_feature_migration(&root)
+                identity::plan_migration(&root)
             } else {
-                identity::migrate_features(&root)
+                identity::migrate_entities(&root)
             };
             match outcome {
                 Ok(report) => {
@@ -1220,7 +1220,9 @@ pub fn run(cli: Cli) -> io::Result<()> {
                         let entries: Vec<serde_json::Value> = report
                             .migrated
                             .iter()
-                            .map(|m| serde_json::json!({"id": m.id, "uid": m.uid}))
+                            .map(|m| {
+                                serde_json::json!({"kind": m.kind.as_str(), "id": m.id, "uid": m.uid})
+                            })
                             .collect();
                         println!(
                             "{}",
@@ -1237,13 +1239,25 @@ pub fn run(cli: Cli) -> io::Result<()> {
                             println!("conflict: {conflict}");
                         }
                     } else if report.migrated.is_empty() {
-                        println!("no Features needed migration; every Feature already has a uid");
+                        println!(
+                            "no Knowledge elements needed migration; every element already has a uid"
+                        );
                     } else {
-                        for feature in &report.migrated {
+                        for entity in &report.migrated {
                             if dry_run {
-                                println!("would migrate '{}' -> uid {}", feature.id, feature.uid);
+                                println!(
+                                    "would migrate {} '{}' -> uid {}",
+                                    entity.kind.as_str(),
+                                    entity.id,
+                                    entity.uid
+                                );
                             } else {
-                                println!("migrated '{}' -> uid {}", feature.id, feature.uid);
+                                println!(
+                                    "migrated {} '{}' -> uid {}",
+                                    entity.kind.as_str(),
+                                    entity.id,
+                                    entity.uid
+                                );
                             }
                         }
                         if dry_run {

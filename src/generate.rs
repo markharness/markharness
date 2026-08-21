@@ -14,10 +14,10 @@ pub struct GeneratedFrom {
     pub requirement: String,
     pub feature: String,
     /// The Feature's immutable identity (ADR 0013), when it has one.
-    /// `None` for a Feature that has not been migrated (§10 of the design
-    /// doc: `case_uid` itself needs every one of Requirement/Feature/
-    /// Behavior/Condition/ExpectedResult to carry a `uid`, which isn't the
-    /// case until Phase 3/4 of ADR 0013's migration completes).
+    /// `None` for a Feature that has not been migrated. Kept alongside
+    /// `TestCase.case_uid` (§8 of the design doc) rather than replaced by
+    /// it, since a case's `case_uid` still needs every one of the other
+    /// four contributing elements to carry a `uid` too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature_uid: Option<String>,
     pub behavior: String,
@@ -28,6 +28,30 @@ pub struct GeneratedFrom {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct TestCase {
     pub case_id: String,
+    /// design doc §8's `case_uid`, computed once every one of the five
+    /// contributing elements (Requirement/Feature/Behavior/Condition/
+    /// every ExpectedResult) carries a `uid`. `None` before ADR 0013's
+    /// migration reaches all five kinds for this specific case, or for a
+    /// project that hasn't adopted the identity model at all — never
+    /// computed from a partial set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_uid: Option<String>,
+    /// The repo-relative paths of every one of this case's five
+    /// contributing files — `requirement.yml`, `feature.yml`,
+    /// `behavior.yml`, `condition.yml`, and every `expected/*.yml` — used
+    /// by `identity::migration_manifest` to build each case's
+    /// `LegacyElementLocator`s (design doc §12's "legacy snapshot identity
+    /// (tree SHA)、entity kind、旧ID、旧path/content locator"): the paths,
+    /// together with a shared `.markharness/knowledge` tree SHA, qualify
+    /// exactly which files this case was made of at the moment its legacy
+    /// identity was captured — so a reissue (retired and recreated under
+    /// the same `id` with the same content but a different `uid`) is still
+    /// told apart, since the reissue's fresh `uid` changes the tree SHA
+    /// too. Not serialized into `generated/testcases/*.yml`: it is
+    /// migration-manifest plumbing, not part of the TestCase contract
+    /// consumers read.
+    #[serde(skip)]
+    pub case_files: CaseFilePaths,
     pub generated_from: GeneratedFrom,
     pub title: String,
     pub steps: Vec<String>,
@@ -37,25 +61,67 @@ pub struct TestCase {
     pub axis: Vec<String>,
 }
 
+/// Repo-relative (forward-slash, `.markharness/knowledge/...`-prefixed)
+/// paths of a case's five contributing files, in the same nesting order
+/// `knowledge/` itself uses. See `TestCase::case_files`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CaseFilePaths {
+    pub requirement: String,
+    pub feature: String,
+    pub behavior: String,
+    pub condition: String,
+    /// Sorted, so file read order never affects downstream comparisons.
+    pub expected: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpectedSnapshot {
     pub id: String,
     pub description: String,
+    pub uid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnowledgeCaseSnapshot {
     pub requirement_id: String,
+    pub requirement_uid: Option<String>,
     pub requirement_axis: Vec<String>,
     pub feature_id: String,
     pub feature_uid: Option<String>,
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
+    pub behavior_uid: Option<String>,
     pub behavior_description: String,
     pub behavior_axis: Vec<String>,
     pub condition_id: String,
+    pub condition_uid: Option<String>,
     pub condition_description: String,
     pub expected: Vec<ExpectedSnapshot>,
+    /// See `TestCase::case_files`.
+    pub case_files: CaseFilePaths,
+}
+
+/// design doc §8: derives `case_uid` from the sorted set of every
+/// contributing element's `uid`, or `None` if any one of them (including
+/// any ExpectedResult) hasn't been migrated yet — a case_uid is never
+/// computed from a partial set of identities.
+fn compute_case_uid(case: &KnowledgeCaseSnapshot) -> Option<String> {
+    let requirement_uid = case.requirement_uid.as_deref()?;
+    let feature_uid = case.feature_uid.as_deref()?;
+    let behavior_uid = case.behavior_uid.as_deref()?;
+    let condition_uid = case.condition_uid.as_deref()?;
+    let expected_result_uids: Vec<String> = case
+        .expected
+        .iter()
+        .map(|expected| expected.uid.clone())
+        .collect::<Option<_>>()?;
+    Some(crate::identity::derived_uid::case_uid(
+        requirement_uid,
+        feature_uid,
+        behavior_uid,
+        condition_uid,
+        &expected_result_uids,
+    ))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -212,6 +278,20 @@ fn require_valid_slug(source_path: &Path, field: &str, id: &str) -> io::Result<(
     ))
 }
 
+/// `path`, made repo-relative and forward-slash-normalized (`Path::join`'s
+/// platform separator is unsuitable for a git pathspec — see
+/// `project_root::KNOWLEDGE_PATH_IN_REPO`'s own doc comment), under the
+/// convention every caller of `load_knowledge_snapshot` already relies on:
+/// `knowledge_root` is always `<project_root>/.markharness/knowledge`.
+fn repo_relative_path(knowledge_root: &Path, path: &Path) -> String {
+    let relative = path
+        .strip_prefix(knowledge_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    format!("{}/{relative}", crate::project_root::KNOWLEDGE_PATH_IN_REPO)
+}
+
 pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSnapshot> {
     let mut cases = Vec::new();
 
@@ -220,7 +300,8 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
         if !requirement_path.is_file() {
             continue;
         }
-        let requirement = parse_requirement(&fs::read_to_string(&requirement_path)?)
+        let requirement_yaml = fs::read_to_string(&requirement_path)?;
+        let requirement = parse_requirement(&requirement_yaml)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         require_valid_slug(&requirement_path, "requirement", &requirement.id)?;
 
@@ -229,19 +310,22 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
             if !feature_path.is_file() {
                 continue;
             }
-            let feature = parse_feature(&fs::read_to_string(&feature_path)?)
+            let feature_yaml = fs::read_to_string(&feature_path)?;
+            let feature = parse_feature(&feature_yaml)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             require_valid_slug(&feature_path, "feature", &feature.id)?;
 
             for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
                 let behavior_path = behavior_dir.join("behavior.yml");
-                let behavior = parse_behavior(&fs::read_to_string(&behavior_path)?)
+                let behavior_yaml = fs::read_to_string(&behavior_path)?;
+                let behavior = parse_behavior(&behavior_yaml)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 require_valid_slug(&behavior_path, "behavior", &behavior.id)?;
 
                 for condition_dir in find_dirs_with_marker(&behavior_dir, "condition.yml")? {
                     let condition_path = condition_dir.join("condition.yml");
-                    let condition = parse_condition(&fs::read_to_string(&condition_path)?)
+                    let condition_yaml = fs::read_to_string(&condition_path)?;
+                    let condition = parse_condition(&condition_yaml)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                     require_valid_slug(&condition_path, "condition", &condition.id)?;
 
@@ -261,26 +345,42 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
 
                     let mut expected = Vec::new();
                     for expected_path in &expected_paths {
-                        let parsed = parse_expected_result(&fs::read_to_string(expected_path)?)
+                        let expected_yaml = fs::read_to_string(expected_path)?;
+                        let parsed = parse_expected_result(&expected_yaml)
                             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                         expected.push(ExpectedSnapshot {
                             id: parsed.id,
                             description: parsed.description,
+                            uid: parsed.uid,
                         });
                     }
+                    let case_files = CaseFilePaths {
+                        requirement: repo_relative_path(knowledge_root, &requirement_path),
+                        feature: repo_relative_path(knowledge_root, &feature_path),
+                        behavior: repo_relative_path(knowledge_root, &behavior_path),
+                        condition: repo_relative_path(knowledge_root, &condition_path),
+                        expected: expected_paths
+                            .iter()
+                            .map(|path| repo_relative_path(knowledge_root, path))
+                            .collect(),
+                    };
 
                     cases.push(KnowledgeCaseSnapshot {
                         requirement_id: requirement.id.clone(),
+                        requirement_uid: requirement.uid.clone(),
                         requirement_axis: requirement.axis.clone(),
                         feature_id: feature.id.clone(),
                         feature_uid: feature.uid.clone(),
                         feature_axis: feature.axis.clone(),
                         behavior_id: behavior.id.clone(),
+                        behavior_uid: behavior.uid.clone(),
                         behavior_description: behavior.description.clone(),
                         behavior_axis: behavior.axis.clone(),
                         condition_id: condition.id,
+                        condition_uid: condition.uid.clone(),
                         condition_description: condition.description,
                         expected,
+                        case_files,
                     });
                 }
             }
@@ -299,6 +399,8 @@ pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
                 "tc-{}-{}-{}-{}",
                 case.requirement_id, case.feature_id, case.behavior_id, case.condition_id
             ),
+            case_uid: compute_case_uid(case),
+            case_files: case.case_files.clone(),
             generated_from: GeneratedFrom {
                 requirement: case.requirement_id.clone(),
                 feature: case.feature_id.clone(),
@@ -977,6 +1079,8 @@ mod tests {
     fn serialized_testcase_contains_no_leading_comment() {
         let testcase = TestCase {
             case_id: "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input".to_string(),
+            case_uid: None,
+            case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
@@ -1061,6 +1165,137 @@ mod tests {
         );
     }
 
+    const REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FR0";
+    const FEATURE_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FE0";
+    const BEHAVIOR_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
+    const CONDITION_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC0";
+    const EXPECTED_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FX0";
+
+    /// Writes a full req -> feature -> behavior -> condition -> expected
+    /// tree, each level carrying a `uid` when the corresponding `*_uid`
+    /// argument is `Some`.
+    #[allow(clippy::too_many_arguments)]
+    fn write_full_tree_with_uids(
+        root: &std::path::Path,
+        requirement_uid: Option<&str>,
+        feature_uid: Option<&str>,
+        behavior_uid: Option<&str>,
+        condition_uid: Option<&str>,
+        expected_uid: Option<&str>,
+    ) {
+        let knowledge = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
+        fs::create_dir_all(knowledge.join("expected")).unwrap();
+        fs::write(
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge/req-todo/requirement.yml"),
+            format!(
+                "id: req-todo\nlabel: req-todo\naxis: []\n{}",
+                requirement_uid
+                    .map(|uid| format!("uid: {uid}\n"))
+                    .unwrap_or_default()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge/req-todo/todo/feature.yml"),
+            format!(
+                "id: todo\nrequirement: req-todo\nlabel: todo\naxis: []\n{}",
+                feature_uid
+                    .map(|uid| format!("uid: {uid}\n"))
+                    .unwrap_or_default()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
+            format!(
+                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\n{}",
+                behavior_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            knowledge.join("condition.yml"),
+            format!(
+                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\n{}",
+                condition_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            knowledge.join("expected/001.yml"),
+            format!(
+                "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\n{}",
+                expected_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
+            ),
+        )
+        .unwrap();
+    }
+
+    /// design doc §8: once every one of the five contributing elements
+    /// carries a `uid`, `case_uid` is computed deterministically from them
+    /// (the same value `identity::derived_uid::case_uid` alone would
+    /// produce, not some ad-hoc recombination).
+    #[test]
+    fn case_uid_is_computed_once_every_contributing_element_has_a_uid() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_full_tree_with_uids(
+            dir.path(),
+            Some(REQUIREMENT_UID),
+            Some(FEATURE_UID),
+            Some(BEHAVIOR_UID),
+            Some(CONDITION_UID),
+            Some(EXPECTED_UID),
+        );
+
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+
+        let expected = crate::identity::derived_uid::case_uid(
+            REQUIREMENT_UID,
+            FEATURE_UID,
+            BEHAVIOR_UID,
+            CONDITION_UID,
+            &[EXPECTED_UID.to_string()],
+        );
+        assert_eq!(testcases[0].case_uid, Some(expected));
+    }
+
+    /// A `case_uid` is never computed from a partial set: if even one
+    /// contributing element (here, the Behavior) hasn't been migrated yet,
+    /// `case_uid` stays `None` — never silently substituting a fallback.
+    #[test]
+    fn case_uid_stays_none_when_any_contributing_element_lacks_a_uid() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_full_tree_with_uids(
+            dir.path(),
+            Some(REQUIREMENT_UID),
+            Some(FEATURE_UID),
+            None, // Behavior not migrated yet.
+            Some(CONDITION_UID),
+            Some(EXPECTED_UID),
+        );
+
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+
+        assert_eq!(testcases[0].case_uid, None);
+    }
+
     #[test]
     fn testcase_axis_is_union_of_requirement_feature_and_behavior_axis() {
         let dir = tempfile::tempdir().unwrap();
@@ -1112,6 +1347,8 @@ mod tests {
     fn relative_path_mirrors_the_requirement_feature_behavior_condition_hierarchy() {
         let testcase = TestCase {
             case_id: "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input".to_string(),
+            case_uid: None,
+            case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),

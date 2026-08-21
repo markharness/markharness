@@ -1,6 +1,6 @@
 use markharness::changes::CommitRef;
 use markharness::generate::{
-    ExpectedSnapshot, KnowledgeCaseSnapshot, KnowledgeSnapshot, compile_testcases,
+    CaseFilePaths, ExpectedSnapshot, KnowledgeCaseSnapshot, KnowledgeSnapshot, compile_testcases,
 };
 use markharness::verify::{
     PendingCandidate, ReflectedChange, VerificationStatus, evaluate_pending_candidate,
@@ -11,19 +11,24 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
     let snapshot = KnowledgeSnapshot {
         cases: vec![KnowledgeCaseSnapshot {
             requirement_id: "req".to_string(),
+            requirement_uid: None,
             requirement_axis: vec!["ui".to_string()],
             feature_id: "feature".to_string(),
             feature_uid: None,
             feature_axis: vec!["workflow".to_string()],
             behavior_id: "behavior".to_string(),
+            behavior_uid: None,
             behavior_description: "perform action".to_string(),
             behavior_axis: vec!["ui".to_string()],
             condition_id: "condition".to_string(),
+            condition_uid: None,
             condition_description: "given state".to_string(),
             expected: vec![ExpectedSnapshot {
                 id: "expected-1".to_string(),
                 description: "result".to_string(),
+                uid: None,
             }],
+            case_files: CaseFilePaths::default(),
         }],
     };
 

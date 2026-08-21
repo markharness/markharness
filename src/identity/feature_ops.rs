@@ -1,13 +1,11 @@
-use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::execution::iso8601_utc_now;
-use crate::fs_safety::replace_file;
 use crate::identity::{
-    EntityKind, IdentityEvent, IdentityMutation, engine, lock, recovery, registry,
+    EntityKind, IdentityEvent, IdentityMutation, engine, knowledge_walk, lock, migration_manifest,
+    recovery, registry,
 };
-use crate::knowledge::{self, Feature};
 
 /// Why `rename_id` refused to run, or failed partway (design doc §3, §9).
 #[derive(Debug)]
@@ -42,77 +40,39 @@ impl From<io::Error> for RenameError {
     }
 }
 
-struct FoundFeature {
-    path: PathBuf,
-    feature: Feature,
-}
-
-fn sorted_subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut dirs: Vec<PathBuf> = match fs::read_dir(dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .collect(),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e),
-    };
-    dirs.sort();
-    Ok(dirs)
-}
-
-/// Walks `knowledge/<requirement>/<feature>/feature.yml` in the working
-/// tree (not a committed ref — this drives mutating commands, which act
-/// before anything is committed) looking for the first Feature matching
-/// `predicate`.
-fn find_feature_where(
-    root: &Path,
-    predicate: impl Fn(&Feature) -> bool,
-) -> io::Result<Option<FoundFeature>> {
-    let knowledge_root = root
-        .join(crate::project_root::MARKHARNESS_DIR)
-        .join("knowledge");
-    for requirement_dir in sorted_subdirs(&knowledge_root)? {
-        for feature_dir in sorted_subdirs(&requirement_dir)? {
-            let feature_path = feature_dir.join("feature.yml");
-            if !feature_path.is_file() {
-                continue;
-            }
-            let content = fs::read_to_string(&feature_path)?;
-            if let Ok(feature) = knowledge::parse_feature(&content)
-                && predicate(&feature)
-            {
-                return Ok(Some(FoundFeature {
-                    path: feature_path,
-                    feature,
-                }));
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn find_feature_by_id(root: &Path, id: &str) -> io::Result<Option<FoundFeature>> {
-    find_feature_where(root, |feature| feature.id == id)
-}
-
-fn find_feature_by_uid(root: &Path, uid: &str) -> io::Result<Option<FoundFeature>> {
-    find_feature_where(root, |feature| feature.uid.as_deref() == Some(uid))
-}
-
-/// Brings `feature.yml` and the Registry cache in line with `intent`'s
-/// entity's current replayed state (design doc §6.1 steps 3–4). Runs both
+/// Brings the entity's Knowledge YAML and the Registry cache in line with
+/// `intent`'s current replayed state (design doc §6.1 steps 3–4). Runs both
 /// immediately after a fresh commit and, identically, from the startup
 /// recovery scan after a crash — the only difference is which process
 /// invocation calls it, which is exactly the point: this step must be
-/// idempotent and safe to redo from just the identity event log.
+/// idempotent and safe to redo from just the identity event log. Kind-
+/// generic (design doc §3.2): the only kind-specific part —
+/// which struct to parse/serialize — lives in `knowledge_walk`.
 fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result<()> {
     recovery::complete_batch_commits(root, intent)?;
     if intent.batch_events.is_empty() {
-        return roll_forward_entity(root, intent.entity_kind, &intent.entity_uid);
+        roll_forward_entity(root, intent.entity_kind, &intent.entity_uid)?;
+    } else {
+        for event in &intent.batch_events {
+            roll_forward_entity(root, event.entity_kind, &event.entity_uid)?;
+        }
     }
-    for event in &intent.batch_events {
-        roll_forward_entity(root, event.entity_kind, &event.entity_uid)?;
+    // `migrate_all` is the only caller that ever sets `caller_payload`
+    // (its cases' legacy, pre-migration snapshot identity, captured and
+    // durably persisted *before* this intent's commit point — design doc
+    // §6.1). Recording it here, rather than back in `migrate_all` itself,
+    // is what makes it survive a crash between the commit point and the
+    // manifest being updated: this function runs identically on the happy
+    // path and from crash recovery replay (`run_startup_recovery`), so a
+    // kill in that window is simply finished on the next run instead of
+    // silently losing the legacy identity. Matching on the exact
+    // `IdentityMigration` variant (rather than "any non-empty payload")
+    // means a future, unrelated `IntentPayload` variant can never be
+    // misread as this one.
+    if let Some(recovery::IntentPayload::IdentityMigration(payload)) = &intent.caller_payload {
+        let legacy_signatures =
+            migration_manifest::LegacyCaseSignatures::from_durable_payload(payload)?;
+        migration_manifest::record_new_case_uids(root, &legacy_signatures)?;
     }
     Ok(())
 }
@@ -122,26 +82,22 @@ fn roll_forward_entity(root: &Path, entity_kind: EntityKind, entity_uid: &str) -
         .map_err(|e| io::Error::other(format!("{e:?}")))?;
 
     // A migrate operation's root `Issued` event assigns a `uid` no
-    // `feature.yml` carries yet, so `find_feature_by_uid` can't find it —
-    // fall back to locating it by the id the event just issued/renamed to.
-    let found = match find_feature_by_uid(root, entity_uid)? {
+    // Knowledge file carries yet, so `find_by_uid` can't find it — fall
+    // back to locating it by the id the event just issued/renamed to.
+    let found = match knowledge_walk::find_by_uid(root, entity_kind, entity_uid)? {
         Some(found) => Some(found),
-        None => find_feature_by_id(root, &result.current_id)?,
+        None => knowledge_walk::find_by_id(root, entity_kind, &result.current_id)?,
     };
 
     if let Some(found) = found
-        && (found.feature.id != result.current_id
-            || found.feature.uid.as_deref() != Some(entity_uid))
+        && (found.id != result.current_id || found.uid.as_deref() != Some(entity_uid))
     {
-        let updated = Feature {
-            id: result.current_id,
-            uid: Some(entity_uid.to_string()),
-            ..found.feature
-        };
-        replace_file(
+        knowledge_walk::write_id_and_uid(
             root,
+            entity_kind,
             &found.path,
-            knowledge::serialize_feature(&updated).as_bytes(),
+            &result.current_id,
+            entity_uid,
         )?;
     }
 
@@ -160,13 +116,14 @@ pub fn rename_id(root: &Path, old_id: &str, new_id: &str) -> Result<(), RenameEr
         recovery::StartupRecovery::Recovered(_) => {}
     }
 
-    let Some(found) = find_feature_by_id(root, old_id)? else {
+    let Some(found) = knowledge_walk::find_by_id(root, EntityKind::Feature, old_id)? else {
         return Err(RenameError::FeatureNotFound(old_id.to_string()));
     };
-    let Some(entity_uid) = found.feature.uid.clone() else {
+    let Some(entity_uid) = found.uid.clone() else {
         return Err(RenameError::NotMigrated(old_id.to_string()));
     };
-    if old_id != new_id && find_feature_by_id(root, new_id)?.is_some() {
+    if old_id != new_id && knowledge_walk::find_by_id(root, EntityKind::Feature, new_id)?.is_some()
+    {
         return Err(RenameError::NewIdAlreadyInUse(new_id.to_string()));
     }
 
@@ -408,16 +365,17 @@ fn commit_release(
     Ok(())
 }
 
-/// One Feature `identity migrate` newly assigned a `uid` to.
+/// One Knowledge element `identity migrate` newly assigned a `uid` to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MigratedFeature {
+pub struct MigratedEntity {
+    pub kind: EntityKind,
     pub id: String,
     pub uid: String,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MigrateReport {
-    pub migrated: Vec<MigratedFeature>,
+    pub migrated: Vec<MigratedEntity>,
     pub conflicts: Vec<String>,
     pub changed_files: Vec<String>,
 }
@@ -427,7 +385,7 @@ struct MigrationPlan {
     events: Vec<recovery::BatchEvent>,
 }
 
-/// Why `migrate_features` refused to run, or failed partway.
+/// Why `migrate_entities` refused to run, or failed partway.
 #[derive(Debug)]
 pub enum MigrateError {
     /// A concurrent identity operation is genuinely in progress
@@ -443,13 +401,13 @@ impl From<io::Error> for MigrateError {
     }
 }
 
-/// `markharness identity migrate` (design doc §12, Phase 2 scope: Feature
-/// only): assigns a fresh `uid` to every Feature in the working tree that
-/// doesn't have one yet, recording each as a root `Issued` identity event.
-/// Idempotent — a Feature that already has a `uid` is left untouched, so
-/// re-running after copy/import/hand-editing introduces new uid-less
-/// Features is safe.
-pub fn migrate_features(root: &Path) -> Result<MigrateReport, MigrateError> {
+/// `markharness identity migrate` (design doc §12, §13 Phase 4: all five
+/// Knowledge element kinds): assigns a fresh `uid` to every element in the
+/// working tree that doesn't have one yet, recording each as a root
+/// `Issued` identity event. Idempotent — an element that already has a
+/// `uid` is left untouched, so re-running after copy/import/hand-editing
+/// introduces new uid-less elements is safe.
+pub fn migrate_entities(root: &Path) -> Result<MigrateReport, MigrateError> {
     match recovery::run_startup_recovery(root, |intent| roll_forward(root, intent))? {
         recovery::StartupRecovery::OperationInProgress => {
             return Err(MigrateError::OperationInProgress);
@@ -464,111 +422,145 @@ pub fn migrate_features(root: &Path) -> Result<MigrateReport, MigrateError> {
 }
 
 fn migrate_all(root: &Path) -> Result<MigrateReport, MigrateError> {
+    // Captured *before* anything below writes a single byte: this is the
+    // legacy (pre-migration) identity this run's new manifest entries, if
+    // any, must be keyed on — see `LegacySnapshot`'s doc comment for why
+    // recomputing it from the post-migration tree instead would be wrong.
+    let legacy_signatures = migration_manifest::capture_case_signatures(root)?;
+
     let plan = build_migration_plan(root)?;
     if !plan.report.conflicts.is_empty() {
         return Err(MigrateError::Conflicts(plan.report.conflicts));
     }
     if plan.events.is_empty() {
+        // Nothing for this run to migrate at the entity level, but a
+        // case's `case_uid` can still become newly computable purely
+        // because an *earlier* run finished its last missing element —
+        // recorded directly, since there is no risky write in progress
+        // this round for `legacy_signatures` to protect against.
+        migration_manifest::record_new_case_uids(root, &legacy_signatures)?;
         return Ok(plan.report);
     }
-    let intent = recovery::begin_batch(root, plan.events)?;
+    // `legacy_signatures` is durably written into the intent here —
+    // *before* `commit_batch` below reaches this operation's logical
+    // commit point — so `roll_forward` (identically on the happy path and
+    // from crash recovery, see its own doc comment) can still record the
+    // correct migration manifest entries even if the process is killed
+    // between the commit point and this call returning.
+    let intent = recovery::begin_batch_with_payload(
+        root,
+        plan.events,
+        Some(recovery::IntentPayload::IdentityMigration(
+            legacy_signatures.to_durable_payload()?,
+        )),
+    )?;
     recovery::commit_batch(root, &intent)?;
     roll_forward(root, &intent)?;
     recovery::finish(root, &intent)?;
     Ok(plan.report)
 }
 
-/// Computes the exact UID assignments a migration would make without
-/// writing Knowledge, identity events, locks, or staging state.
-pub fn plan_feature_migration(root: &Path) -> Result<MigrateReport, MigrateError> {
+/// Computes the exact UID assignments a migration would make, across all
+/// five `EntityKind`s, without writing Knowledge, identity events, locks,
+/// or staging state.
+pub fn plan_migration(root: &Path) -> Result<MigrateReport, MigrateError> {
     Ok(build_migration_plan(root)?.report)
+}
+
+fn relative_path_string(root: &Path, path: &std::path::Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn build_migration_plan(root: &Path) -> Result<MigrationPlan, MigrateError> {
     let mut report = MigrateReport::default();
     let mut events = Vec::new();
     let recorded_at = iso8601_utc_now();
-    let knowledge_root = root
-        .join(crate::project_root::MARKHARNESS_DIR)
-        .join("knowledge");
-    let mut features = Vec::new();
-    let mut ids: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
-    let mut uids: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
-    for requirement_dir in sorted_subdirs(&knowledge_root)? {
-        for feature_dir in sorted_subdirs(&requirement_dir)? {
-            let feature_path = feature_dir.join("feature.yml");
-            if !feature_path.is_file() {
-                continue;
-            }
-            let content = fs::read_to_string(&feature_path)?;
-            let feature = knowledge::parse_feature(&content).map_err(io::Error::other)?;
-            let relative_path = feature_path
-                .strip_prefix(root)
-                .unwrap_or(&feature_path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            ids.entry(feature.id.clone())
+
+    // Pass 1: enumerate every kind's elements and detect id/uid conflicts
+    // *before* generating any event — a conflict in one kind must not let
+    // another kind's migration proceed halfway (design doc §12's
+    // all-or-nothing batch).
+    let mut per_kind_entities = Vec::new();
+    for kind in EntityKind::ALL {
+        let entities = knowledge_walk::list_entities(root, kind)?;
+
+        let mut ids: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        let mut uids: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for entity in &entities {
+            let relative_path = relative_path_string(root, &entity.path);
+            ids.entry(entity.id.clone())
                 .or_default()
                 .push(relative_path.clone());
-            if let Some(uid) = &feature.uid {
-                uids.entry(uid.clone())
-                    .or_default()
-                    .push(relative_path.clone());
+            if let Some(uid) = &entity.uid {
+                uids.entry(uid.clone()).or_default().push(relative_path);
             }
-            features.push((feature_path, relative_path, feature));
         }
-    }
-    for (id, paths) in ids.into_iter().filter(|(_, paths)| paths.len() > 1) {
-        report
-            .conflicts
-            .push(format!("duplicate Feature id '{id}': {}", paths.join(", ")));
-    }
-    for (uid, paths) in uids.into_iter().filter(|(_, paths)| paths.len() > 1) {
-        report.conflicts.push(format!(
-            "duplicate Feature uid '{uid}': {}",
-            paths.join(", ")
-        ));
+        for (id, paths) in ids.into_iter().filter(|(_, paths)| paths.len() > 1) {
+            report.conflicts.push(format!(
+                "duplicate {} id '{id}': {}",
+                kind.as_str(),
+                paths.join(", ")
+            ));
+        }
+        for (uid, paths) in uids.into_iter().filter(|(_, paths)| paths.len() > 1) {
+            report.conflicts.push(format!(
+                "duplicate {} uid '{uid}': {}",
+                kind.as_str(),
+                paths.join(", ")
+            ));
+        }
+
+        per_kind_entities.push((kind, entities));
     }
     if !report.conflicts.is_empty() {
         return Ok(MigrationPlan { report, events });
     }
-    for (_feature_path, relative_path, feature) in features {
-        if feature.uid.is_some() {
-            continue;
+
+    // Pass 2: generate one root `Issued` event per uid-less element, all
+    // sharing `recorded_at` (design doc §12: one operation, one honest
+    // "tracking began here" timestamp).
+    for (kind, entities) in per_kind_entities {
+        for entity in entities {
+            if entity.uid.is_some() {
+                continue;
+            }
+            let entity_uid = ulid::Ulid::new().to_string();
+            let event_uid = ulid::Ulid::new().to_string();
+            let event = IdentityEvent {
+                identity_event_uid: event_uid.clone(),
+                entity_uid: entity_uid.clone(),
+                entity_kind: kind,
+                previous_identity_event_uid: None,
+                previous_identity_event_uids: Vec::new(),
+                recorded_at: recorded_at.clone(),
+                mutation: IdentityMutation::Issued {
+                    id: entity.id.clone(),
+                },
+            };
+            events.push(recovery::BatchEvent {
+                entity_kind: kind,
+                entity_uid: entity_uid.clone(),
+                identity_event_uid: event_uid.clone(),
+                event_yaml: serde_yaml_ng::to_string(&event).map_err(io::Error::other)?,
+            });
+            report
+                .changed_files
+                .push(relative_path_string(root, &entity.path));
+            report.changed_files.push(relative_path_string(
+                root,
+                &recovery::event_file_path(root, kind, &entity_uid, &event_uid),
+            ));
+            report.migrated.push(MigratedEntity {
+                kind,
+                id: entity.id,
+                uid: entity_uid,
+            });
         }
-        let entity_uid = ulid::Ulid::new().to_string();
-        let event_uid = ulid::Ulid::new().to_string();
-        let event = IdentityEvent {
-            identity_event_uid: event_uid.clone(),
-            entity_uid: entity_uid.clone(),
-            entity_kind: EntityKind::Feature,
-            previous_identity_event_uid: None,
-            previous_identity_event_uids: Vec::new(),
-            recorded_at: recorded_at.clone(),
-            mutation: IdentityMutation::Issued {
-                id: feature.id.clone(),
-            },
-        };
-        events.push(recovery::BatchEvent {
-            entity_kind: EntityKind::Feature,
-            entity_uid: entity_uid.clone(),
-            identity_event_uid: event_uid.clone(),
-            event_yaml: serde_yaml_ng::to_string(&event).map_err(io::Error::other)?,
-        });
-        report.changed_files.push(relative_path);
-        report.changed_files.push(
-            recovery::event_file_path(root, EntityKind::Feature, &entity_uid, &event_uid)
-                .strip_prefix(root)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/"),
-        );
-        report.migrated.push(MigratedFeature {
-            id: feature.id,
-            uid: entity_uid,
-        });
     }
     Ok(MigrationPlan { report, events })
 }
@@ -576,10 +568,30 @@ fn build_migration_plan(root: &Path) -> Result<MigrationPlan, MigrateError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::knowledge::{self, Feature};
     use std::fs;
+
+    /// `migrate_entities` -> `migration_manifest::capture_case_signatures`
+    /// -> `git::write_tree_prefix` requires an actual git repository (it
+    /// builds a real tree object via a temporary index) — every fixture
+    /// used by a test that calls `migrate_entities` needs this.
+    fn init_git_repo(dir: &Path) {
+        let status = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .unwrap()
+        };
+        assert!(status(&["init", "-q"]).success());
+        assert!(status(&["config", "user.email", "test@example.com"]).success());
+        assert!(status(&["config", "user.name", "Test"]).success());
+    }
 
     fn init_project() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
+        init_git_repo(dir.path());
         fs::create_dir_all(
             dir.path()
                 .join(".markharness/knowledge/controls/player-jump"),
@@ -588,7 +600,11 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: []\n",
+            // Already migrated, so Feature-focused tests calling
+            // `migrate_entities`/`plan_migration` see only the Feature(s)
+            // they set up themselves — multi-kind migration itself is
+            // covered separately below.
+            "id: controls\nlabel: controls\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FR0\n",
         )
         .unwrap();
         dir
@@ -915,7 +931,7 @@ mod tests {
         let dir = init_project();
         write_feature(dir.path(), "todo-management", None);
 
-        let report = migrate_features(dir.path()).unwrap();
+        let report = migrate_entities(dir.path()).unwrap();
 
         assert_eq!(report.migrated.len(), 1);
         assert_eq!(report.migrated[0].id, "todo-management");
@@ -947,7 +963,7 @@ mod tests {
         write_feature(dir.path(), "todo-management", Some(UID));
         issue_uid(dir.path(), UID, "todo-management");
 
-        let report = migrate_features(dir.path()).unwrap();
+        let report = migrate_entities(dir.path()).unwrap();
 
         assert!(report.migrated.is_empty());
         let content = fs::read_to_string(
@@ -972,7 +988,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = migrate_features(dir.path()).unwrap();
+        let report = migrate_entities(dir.path()).unwrap();
 
         assert_eq!(report.migrated.len(), 1);
         assert_eq!(report.migrated[0].id, "second-feature");
@@ -983,7 +999,7 @@ mod tests {
         let dir = init_project();
         write_feature(dir.path(), "todo-management", None);
 
-        let report = plan_feature_migration(dir.path()).unwrap();
+        let report = plan_migration(dir.path()).unwrap();
 
         assert_eq!(report.migrated.len(), 1);
         assert_eq!(report.migrated[0].id, "todo-management");
@@ -1008,7 +1024,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = plan_feature_migration(dir.path()).unwrap();
+        let report = plan_migration(dir.path()).unwrap();
 
         assert!(report.migrated.is_empty());
         assert_eq!(report.conflicts.len(), 1);
@@ -1028,7 +1044,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = migrate_features(dir.path());
+        let result = migrate_entities(dir.path());
 
         assert!(matches!(result, Err(MigrateError::Conflicts(_))));
         assert!(!dir.path().join(".markharness/identity-events").exists());
@@ -1047,7 +1063,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = migrate_features(dir.path()).unwrap();
+        let report = migrate_entities(dir.path()).unwrap();
         let recorded_at: std::collections::BTreeSet<String> = report
             .migrated
             .iter()
@@ -1064,5 +1080,343 @@ mod tests {
             .collect();
 
         assert_eq!(recorded_at.len(), 1);
+    }
+
+    /// A working tree with one uid-less element of every kind:
+    /// req -> feature -> behavior -> condition -> expected/001.yml.
+    fn full_tree_project() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        init_git_repo(dir.path());
+        let base = dir
+            .path()
+            .join(".markharness/knowledge/req/feature/behavior/condition");
+        fs::create_dir_all(base.join("expected")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/requirement.yml"),
+            "id: req\nlabel: req\naxis: []\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/feature.yml"),
+            "id: feature\nrequirement: req\nlabel: feature\naxis: []\n",
+        )
+        .unwrap();
+        fs::write(
+            base.parent().unwrap().join("behavior.yml"),
+            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("condition.yml"),
+            "id: condition\nbehavior: behavior\nlabel: condition\ndescription: |\n  d\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("expected/001.yml"),
+            "id: condition-001\ncondition: condition\ndescription: |\n  d\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    /// Step 30: `identity migrate` must cover all five `EntityKind`s in a
+    /// single operation, not just Feature.
+    #[test]
+    fn migrate_entities_assigns_a_uid_to_every_kind_in_one_operation() {
+        let dir = full_tree_project();
+
+        let report = migrate_entities(dir.path()).unwrap();
+
+        let kinds: std::collections::BTreeSet<EntityKind> =
+            report.migrated.iter().map(|m| m.kind).collect();
+        assert_eq!(
+            kinds,
+            EntityKind::ALL.into_iter().collect(),
+            "expected every EntityKind to be migrated, got {report:?}"
+        );
+        assert_eq!(report.migrated.len(), 5);
+    }
+
+    /// The batch is genuinely one operation: every migrated element,
+    /// across all five kinds, shares the same `recorded_at`.
+    #[test]
+    fn migrate_entities_shares_one_recorded_at_across_every_kind() {
+        let dir = full_tree_project();
+
+        let report = migrate_entities(dir.path()).unwrap();
+
+        let recorded_at: std::collections::BTreeSet<String> = report
+            .migrated
+            .iter()
+            .map(|migrated| {
+                registry::load_events_from_working_tree(dir.path(), migrated.kind, &migrated.uid)
+                    .unwrap()[0]
+                    .recorded_at
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(recorded_at.len(), 1);
+    }
+
+    /// Migrating a Behavior must write its `uid:` into `behavior.yml`
+    /// specifically (not silently succeed while touching nothing, and not
+    /// misfire onto some other kind's file).
+    #[test]
+    fn migrate_entities_writes_uid_into_the_behavior_yml_itself() {
+        let dir = full_tree_project();
+
+        let report = migrate_entities(dir.path()).unwrap();
+
+        let behavior_migration = report
+            .migrated
+            .iter()
+            .find(|m| m.kind == EntityKind::Behavior)
+            .unwrap();
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/behavior/behavior.yml"),
+        )
+        .unwrap();
+        let behavior: knowledge::Behavior = knowledge::parse_behavior(&content).unwrap();
+        assert_eq!(behavior.uid, Some(behavior_migration.uid.clone()));
+        assert_eq!(behavior.feature, "feature", "other fields must survive");
+    }
+
+    /// Duplicate ids in *different* kinds (e.g. a Requirement and a
+    /// Feature both named "shared") are not a conflict — only a
+    /// duplicate within the same kind is.
+    #[test]
+    fn migrate_entities_does_not_treat_the_same_id_in_different_kinds_as_a_conflict() {
+        let dir = full_tree_project();
+        // Reuse "req"'s id for the Feature too: allowed, different kinds.
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/feature.yml"),
+            "id: req\nrequirement: req\nlabel: feature\naxis: []\n",
+        )
+        .unwrap();
+
+        let report = migrate_entities(dir.path()).unwrap();
+
+        assert!(report.conflicts.is_empty());
+        assert_eq!(report.migrated.len(), 5);
+    }
+
+    /// A duplicate id *within* one kind (two Behaviors both named
+    /// "behavior") must still be rejected, generalizing the earlier
+    /// Feature-only conflict check to every kind.
+    #[test]
+    fn migrate_entities_rejects_a_duplicate_id_within_a_single_kind() {
+        let dir = full_tree_project();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/other-behavior"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/other-behavior/behavior.yml"),
+            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\n",
+        )
+        .unwrap();
+
+        let result = migrate_entities(dir.path());
+
+        assert!(
+            matches!(result, Err(MigrateError::Conflicts(ref c)) if c.iter().any(|m| m.contains("behavior")))
+        );
+    }
+
+    /// Regression: before `roll_forward_entity` was generalized past
+    /// Feature, `resolve_divergence` for a non-Feature kind would silently
+    /// fail to update its Knowledge YAML (the Feature-only lookup simply
+    /// never found the Behavior, so nothing was written — no error, no
+    /// effect). This must actually update `behavior.yml` now.
+    #[test]
+    fn resolve_divergence_updates_a_behavior_not_just_a_feature() {
+        let dir = full_tree_project();
+        const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FBH";
+        let events_dir = dir
+            .path()
+            .join(".markharness/identity-events/behaviors")
+            .join(UID);
+        fs::create_dir_all(&events_dir).unwrap();
+        let root_event = IdentityEvent {
+            identity_event_uid: "01ARZ3NDEKTSV4RRFFQ69G5FB0".to_string(),
+            entity_uid: UID.to_string(),
+            entity_kind: EntityKind::Behavior,
+            previous_identity_event_uid: None,
+            previous_identity_event_uids: Vec::new(),
+            recorded_at: "2026-08-21T00:00:00Z".to_string(),
+            mutation: IdentityMutation::Issued {
+                id: "behavior".to_string(),
+            },
+        };
+        fs::write(
+            events_dir.join("01ARZ3NDEKTSV4RRFFQ69G5FB0.yml"),
+            serde_yaml_ng::to_string(&root_event).unwrap(),
+        )
+        .unwrap();
+        knowledge_walk::write_id_and_uid(
+            dir.path(),
+            EntityKind::Behavior,
+            &dir.path()
+                .join(".markharness/knowledge/req/feature/behavior/behavior.yml"),
+            "behavior",
+            UID,
+        )
+        .unwrap();
+        let branch_a = IdentityEvent {
+            identity_event_uid: "01ARZ3NDEKTSV4RRFFQ69G5FB1".to_string(),
+            entity_uid: UID.to_string(),
+            entity_kind: EntityKind::Behavior,
+            previous_identity_event_uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FB0".to_string()),
+            previous_identity_event_uids: Vec::new(),
+            recorded_at: "2026-08-21T00:01:00Z".to_string(),
+            mutation: IdentityMutation::Renamed {
+                from_id: "behavior".to_string(),
+                to_id: "behavior-a".to_string(),
+            },
+        };
+        let branch_b = IdentityEvent {
+            identity_event_uid: "01ARZ3NDEKTSV4RRFFQ69G5FB2".to_string(),
+            entity_uid: UID.to_string(),
+            entity_kind: EntityKind::Behavior,
+            previous_identity_event_uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FB0".to_string()),
+            previous_identity_event_uids: Vec::new(),
+            recorded_at: "2026-08-21T00:01:01Z".to_string(),
+            mutation: IdentityMutation::Renamed {
+                from_id: "behavior".to_string(),
+                to_id: "behavior-b".to_string(),
+            },
+        };
+        fs::write(
+            events_dir.join("01ARZ3NDEKTSV4RRFFQ69G5FB1.yml"),
+            serde_yaml_ng::to_string(&branch_a).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            events_dir.join("01ARZ3NDEKTSV4RRFFQ69G5FB2.yml"),
+            serde_yaml_ng::to_string(&branch_b).unwrap(),
+        )
+        .unwrap();
+
+        resolve_divergence(
+            dir.path(),
+            EntityKind::Behavior,
+            UID,
+            "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/behavior/behavior.yml"),
+        )
+        .unwrap();
+        assert!(
+            content.contains("id: behavior-a"),
+            "expected behavior.yml to reflect the resolved rename, got: {content}"
+        );
+    }
+
+    /// Step 31: a single `migrate_entities` call that completes every one
+    /// of a case's five contributing elements at once must also record
+    /// that case's `legacy_case_id` -> `case_uid` mapping in the
+    /// migration manifest — not require a separate command.
+    #[test]
+    fn migrate_entities_records_the_migration_manifest_once_a_case_is_fully_migrated() {
+        let dir = full_tree_project();
+
+        migrate_entities(dir.path()).unwrap();
+
+        let manifest = crate::identity::migration_manifest::read(dir.path()).unwrap();
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(
+            manifest.entries[0].legacy_case_id,
+            "tc-req-feature-behavior-condition"
+        );
+    }
+
+    /// The reviewer's kill/restart finding: a process killed *after*
+    /// `migrate_all`'s batch reaches its logical commit point (uid-issuing
+    /// events durably written) but *before* the migration manifest is
+    /// updated must not lose the case's legacy (pre-migration) identity.
+    /// Recovery on the next run must record the manifest using the exact
+    /// legacy snapshot captured before the crash — not a signature
+    /// recomputed from the working tree, which by the time recovery runs
+    /// is already fully migrated (uid lines present) and so would produce
+    /// a different, wrongly "legacy"-labeled snapshot.
+    #[test]
+    fn migrate_entities_recovers_the_correct_legacy_manifest_entry_after_a_kill_right_after_the_commit_point()
+     {
+        let dir = full_tree_project();
+
+        // Replicates `migrate_all` up through its logical commit point,
+        // deliberately stopping there (no `roll_forward`/`finish`) to
+        // simulate a process kill in exactly the window the finding
+        // describes.
+        let legacy_signatures = migration_manifest::capture_case_signatures(dir.path()).unwrap();
+        let plan = build_migration_plan(dir.path()).unwrap();
+        assert!(plan.report.conflicts.is_empty());
+        assert!(
+            !plan.events.is_empty(),
+            "a fresh, fully uid-less project must have real entity-level work to migrate"
+        );
+        let intent = recovery::begin_batch_with_payload(
+            dir.path(),
+            plan.events,
+            Some(recovery::IntentPayload::IdentityMigration(
+                legacy_signatures.to_durable_payload().unwrap(),
+            )),
+        )
+        .unwrap();
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+        // Deliberately no roll_forward/finish call: this is the crash point.
+
+        // "Restart": the public entry point must detect the leftover
+        // intent, replay it via startup recovery, and finish normally.
+        let report = migrate_entities(dir.path()).unwrap();
+        assert!(
+            report.migrated.is_empty(),
+            "every entity was already committed by the simulated crash; nothing left for this \
+             call to migrate at the entity level"
+        );
+
+        let manifest = migration_manifest::read(dir.path()).unwrap();
+        assert_eq!(
+            manifest.entries.len(),
+            1,
+            "recovery must record exactly the one legacy identity captured before the crash, \
+             not also let the post-recovery migrate_all call record a second, spuriously \
+             \"legacy\" entry from the by-then-already-migrated working tree: {manifest:?}"
+        );
+        let recovered_entry = &manifest.entries[0];
+
+        // The recovered entry's legacy snapshot must be exactly what was
+        // captured *before* the simulated crash — reconstructed here from
+        // that same pre-crash capture's own durable payload, not recomputed.
+        let legacy_payload = legacy_signatures.to_durable_payload().unwrap();
+        let expected_legacy_snapshot: migration_manifest::LegacySnapshot =
+            serde_yaml_ng::from_str(&legacy_payload[&recovered_entry.legacy_case_id]).unwrap();
+        assert_eq!(recovered_entry.legacy_snapshot, expected_legacy_snapshot);
+
+        // And it must differ from what a *fresh* capture of the now-migrated
+        // (uid-bearing) working tree would produce — proving recovery used
+        // the durably-persisted pre-crash snapshot, not a recomputation.
+        let post_migration_signatures =
+            migration_manifest::capture_case_signatures(dir.path()).unwrap();
+        let post_migration_payload = post_migration_signatures.to_durable_payload().unwrap();
+        let post_migration_snapshot: migration_manifest::LegacySnapshot =
+            serde_yaml_ng::from_str(&post_migration_payload[&recovered_entry.legacy_case_id])
+                .unwrap();
+        assert_ne!(
+            recovered_entry.legacy_snapshot, post_migration_snapshot,
+            "the recovered entry must keep the true pre-migration legacy identity, not a \
+             signature recomputed after uids were already written"
+        );
     }
 }

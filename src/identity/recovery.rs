@@ -54,6 +54,34 @@ pub struct Intent {
     /// rolls all projections forward before exposing normal operation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub batch_events: Vec<BatchEvent>,
+    /// Data a caller needs durably recorded *before* this operation's
+    /// commit point, and available again to its own `roll_forward`
+    /// callback both on the happy path and during crash recovery replay
+    /// (design doc §6.1: the whole point of writing intent first is that
+    /// nothing the operation depends on is only ever held in memory). Each
+    /// caller feature gets its own [`IntentPayload`] variant rather than a
+    /// bare untyped map, so `roll_forward` (there is only one per this
+    /// module's caller, but nothing stops that from changing) is forced by
+    /// the type system to match the exact variant it expects instead of
+    /// assuming any non-empty payload must be its own — misreading another
+    /// feature's payload as its own would otherwise fail silently or
+    /// corrupt unrelated state rather than erroring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_payload: Option<IntentPayload>,
+}
+
+/// A caller feature's own durably-persisted pre-commit data (see
+/// `Intent::caller_payload`). One variant per feature that needs this —
+/// add a new variant rather than reusing an existing one for an unrelated
+/// purpose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IntentPayload {
+    /// `feature_ops::migrate_all`'s legacy (pre-migration) case identity —
+    /// `case_id` -> a serialized `identity::migration_manifest::LegacySnapshot`
+    /// — captured before `batch_events` ever touch the working tree, so it
+    /// survives a crash between the commit point and the migration
+    /// manifest being updated.
+    IdentityMigration(std::collections::BTreeMap<String, String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +108,7 @@ pub fn begin(
         entity_uid: entity_uid.to_string(),
         identity_event_uid: identity_event_uid.to_string(),
         batch_events: Vec::new(),
+        caller_payload: None,
     };
     let yaml = serde_yaml_ng::to_string(&intent).map_err(io::Error::other)?;
     replace_file(
@@ -93,6 +122,19 @@ pub fn begin(
 /// Records the complete plan for a multi-entity operation before its
 /// logical commit point. This makes the operation recoverable as a whole.
 pub fn begin_batch(root: &Path, batch_events: Vec<BatchEvent>) -> io::Result<Intent> {
+    begin_batch_with_payload(root, batch_events, None)
+}
+
+/// Like [`begin_batch`], but also durably records `caller_payload`
+/// (`Intent::caller_payload`) before the batch's logical commit point, so
+/// it survives a crash between that commit point and the caller's own
+/// post-commit work (e.g. `feature_ops::migrate_all` recording the
+/// migration manifest).
+pub fn begin_batch_with_payload(
+    root: &Path,
+    batch_events: Vec<BatchEvent>,
+    caller_payload: Option<IntentPayload>,
+) -> io::Result<Intent> {
     let first = batch_events
         .first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "batch must not be empty"))?;
@@ -102,6 +144,7 @@ pub fn begin_batch(root: &Path, batch_events: Vec<BatchEvent>) -> io::Result<Int
         entity_uid: first.entity_uid.clone(),
         identity_event_uid: first.identity_event_uid.clone(),
         batch_events,
+        caller_payload,
     };
     let yaml = serde_yaml_ng::to_string(&intent).map_err(io::Error::other)?;
     replace_file(
@@ -422,6 +465,37 @@ mod tests {
 
         assert_eq!(outcomes.len(), 2);
         assert_eq!(rolled_forward_for, vec!["uid-committed".to_string()]);
+    }
+
+    /// The reviewer-requested kill/restart boundary: `caller_payload` must
+    /// be readable by `roll_forward` during crash recovery exactly as it
+    /// was at `begin_batch_with_payload` time — a process kill right after
+    /// the batch's commit point (simulated here by never calling `finish`)
+    /// must not lose it.
+    #[test]
+    fn caller_payload_survives_recovery_after_a_kill_right_after_the_commit_point() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = vec![BatchEvent {
+            entity_kind: EntityKind::Feature,
+            entity_uid: "uid-a".to_string(),
+            identity_event_uid: "event-a".to_string(),
+            event_yaml: "identity_event_uid: event-a\n".to_string(),
+        }];
+        let mut payload_map = std::collections::BTreeMap::new();
+        payload_map.insert("tc-case-1".to_string(), "legacy-snapshot-yaml".to_string());
+        let payload = Some(IntentPayload::IdentityMigration(payload_map));
+        let intent = begin_batch_with_payload(dir.path(), events, payload.clone()).unwrap();
+        commit(dir.path(), &intent, "identity_event_uid: event-a\n").unwrap();
+        // Deliberately no `finish` call: this is the crash point being simulated.
+
+        let mut seen_payload = None;
+        recover_incomplete_operations(dir.path(), |intent| {
+            seen_payload = Some(intent.caller_payload.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(seen_payload, Some(payload));
     }
 
     #[test]
