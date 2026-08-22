@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod application;
+pub mod audit_scope;
 pub mod axes;
 pub mod backfill;
 pub mod canonical;

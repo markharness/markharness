@@ -183,3 +183,82 @@ fn identity_migrate_exits_nonzero_and_reports_conflicts_for_a_duplicate_id_withi
     );
     assert!(!dir.path().join(".markharness/identity-events").exists());
 }
+
+fn git_commit_all(dir: &std::path::Path, message: &str) {
+    let status = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .status()
+            .unwrap()
+    };
+    assert!(status(&["add", "-A"]).success());
+    assert!(status(&["commit", "-q", "-m", message]).success());
+}
+
+#[test]
+fn identity_audit_json_reports_no_violations_for_a_clean_migrate_history() {
+    let dir = init_project();
+    write_full_tree(dir.path(), "todo");
+    git_commit_all(dir.path(), "initial");
+    let migrate = run(&["identity", "migrate", "--dir", dir.path().to_str().unwrap()]);
+    assert!(migrate.status.success(), "{migrate:?}");
+    git_commit_all(dir.path(), "migrate");
+
+    let output = run(&[
+        "identity",
+        "audit",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert!(output.status.success(), "{output:?}");
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["audit_scope"], "full_history");
+    assert_eq!(body["commits_scanned"], 2);
+    assert!(body["violations"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn identity_audit_exits_nonzero_when_an_event_file_is_deleted_out_of_band() {
+    let dir = init_project();
+    write_full_tree(dir.path(), "todo");
+    git_commit_all(dir.path(), "initial");
+    let migrate = run(&["identity", "migrate", "--dir", dir.path().to_str().unwrap()]);
+    assert!(migrate.status.success(), "{migrate:?}");
+    git_commit_all(dir.path(), "migrate");
+
+    let feature_yml = std::fs::read_to_string(
+        dir.path()
+            .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+    )
+    .unwrap();
+    let feature_uid = feature_yml
+        .lines()
+        .find_map(|line| line.strip_prefix("uid: "))
+        .unwrap()
+        .to_string();
+    let events_dir = dir
+        .path()
+        .join(".markharness/identity-events/features")
+        .join(&feature_uid);
+    let event_file = std::fs::read_dir(&events_dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::remove_file(&event_file).unwrap();
+    git_commit_all(dir.path(), "tamper: delete event file");
+
+    let output = run(&["identity", "audit", "--dir", dir.path().to_str().unwrap()]);
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("event disappeared") && stdout.contains(&feature_uid),
+        "unexpected stdout: {stdout}"
+    );
+}

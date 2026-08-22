@@ -7,6 +7,7 @@ use std::process;
 use std::time::Duration;
 
 use crate::application;
+use crate::audit_scope;
 use crate::axes;
 use crate::backfill;
 use crate::changes;
@@ -209,6 +210,18 @@ pub enum IdentityCommand {
         /// Show planned UID assignments without changing any file
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Walk this branch's committed history and verify identity events are append-only and every commit's event set still replays (design doc §11, IdentityAuditor). Unlike `changes`/`verify`, this scans full history and can be slow on a long-lived repository.
+    Audit {
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+        /// Git ref whose first-parent history to walk. Defaults to HEAD.
+        #[arg(long, default_value = "HEAD")]
+        r#ref: String,
     },
 }
 
@@ -1227,6 +1240,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                         println!(
                             "{}",
                             serde_json::to_string(&serde_json::json!({
+                                "audit_scope": audit_scope::AuditScope::WorkingTree,
                                 "dry_run": dry_run,
                                 "migrated": entries,
                                 "conflicts": report.conflicts,
@@ -1284,6 +1298,43 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }
+            }
+        }
+        Command::Identity(IdentityCommand::Audit { dir, json, r#ref }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            let report = identity::run_audit(&root, &r#ref)?;
+            if json {
+                let violations: Vec<serde_json::Value> = report
+                    .violations
+                    .iter()
+                    .map(|v| {
+                        serde_json::to_value(v)
+                            .expect("audit violation serialization is infallible")
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "audit_scope": audit_scope::AuditScope::FullHistory,
+                        "commits_scanned": report.commits_scanned,
+                        "violations": violations,
+                    }))
+                    .expect("audit report serialization is infallible")
+                );
+            } else if report.violations.is_empty() {
+                println!(
+                    "no identity-history violations found ({} commits scanned)",
+                    report.commits_scanned
+                );
+            } else {
+                for violation in &report.violations {
+                    println!("{violation}");
+                }
+            }
+            if report.violations.is_empty() {
+                Ok(())
+            } else {
+                std::process::exit(1);
             }
         }
         Command::Verify(VerifyArgs {

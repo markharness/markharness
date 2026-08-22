@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crate::execution::iso8601_utc_now;
 use crate::identity::{
-    EntityKind, IdentityEvent, IdentityMutation, engine, knowledge_walk, lock, migration_manifest,
-    recovery, registry,
+    EntityKind, IdentityEvent, IdentityMutation, engine, knowledge_walk, lock, marker,
+    migration_manifest, recovery, registry,
 };
 
 /// Why `rename_id` refused to run, or failed partway (design doc §3, §9).
@@ -439,6 +439,7 @@ fn migrate_all(root: &Path) -> Result<MigrateReport, MigrateError> {
         // recorded directly, since there is no risky write in progress
         // this round for `legacy_signatures` to protect against.
         migration_manifest::record_new_case_uids(root, &legacy_signatures)?;
+        mark_uid_mode_if_fully_migrated(root)?;
         return Ok(plan.report);
     }
     // `legacy_signatures` is durably written into the intent here —
@@ -457,7 +458,29 @@ fn migrate_all(root: &Path) -> Result<MigrateReport, MigrateError> {
     recovery::commit_batch(root, &intent)?;
     roll_forward(root, &intent)?;
     recovery::finish(root, &intent)?;
+    mark_uid_mode_if_fully_migrated(root)?;
     Ok(plan.report)
+}
+
+/// The schema version 2 public cutover (design doc §13 Phase 5, ADR 0013
+/// 「移行」節): once every element of all five `EntityKind`s carries a
+/// `uid`, flips `config.toml`'s `[identity]` marker to `mode = "uid"` — the
+/// single authoritative flag consumers use to decide whether uid-less
+/// elements are a legitimate pre-migration state or a data-integrity
+/// violation. Re-scans the working tree directly rather than trusting the
+/// migration plan just committed, so it stays correct even if entities
+/// appeared between planning and commit. Idempotent — cheap enough to call
+/// after every `migrate_entities` run, including no-op ones.
+fn mark_uid_mode_if_fully_migrated(root: &Path) -> io::Result<()> {
+    for kind in EntityKind::ALL {
+        if knowledge_walk::list_entities(root, kind)?
+            .iter()
+            .any(|entity| entity.uid.is_none())
+        {
+            return Ok(());
+        }
+    }
+    marker::mark_uid_mode(root)
 }
 
 /// Computes the exact UID assignments a migration would make, across all
@@ -1203,6 +1226,60 @@ mod tests {
 
         assert!(report.conflicts.is_empty());
         assert_eq!(report.migrated.len(), 5);
+    }
+
+    /// Step 34 (design doc §13 Phase 5): once every element of every kind
+    /// carries a `uid`, `migrate_entities` must flip the project marker to
+    /// `mode = "uid"` in the same operation, since that marker — not a
+    /// count of migrated Features — is what future consumers check.
+    #[test]
+    fn migrate_entities_marks_uid_mode_once_every_kind_is_fully_migrated() {
+        let dir = full_tree_project();
+        assert!(!marker::is_uid_mode(dir.path()).unwrap());
+
+        migrate_entities(dir.path()).unwrap();
+
+        assert!(marker::is_uid_mode(dir.path()).unwrap());
+    }
+
+    /// A partial migration (e.g. only some kinds fully processed, or a
+    /// project with a still-unmigrated element added after cutover) must
+    /// not flip the marker — mode = "uid" is an all-five-kinds guarantee.
+    #[test]
+    fn migrate_entities_does_not_mark_uid_mode_while_conflicts_block_the_run() {
+        let dir = full_tree_project();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/other-behavior"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feature/other-behavior/behavior.yml"),
+            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\n",
+        )
+        .unwrap();
+
+        let result = migrate_entities(dir.path());
+
+        assert!(matches!(result, Err(MigrateError::Conflicts(_))));
+        assert!(!marker::is_uid_mode(dir.path()).unwrap());
+    }
+
+    /// Re-running `migrate_entities` on an already fully migrated project
+    /// (the common no-op path) must still leave the marker set — the
+    /// no-events branch has its own call site for
+    /// `mark_uid_mode_if_fully_migrated`.
+    #[test]
+    fn migrate_entities_keeps_uid_mode_marked_on_a_no_op_rerun() {
+        let dir = full_tree_project();
+        migrate_entities(dir.path()).unwrap();
+        assert!(marker::is_uid_mode(dir.path()).unwrap());
+
+        let report = migrate_entities(dir.path()).unwrap();
+
+        assert!(report.migrated.is_empty());
+        assert!(marker::is_uid_mode(dir.path()).unwrap());
     }
 
     /// A duplicate id *within* one kind (two Behaviors both named

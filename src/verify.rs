@@ -140,6 +140,12 @@ pub struct TraceEntry {
 /// The `verify trace` answer for one TestExecution record.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct TraceResult {
+    /// Always `AuditScope::TwoSnapshot` (design doc §11, ADR 0013 検証規則):
+    /// `trace` only ever compares the two `.markharness` snapshots named by
+    /// `verified_feature_tree_shas` and `changes/`, never full commit
+    /// history — that's `identity audit`'s job. A machine-readable marker
+    /// so a CI gate can tell the two apart without documentation alone.
+    pub audit_scope: crate::audit_scope::AuditScope,
     pub case_id: String,
     pub executed_at: String,
     pub entries: Vec<TraceEntry>,
@@ -235,6 +241,7 @@ pub fn trace(root: &Path, case_id: &str, milestone: &str) -> Result<TraceResult,
         });
     }
     Ok(TraceResult {
+        audit_scope: crate::audit_scope::AuditScope::TwoSnapshot,
         case_id: entry.case_id.clone(),
         executed_at: entry.executed_at.clone(),
         entries: trace_entries,
@@ -1033,6 +1040,10 @@ mod tests {
 
         let result = trace(dir.path(), "tc-edit-existing-todo-001", "test2").unwrap();
 
+        assert_eq!(
+            result.audit_scope,
+            crate::audit_scope::AuditScope::TwoSnapshot
+        );
         assert_eq!(result.case_id, "tc-edit-existing-todo-001");
         assert_eq!(result.executed_at, "2026-08-08T16:38:52Z");
         assert_eq!(

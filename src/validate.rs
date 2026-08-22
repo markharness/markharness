@@ -238,8 +238,36 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
     }
 
     validate_executions(root, &mut issues)?;
+    validate_uid_mode_invariant(root, &mut issues)?;
 
     Ok(issues)
+}
+
+/// ADR 0013 検証規則: schema version 2 の公開cutover後(`[identity]
+/// mode = "uid"`)は、UIDなし要素の新規追加を通常コマンドが拒否する。
+/// copy/import/手編集で紛れ込んだuidなし要素をここで検出し、
+/// `markharness identity migrate`(明示的なrepair操作)を促す。cutover前
+/// のprojectでは`mode`マーカー自体が存在しないため、このチェックは
+/// 常にno-op(移行途中のuidなし要素を誤検出しない)。
+fn validate_uid_mode_invariant(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Result<()> {
+    if !crate::identity::is_uid_mode(root)? {
+        return Ok(());
+    }
+    for kind in crate::identity::EntityKind::ALL {
+        for entity in crate::identity::knowledge_walk::list_entities(root, kind)? {
+            if entity.uid.is_none() {
+                issues.push(ValidationIssue {
+                    path: rel(root, &entity.path),
+                    message: format!(
+                        "project is in UID mode ([identity] mode = \"uid\") but this {} '{}' has no uid; run `markharness identity migrate` to repair",
+                        kind.as_str(),
+                        entity.id
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -293,6 +321,64 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    /// ADR 0013 検証規則: cutover前(markerなし)のprojectでは、uidなし
+    /// 要素があってもUID mode違反として報告してはならない(移行途中の
+    /// 通常状態のため)。
+    #[test]
+    fn does_not_flag_uid_less_elements_before_the_uid_mode_cutover() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    /// cutover後(`[identity] mode = "uid"`)は、uidを持たない要素の
+    /// 存在自体がvalidation issueとして報告されなければならない。
+    #[test]
+    fn flags_a_uid_less_feature_once_the_project_is_in_uid_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        crate::identity::marker::mark_uid_mode(dir.path()).unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(
+            issues.iter().any(|i| i.path.contains("feature.yml")
+                && i.message.contains("no uid")
+                && i.message.contains("identity migrate")),
+            "expected a UID-mode violation for the uid-less feature, got: {issues:?}"
+        );
+    }
+
+    /// Once every element actually has a `uid`, being in UID mode must not
+    /// itself produce spurious issues.
+    #[test]
+    fn does_not_flag_anything_when_every_element_has_a_uid_in_uid_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        let git_status = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .status()
+                .unwrap()
+        };
+        assert!(git_status(&["init", "-q"]).success());
+        assert!(git_status(&["config", "user.email", "test@example.com"]).success());
+        assert!(git_status(&["config", "user.name", "Test"]).success());
+        crate::identity::migrate_entities(dir.path()).unwrap();
 
         let issues = validate_all(dir.path()).unwrap();
 

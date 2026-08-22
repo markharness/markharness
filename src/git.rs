@@ -329,6 +329,85 @@ pub fn notes_add(root: &Path, notes_ref: &str, git_ref: &str, message: &str) -> 
     Ok(())
 }
 
+/// One line of `git diff --name-status`'s output: whether a path was
+/// added, deleted, or had its content modified between the two commits
+/// compared. Rename detection is explicitly disabled (`--no-renames`) — a
+/// path that disappears at one commit and reappears at another under a
+/// different name (or with sufficiently similar content) must be reported
+/// as a plain delete, not folded away as a single `R100` rename line this
+/// parser doesn't understand, so `identity::audit`'s append-only check
+/// sees it. Simply omitting `-M`/`--find-renames` is not enough: a
+/// repository (or the user's global config) with `diff.renames` enabled
+/// turns rename detection on by default even without either flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffStatus {
+    Added,
+    Deleted,
+    Modified,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffEntry {
+    pub status: DiffStatus,
+    pub path: String,
+}
+
+/// Every added/deleted/modified path under `path_in_repo` between `from`
+/// and `to`, via `git diff --name-status`. Used by `identity::audit` to
+/// find, commit pair by commit pair, exactly which identity event files
+/// changed — far cheaper than re-listing the whole tree at every commit.
+pub fn diff_name_status(
+    root: &Path,
+    from: &str,
+    to: &str,
+    path_in_repo: &str,
+) -> io::Result<Vec<DiffEntry>> {
+    reject_option_like(from)?;
+    reject_option_like(to)?;
+    let raw = run_git(
+        root,
+        &[
+            "diff",
+            "--no-renames",
+            "--name-status",
+            from,
+            to,
+            "--",
+            path_in_repo,
+        ],
+    )?;
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let status = match parts.next() {
+            Some("A") => DiffStatus::Added,
+            Some("D") => DiffStatus::Deleted,
+            Some("M") => DiffStatus::Modified,
+            _ => continue,
+        };
+        if let Some(path) = parts.next() {
+            entries.push(DiffEntry {
+                status,
+                path: path.to_string(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// Every commit from the repository root up to `git_ref`, following only
+/// first parents (i.e. skipping commits that only ever existed on a
+/// branch that was merged in), oldest first. Used by `identity::audit` to
+/// walk exactly the linear history that ended up on `git_ref`, matching
+/// what a `git log` on that branch would show.
+pub fn first_parent_history(root: &Path, git_ref: &str) -> io::Result<Vec<String>> {
+    reject_option_like(git_ref)?;
+    let raw = run_git(root, &["log", "--first-parent", "--format=%H", git_ref])?;
+    let mut commits: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+    commits.reverse();
+    Ok(commits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -967,5 +1046,167 @@ mod tests {
         let result = is_ancestor(dir.path(), "HEAD", &malicious);
         assert!(result.is_err());
         assert!(!victim.exists());
+    }
+
+    #[test]
+    fn diff_name_status_reports_added_deleted_and_modified_paths() {
+        let dir = init_repo();
+        fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        fs::write(dir.path().join("b.txt"), "keep\n").unwrap();
+        commit_all(dir.path(), "first");
+        let from = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        fs::remove_file(dir.path().join("b.txt")).unwrap();
+        fs::write(dir.path().join("c.txt"), "new\n").unwrap();
+        commit_all(dir.path(), "second");
+        let to = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let mut entries = diff_name_status(dir.path(), &from, &to, ".").unwrap();
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        assert_eq!(
+            entries,
+            vec![
+                DiffEntry {
+                    status: DiffStatus::Modified,
+                    path: "a.txt".to_string()
+                },
+                DiffEntry {
+                    status: DiffStatus::Deleted,
+                    path: "b.txt".to_string()
+                },
+                DiffEntry {
+                    status: DiffStatus::Added,
+                    path: "c.txt".to_string()
+                },
+            ]
+        );
+    }
+
+    /// If the repository (or the user's global config) has
+    /// `diff.renames` enabled, plain `git diff --name-status` collapses a
+    /// delete+add pair with similar content into a single `R100` line
+    /// instead of separate `D`/`A` lines — invisible to `identity::audit`,
+    /// which only understands `A`/`D`/`M`. `diff_name_status` must force
+    /// rename detection off regardless of that config, so a genuine
+    /// deletion is never silently hidden behind a detected "rename".
+    #[test]
+    fn diff_name_status_never_folds_a_delete_and_add_into_a_rename_even_with_diff_renames_enabled()
+    {
+        let dir = init_repo();
+        run_git(dir.path(), &["config", "diff.renames", "true"]).unwrap();
+        let content = "identical content that is long enough for git's \
+            similarity heuristic to treat this as a rename by default\n"
+            .repeat(5);
+        fs::write(dir.path().join("old_name.txt"), &content).unwrap();
+        commit_all(dir.path(), "first");
+        let from = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        fs::remove_file(dir.path().join("old_name.txt")).unwrap();
+        fs::write(dir.path().join("new_name.txt"), &content).unwrap();
+        commit_all(dir.path(), "second");
+        let to = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let mut entries = diff_name_status(dir.path(), &from, &to, ".").unwrap();
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        assert_eq!(
+            entries,
+            vec![
+                DiffEntry {
+                    status: DiffStatus::Added,
+                    path: "new_name.txt".to_string()
+                },
+                DiffEntry {
+                    status: DiffStatus::Deleted,
+                    path: "old_name.txt".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_name_status_rejects_option_like_revisions() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = diff_name_status(dir.path(), &malicious, "HEAD", ".");
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
+    fn first_parent_history_returns_commits_oldest_first() {
+        let dir = init_repo();
+        fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        commit_all(dir.path(), "first");
+        let first = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        commit_all(dir.path(), "second");
+        let second = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let history = first_parent_history(dir.path(), "HEAD").unwrap();
+
+        assert_eq!(history, vec![first, second]);
+    }
+
+    #[test]
+    fn first_parent_history_skips_commits_only_reachable_via_a_merged_side_branch() {
+        let dir = init_repo();
+        fs::write(dir.path().join("a.txt"), "base\n").unwrap();
+        commit_all(dir.path(), "base");
+        let base = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        run_git(dir.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        fs::write(dir.path().join("b.txt"), "side\n").unwrap();
+        commit_all(dir.path(), "side commit");
+
+        run_git(dir.path(), &["checkout", "-q", "main"]).unwrap();
+        fs::write(dir.path().join("c.txt"), "main\n").unwrap();
+        commit_all(dir.path(), "main commit");
+        run_git(
+            dir.path(),
+            &["merge", "-q", "--no-ff", "side", "-m", "merge"],
+        )
+        .unwrap();
+        let merge = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let history = first_parent_history(dir.path(), "HEAD").unwrap();
+
+        assert_eq!(
+            history.len(),
+            3,
+            "expected base, main commit, merge only: {history:?}"
+        );
+        assert_eq!(history[0], base);
+        assert_eq!(history[2], merge);
     }
 }

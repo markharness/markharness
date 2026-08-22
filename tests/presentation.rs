@@ -1,6 +1,7 @@
 use markharness::presentation::{
     CommandOutcome, HumanPresenter, JsonPresenter, PresentedResult, Presenter,
 };
+use markharness::verify::PendingReport;
 
 #[test]
 fn human_presenter_renders_generated_outcome_without_side_effects() {
@@ -31,5 +32,40 @@ fn json_presenter_wraps_generated_outcome_in_versioned_contract() {
     assert_eq!(
         result.stdout,
         "{\"generated\":2,\"ok\":true,\"outcome\":\"generated\",\"schema_version\":1,\"written\":[]}\n"
+    );
+}
+
+/// ADR 0013 検証規則: `changes compute` only ever compares two
+/// `.markharness` snapshots, never full commit history — that distinction
+/// must be machine-readable in its JSON output, not just documented, so a
+/// CI gate can tell it apart from `identity audit`.
+#[test]
+fn json_presenter_marks_changes_computed_with_the_two_snapshot_audit_scope() {
+    let result = JsonPresenter.present(&CommandOutcome::ChangesComputed {
+        count: 3,
+        to: "v2".to_string(),
+    });
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("\"audit_scope\":\"two_snapshot\""),
+        "unexpected stdout: {}",
+        result.stdout
+    );
+}
+
+/// Same `audit_scope` contract for `verify pending`'s JSON output.
+#[test]
+fn json_presenter_marks_pending_with_the_two_snapshot_audit_scope() {
+    let result = JsonPresenter.present(&CommandOutcome::Pending {
+        report: PendingReport::default(),
+        fail_on_pending: false,
+    });
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("\"audit_scope\":\"two_snapshot\""),
+        "unexpected stdout: {}",
+        result.stdout
     );
 }

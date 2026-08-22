@@ -69,6 +69,15 @@ fn compute_cache_key(
 /// as it existed at `git_ref`. Returns an empty `Vec` (not an error) when
 /// the entity has no events at that ref — for example, before it was ever
 /// issued a UID.
+///
+/// A malformed event file (invalid YAML, or valid YAML that doesn't match
+/// `IdentityEvent`'s shape) fails with `io::ErrorKind::InvalidData`
+/// specifically — never `io::Error::other`'s `Other`, which every
+/// underlying git-command failure in this same call chain also uses.
+/// Callers like `identity::audit::check_causal_chain` rely on that
+/// distinction to tell a malformed event file (itself an audit finding to
+/// report) apart from a genuine Git/I/O failure (an infrastructure
+/// problem that must keep propagating instead).
 fn load_events(
     root: &Path,
     git_ref: &str,
@@ -83,7 +92,8 @@ fn load_events(
             continue;
         }
         let content = git::show_blob_by_sha(root, &entry.sha)?;
-        let event: IdentityEvent = serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let event: IdentityEvent = serde_yaml_ng::from_str(&content)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         events.push(event);
     }
     Ok(events)
