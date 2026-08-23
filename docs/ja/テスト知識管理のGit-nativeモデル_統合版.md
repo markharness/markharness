@@ -11,7 +11,7 @@
 
 ## 0. 経緯サマリー
 
-1. **初期案(A案)**：機能構造・テストケース・実行結果・マイルストーンを統合する情報モデル。研究テーマとしては要件⇔テスト⇔実装のトレーサビリティ研究(Cleland-Huang, 2011等)と重なり新規性が弱いが、「バージョン軸を第一級概念とする派生関係の追跡」は、調査対象の既存TMSとの差分候補として残った(付録A・検討まとめ第1章。現時点の限定は第2.9節)。
+1. **初期案(A案)**：機能構造・テストケース・実行結果・マイルストーンを統合する情報モデル。研究テーマとしては要件⇔テスト⇔実装のトレーサビリティ研究(Cleland-Huang, 2011等)と重なり新規性が弱いが、「バージョン軸を第一級概念とする派生関係の追跡」は、調査対象の既存TMSとの差分候補として残った(付録A・検討まとめ第1章。現時点の限定は第2.10節)。
 2. **Git階層・グラフ構造案との統合**：テスト知識(Requirement/Feature/Behavior/Condition/ExpectedResult)を木構造+横断的観点(Axis、グラフ構造)で管理し、テストケースをその派生物として扱うモデルに統合(検討まとめ第2〜3章)。
 3. **LLM活用への全面ピボット案(不採用)**：「AI専用知識グラフ」への転換を検討したが、(a)クエリ速度・使いやすさの懸念は対象がLLMになっても解消されない、(b)新規性の主張として弱い、(c)評価方法が根本的に変わり単独では査読耐性が下がる、との理由で不採用(付録A.1)。
 4. **部分ピボットと段階的な設計修正**：人間向けモデルを土台に、LLM角度は将来課題として切り出した上で、研究テーマを「案1：構造表現」単独に絞り込み(検討まとめ第4章)、以降10回以上の技術的指摘を受けて以下を確定させた。
@@ -73,7 +73,7 @@ flowchart LR
 3. 既存の大規模リポジトリへの段階的な導入を狙って設計した、マイルストーン単位の非同期バックフィルアーキテクチャ(第4章)。ただしこの設計が実際の大規模リポジトリでも意図通り機能するかは、本ドラフト時点では実データによる検証(ケーススタディ)を経ていない仮説である(第6章Threats to Validity・第7章Future Work参照)。
 4. 対象組織の実際の現状運用を対照群とし、正解データを当時の成果物から再構成した、実データに基づく評価設計(第5章)。
 
-**本研究の差分**：Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、再検証追跡を統合したローカル/Git-native運用である。既存TMS(TestRail等)が提供するテストケース単体の履歴比較・復元機能とは異なり、複数Feature・複数リリースにまたがる版履歴を問い合わせるための情報を単一モデルで導出できる点が差分の一つである(第2.8節)。ただし、要件・テストトレーサビリティ、イベントベースの変更伝播、要件ベースの回帰テスト選択・テスト生成、trace link evolution、content fingerprintによる変更鮮度判定にはそれぞれ前例がある。本研究は「個別要素の世界初」を主張せず、Feature集約のversion identity・決定論的テスト派生・snapshot差分・影響TestCase導出・version-bound execution evidence・再検証状態という6性質を統合した**検証対象の設計仮説**として位置づける(第2.9節)。
+**本研究の差分**：Gitのコミット意味論、構造化テスト知識、マイルストーン境界のChangeEvent、再検証追跡を統合したローカル/Git-native運用である。既存TMS(TestRail等)が提供するテストケース単体の履歴比較・復元機能とは異なり、複数Feature・複数リリースにまたがる版履歴を問い合わせるための情報を単一モデルで導出できる点が差分の一つである(第2.8節)。ただし、要件・テストトレーサビリティ、イベントベースの変更伝播、要件ベースの回帰テスト選択・テスト生成、trace link evolution、content fingerprintによる変更鮮度判定にはそれぞれ前例がある。本研究は「個別要素の世界初」を主張せず、Feature集約のversion identity・決定論的テスト派生・snapshot差分・影響TestCase導出・version-bound execution evidence・再検証状態という6性質を統合した**検証対象の設計仮説**として位置づける(第2.10節)。
 
 ### 1.4 研究・OSS・プロダクトとしての位置づけ
 
@@ -123,7 +123,7 @@ Rahimiら(2018)のTrace Link Evolver(TLE)は、連続するソフトウェアver
 
 **(2) 素朴なGit運用**：Markdown/YAMLでのテストケース管理をGit上でそのまま行う運用も実務に存在する(第1.1節)。バージョンキーはcommitハッシュに依存し体系化されず、版履歴の自動導出・変更影響分析のいずれも持たない。
 
-**(3) 構造化メタデータ＋Git管理型ツール(Doorstop、StrictDoc、GTM、tmt/fmf)**：Doorstopは要件・テストケース等のlinkable itemをYAMLとしてバージョン管理下に置き、document tree・traceability validation・publication機能を提供する。さらに各itemの内容由来のSHA-256 fingerprint、レビュー時点のfingerprint、親itemへのlinkに記録したfingerprintを比較し、変更後のitemやlinkをunreviewed/suspectとして検出する。したがってcontent-derived identityとtrace-link freshness自体は既知である。本モデルとの差は、Feature配下全体をGit tree SHAで集約し、生成TestCaseの実行証拠をそのFeature versionへbindして、マイルストーン間の再実行要否を導出する点に置く。StrictDocはhuman-readableなテキストでrequirements/specificationを管理し、requirements・test cases・test results間のtraceabilityやJUnit XML等のtest report統合を提供する。差分はtest result traceabilityの有無ではなく、結果が対象knowledge versionを記録し、knowledge変更後にresult validityを自動再評価する意味論が公開仕様の確認範囲では見つからない点である。GTMはMarkdown上のテスト管理と手動整数versionを提供する。tmt/fmfはGit refによるremote plan取得、Storiesのverified状態、Results、`adjust`/Policyを備えるため「versionの概念自体を持たない」とは扱わない。一方、Feature content versionと実行証拠を結び、変更後の再検証状態を導出するドメインモデルは、確認した公開仕様の範囲では見つからなかった。これらは機能の非存在を証明する結論ではなく、第2.9節に示す調査範囲内の比較である。
+**(3) 構造化メタデータ＋Git管理型ツール(Doorstop、StrictDoc、GTM、tmt/fmf)**：Doorstopは要件・テストケース等のlinkable itemをYAMLとしてバージョン管理下に置き、document tree・traceability validation・publication機能を提供する。さらに各itemの内容由来のSHA-256 fingerprint、レビュー時点のfingerprint、親itemへのlinkに記録したfingerprintを比較し、変更後のitemやlinkをunreviewed/suspectとして検出する。したがってcontent-derived identityとtrace-link freshness自体は既知である。本モデルとの差は、Feature配下全体をGit tree SHAで集約し、生成TestCaseの実行証拠をそのFeature versionへbindして、マイルストーン間の再実行要否を導出する点に置く。StrictDocはhuman-readableなテキストでrequirements/specificationを管理し、requirements・test cases・test results間のtraceabilityやJUnit XML等のtest report統合を提供する。差分はtest result traceabilityの有無ではなく、結果が対象knowledge versionを記録し、knowledge変更後にresult validityを自動再評価する意味論が公開仕様の確認範囲では見つからない点である。GTMはMarkdown上のテスト管理と手動整数versionを提供する。tmt/fmfはGit refによるremote plan取得、Storiesのverified状態、Results、`adjust`/Policyを備えるため「versionの概念自体を持たない」とは扱わない。一方、Feature content versionと実行証拠を結び、変更後の再検証状態を導出するドメインモデルは、確認した公開仕様の範囲では見つからなかった。これらは機能の非存在を証明する結論ではなく、第2.10節に示す調査範囲内の比較である。
 
 実務では、これら単体ではなくTMS・課題管理ツール・git検索等を組み合わせて運用する。その組合せから過去の変更影響を調査できる場合もあるが、対象とする現状運用ではFeature versionとTestCase・実行証拠の関係を直接問い合わせられず、複数情報源の手動照合を要する。本研究は、この照合を単一モデルで支援する設計が正答率・所要時間を改善するかを評価する。
 
@@ -143,7 +143,15 @@ Rahimiら(2018)のTrace Link Evolver(TLE)は、連続するソフトウェアver
 注2：GTMの手動整数方式は、本研究が第3.2節で人間の手動整数管理からGitのコンテンツアドレス方式へ移行した、まさにその不採用対象の方式にあたる。
 注3：Doorstopはitem内容とlink先からSHA-256 fingerprintを計算し、`reviewed`および親linkに保存したfingerprintとの差から変更鮮度を判定する。これはMarkharnessのcontent-addressed identity/freshnessに近い重要な先行機構である。相違はMarkharnessがFeatureディレクトリ全体のGit tree SHAをversion identityとし、TestExecutionをそのversionへbindしてrelease verificationのpending/staleを導出する点にある。StrictDocはtest result traceabilityを提供するが、確認した公開仕様ではこのversion bindingと変更後のvalidity再評価までは見つからなかった(調査日：2026-08-18)。
 
-### 2.9 新規性の位置付けと調査範囲の限定
+### 2.9 モジュール分割における粒度決定
+
+テスト知識をFEATURE単位に分割する際の粒度(1つのFeatureにどこまでConditionを集約するか)の質は、本モデルでは完全に利用者の設計判断に委ねられており、ツール側での検証・診断は行っていない(第3.5節)。これはDoorstop・StrictDoc・GTM・tmt/fmf(第2.8節)と同じ立場であり、いずれの比較対象ツールも粒度診断機能を持たない、Git管理・YAMLベースの知識管理ツールに広く共有される既知の限界である。
+
+一方、モノリスからマイクロサービスへの分割という別の文脈では、類似の粒度問題を凝集度・結合度等の構造的指標に基づき解決しようとする研究が20年以上蓄積されている。グラフクラスタリングによる手法(cohesion/coupling fitness functionに基づくBunch)や、多目的進化的探索による手法(結合度の最小化・凝集度の最大化を目的関数とするMSExtractor)がその例である。ただし、この領域を対象にした文献調査(Vera-Rivera et al., 2021)は、自動的手法が少数派であり、調査対象29本中15本が依然として手動の方法論に留まっていることを報告している。したがって「粒度を構造で解く」研究は存在するものの、業界標準としては確立しておらず、本モデルが粒度決定を利用者の手動裁量に委ねていること自体は、この分野の主流と整合した選択でもある。
+
+本研究はこれらの構造的・アルゴリズム的な粒度決定手法を採用しない。その結果として生じる露出(Feature粒度が粗いほど`impacted_testcases`が無関係なTestCaseを過剰に含む、第3.5節)は、第6章の限界として扱い、粒度診断への拡張は第7章 Future Workとする。
+
+### 2.10 新規性の位置付けと調査範囲の限定
 
 本節までのRelated Workが示す通り、本モデルの個々の構成要素には強い先行研究・既存ツールが存在する。したがって、次のような広い表現は避ける。
 
@@ -341,6 +349,8 @@ flowchart TB
 **related_events(2026-08追記、製品化提案)**：`ChangeEvent`は`related_events: Vec<String>`(他の`event_id`の配列、`#[serde(default)]`で加算的)も持つ。複数のFeatureにまたがる変更が実は同じ論理変更の一部だった、という関連付けを人間が事後的に記録できるフィールドで、`markharness changes annotate <event_id> --related <他のevent_id>...`(複数指定可)で追記する。`ChangeEvent`がFeature単位・自動計算という原子性を保つ(§3.2)ための設計上の選択であり、複合ChangeEventのような自動計算ロジック自体の変更は行わない。
 
 **候補抽出の粒度**：`impacted_testcases`は、変更が検出されたFeatureに対応する全TestCaseを候補として返す、Feature単位の保守的な候補抽出である(`src/changes.rs`)。Condition/ExpectedResultのうちどの部分が変更されたかに基づいて対象を絞り込む処理は行っていないため、実際には変更の影響を受けていないTestCaseも候補に含まれうる(適合率低下の要因、第5.5節で候補数・適合率・再現率を併記する)。この精密化は第7章 Future Workとする。
+
+この適合率低下の度合いは、1つのFeatureに集約されたCondition数(Feature粒度)が多いほど悪化する構造を持つ。`markharness validate`はスキーマ整合性とaxis/forked_fromの参照整合性は検証するが(第3.6節)、Feature粒度の妥当性(Condition数の分布、Condition間の共変更相関等)自体を診断する機能は持たない。この設計は、粒度決定を利用者の裁量に委ねるDoorstop・StrictDoc・GTM・tmt/fmf等の比較対象ツール(第2.8節)と同じ立場であり、モジュール分割研究における粒度決定の位置づけは第2.9節を参照。
 
 **候補抽出の2モード(2026-08追記)**：`impacted_testcases`をどの時点の`knowledge/`から生成するかについて、`markharness changes compute`は2つのモードを持つ。既定は`historical`モードで、`to_milestone`タグが指すGitツリーからTestCaseを生成するため、同じ`from_milestone..to_milestone`区間を後日再計算しても常に同じ結果が得られる(`historical_testcases_by_feature`)。`--current-tree`を指定すると、現在の作業ツリーの`knowledge/`から生成する従来動作になり(`impacted_testcases_by_feature`)、作業ツリーが変化し続ける限り同じ区間の再計算結果も変わりうる。前者は「過去のある区間で実際に何が影響を受けたか」を安定して問い合わせる用途、後者は「今この時点で再確認すべきテストは何か」を問い合わせる用途に対応する。詳細は[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md)を参照。
 
@@ -553,6 +563,7 @@ flowchart TB
 - 提案モデルの実装(ツール)が被験者実験の結果に影響する可能性(ツールの使いやすさとモデルそのものの有効性を混同しないよう、UIの簡素化・操作説明の標準化を行う)。
 - id解決キャッシュを非コミット化したことで、CI環境が変わるたびに再計算コストが発生する可能性(ビルドキャッシュの永続化戦略に依存)。
 - バックフィルアーキテクチャ(第4章)の性能は、実際の大規模リポジトリでの検証(ケーススタディ)がまだない。新規構築するデータセットでは移行コストが顕在化しない可能性があり、実際の導入コストを過小評価するリスクがある。
+- **粒度依存性**：`impacted_testcases`の適合率は、対象プロジェクトがFeatureをどの粒度で分割するかに左右される(第2.9節・第3.5節)。この分割の質はツール側で診断されないため、第5章の評価計画では、評価対象プロジェクトの`knowledge/`ツリーの粒度特性(Feature当たりのCondition数分布等)を共変量として報告すべきである。そうしなければ、Feature粒度が粗いプロジェクトでモデル自体の妥当性とは独立に適合率が系統的に低下する可能性を、RQ1の結果と混同するリスクがある。
 
 ---
 
@@ -564,6 +575,7 @@ flowchart TB
 - ADR 0013のschema version 2 identityモデル(全永続Knowledge要素の不変UID、限定的なidentity宣言、UIDベースのTestCase/Execution/ChangeEvent継続性、legacy migration、crash recovery)は実装済み(3.6節、CLI manual 1.25〜1.33節)であり、Acceptedへ移行した。従来候補のid⇔path独立indexとalias方式は並行するFuture Workではなく、置き換え済みの代替案である。残る課題は実プロジェクトへの適用による有用性・生産性への効果の評価、およびrepository統合(複数repositoryが同じUIDを持つ場合の明示的reissue運用、decisions/0013「copy、import、repository統合の規則」)の実運用検証である。
 - 既存TMS(TestRail/Xray等)からのインポータの実装(第3.6節で未実装と整理した項目)。
 - Condition/ExpectedResult差分に基づく候補抽出の精密化。現行実装はFeature単位の保守的な候補抽出であり(第3.5節)、Feature内のどのCondition/ExpectedResultが変わったかまでは絞り込まない。これによる適合率低下の実測は第5章の評価計画で確認する。
+- **粒度診断**：上記のCondition/ExpectedResult単位への絞り込みとは別に、Feature粒度そのものを診断する方向も補完的な拡張として考えられる。例えば、Feature当たりのCondition数や`impacted_testcases`候補数がプロジェクトの過去分布から統計的に逸脱しているFeatureを検出したり、Feature内のConditionの共変更傾向をsplit/merge判断のヒントとして提示したりすることが考えられる。これはマイクロサービス分割研究における構造的・アルゴリズム的な粒度決定(fitness function に基づくクラスタリング[Bunch]、多目的進化的探索[MSExtractor]、第2.9節)を参考にした方向であり、本研究では採用していない。こうした診断が、新たな複雑性を持ち込むことなく適合率を実質的に改善するかは未検証の問題であり、より成熟したマイクロサービス粒度決定の文献においても自動的手法が依然として少数派である(第2.9節)ことを踏まえると、慎重な検証を要する。
 - LLMによる文脈供給・Markdown手順書の自動生成・更新への応用可能性(検討経緯・不採用理由は付録A参照。本研究の評価対象外)。
 - 構造からのテストケース自動生成の網羅率評価、Git粒度分割によるレビュー性向上の検証(検討まとめ第4章の案2・3)。
 - 他ドメイン・他組織での追試による一般化可能性の検証。
@@ -640,6 +652,9 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 - Software Test Data Management Based on Knowledge Graph. https://www.informatica.si/index.php/informatica/article/download/6416/3168
 - Model management to support systems engineering workflows using ontology-based knowledge graphs. https://arxiv.org/html/2512.09596v1
 - UOOR: Seamless and Traceable Requirements. https://arxiv.org/pdf/2502.18617
+- Vera-Rivera, F. H. et al. (2021). Defining and measuring microservice granularity — a literature overview. *PeerJ Computer Science*. https://pmc.ncbi.nlm.nih.gov/articles/PMC8444086/
+- Saidani, I., Ouni, A., Mkaouer, M. W., Saied, A. (2019). Towards Automated Microservices Extraction Using Muti-objective Evolutionary Search(MSExtractor). *ICSOC 2019*, LNCS 11895, pp. 58–63. https://doi.org/10.1007/978-3-030-33702-5_5
+- Bunch(cohesion/coupling fitness functionに基づくsearch-based software modularization)。参照：CARGO関連文献 https://www.researchgate.net/publication/362252400_CARGO_AI-Guided_Dependency_Analysis_for_Migrating_Monolithic_Applications_to_Microservices_Architecture
 - Trust-Aware Multi-Agent Traceability. https://arxiv.org/pdf/2606.17203
 - TestRail. Test case versioning (Enterprise版のテストケース単体の履歴比較・復元機能、公式サポート記事). https://support.testrail.com/hc/en-us/articles/7768433966996-Test-case-versioning
 - https://qtrl.ai/blog/testrail-vs-zephyr
@@ -650,6 +665,7 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 - https://qtrl.ai/blog/testlink-vs-testrail
 - https://www.practitest.com/testrail-alternatives/
 - https://www.practitest.com/resource-center/blog/beyond-hierarchical-structures/
+- Martinez, N. (2026). GitLab Test Case Management: 5 Tools Compared. https://medium.com/@nikhilmartinez/gitlab-test-case-management-5-tools-compared-e0cb6ae9a416
 - The Git Test Management (GTM) System. https://www.testmanagement.com/the-gtm-system/
 - GTMS: Git Test Management System. https://www.testmanagement.com/
 - teemtee/tmt. https://github.com/teemtee/tmt
@@ -665,6 +681,8 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
 
+- **2026-08-23(15)**：参考文献の全件リンク・書誌情報を実際にfetchして検証した。前項(14)で追加したMSExtractorの参考文献に誤りを発見して修正した：著者を「Saidani, I. et al.」、URLをScienceDirect(S0950584922001264、2022年)としていたが、このURLの実際の論文は"Improving microservices extraction using evolutionary search"(Sellami, Ouni, Saied, Bouktif, Mkaouer、2022年)であり、Saidaniは著者に含まれていなかった。「MSExtractor」という名称自体はSaidani, Ouni, Mkaouer, Saied (2019, ICSOC)の"Towards Automated Microservices Extraction Using Muti-objective Evolutionary Search"で提唱されたものであり、参考文献を正しい論文・DOI(`10.1007/978-3-030-33702-5_5`)へ差し替えた。あわせて第2.9節本文の「粒度・結合度・凝集度を同時最適化するMSExtractor」という記述も、実際の目的関数(結合度の最小化・凝集度の最大化の2つ)に合わせて修正した(ja/en)。また、変更履歴末尾に参考文献リストと無関係に置かれていたMedium記事へのbare URLを、参考文献リストへ書誌情報付きで移動した(ja/en)。他の参考文献(Cleland-Huang等の学術論文4件、Doorstop/StrictDoc公式ドキュメント4件、arXiv論文3件、TestRail/GTM/GTMS/tmt公式資料、TMS比較ブログ記事8件)はすべて実在確認・内容確認が取れた。コードの機能的な変更は無く、本稿(ja/en)の記述修正のみ。
+- **2026-08-23(14)**：`docs/markharness-granularity-review.md`のレビュー提案(有用と判定)に対応。Feature粒度(1つのFeatureに集約するCondition数)の質をツール側で一切検証・診断していない設計上の立場を、比較対象ツール(Doorstop/StrictDoc/GTM/tmt/fmf)との対比だけでなく、マイクロサービス分割研究における粒度決定(構造的・アルゴリズム的手法、Bunch/MSExtractor、Vera-Rivera et al. 2021の文献調査)との対比としても明示した。§2に新設§2.9「モジュール分割における粒度決定」を追加し(旧§2.9「新規性の位置付けと調査範囲の限定」は§2.10へ繰り下げ、本文中の参照3箇所を修正)、§3.5の「候補抽出の粒度」段落へFeature粒度自体は`validate`の診断対象外である旨を追記、§6 Threats to Validityへ「粒度依存性」、§7 Future Workへ「粒度診断」の各項目を追加した。参考文献にVera-Rivera et al. (2021)・Saidani MSExtractor・Bunch関連文献を追加。コードの機能的な変更は無く、本稿(ja/en)の記述追加のみ。
 - **2026-08-23(13)**：§1.4・§3.3に残っていた「identity event store/ADR 0013の不変UIDモデルはProposedで未実装」という記述を、2026-08-22の§3.6/§7/§8修正時に見落とされていた箇所として修正した。ADR 0013は既にAccepted・実装済み(第3.6節)であり、この2箇所だけが古い記述のまま取り残されていた。コードの機能的な変更は無く、本稿(ja/en)の記述修正のみ。
 - **2026-08-23(12)**：Standards/Spec形式レビューの指摘(「共通のdirectory削除・再作成リスクに再検討条件がありません」「全platform共通のAccepted riskが記録要件を満たしていません」)に対応。十一度目のレビュー対応で追記した全platform共通のAccepted-risk記録(`.markharness/`を通常directoryとして削除・再作成するsplit-brain変種、design doc §6.4)には、直後に追加したWindows固有記録とは異なり、明示的な再検討トリガーが欠けていた。design doc §6.4(ja/en)へ、`docs/review-policy.md`のAccepted-risk記録要件に沿って、次の4件の再検討トリガーを追記した: (1) 祖先ディレクトリの同一性を安全かつ低コストに固定できる手段が利用可能になった場合、(2) この変種がより低い権限で到達可能になると判明した場合、(3) threat modelがuntrusted workspace writerを含むよう変更された場合、(4) 実運用でincidentが発生した場合。コードの機能的な変更は無く、design doc(ja/en)修正のみ。571 tests green(件数変更なし)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
 - **2026-08-23(11)**：Stop hook Codexレビューの指摘(「Windows accepted-risk record overstates the post-open mitigation」)に対応。直前に追加したWindows固有Accepted-risk記録の「既存の緩和策」項が、open後の事後検証(`is_dir()`/`is_symlink()`/`FILE_ATTRIBUTE_REPARSE_POINT`/`GetFileType`)を「symlink・junction・非ディスクファイルへ追従した結果を検出・拒否する」と記述していたが、これは記録が対象とする**祖先置換**の変種に対しては誤りだった。置換された祖先の指す先(攻撃者の制御下にあるディレクトリ)に攻撃者が通常の正規ファイルを置いておけば、追従した結果のopenは事後検証を素通りする(場所が違うだけの本物のファイルであるため)。事後検証が実際に効くのは「最終要素自体が非通常ファイルである」という別のケース(既存の、この変種とは無関係な防御)であり、この変種の検出手段にはなっていなかった。design doc §6.4(ja/en)の該当記述を、事後検証はこの変種に対しては実効的な緩和にならない旨を明記する記述へ修正し、実効的な緩和策はチェックとopenの間の窓を狭めることのみである、と正確に記載した。コードの機能的な変更は無く、design doc(ja/en)のAccepted-risk記述修正のみ。571 tests green(件数変更なし)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
@@ -707,4 +725,3 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 - **2026-08-10**：RQ1未実証への対応(論文の位置づけを「設計提案＋リファレンス実装のレポート」に修正、第8章Conclusion整備)、`verify trace`/`verify pending`を新設§3.7として反映、`changes lineage`の部分統合(`to_milestone`が直接マージコミットの場合のみ)を反映、ファイル名を`統合版V2.md`から`統合版.md`へ正式化(内容変更なし)、未実装だった5項目(idパス非依存化・キャッシュキー内容アドレス化・`change_type`・schema検証・merge-base系譜監査)の実装を反映。
 - **2026-08-09**：論文を当時のmarkharness実装の状態に合わせて修正。
 - **2026-08-07以前**：初版作成(検討経緯・v1〜v10ドラフトの統合)。
-- https://medium.com/@nikhilmartinez/gitlab-test-case-management-5-tools-compared-e0cb6ae9a416
