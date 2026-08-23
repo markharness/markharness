@@ -106,6 +106,23 @@ Apply these defaults unless a more specific accepted ADR or design document says
 - A finding whose entire content is "this accepted-risk record's prose doesn't literally restate one of the required elements," where the underlying risk determination (condition, capability, reachability, mitigation, acceptance reasoning) is otherwise unchanged and correct, is `No finding` once that determination has already been recorded once in substance — do not require a second round to reformat it into stricter headings or bullet structure.
 - Before opening a new review round on a change that is itself the fix for the previous round's finding, confirm the previous finding's evidence no longer applies. If the fix is correct, the review is done for that finding; do not use the same evidence location to open an adjacent, narrower finding unless it describes a genuinely different condition.
 
+### Complete-pass and re-review discipline
+
+A review should give the author one complete, actionable picture of the current change, not reveal independently discoverable problems over a sequence of rounds.
+
+- At the start of a review, enumerate the behaviors changed by the diff and check each one against both the Standards and Spec axes, including its ordinary failure path and any platform behavior that is material to an explicit contract. Treat observations made before that pass finishes as interim, not as the final review result.
+- Complete the full pass before issuing the review conclusion, and report all findings discovered in that pass together. A later round must not turn an already-inspected, unchanged behavior into a new finding merely to pursue a nearby edge case.
+- Apply YAGNI to remediation as well as implementation. When a narrow fix satisfies the current issue and preserves the applicable invariants, recommend that fix instead of requiring a general mechanism. If the author nevertheless introduces a broader contract, review the newly promised behavior, but do not require the broader contract to be retained.
+- For an issue-scoped change, review Standards and Spec as required above, but make a blocking finding only for a violation introduced, worsened, or newly exposed by the change. Unrelated pre-existing problems are `Follow-up` at most.
+- Reserve `Must fix` for the conditions defined in this policy. Do not promote a portability edge case or unusual filesystem object to `Must fix` unless it is credibly reachable in ordinary use and violates an explicit requirement or invariant. Prefer narrowing an unnecessary guarantee over completing a general solution for every edge case.
+
+On a re-review of a corrective change:
+
+1. First determine whether every previous finding is resolved, still present, or deliberately addressed by narrowing the implementation or its documented contract.
+2. Review all behavior newly added or changed by the correction in the same pass. A new finding is appropriate when the correction introduced, worsened, or newly exposed the condition.
+3. If a new finding concerns behavior that was unchanged and available for inspection in the previous completed review, label it explicitly as a reviewer omission. Do not present it as a consequence of the author's latest correction. Consolidate any remaining independently discoverable issues from that behavior in the same round.
+4. End with an explicit merge disposition: `mergeable`, `mergeable with non-blocking follow-up`, or `not mergeable`, with the blocking findings identified. When no blocking finding remains, say so directly.
+
 ## Finding format
 
 Each finding must be self-contained and include:
