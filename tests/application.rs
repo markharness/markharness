@@ -42,6 +42,95 @@ fn generate_use_case_writes_artifacts_and_returns_an_outcome() {
 }
 
 #[test]
+fn generate_use_case_preserves_non_owned_siblings_in_generated_dir() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".markharness/generated/extra/nested")).unwrap();
+    std::fs::write(root.path().join(".markharness/generated/.gitkeep"), "").unwrap();
+    std::fs::write(
+        root.path()
+            .join(".markharness/generated/extra/nested/note.txt"),
+        "keep me\n",
+    )
+    .unwrap();
+
+    application::generate_testcases(root.path()).unwrap();
+
+    assert!(
+        root.path()
+            .join(".markharness/generated/.gitkeep")
+            .is_file(),
+        "generate must not delete the .gitkeep placeholder init left in generated/"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            root.path()
+                .join(".markharness/generated/extra/nested/note.txt")
+        )
+        .unwrap(),
+        "keep me\n",
+        "generate must not delete files/directories it does not own"
+    );
+}
+
+// Windows and default-configuration macOS filesystems are case-insensitive,
+// so "testcases" and "TestCases" name the very same directory at the OS
+// level there: the setup below can't even create them as two distinct
+// entries, let alone exercise the alias-rejection this test targets. Linux
+// (this crate's only case-sensitive supported target, and what CI runs) is
+// the one platform where this scenario is actually constructible.
+#[cfg(target_os = "linux")]
+#[test]
+fn generate_use_case_fails_without_swapping_when_a_sibling_name_is_a_case_insensitive_alias_of_an_owned_name()
+ {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".markharness/generated/testcases")).unwrap();
+    std::fs::write(
+        root.path()
+            .join(".markharness/generated/testcases/existing.yml"),
+        "existing\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path()
+            .join(".markharness/generated/traceability-index.json"),
+        "existing index\n",
+    )
+    .unwrap();
+    std::fs::write(root.path().join(".markharness/generated/.gitkeep"), "").unwrap();
+    // Case-insensitive alias of the generator-owned "testcases" name.
+    std::fs::create_dir(root.path().join(".markharness/generated/TestCases")).unwrap();
+
+    let result = application::generate_testcases(root.path());
+
+    assert!(
+        result.is_err(),
+        "expected an error for an owned-name alias, got: {result:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            root.path()
+                .join(".markharness/generated/testcases/existing.yml")
+        )
+        .unwrap(),
+        "existing\n",
+        "an alias-name error must not swap in any staged content"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            root.path()
+                .join(".markharness/generated/traceability-index.json")
+        )
+        .unwrap(),
+        "existing index\n"
+    );
+    assert!(
+        root.path()
+            .join(".markharness/generated/.gitkeep")
+            .is_file()
+    );
+}
+
+#[test]
 fn generate_use_case_preserves_existing_artifacts_when_staging_fails() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join(".markharness/generated/testcases")).unwrap();
@@ -51,6 +140,7 @@ fn generate_use_case_preserves_existing_artifacts_when_staging_fails() {
         "existing\n",
     )
     .unwrap();
+    std::fs::write(root.path().join(".markharness/generated/.gitkeep"), "").unwrap();
     std::fs::create_dir(
         root.path()
             .join(".markharness/generated/traceability-index.json"),
@@ -67,6 +157,12 @@ fn generate_use_case_preserves_existing_artifacts_when_staging_fails() {
         )
         .unwrap(),
         "existing\n"
+    );
+    assert!(
+        root.path()
+            .join(".markharness/generated/.gitkeep")
+            .is_file(),
+        "a staging failure must leave non-owned siblings untouched too"
     );
 }
 
