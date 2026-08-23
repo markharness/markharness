@@ -22,7 +22,9 @@ This step is complete when `git branch --show-current` reports a task-appropriat
 
 Keep the branch scoped to one reviewable purpose. Follow the repository's TDD and Pre-PR checks. Preserve unrelated user changes and include only task-related files in commits.
 
-This step is complete when the requested outcome is implemented and every required local check passes.
+Before running a verification command that may write files, capture `git status --short`; inspect it again immediately afterward and account for every new change. Classify unexpected changes as content changes, additions/deletions, or metadata/rewrite-only detections, then investigate their cause. Restore only changes proven to have been produced by the verification command, and report the affected paths, classification, cause, and restoration. Preserve unclear or pre-existing changes and ask the user before altering them. A command that exits successfully but leaves an unexplained or unintended diff is not a clean verification pass.
+
+This step is complete when the requested outcome is implemented, every required local check passes, and every verification-induced worktree change is explained and reported.
 
 ## 3. Commit locally
 
@@ -39,4 +41,4 @@ Treat push, pull-request creation, and merge as separate externally visible acti
 - Merge only when the user explicitly requests it and required checks/review are satisfied.
 - Delete the branch only after merge and only when requested or clearly included in the merge workflow.
 
-This step is complete at the boundary the user authorized. Report the branch name, local commits, checks, and any remaining push/PR/merge action.
+This step is complete at the boundary the user authorized. Report the branch name, local commits, checks, any unexpected verification side effects and their disposition, and any remaining push/PR/merge action.
