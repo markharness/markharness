@@ -302,42 +302,77 @@ where
 }
 
 /// The combined startup check every ordinary command runs before doing
-/// anything else (design doc §6.3): clear a stale lock left by a crashed
-/// operation, then roll forward or discard any leftover staging entries.
-/// A *live* lock (an operation genuinely running concurrently) is left in
-/// place and reported so the caller can refuse to proceed rather than
-/// racing it.
+/// anything else (design doc §6.3): acquire the identity lock, then roll
+/// forward or discard any leftover staging entries. A *live* lock (an
+/// operation genuinely running concurrently, or another process's own
+/// startup recovery already in flight) is left in place and reported so
+/// the caller can refuse to proceed rather than racing it.
+///
+/// `recover_incomplete_operations`'s own doc comment states its contract
+/// as running "after acquiring `identity::lock`," which is exactly what
+/// this function does on its caller's behalf.
+///
+/// Unlike an earlier version of this function, the lock is **not**
+/// released before returning on success — it is handed back to the caller
+/// inside `StartupRecovery::Ready`, and the caller must go on to use that
+/// exact same lock for its own check-and-commit rather than releasing it
+/// and acquiring a fresh one. Releasing and reacquiring left a real gap: a
+/// *different* process could commit an event and crash mid-operation
+/// (post-commit, pre-roll-forward) in the window between this recovery
+/// scan finishing and the caller's own separate acquire, and the caller
+/// would then read that inconsistent intermediate state without this
+/// function's own recovery logic ever having had a chance to notice and
+/// fix it — because it ran too early, before the crash even happened.
+/// Keeping recovery and the caller's operation inside one continuous lock
+/// hold closes that gap: nothing else can commit anything for this
+/// project between this scan and the caller's own read.
+///
+/// Because `lock::IdentityLock` is now backed by the OS's own advisory
+/// file lock rather than a plain file's presence (see that module's doc
+/// comment for why), there is no separate "is the existing lock merely a
+/// stale leftover from a crashed process" question to answer here at all
+/// — a crash releases the OS lock as part of the crashed process exiting,
+/// so a fresh `acquire` right after a crash simply succeeds immediately.
+/// `acquire` failing with `WouldBlock` means exactly one thing: a *live*
+/// holder; any other error (permission denied, a read-only filesystem, a
+/// malformed lock path, ...) is a genuine failure this function must
+/// propagate rather than misreport as mere lock contention.
 pub fn run_startup_recovery<F>(root: &Path, roll_forward: F) -> io::Result<StartupRecovery>
 where
     F: FnMut(&Intent) -> io::Result<()>,
 {
-    let cleared_stale_lock = lock::clear_if_stale(root)?;
-    if !cleared_stale_lock && lock_is_present(root)? {
-        return Ok(StartupRecovery::OperationInProgress);
-    }
+    let held_lock = match lock::IdentityLock::acquire(root) {
+        Ok(held_lock) => held_lock,
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            return Ok(StartupRecovery::OperationInProgress);
+        }
+        Err(e) => return Err(e),
+    };
     let outcomes = recover_incomplete_operations(root, roll_forward)?;
-    Ok(StartupRecovery::Recovered(outcomes))
+    Ok(StartupRecovery::Ready {
+        outcomes,
+        lock: held_lock,
+    })
 }
 
-fn lock_is_present(root: &Path) -> io::Result<bool> {
-    match fs::metadata(
-        root.join(crate::project_root::MARKHARNESS_DIR)
-            .join(".identity.lock"),
-    ) {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e),
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum StartupRecovery {
     /// A lock owned by a still-running process is held; the caller must
     /// not proceed (design doc §6.3: "通常コマンドは...recoveryを完了する
     /// まで通常処理を行わない", which for a genuinely concurrent operation
     /// means refusing rather than racing it).
     OperationInProgress,
-    Recovered(Vec<RecoveryOutcome>),
+    /// Recovery completed (possibly finding nothing to do) and the lock it
+    /// was acquired under is handed back here, still held. Callers must
+    /// use this exact `lock` for their own subsequent check-and-commit —
+    /// see this function's own doc comment for why releasing it and
+    /// acquiring a fresh one instead would reopen the gap this design
+    /// closes — and are responsible for releasing it themselves once
+    /// their own operation-specific work is done.
+    Ready {
+        outcomes: Vec<RecoveryOutcome>,
+        lock: lock::IdentityLock,
+    },
 }
 
 #[cfg(test)]
@@ -550,23 +585,77 @@ mod tests {
         commit(dir.path(), &intent, "identity_event_uid: event-1\n").unwrap();
 
         let result = run_startup_recovery(dir.path(), |_| Ok(())).unwrap();
-        assert!(matches!(
-            result,
-            StartupRecovery::Recovered(outcomes) if matches!(outcomes.as_slice(), [RecoveryOutcome::RolledForward { .. }])
-        ));
+        match result {
+            StartupRecovery::Ready { outcomes, lock } => {
+                assert!(matches!(
+                    outcomes.as_slice(),
+                    [RecoveryOutcome::RolledForward { .. }]
+                ));
+                lock.release().unwrap();
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
     }
 
     #[test]
-    fn startup_recovery_clears_a_stale_lock_and_still_recovers() {
+    fn startup_recovery_recovers_despite_a_leftover_lock_file_from_a_crashed_process() {
         let dir = tempfile::tempdir().unwrap();
         let lock_dir = dir.path().join(".markharness");
         fs::create_dir_all(&lock_dir).unwrap();
+        // A crashed process's leftover: the file itself survives, but
+        // nothing at the OS level still holds a lock on it (the crash
+        // released that automatically) — `lock::IdentityLock` no longer
+        // needs to inspect this content at all to know it's safe to
+        // acquire fresh.
         fs::write(lock_dir.join(".identity.lock"), "999999999").unwrap();
         begin(dir.path(), EntityKind::Feature, "uid-1", "event-1").unwrap();
 
         let result = run_startup_recovery(dir.path(), |_| Ok(())).unwrap();
-        assert!(!lock_dir.join(".identity.lock").exists());
-        assert!(matches!(result, StartupRecovery::Recovered(_)));
+        match result {
+            StartupRecovery::Ready { lock, .. } => lock.release().unwrap(),
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
+
+    /// Regression test for the handoff gap an earlier design had:
+    /// `run_startup_recovery` used to release its lock before returning,
+    /// so a caller finishing recovery and going on to its own
+    /// check-and-commit had to acquire a *second*, separate lock — leaving
+    /// a real window in between where a different process could commit an
+    /// event and crash (post-commit, pre-roll-forward) without this
+    /// recovery scan ever getting a chance to notice and fix it, since it
+    /// had already run and finished before that crash even happened.
+    ///
+    /// Simulates process A completing recovery and then still being mid
+    /// way through its own operation-specific work (the lock from `Ready`
+    /// is not released yet) and process B trying to start up at that exact
+    /// moment: B's own `acquire` must be refused with `WouldBlock` for the
+    /// *entire* time A holds the lock — not just during A's recovery scan
+    /// — and only succeed once A actually finishes and releases.
+    #[test]
+    fn recovery_lock_stays_held_for_caller_until_it_finishes_its_own_operation() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let a_lock = match run_startup_recovery(dir.path(), |_| Ok(())).unwrap() {
+            StartupRecovery::Ready { lock, .. } => lock,
+            other => panic!("expected Ready, got {other:?}"),
+        };
+
+        // Process B attempting to start up (or acquire the lock directly
+        // for its own operation) while A is still mid-operation.
+        let b_attempt = lock::IdentityLock::acquire(dir.path());
+        assert!(
+            matches!(&b_attempt, Err(e) if e.kind() == io::ErrorKind::WouldBlock),
+            "B must be refused while A still holds the handed-off lock, got {b_attempt:?}"
+        );
+
+        // A finishes its own operation-specific work and only now releases.
+        a_lock.release().unwrap();
+
+        // B can finally proceed.
+        let b_lock = lock::IdentityLock::acquire(dir.path())
+            .expect("B must be able to acquire once A has released");
+        b_lock.release().unwrap();
     }
 
     #[test]
@@ -581,8 +670,73 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(result, StartupRecovery::OperationInProgress);
+        assert!(matches!(result, StartupRecovery::OperationInProgress));
         assert_eq!(roll_forward_calls, 0);
         held_lock.release().unwrap();
+    }
+
+    /// Regression test: `run_startup_recovery` used to call
+    /// `recover_incomplete_operations` — which writes Knowledge
+    /// projections via the caller's `roll_forward` — without holding any
+    /// lock of its own around it. Two processes starting up after the same
+    /// crash could both roll forward the same leftover committed intent
+    /// concurrently. Real OS threads, barrier-started together, all racing
+    /// to recover the same leftover-lock-file-plus-leftover-intent state
+    /// (the `.identity.lock` content here is a crashed process's leftover
+    /// *file*, per `lock::IdentityLock`'s own doc comment — nothing at the
+    /// OS level actually holds it) must let exactly one of them actually
+    /// invoke `roll_forward` — never zero (the leftover must still get
+    /// recovered by *someone*), never more than one (that would be the
+    /// double-application this test guards against).
+    #[test]
+    fn concurrent_startup_recovery_never_rolls_forward_twice_for_the_same_stale_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_dir = dir.path().join(".markharness");
+        fs::create_dir_all(&lock_dir).unwrap();
+        fs::write(lock_dir.join(".identity.lock"), "999999999").unwrap();
+        let intent = begin(dir.path(), EntityKind::Feature, "uid-1", "event-1").unwrap();
+        commit(dir.path(), &intent, "identity_event_uid: event-1\n").unwrap();
+
+        let root = dir.path();
+        let roll_forward_calls = std::sync::atomic::AtomicUsize::new(0);
+        const ATTEMPTS: usize = 8;
+        let barrier = std::sync::Barrier::new(ATTEMPTS);
+        let results: Vec<io::Result<StartupRecovery>> = std::thread::scope(|scope| {
+            let barrier = &barrier;
+            let roll_forward_calls = &roll_forward_calls;
+            let handles: Vec<_> = (0..ATTEMPTS)
+                .map(|_| {
+                    scope.spawn(move || {
+                        barrier.wait();
+                        run_startup_recovery(root, |_| {
+                            roll_forward_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            Ok(())
+                        })
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        assert_eq!(
+            roll_forward_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "exactly one concurrent startup recovery attempt must actually roll forward"
+        );
+        // Every attempt must end cleanly one way or another — either it
+        // recovered (possibly finding nothing left, if it ran after the
+        // winner already finished) or it correctly backed off as
+        // `OperationInProgress`; a queue-free, fail-fast lock (design doc
+        // §6, Q6) makes both legitimate, so this doesn't pin down exactly
+        // how many land in each bucket — only that none of them error out.
+        assert!(
+            results.iter().all(|r| r.is_ok()),
+            "no concurrent startup recovery attempt should fail outright: {results:?}"
+        );
+        for result in results {
+            if let Ok(StartupRecovery::Ready { lock, .. }) = result {
+                lock.release().unwrap();
+            }
+        }
     }
 }

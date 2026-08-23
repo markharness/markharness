@@ -1004,6 +1004,8 @@ markharness validate [--json] [-d, --dir <path>]
 
 **Schema of `.markharness/executions/*/results.yml`**: `execution_result.schema.json` requires `case_id` / `result` (`pass`/`fail`/`skip`) / `executor` / `executed_at`, and treats `note` / `verified_feature_tree_shas` as optional fields (section 1.15). `verified_feature_tree_shas` is absent from execution records written before this specification was introduced, but since it is defined as an optional field, such past records still pass schema validation as-is. In this case, `verify trace`/`verify pending` (change-event-verification-tracking-spec.md §6) does not retroactively backfill the record, and treats it as "unknown."
 
+**Additional validation in UID mode (ADR 0013, design doc §13 Phase 5)**: For a project whose `.markharness/config.toml` `[identity]` marker is `mode = "uid"` (written by `identity migrate`, section 1.26, once every kind has finished migrating), any Requirement/Feature/Behavior/Condition/ExpectedResult that lacks a `uid:` is reported as a validation issue, naming the file and prompting a run of `markharness identity migrate`. This guards against a uid-less element being introduced after cutover (via copy/import/hand-editing); it does not apply to a project that hasn't cut over yet (no marker).
+
 **Behavior**
 
 - If there are zero problems, exits with code `0`. In human-readable mode, prints `.markharness/knowledge/ and .markharness/axes/ are valid`; with `--json`, prints `{"ok":true}`.
@@ -1136,6 +1138,304 @@ markharness serve [--base <git-ref>] [--head <git-ref>] [--port <port>] [-d, --d
 ```
 
 Serves a read-only dashboard on `127.0.0.1` only. The default range is `HEAD~1`→`HEAD` and the default port is `8787`. The UI displays the Verification Plan summary, affected-test status/reason/origin, and rule-based proposals returned by the same Stage 2 Domain Engine. Its Feature History API returns Git tree SHAs and existing ChangeEvents. It neither computes a separate GUI status nor edits Git-managed files. Frontend assets are embedded in the Rust binary, so Node.js is not required at runtime.
+
+---
+
+### 1.25 `markharness feature rename-id` — Rename a Feature's id while preserving its uid (ADR 0013)
+
+```text
+markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
+```
+
+**Purpose**: Changes a Feature's `id:` from `OLD` to `NEW`. Because its immutable `uid` (issued by `identity migrate`, section 1.26) is preserved, `changes compute` (section 1.12) treats the rename as the same Feature before and after, detecting it as a single ChangeEvent rather than a delete+add (ADR 0013, Issue #17). This is a crash-recoverable identity operation (append an identity event, then rewrite `feature.yml`) and runs without a confirmation prompt (to undo, run `rename-id` again back to the original id).
+
+**Precondition**: The target Feature must already have a `uid` from `identity migrate` (section 1.26).
+
+**Behavior**
+
+- On success, prints `renamed Feature '<old>' to '<new>' (uid preserved)` and exits with code `0`.
+- Exits with code `2` if: no Feature with id `<OLD>` exists; `<NEW>` is already used by another Feature; the target Feature has no `uid` yet (prompts to run `identity migrate` first); `feature.yml`'s `id:` disagrees with what replaying its identity events says (working tree and identity event log have drifted apart, e.g. from a manual edit); or a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+
+**Example**
+
+```console
+$ markharness feature rename-id todo todo-v2
+renamed Feature 'todo' to 'todo-v2' (uid preserved)
+```
+
+**Use case mapping**: ADR 0013 (immutable uid model), Issue #17 (ChangeEvent failing to track id changes correctly).
+
+---
+
+### 1.26 `markharness identity migrate` — Bulk-issue uids for every Knowledge element kind (ADR 0013, design doc §12 and §13 Phase 4/5)
+
+```text
+markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
+```
+
+**Purpose**: Issues a fresh uid, and records a root `Issued` identity event, for every Requirement/Feature/Behavior/Condition/ExpectedResult under `.markharness/knowledge/` that doesn't have one yet. Idempotent — safe to re-run after copy/import/hand-editing introduces new uid-less elements. Also records TestCase `case_id` → `case_uid` mappings (the migration manifest, `.markharness/identity-migration-manifest.yml`).
+
+Once every one of the five kinds has zero uid-less elements left, writes `schema_version = 2` / `mode = "uid"` into `.markharness/config.toml`'s `[identity]` marker, completing the schema version 2 public cutover (design doc §13 Phase 5). After cutover, `markharness validate` (section 1.18) starts reporting any newly introduced uid-less element as a validation issue.
+
+**Precondition**: The target directory must already be a Git repository. To record the legacy snapshot identity (the tree SHA of `.markharness/knowledge`) into the migration manifest, this internally performs a `git write-tree`-equivalent operation against a disposable temporary index (the repository's real staging area is never touched).
+
+**Behavior**
+
+- `--dry-run`: writes no lock, staging, identity event, or Knowledge file — only shows the planned UID assignments and the list of files that would change.
+- Normal run: processes all five kinds in two passes (detect id/uid conflicts first; if none, record every kind's `Issued` events as one crash-recoverable batch). Reusing the same id across different kinds is allowed; a duplicate id within one kind is rejected as a conflict (exit code `2`).
+- Exits with code `2` if a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+- `--json`: prints `{"audit_scope":"working_tree","dry_run":bool,"migrated":[{"kind","id","uid"}],"conflicts":[string],"changed_files":[string]}`. `audit_scope` is a machine-readable field (design doc §11) contrasting with `"two_snapshot"` (`changes compute`/`verify`, sections 1.6/1.12) and `"full_history"` (`identity audit`, section 1.29) — it marks `identity migrate` as inspecting only the current working tree.
+
+**Example**
+
+```console
+$ markharness identity migrate --dry-run
+would migrate requirement 'req-todo' -> uid 01M0M862TX3X878T44WXBCQDQF
+would migrate feature 'todo' -> uid 01M0M862TYP26CAAB5RWHKWC2B
+would migrate behavior 'todo-add-task' -> uid 01M0M862TYD5B5H95VGXAXYKN3
+would migrate condition 'todo-add-task-empty-input' -> uid 01M0M862TYDND4EQJT6A25KAG4
+would migrate expected_result 'todo-add-task-empty-input-001' -> uid 01M0M862TYQKXDCTGDYPE8BBWY
+would change .markharness/knowledge/req-todo/requirement.yml
+would change .markharness/identity-events/requirements/01M0M862TX3X878T44WXBCQDQF/01M0M862TYKGXCZV3TECPDQGWS.yml
+... (every changed file, across all five kinds, is listed the same way)
+
+$ markharness identity migrate
+migrated requirement 'req-todo' -> uid 01M0M8632NP9SY6T1X1NK7Z9XE
+migrated feature 'todo' -> uid 01M0M8632N73PB010A2TQQYG84
+migrated behavior 'todo-add-task' -> uid 01M0M8632N0KDPK15MAK34TZKC
+migrated condition 'todo-add-task-empty-input' -> uid 01M0M8632N94PXJREJEJNMKETY
+migrated expected_result 'todo-add-task-empty-input-001' -> uid 01M0M8632NWZAW5VM0HZ2AWNMV
+
+$ markharness identity migrate --json
+{"audit_scope":"working_tree","changed_files":[],"conflicts":[],"dry_run":false,"migrated":[]}
+```
+
+(The second `--json` run is a no-op response with an empty `migrated`, since every element is already migrated.)
+
+**Use case mapping**: ADR 0013's "Migration" section; design doc §12 (`recorded_at` and crash-recovery during migration) and §13 Phase 4 (migrating all elements) / Phase 5 (schema version 2 public cutover).
+
+---
+
+### 1.27 `markharness identity resolve` — Explicitly resolve a branch divergence (ADR 0013, design doc §7)
+
+```text
+markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
+```
+
+`<KIND>` is one of `requirement` / `feature` / `behavior` / `condition` / `expected-result`.
+
+**Purpose**: When one entity has multiple identity events that diverged from the same predecessor (a branch divergence, design doc §7), explicitly picks which one's outcome (id/status) wins and records a `Resolved` identity event. Divergence can arise when independent identity operations (rename/retire, etc.) on different branches are later merged. It rarely occurs under ordinary single-branch use; this command exists as the recovery path for that merge scenario.
+
+**Behavior**
+
+- On success, prints `resolved divergence for <uid>, keeping <keep>` and exits with code `0`.
+- Exits with code `2` if: the target entity has no unresolved divergence right now; the event uid passed to `--keep` is not one of the divergent heads (the error message lists the candidates); or a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+
+**Use case mapping**: ADR 0013 design doc §7 (resolving branch divergence).
+
+---
+
+### 1.28 `markharness identity release` — Lift the reuse reservation on a retired entity's former id (ADR 0013, design doc §9)
+
+```text
+markharness identity release <KIND> <UID> <OLD_ID> [-d, --dir <path>]
+```
+
+**Purpose**: Explicitly lifts the reservation on `OLD_ID`, a former id of a `Retired` entity, so a different, new entity may use it (records a `Released` identity event). Like `rename-id` (section 1.25), it runs without a confirmation flag — the project consistently relies on the command invocation itself, plus the Git diff and identity event, as the audit trail for identity-affecting operations, and does not single out `release` for special treatment (design doc §9). This also reflects that it's a reversible operation in practice (issuing a fresh uid again effectively undoes it).
+
+**Behavior**
+
+- On success, prints `released '<old_id>' for reuse (was held by <uid>)` and exits with code `0`.
+- Exits with code `2` if: the target entity is not `Retired`; `<OLD_ID>` is not in the target entity's `id_history`; or a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+
+**Use case mapping**: ADR 0013 design doc §9 (operational friction of the release event). Complements the "no permanent reuse ban; uid is canonical for external integrations" policy from ADR 0013's "No alias mechanism" section.
+
+---
+
+### 1.29 `markharness identity audit` — Full commit-history identity audit (IdentityAuditor, ADR 0013, design doc §11)
+
+```text
+markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
+```
+
+**Purpose**: Walks the entire first-parent history of `<ref>` (default `HEAD`) and verifies two properties `.markharness/identity-events/` is supposed to hold: (1) identity events are append-only (an event file committed once must never disappear or change content in a later commit), and (2) the event set at every commit still replays without a causal-chain contradiction. `changes compute`, `verify`, and `identity migrate` (sections 1.6/1.12/1.26) are all lightweight comparisons that look at no more than two `.markharness` snapshots; `identity audit` is the one command that walks the entire Git commit history, and is kept as its own separate top-level command for that reason (design doc §11).
+
+The walk is limited to the first-parent history of the currently checked-out branch (equivalent to `git log --first-parent`). Changes that only ever existed on a not-yet-merged side branch are not this project's published history, and are excluded.
+
+**Behavior**
+
+- Exits with code `0` if there are zero violations. In human-readable mode, prints `no identity-history violations found (<N> commits scanned)`; with `--json`, `violations` is an empty array.
+- Exits with code `1` if there are violations, printing one line per violation.
+- `--json`: prints `{"audit_scope":"full_history","commits_scanned":<N>,"violations":[...]}`. Each element of `violations` is tagged by a `type` field (`event_disappeared` / `event_content_changed` / `causal_chain_contradiction`).
+- An underlying infrastructure failure (e.g. a Git object read failure) makes the command itself exit with an error, rather than being misreported as a contradiction in the audited history.
+
+**Example**
+
+```console
+$ markharness identity audit
+no identity-history violations found (3 commits scanned)
+
+$ markharness identity audit --json
+{"audit_scope":"full_history","commits_scanned":3,"violations":[]}
+```
+
+When history has been tampered with, e.g. an identity event file was later deleted:
+
+```console
+$ markharness identity audit
+event disappeared: feature '01M0M8632N73PB010A2TQQYG84' event '01M0M8632N666JSS1BXY1NCH30' is missing as of commit a021aed5d2159dbe718b111e9aaf679130ee823b (.markharness/identity-events/features/01M0M8632N73PB010A2TQQYG84/01M0M8632N666JSS1BXY1NCH30.yml)
+causal chain contradiction: feature '01M0M8632N73PB010A2TQQYG84' at commit a021aed5d2159dbe718b111e9aaf679130ee823b: NoRootEvent
+$ echo $?
+1
+```
+
+**Use case mapping**: ADR 0013's verification rules ("only `IdentityAuditor` walks the full Git commit history, verifying repository-wide event append-only-ness and any deletion/past alteration outside the two selected snapshots"), design doc §11.
+
+---
+
+### 1.30 `markharness identity retire` — Record a deleted Knowledge element as retired (ADR 0013, design doc §2 and §4.2)
+
+```text
+markharness identity retire <KIND> <UID> [-d, --dir <path>]
+```
+
+**Purpose**: For a Knowledge element you have already deleted from `.markharness/knowledge/` yourself, records a `Retired` identity event. Never deletes the file itself — the division of responsibility is "you delete it, this command records it"; there is no filesystem watcher that detects deletion automatically. Its former id stays reserved (not assignable to a different entity) until `release` (section 1.28) is run.
+
+**Precondition**: Refused if the entity still exists under `.markharness/knowledge/` (delete the file first). Also refused if the entity is already `Retired`.
+
+**Behavior**
+
+- On success, prints `retired <uid>` and exits with code `0`.
+- Exits with code `2` if: the target entity has no `uid`; its Knowledge element still exists; it is already retired; or a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+
+**Example**
+
+```console
+$ rm .markharness/knowledge/req-todo/todo/feature.yml
+$ markharness identity retire feature 01M0M9DE51V68FDX22SC6A6TM7
+retired 01M0M9DE51V68FDX22SC6A6TM7
+```
+
+**Use case mapping**: ADR 0013 design doc §2 (Background) and §4.2 (the `Retired` mutation).
+
+---
+
+### 1.31 `markharness identity restore` — Bring a retired entity back to active (ADR 0013, design doc §2)
+
+```text
+markharness identity restore <KIND> <UID> [-d, --dir <path>]
+```
+
+**Purpose**: Reverses `identity retire` (section 1.30), recording a `Restored` identity event that flips the entity's status back to `active`. Does not recreate the Knowledge element's file itself. If the file is restored (or re-created under the same id) **before** calling `restore`, `restore`'s own roll-forward writes its `uid:` back in immediately. If the file is restored **after** calling `restore` instead, nothing syncs it automatically — run `identity sync` (section 1.32) once the file exists.
+
+**Behavior**
+
+- On success, prints `restored <uid>` and exits with code `0`.
+- Exits with code `2` if: the target entity has no `uid`; it is not `Retired`; or a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+
+**Example**
+
+```console
+$ markharness identity restore feature 01M0M9DE51V68FDX22SC6A6TM7
+restored 01M0M9DE51V68FDX22SC6A6TM7
+```
+
+**Use case mapping**: ADR 0013 design doc §2 (Background).
+
+---
+
+### 1.32 `markharness identity sync` — Re-derive a Knowledge file's id:/uid: from its identity event log
+
+```text
+markharness identity sync <KIND> <UID> [-d, --dir <path>]
+```
+
+**Purpose**: Replays `<UID>`'s identity events to their current state and writes the resulting `id` back into whatever Knowledge file currently carries it — filling in a missing `uid:` or correcting a stale one. Records no new identity event; it only re-derives file state from the already-durable event log. This is the same "resync Knowledge file via roll-forward" side effect every other identity operation (including `identity migrate`) already performs internally, exposed on its own.
+
+**Precondition**: Meant to cover cases where no other operation's side effect performed the sync — most notably, restoring or re-creating a file *after* calling `identity restore` (section 1.31) rather than before. `rename-id` (section 1.25) exists only for Feature and requires the file to already carry a `uid:`, so it cannot serve as a general-purpose resync for a still-uid-less file; `identity sync` supports all five kinds and works regardless of whether the file currently has a `uid:`. Only runs when the target entity's status is `active` — refused for a `retired` one, since writing its `uid:` back into a Knowledge file without a `Restored` event first would resurrect a retired entity's presence on disk without authorization.
+
+**Behavior**
+
+- On success, prints `synced <uid>` and exits with code `0`.
+- Exits with code `2` if: the target entity has no `uid`; the entity is not `active` (i.e. `retired`); or a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+
+**Example**
+
+```console
+$ markharness identity sync feature 01M0MJQ5C4CJ3HHVG7PBYAQEBR
+synced 01M0MJQ5C4CJ3HHVG7PBYAQEBR
+$ cat .markharness/knowledge/req-todo/todo/feature.yml
+id: todo
+requirement: req-todo
+label: todo
+axis: []
+uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
+```
+
+**Use case mapping**: An order-independent general cleanup for `identity restore` (design doc §2).
+
+---
+
+### 1.33 `markharness identity reissue` — Force-issue a new uid for an existing element (ADR 0013's rules for copy, import, and repository integration)
+
+```text
+markharness identity reissue <KIND> <ID> [--json] [-d, --dir <path>]
+```
+
+**Purpose**: Issues a completely fresh uid for the Knowledge element currently named `<ID>`, without continuing whatever uid (if any) it currently has, and records a root `Reissued` identity event. Its existing `uid:`, if it had one, is recorded on the event as `source_uid` purely for audit purposes — it is never resolved as an entity in this project. Used when copying/importing from another repository and you want to treat the element as a distinct entity rather than a continuation, or when integrating two repositories and one side of a UID collision needs to be explicitly switched to a different entity (the opposite of `rename-id`, which changes only `id` while preserving identity).
+
+**Precondition**: Refused unless `<ID>` has been explicitly `release`d in this project's local identity event log. This enforces the ADR's own text: "once an ID has been issued to a UID, it cannot be assigned to another UID unless an explicit `release` event lifts that reservation." **Retiring the old UID alone is not enough** — its former ids stay reserved until `identity release` runs — so this requires `identity retire` followed by `identity release <kind> <old-uid> <id>` first. This check is not limited to the Knowledge element's own current `uid:` — it scans every locally known UID of this `kind` under `.markharness/identity-events/<kind>/`, so a Knowledge file with no `uid:` at all (recreated by hand or by copy/import) is still refused if some other local UID still holds `<ID>` unreleased. A `uid:` copied in from another repository (no local event log for it at all) is not subject to this restriction.
+
+**Behavior**
+
+- On success, in human-readable mode prints `reissued '<id>' -> uid <new-uid>` (appending `(source_uid: <old-uid>)` when there was a previous uid); with `--json`, prints `{"uid":"<new-uid>","source_uid":"<old-uid-or-null>"}`. Exits with code `0`.
+- Exits with code `2` if: no Knowledge element with id `<ID>` exists; `<ID>` has not been released from some local UID yet (see Precondition); or a concurrent identity operation is detected.
+- Exits with code `3` on a filesystem error.
+
+**Example**
+
+```console
+$ markharness identity reissue feature todo
+reissued 'todo' -> uid 01M0MKNNQ84CPQPP2XFT0ZDDFE (source_uid: 01FOREIGN00000000000000000)
+```
+
+A refused example (`todo2` was already `identity migrate`d and its current uid has not released it):
+
+```console
+$ markharness identity reissue feature todo2
+error: 'todo2' has not been released from '01M0MKNNWNCNE5B8SX4NXHW3AD'; run `markharness identity retire feature 01M0MKNNWNCNE5B8SX4NXHW3AD` then `markharness identity release feature 01M0MKNNWNCNE5B8SX4NXHW3AD todo2` first
+```
+
+Running `retire` and then `release` first makes it succeed:
+
+```console
+$ markharness identity retire feature 01M0MKNNWNCNE5B8SX4NXHW3AD
+retired 01M0MKNNWNCNE5B8SX4NXHW3AD
+$ markharness identity release feature 01M0MKNNWNCNE5B8SX4NXHW3AD todo2
+released 'todo2' for reuse (was held by 01M0MKNNWNCNE5B8SX4NXHW3AD)
+$ markharness identity reissue feature todo2
+reissued 'todo2' -> uid 01M0MKNPCD1PFM7WXYFMC9SE3X (source_uid: 01M0MKNNWNCNE5B8SX4NXHW3AD)
+```
+
+The same refusal applies even when the Knowledge file has no `uid:` at all (`todo` was `identity migrate`d and retired, but not yet released):
+
+```console
+$ markharness identity reissue feature todo
+error: 'todo' is still reserved by '01M0MTAP7839QFJ2NNWEEPBDKY'; run `markharness identity retire feature 01M0MTAP7839QFJ2NNWEEPBDKY` then `markharness identity release feature 01M0MTAP7839QFJ2NNWEEPBDKY todo` first
+$ markharness identity release feature 01M0MTAP7839QFJ2NNWEEPBDKY todo
+released 'todo' for reuse (was held by 01M0MTAP7839QFJ2NNWEEPBDKY)
+$ markharness identity reissue feature todo
+reissued 'todo' -> uid 01M0MTAPRVG79QSZWZN4YM06AM (source_uid: 01M0MTAP7839QFJ2NNWEEPBDKY)
+```
+
+**Use case mapping**: ADR 0013's "Rules for copy, import, and repository integration" ("when importing as a distinct element, issue a new UID and record a reissue event"; "when integrating repositories where different elements share a UID, explicitly reissue one side before integrating"), and "once an ID has been issued to a UID, it cannot be assigned to another UID unless an explicit release lifts that reservation."
 
 ---
 

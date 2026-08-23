@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Proposed
+Accepted(2026-08-22。実装完了・`checklist-immutable-identity-model.md`参照)
 
 ## 背景
 
@@ -216,7 +216,7 @@ dry-runでは予定するUID、競合、変更ファイルを表示する。論�
 - root発行、`previous_identity_event_uid`、解決eventの`previous_identity_event_uids`、branch divergenceと競合解決、時刻やfilesystem順に依存しないcanonical replay規則を確定する。
 - 複数ファイルidentity operationのためのcrash-recovery protocolを独立した設計ゲートとして確定する。transaction intent、staging、単一commit point、lock、flush/durability、未commit操作の破棄、commit後の冪等なroll-forward、recovery中の通常処理拒否、Windows/Unixの保証差を含める。
 - UID発行・rename・retire・restore・release・reissue・migrationが上記protocolへ渡すmutation planと、各operationの論理commit境界を詳細設計する。
-- 全書き込み段階とrecovery段階でのprocess killを注入するtestを用意し、再起動後に旧状態またはcommit済み新状態へ収束して中間状態が通常処理から観測されないことを検証する。
+- 全operation種別について、commit前(intentのみstaging済み)・commit後roll-forward前の2境界の状態を直接構築し、実際の再起動が呼ぶrecovery entry pointを呼んで、旧状態またはcommit済み新状態へ収束し中間状態が通常処理から観測されないことを検証するtestを用意する(実OSプロセスへのkill注入ではなく状態直接構築による検証。理由・詳細はdesign doc §6.3を参照)。
 - legacy ChangeEvent、TestCase、executionをUIDへ解決する規則をgolden fixtureで検証する。
 - 全consumerをUIDベースへ移行する実装順序と、一時的な互換adapterの削除条件を決める。
 - `EntityKind`、`EntityUid`、`EntityId`、`IdentityHeader`、`IdentityMutation`、`IdentityEvent`、`IdentityEngine` Interfaceを確定し、発行・rename・lifecycle・replay・migrationの規則が要素種別ごとに重複しないことを設計レビューで確認する。

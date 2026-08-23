@@ -262,3 +262,158 @@ fn identity_audit_exits_nonzero_when_an_event_file_is_deleted_out_of_band() {
         "unexpected stdout: {stdout}"
     );
 }
+
+fn migrated_feature_uid(dir: &std::path::Path) -> String {
+    let feature_yml =
+        std::fs::read_to_string(dir.join(".markharness/knowledge/req-todo/todo/feature.yml"))
+            .unwrap();
+    feature_yml
+        .lines()
+        .find_map(|line| line.strip_prefix("uid: "))
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn identity_retire_then_restore_round_trips_through_the_cli() {
+    let dir = init_project();
+    write_full_tree(dir.path(), "todo");
+    let migrate = run(&["identity", "migrate", "--dir", dir.path().to_str().unwrap()]);
+    assert!(migrate.status.success(), "{migrate:?}");
+    let feature_uid = migrated_feature_uid(dir.path());
+
+    std::fs::remove_file(
+        dir.path()
+            .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+    )
+    .unwrap();
+
+    let retire = run(&[
+        "identity",
+        "retire",
+        "feature",
+        &feature_uid,
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert!(retire.status.success(), "{retire:?}");
+    assert!(
+        String::from_utf8_lossy(&retire.stdout).contains(&feature_uid),
+        "{retire:?}"
+    );
+
+    let restore = run(&[
+        "identity",
+        "restore",
+        "feature",
+        &feature_uid,
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert!(restore.status.success(), "{restore:?}");
+    assert!(
+        String::from_utf8_lossy(&restore.stdout).contains(&feature_uid),
+        "{restore:?}"
+    );
+}
+
+#[test]
+fn identity_retire_exits_nonzero_when_the_knowledge_file_still_exists() {
+    let dir = init_project();
+    write_full_tree(dir.path(), "todo");
+    let migrate = run(&["identity", "migrate", "--dir", dir.path().to_str().unwrap()]);
+    assert!(migrate.status.success(), "{migrate:?}");
+    let feature_uid = migrated_feature_uid(dir.path());
+
+    let output = run(&[
+        "identity",
+        "retire",
+        "feature",
+        &feature_uid,
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("still has a Knowledge element"), "{stderr}");
+}
+
+#[test]
+fn identity_reissue_json_reports_the_new_uid_and_source_uid() {
+    let dir = init_project();
+    write_full_tree(dir.path(), "todo");
+    // A `uid:` written directly into the file, as if copied in from
+    // another repository as-is: it has no local
+    // `.markharness/identity-events/` entry, so `reissue` doesn't need a
+    // prior `retire` (contrast with a uid that already has a live local
+    // identity, which `reissue` must refuse — see
+    // `identity_reissue_exits_nonzero_when_the_current_uid_has_a_live_local_identity`).
+    let foreign_uid = "01FOREIGN00000000000000000";
+    let feature_yml = dir
+        .path()
+        .join(".markharness/knowledge/req-todo/todo/feature.yml");
+    let content = std::fs::read_to_string(&feature_yml).unwrap();
+    std::fs::write(&feature_yml, format!("{content}uid: {foreign_uid}\n")).unwrap();
+
+    let output = run(&[
+        "identity",
+        "reissue",
+        "feature",
+        "todo",
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert!(output.status.success(), "{output:?}");
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let new_uid = body["uid"].as_str().unwrap().to_string();
+    assert_ne!(new_uid, foreign_uid);
+    assert_eq!(body["source_uid"], foreign_uid);
+
+    let content = std::fs::read_to_string(&feature_yml).unwrap();
+    assert!(content.contains(&format!("uid: {new_uid}")));
+}
+
+#[test]
+fn identity_reissue_exits_nonzero_when_the_current_uid_has_a_live_local_identity() {
+    let dir = init_project();
+    write_full_tree(dir.path(), "todo");
+    let migrate = run(&["identity", "migrate", "--dir", dir.path().to_str().unwrap()]);
+    assert!(migrate.status.success(), "{migrate:?}");
+    let uid = migrated_feature_uid(dir.path());
+
+    let output = run(&[
+        "identity",
+        "reissue",
+        "feature",
+        "todo",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&uid) && stderr.contains("retire"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn identity_reissue_exits_nonzero_for_an_unknown_id() {
+    let dir = init_project();
+    write_full_tree(dir.path(), "todo");
+
+    let output = run(&[
+        "identity",
+        "reissue",
+        "feature",
+        "no-such-feature",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}

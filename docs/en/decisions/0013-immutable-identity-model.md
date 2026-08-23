@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted (2026-08-22. Implementation complete; see `checklist-immutable-identity-model.md`)
 
 ## Background
 
@@ -216,7 +216,7 @@ A migration manifest maps legacy snapshot identity (tree SHA), entity kind, old 
 - Finalize issuance roots, `previous_identity_event_uid`, resolution-event `previous_identity_event_uids`, branch divergence/conflict resolution, and canonical replay rules without timestamp or filesystem-order dependence.
 - Finalize a crash-recovery protocol for multi-file identity operations as an independent design gate, including transaction intent, staging, one commit point, locking, flush/durability, disposal of uncommitted operations, idempotent post-commit roll-forward, blocking normal commands during recovery, and Windows/Unix guarantee differences.
 - Detail the mutation plans submitted to that protocol by UID issuance, rename, retirement, restoration, release, reissue, and migration, including each operation's logical commit boundary.
-- Add process-kill injection tests at every write and recovery stage, verifying that restart converges to the old or committed new state and that normal processing never observes an intermediate state.
+- For every operation kind, add tests that directly construct the on-disk state at two boundaries — pre-commit (intent staged only) and post-commit/pre-roll-forward — then call the same recovery entry point a real restart would call, verifying convergence to the old or committed new state with no intermediate state ever observed by normal processing (verified by directly constructing state rather than injecting a real OS process kill; see design doc §6.3 for the rationale and detail).
 - Validate legacy ChangeEvent, TestCase, and execution resolution with golden fixtures.
 - Define the implementation order for migrating all consumers to UID and the removal condition for temporary compatibility adapters.
 - Finalize `EntityKind`, `EntityUid`, `EntityId`, `IdentityHeader`, `IdentityMutation`, `IdentityEvent`, and the `IdentityEngine` Interface, and confirm in design review that issuance, rename, lifecycle, replay, and migration rules are not duplicated per entity kind.

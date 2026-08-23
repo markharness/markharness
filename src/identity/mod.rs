@@ -24,8 +24,10 @@ pub use engine::{IdHistoryEntry, ReplayError, ReplayResult, Status, replay};
 pub use entity_kind::{EntityDescriptor, EntityKind, descriptor};
 pub use event::{IdentityEvent, IdentityMutation};
 pub use feature_ops::{
-    MigrateError, MigrateReport, MigratedEntity, ReleaseError, RenameError, ResolveError,
-    migrate_entities, plan_migration, release_id, rename_id, resolve_divergence,
+    MigrateError, MigrateReport, MigratedEntity, ReissueError, ReissuedEntity, ReleaseError,
+    RenameError, ResolveError, RestoreError, RetireError, SyncError, migrate_entities,
+    plan_migration, reissue_entity, release_id, rename_id, resolve_divergence, restore_entity,
+    retire_entity, sync_entity,
 };
 pub use marker::{IDENTITY_SCHEMA_VERSION, is_uid_mode};
 pub use migration_manifest::{

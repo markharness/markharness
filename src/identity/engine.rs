@@ -66,6 +66,25 @@ pub struct ReplayResult {
 /// determined by `previous_identity_event_uid`/`previous_identity_event_uids`
 /// (design doc §4.3), never by the order of this slice.
 pub fn replay(entity_uid: &str, events: &[IdentityEvent]) -> Result<ReplayResult, ReplayError> {
+    let chain = resolve_winning_chain(events)?;
+    apply_chain(entity_uid, &chain)
+}
+
+/// Returns one entity's identity events in causal order (root first, head
+/// last) — the same winning-branch chain `replay` applies, exposed for
+/// callers that need to reason about event *order* directly (e.g. "was
+/// this id's most recent claim ever released, or was it reclaimed
+/// afterward") rather than only the materialized end state `ReplayResult`
+/// captures. As with `replay`, the order of `events` itself does not
+/// matter; only the predecessor links do.
+pub fn causal_order(events: &[IdentityEvent]) -> Result<Vec<IdentityEvent>, ReplayError> {
+    Ok(resolve_winning_chain(events)?
+        .into_iter()
+        .cloned()
+        .collect())
+}
+
+fn resolve_winning_chain(events: &[IdentityEvent]) -> Result<Vec<&IdentityEvent>, ReplayError> {
     let by_uid: BTreeMap<&str, &IdentityEvent> = events
         .iter()
         .map(|e| (e.identity_event_uid.as_str(), e))
@@ -152,8 +171,7 @@ pub fn replay(entity_uid: &str, events: &[IdentityEvent]) -> Result<ReplayResult
         }
     };
 
-    let chain = winning_chain(by_uid[head_uid], &by_uid);
-    apply_chain(entity_uid, &chain)
+    Ok(winning_chain(by_uid[head_uid], &by_uid))
 }
 
 /// DFS over the predecessor graph starting at `root`, following

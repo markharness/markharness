@@ -1,6 +1,6 @@
 # 不変Identityモデル：実装設計仕様
 
-**Status**: 設計確定(未実装)
+**Status**: Implemented(Phase 1〜5完了。ADR 0013はAccepted。`checklist-immutable-identity-model.md`参照)
 **関連ドキュメント**: [decisions/0013-immutable-identity-model.md](../decisions/0013-immutable-identity-model.md)(以下「ADR 0013」)、[テスト知識管理のGit-nativeモデル_統合版.md](../テスト知識管理のGit-nativeモデル_統合版.md)
 **対象読者**：`markharness`の実装者
 
@@ -57,7 +57,7 @@ src/identity/
   engine.rs        # IdentityEngine(検証・mutation plan生成)
   registry.rs       # Identity Registry(非commit cache)の読み書き・replay
   recovery.rs       # crash-recovery(staging・commit point・roll-forward)
-  lock.rs           # アプリケーションレベルlock
+  lock.rs           # identity operation lock(OS advisory lock、§6.4)
   audit.rs          # IdentityAuditor(全履歴監査、`identity`コマンドのみが依存)
 ```
 
@@ -140,7 +140,7 @@ const DESCRIPTORS: [EntityDescriptor; 5] = [ /* Requirement, Feature, Behavior, 
 | `reissued` | copy/import時の新規UID発行 | `source_uid`(任意) |
 | `resolved` | branch divergenceの明示的解決 | `previous_identity_event_uids`(複数)、`winning_event_uid` |
 
-`issued`以外は先行eventを持つ。通常eventは`previous_identity_event_uid`(単数)で直前の自entity内headを参照する。`resolved`だけは`previous_identity_event_uids`(複数)で解決対象の全divergent headをjoinする。
+`issued`・`reissued`はroot(先行eventなし)。両者とも新規UID発行という点で同じroot条件を満たす — `reissued`はcopy/import時に**別の**新規UIDを発行するのであって、既存UIDの後続eventではない(実装は`IdentityMutation::can_be_root`で両者を等しくrootとして扱う)。それ以外の通常eventは`previous_identity_event_uid`(単数)で直前の自entity内headを参照する。`resolved`だけは`previous_identity_event_uids`(複数)で解決対象の全divergent headをjoinする。
 
 ```yaml
 identity_event_uid: 01ARZ3NDEKTSV4RRFFQ69G5FE1
@@ -204,9 +204,51 @@ id_history:
 
 `issued`/`renamed`/`retired`/`restored`/`released`/`reissued`/`resolved`のいずれも、上記手順(intent書き込み→commit-point eventのatomic write→projectionのroll-forward)に従う同一の枠組みで扱う。operation種別ごとの差はreplayから得るprojectionであり、commit-point機構自体は共通化する。project-wide migrationは§12のbatch形式を用いる。永続intentに予定する全issued eventを含め、最初のeventを単一の論理commit pointとして、recoveryが残りを完了する。
 
-### 6.3 process-kill注入テスト
+### 6.3 crash-recovery境界テスト
 
-各operation種別について、「commit pointの直前」「rename実行中(OS側の原子性に守られる区間)」「commit pointの直後」の3ポイントでプロセスを強制終了させ、次回起動時のrecoveryが必ず「旧状態」または「commit済み新状態」のいずれかに収束することを検証するテストを、実装checklistの一項目として用意する。
+**更新(2026-08-22、ADR 0013のAccepted移行レビュー時)**: 実装は実OSプロセスへのkill注入は行っていない。`checklist-immutable-identity-model.md`のStep 9でPhase 1時点に記録した理由が、以降の全operation種別で一貫して踏襲されている: 実プロセスをkillして再起動するテストはCIでの再現性・移植性に乏しく、この種の不具合の標準的な検証手法ではない。代わりに、各境界について「実際にその時点でクラッシュした場合に残るディスク上の状態」を直接構築し、実際の再起動が呼ぶのと同じrecovery entry point(`run_startup_recovery`)を呼んで収束を検証する、という方式を一貫して採用している。本節は、どの実装にも存在しないprocess-kill注入という当初の記述ではなく、この実際の検証方式を反映するよう修正した。
+
+operation種別ごとに実際に検証している境界は次の2点:
+
+- **commit前**: `recovery::begin`(intentのdurable staging)は呼ぶが`recovery::commit`は呼ばない — commit point到達前のkillを模擬する。recoveryは残置されたintentを破棄し、entityを試みた操作の前と全く同じ状態のまま残さなければならない。
+- **commit後・roll-forward前**: `recovery::begin`・`recovery::commit`は両方呼ぶが、`roll_forward`/`recovery::finish`は呼ばない — design doc §6.1が「論理的には操作が完了しているがKnowledge fileへの反映がまだ」と述べる区間でのkillを模擬する。recoveryは正確に1回だけroll-forwardし、新状態へ収束しなければならない。
+
+commit point自体の書き込み(`replace_file`の単一`rename`)はOSのatomic rename保証に依存しており、本テストスイートが書き込み途中にkillを注入する対象ではない — 単一ファイルのrenameに「書き込み途中の破損状態」は存在しない。
+
+検証は2層構成: `src/identity/recovery.rs`自身のテストスイートが、共有機構(`Intent`・staging・`commit`・`finish`)はどの`IdentityMutation`を運んでいても同一であることを利用して、mutation種別に依存しない形でこの2境界を汎用的に検証する。その上で`src/identity/feature_ops.rs`が、mutation種別ごと(`rename`/`resolve`/`release`/`migrate`、および当初のAccepted移行後に`retire`/`restore`/`reissue`を実装した際に追加したこの3種)に同じ2境界を再度検証し、汎用staging機構だけでなくmutation固有のreplay・roll-forwardロジック自体が正しく収束することを確認する。
+
+### 6.4 identity operation lock(`lock.rs`)
+
+**更新(2026-08-23、Accepted移行後のレビュー対応で発生)**: 当初の実装は、`.identity.lock`という平ファイルの存在自体をlockとして扱い(`fs_safety::create_new_no_follow`による原子的create-if-absent)、クラッシュしたプロセスが残したファイルを、記録されたPIDが生存しているかを起動時に確認して(`pid_is_alive`)安全なら削除する、という設計だった。
+
+このPIDベースの staleness 判定には、ポータブルなfilesystem APIだけでは埋められないTOCTOU競合が原理的に残る: 「あるlockがstaleだと判定する」ことと「実際にそれを削除する」ことは別ステップであり、その間に**別のプロセス**が同じstale lockを自ら削除して、同じpathへ新しい生きているlockを獲得しているかもしれない。その状態を知らずに削除すると、稼働中のoperationのlockを誤って奪ってしまう。読込直後の再読込による窓の縮小(2026-08-23の初回対応)を経てもなお、削除呼び出し自体との間に理論上の窓が残ることが指摘され、根本的にPIDヒューリスティックに頼らない設計へ変更した。
+
+現在の実装は、OSのadvisory file lock(`std::fs::File::try_lock`、Rust 1.89で安定化。Unixの`flock`、Windowsの`LockFileEx`)をそのまま利用する。プロセスが(正常終了であれクラッシュであれ)終了すると、OSがそのプロセスのopen file descriptionを片付ける一部として当該lockを自動的に解放するため、「このlockファイルは死んだプロセスの残骸か」という問いに答える必要が最初から存在しない。クラッシュ直後の`acquire`は即座に成功する。PID読み取り・生存確認・staleness判定・TOCTOU窓のいずれも不要になった。
+
+この変更に伴う設計上の帰結:
+
+- lockファイル自体(`.markharness/.identity.lock`)はこのモジュール自身では削除しない。`acquire`/`release`はlock/unlockのみを行い、この**コードベース自身の**動作として、同じpathへの全ての`acquire`呼び出しが常に同一のファイル(したがって同一のOS lock)を指すようにする(ファイルの削除→再作成を挟むと、削除後に別プロセスが開いたfile handleが別のOS lockを指してしまい、真の排他性が失われるため)。ただし、これはこのモジュール自身が守る不変条件であって、**あらゆる並行書込み者に対して成り立つ保証ではない**点に注意。特権を持つ敵対的プロセスが`.identity.lock`や祖先ディレクトリ(具体的には`.markharness/`自体)を通常のファイル/ディレクトリとして削除・再作成した場合の扱いは、§6.4への追記(下記)を参照。
+- したがって`.markharness/.identity.lock`は、プロジェクトの他の証跡と異なり恒常的に存在しうる非コミット対象であり、`markharness init`が管理する`.gitignore`エントリに追加した(`src/init.rs`)。
+- `run_startup_recovery`(§6.1)は、stale lock解除の専用ステップを持たなくなり、単純に`IdentityLock::acquire`を試みて`recover_incomplete_operations`全体を実行中保持するだけになった(design doc §6.1が要求する「lock取得後に呼ぶこと」という契約を、この関数自身がそのまま体現する)。
+
+**追記(2026-08-23、Standards/Spec形式レビュー対応)**: 上記のOS advisory lockへの移行後、さらに3点のレビュー指摘へ対応した。
+
+1. **symlink安全性**: `IdentityLock::acquire`は当初、通常の`OpenOptions::open`で`.identity.lock`を開いていたため、そのpathが(悪意ある、または偶発的な)symlink/junctionに置き換えられていた場合、リンク先を透過的にfollowして書込み・lockしてしまう欠陥があった。`fs_safety::open_lock_file_no_follow`を新設し、`create_new_no_follow`と同様の考え方(Unix `O_NOFOLLOW`、Windows `FILE_FLAG_OPEN_REPARSE_POINT`)を、既存ファイルの再openにも通用する形で適用し、open後に`file_type().is_dir() || file_type().is_symlink()`で拒否する。`O_NOFOLLOW`の値取得のためだけに`libc`クレート(Unix限定の`target.'cfg(unix)'.dependencies`、MIT OR Apache-2.0)を追加した。
+2. **lock取得エラーの分類**: `run_startup_recovery`が`IdentityLock::acquire`の失敗を種類を問わず`OperationInProgress`として扱っていたため、permission denied・read-only filesystem等の真の障害もlock競合として誤報告していた。`io::ErrorKind::WouldBlock`の場合のみ`OperationInProgress`とし、それ以外は`io::Error`として伝播するよう修正した。
+3. **recoveryと通常operationのhandoff競合**: `run_startup_recovery`が recovery完了後にlockを解放し、呼び出し元(`rename_id`・`retire_entity`等)が別途新しいlockを再取得する構成だったため、両者の間に隙間が生じていた。その隙間で別プロセスがevent commit後・roll-forward前にcrashしても、既に完了済みのrecoveryスキャンがそれに気づいて修復する機会は無い。`StartupRecovery`の戻り値を`Recovered(Vec<RecoveryOutcome>)`から`Ready { outcomes: Vec<RecoveryOutcome>, lock: IdentityLock }`へ変更し、recoveryが取得したlockをそのまま呼び出し元へ手渡すAPIへ再構成した。全8つのidentity operation(`rename_id`・`resolve_divergence`・`release_id`・`retire_entity`・`restore_entity`・`reissue_entity`・`sync_entity`・`migrate_entities`)は、2回目の`IdentityLock::acquire`呼び出しを行わず、recoveryから受け取ったlockをそのままcheck-and-commitへ流用するよう統一し、recoveryから自身のcommitまでを単一の連続したcritical sectionにした。エラー経路でも確実にunlockされるよう`IdentityLock`へ`Drop`実装(best-effort、`release()`との重複呼び出しは安全に無視される)も追加した。
+4. **祖先ディレクトリのsymlink置換に対するUnix版`openat`/`mkdirat`ベースの原子的解決**(2026-08-23、続くレビュー対応): stat-then-open方式(祖先を`ensure_no_symlink_ancestor`でチェックしてから最終要素だけを`O_NOFOLLOW`でatomicにopenする)は、祖先ディレクトリ自体がチェックと実際のopenの間でsymlinkに置換されうるという窓を残していた。Unix版の`open_lock_file_no_follow`を、各経路要素を直前の要素の生fd相対で解決する完全原子的な実装(`libc::openat`/`mkdirat`)へ全面書き換えし、この**symlink置換**の窓を閉じた。
+
+   **既知の残存リスクとして意図的に許容した点(2026-08-23、Codexレビュー十一度目の指摘への対応)**: 上記の`openat`ベースの解決は、祖先が**symlinkに置換される**変種は完全に閉じるが、祖先(具体的には`.markharness/`自体)が**削除されてから、symlinkではない通常のディレクトリとして再作成される**変種までは閉じない。`O_NOFOLLOW`はsymlink追従を禁止するだけで、「同名の別の(symlinkではない)ディレクトリが後から作られる」こと自体は妨げない。この置換が2つの異なるプロセスの`open_lock_file_no_follow`呼び出しの**間**で起きた場合、それぞれの呼び出し自体は内部的に一貫しているが、2つのプロセスは(同じpathを指しているように見えて)異なる実体のlockを保持してしまう(split-brain)。この変種を閉じるには、`.markharness/`の永続的な識別子を検証する仕組み(その識別子自体が同じ置換問題に晒される)か、OSレベルで`.markharness/`の削除を禁止する仕組み(例: Linuxの`chattr +i`。アプリケーションのpathベースAPIでは実現できない、デプロイ環境側の責務)のいずれかが必要で、これはPOSIXの`flock`を通常のpathへ使う場合を含め、**あらゆる名前ベースのlocking方式に共通する原理的な限界**である。この変種を突くには、プロジェクトディレクトリへの並行書込み権限を持ち、かつlock取得のタイミングに合わせて`.markharness/`(そこに永続化されている全identity event履歴を含む)を削除・再作成する能力が必要であり、その能力を持つ攻撃者は`.markharness/identity-events/*.yml`を直接改ざんするなど、より直接的で単純な攻撃手段を既に持っている。この非対称性を踏まえ、この残存リスクはこれ以上追及せず、明示的に許容することとした。
+
+      - **再検討トリガー**: 次のいずれかが生じた場合、この受容を再検討する。(1) `.markharness/`のような祖先ディレクトリの同一性を安全かつ低コストに固定できる手段(externally-verified identityの検証、あるいはOSレベルの削除禁止機構をportableに扱える手段等)が利用可能になった場合。(2) この変種がより低い権限で到達可能になると判明した場合。(3) threat modelがuntrusted workspace writer(プロジェクトディレクトリへの書込み権限を持つが信頼されない主体)を含むよう変更された場合。(4) 実運用でこの変種に起因すると考えられるincidentが発生した場合。
+
+   **Windows固有の既知の残存リスクとして意図的に許容した点(2026-08-23、Standards/Spec形式レビューへの対応、`docs/review-policy.md`のAccepted-risk記録要件に合わせて記載)**: 上記の`openat`/`mkdirat`ベースの原子的解決は**Unix限定**であり、Windows版`open_lock_file_no_follow`(`src/fs_safety.rs`)は引き続きstat-then-openシーケンス(祖先を`ensure_no_symlink_ancestor`でチェックしてから、最終要素だけを`FILE_FLAG_OPEN_REPARSE_POINT`でopenする)のままである。そのためWindowsでは、Unixで既に閉じた**symlink置換の変種そのもの**(祖先ディレクトリがチェックとopenの間にsymlink/junctionへ置換される)が、上記の「削除・再作成」変種と並んで未解決のまま残る。
+      - **条件と想定される影響**: 祖先チェックからopenまでの、狭いが非ゼロの窓(ファイルシステム呼出し数回分)で祖先ディレクトリがsymlink/junctionへ置換されると、`.identity.lock`のopenがそのリンク先を追従してしまい、lockのsplit-brain、および原理上はproject root外への書込みにつながりうる。
+      - **必要な能力と到達性**: Windows上で、プロジェクトディレクトリへの敵対的な並行書込み権限を持ち、かつlock取得のタイミングに正確に同期させる能力が必要。通常利用・operator error・異常な環境状態からは到達しない。
+      - **既存の緩和策**: `ensure_no_symlink_ancestor`によるチェックをopen直前に実行し、チェックから実際のopenまでの窓をファイルシステム呼出し数回分まで最小化している(閉じてはいない)。open後の事後検証(`file_type().is_dir()`/`is_symlink()`、`FILE_ATTRIBUTE_REPARSE_POINT`、`GetFileType`による`FILE_TYPE_DISK`確認)は、**この祖先置換の変種に対しては実質的な緩和にならない**点に注意が必要である: 祖先が指す先(攻撃者の制御下にあるディレクトリ)に、攻撃者が通常の正規ファイルを置いておけば、追従した結果のopenは`is_dir()`/`is_symlink()`/reparse point/非ディスクのいずれにも該当しない、正真正銘の通常ファイルとして事後検証を通過してしまう——事後検証が実際に効くのは「最終要素自体がsymlink/junction/非通常ファイルである」という別のケース(このAccepted riskとは無関係の、既存の防御対象)であり、「祖先が置換され、最終要素自体は正規ファイルである」というこの変種のケースを検出する手段にはならない。したがって、このリスクに対する実効的な緩和策はチェックとopenの間の窓を狭めることのみであり、それ以上の緩和は現状存在しない。
+      - **却下した緩和策とそのコスト/リスク**: NT native APIの`NtCreateFile`(`OBJECT_ATTRIBUTES.RootDirectory`によるopenat相当の相対open)は、`ntdll.dll`への直接FFIという、この局所的な脅威に見合わない規模の追加依存・保守リスクを伴うため見送った。
+      - **受容の理由**: この変種を突くにはWindows上でプロジェクトディレクトリへの敵対的並行書込み権限が既に必要であり、その能力を持つ攻撃者は`.markharness/identity-events/*.yml`を直接改ざんするなど、より直接的で単純な攻撃手段を既に持っている。Unix限定で許容した「削除・再作成」変種と同じ非対称性の論理により、Windowsでは範囲がより広い(symlink置換も含む)この残存リスクをあわせて明示的に許容する。
+      - **再検討トリガー**: 次のいずれかが生じた場合、この受容を再検討する。(1) 大規模なFFI・追加依存を伴わずにWindowsで安全かつ保守された相対path解決手段(openat相当)が利用可能になった場合。(2) この変種がより低い権限(非管理者、通常のoperator error等)で到達可能になると判明した場合。(3) 実運用でこの変種に起因すると考えられるincidentが発生した場合。
 
 ## 7. branch divergenceの解決
 

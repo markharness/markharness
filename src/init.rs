@@ -22,10 +22,13 @@ const SUBDIRS: [&str; 6] = [
 
 /// `markharness init` が管理する .gitignore エントリ。
 /// .markharness-cache/ は id解決キャッシュ(§3.3)で非コミット・毎プロジェクト再構築のため対象。
+/// `.markharness/.identity.lock` はOS advisory lock専用のマーカーファイルで、
+/// (`identity::lock::IdentityLock`)一度作られた後は削除されずlock/unlockを
+/// 繰り返すだけになるため、他のプロジェクト証跡と違い恒常的に存在しうる非コミット対象。
 /// `.markharness/` 本体(knowledge/axes/generated/executions/changes/schema)は
 /// git-native モデルの核であり、証跡としてコミットする対象なのでここには含めない。
 /// 誤って `.markharness/` ごと ignore しないよう注意すること。
-const GITIGNORE_ENTRIES: [&str; 1] = [".markharness-cache/"];
+const GITIGNORE_ENTRIES: [&str; 2] = [".markharness-cache/", ".markharness/.identity.lock"];
 
 pub fn run_init(root: &Path) -> io::Result<()> {
     let markharness_root = root.join(MARKHARNESS_DIR);
@@ -213,6 +216,21 @@ mod tests {
 
         let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert!(content.contains(".markharness-cache/"));
+    }
+
+    /// `.markharness/.identity.lock` is never deleted once created
+    /// (`identity::lock::IdentityLock` only locks/unlocks it, see that
+    /// module's doc comment) — unlike the rest of `.markharness/`, it
+    /// carries no project-history value, so it must be ignored the same
+    /// way the id-resolution cache is.
+    #[test]
+    fn creates_gitignore_with_identity_lock_entry_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".markharness/.identity.lock"));
     }
 
     #[test]
