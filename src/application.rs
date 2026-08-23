@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::canonical;
 use crate::changes::{self, ChangeOptions};
-use crate::fs_safety::{replace_dir_from_staging, replace_file};
+use crate::fs_safety::{copy_unmanaged_siblings_no_follow, replace_dir_from_staging, replace_file};
 use crate::generate;
 use crate::plan::{self, PlanEvidence, PlanInput};
 use crate::presentation::CommandOutcome;
@@ -173,6 +173,18 @@ pub fn generate_testcases(root: &Path) -> io::Result<CommandOutcome> {
         staging_parent.path(),
         &staged_index,
         traceability::serialize_index(&index).as_bytes(),
+    )?;
+    // `testcases/` and `traceability-index.json` are generator-owned and
+    // fully replaced by the staged content above; everything else already
+    // present under `generated/` (e.g. the `.gitkeep` placeholder `init`
+    // leaves behind) is not owned by the generator, so it is carried
+    // forward into staging before the atomic whole-directory swap below,
+    // rather than being discarded by it.
+    copy_unmanaged_siblings_no_follow(
+        root,
+        &generated_dir,
+        &staging_generated,
+        &["testcases", "traceability-index.json"],
     )?;
     replace_dir_from_staging(root, &staging_generated, &generated_dir)?;
 

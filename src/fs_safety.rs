@@ -469,6 +469,116 @@ pub fn remove_dir_all_no_follow(root: &Path, target: &Path) -> io::Result<()> {
     }
 }
 
+/// Copies every entry directly inside `source` into `destination` (which
+/// must already exist), except entries whose name exactly matches one in
+/// `owned_names`, recursing into subdirectories and refusing to follow any
+/// symlink/junction encountered anywhere in `source`. Only regular files and
+/// directories are copied; any other entry type (FIFO, socket, device, ...)
+/// is rejected rather than risked, since e.g. opening a FIFO can block
+/// indefinitely.
+///
+/// An entry whose name matches an owned name only case-insensitively (not
+/// exactly) is rejected outright rather than copied: on a case-insensitive
+/// filesystem (Windows, default macOS) such an entry *is* the same path as
+/// the owned one, so copying it forward as "unmanaged" would let stale
+/// content shadow the freshly generated owned content. Filesystem case
+/// sensitivity itself is not detected — that would be unverifiable in CI,
+/// which only runs on Linux — so this rejection applies uniformly on every
+/// platform, narrowing the contract from "preserves all non-owned content"
+/// to "preserves non-owned content whose name isn't confusable with an
+/// owned one".
+///
+/// Used to carry a managed directory's non-owned content (e.g. an `init`-
+/// placed `.gitkeep`) forward into a staging directory before
+/// [`replace_dir_from_staging`] atomically replaces the managed directory
+/// wholesale, so that replacement does not discard content it doesn't own.
+/// A missing `source` is treated as success (there is nothing to carry
+/// forward yet, e.g. before the managed directory has ever been created).
+pub fn copy_unmanaged_siblings_no_follow(
+    root: &Path,
+    source: &Path,
+    destination: &Path,
+    owned_names: &[&str],
+) -> io::Result<()> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+    ensure_no_symlink_ancestor(root, source)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        if owned_names
+            .iter()
+            .any(|name| file_name == std::ffi::OsStr::new(name))
+        {
+            continue;
+        }
+        if owned_names
+            .iter()
+            .any(|name| file_name.to_string_lossy().eq_ignore_ascii_case(name))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "refusing to preserve {}: its name is ambiguous with a generator-owned name \
+                     under a case-insensitive filesystem",
+                    entry.path().display()
+                ),
+            ));
+        }
+        copy_entry_no_follow(root, &entry.path(), &destination.join(&file_name))?;
+    }
+    Ok(())
+}
+
+fn copy_entry_no_follow(root: &Path, source: &Path, destination: &Path) -> io::Result<()> {
+    ensure_no_symlink_ancestor(root, source)?;
+    let metadata = fs::symlink_metadata(source)?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to copy a symlinked entry: {}", source.display()),
+        ))
+    } else if file_type.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_entry_no_follow(root, &entry.path(), &destination.join(entry.file_name()))?;
+        }
+        // Applied only after every child has been created: setting a
+        // read-only source directory's permissions on `destination` first
+        // would make every subsequent child-creation call inside it fail.
+        fs::set_permissions(destination, metadata.permissions())?;
+        Ok(())
+    } else if file_type.is_file() {
+        // `fs::copy` (unlike a manual read + `create_new_no_follow` + write)
+        // also copies the source's permission bits onto `destination`, so an
+        // unmanaged sibling (e.g. a file someone deliberately made read-only)
+        // doesn't silently regain default permissions just by surviving a
+        // `generate` run. `destination` is always a path this function is
+        // building inside the fresh staging tree the caller controls (never
+        // attacker-influenced), so `create_new_no_follow`'s no-follow
+        // guarantee isn't needed on that side; `source` was already confirmed
+        // non-symlink above.
+        fs::copy(source, destination)?;
+        Ok(())
+    } else {
+        // Neither a regular file nor a directory: a FIFO, socket, device, or
+        // similar. Opening a FIFO for reading blocks until a writer opens
+        // it, which would hang `generate` indefinitely on nothing more than
+        // an ordinary user placing a named pipe under a managed directory,
+        // so every such type is rejected outright instead of risked.
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to preserve a non-regular, non-directory entry: {}",
+                source.display()
+            ),
+        ))
+    }
+}
+
 /// Rejects `target` if it, or any directory between `root` (exclusive) and
 /// `target`, is a symlink. On Windows this also catches directory
 /// junctions, since `FileType::is_symlink()` reports true for both.
@@ -1034,5 +1144,194 @@ mod tests {
 
         assert!(result.is_err(), "expected an error, got: {result:?}");
         assert!(outside.path().join("keep.txt").exists());
+    }
+
+    #[test]
+    fn copy_unmanaged_siblings_no_follow_copies_a_file_and_a_nested_directory_while_skipping_owned_names()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("generated");
+        fs::create_dir_all(source.join("testcases")).unwrap();
+        fs::write(source.join("testcases/owned.yml"), "owned").unwrap();
+        fs::write(source.join("traceability-index.json"), "owned index").unwrap();
+        fs::write(source.join(".gitkeep"), "").unwrap();
+        fs::create_dir_all(source.join("extra/nested")).unwrap();
+        fs::write(source.join("extra/nested/note.txt"), "keep me").unwrap();
+        let destination = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+
+        copy_unmanaged_siblings_no_follow(
+            root,
+            &source,
+            &destination,
+            &["testcases", "traceability-index.json"],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join(".gitkeep")).unwrap(),
+            ""
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("extra/nested/note.txt")).unwrap(),
+            "keep me"
+        );
+        assert!(!destination.join("testcases").exists());
+        assert!(!destination.join("traceability-index.json").exists());
+    }
+
+    /// Regression test for a copy that silently reset a non-owned sibling's
+    /// permission bits to the default: verifies `copy_unmanaged_siblings_no_follow`
+    /// preserves the source's mode bits rather than recreating the file fresh.
+    #[cfg(unix)]
+    #[test]
+    fn copy_unmanaged_siblings_no_follow_preserves_the_source_files_permission_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("generated");
+        fs::create_dir_all(&source).unwrap();
+        let source_file = source.join("read-only.txt");
+        fs::write(&source_file, "do not touch").unwrap();
+        fs::set_permissions(&source_file, fs::Permissions::from_mode(0o440)).unwrap();
+        let destination = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+
+        copy_unmanaged_siblings_no_follow(root, &source, &destination, &[]).unwrap();
+
+        let copied_mode = fs::metadata(destination.join("read-only.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(copied_mode, 0o440);
+    }
+
+    #[test]
+    fn copy_unmanaged_siblings_no_follow_treats_a_missing_source_as_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("generated");
+        let destination = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+
+        assert!(copy_unmanaged_siblings_no_follow(root, &source, &destination, &[]).is_ok());
+    }
+
+    /// Windows/macOS default filesystems are case-insensitive: an existing
+    /// sibling that only differs from an owned name by case (`TestCases` vs.
+    /// `testcases`) is the *same* path as far as those filesystems are
+    /// concerned, so copying it forward as "unmanaged" would let stale
+    /// content shadow the freshly generated owned content. Rather than
+    /// special-casing filesystem case-sensitivity (unverifiable in CI, which
+    /// only runs on Linux), any non-exact case-insensitive alias of an owned
+    /// name is rejected outright on every platform.
+    #[test]
+    fn copy_unmanaged_siblings_no_follow_rejects_a_sibling_whose_name_is_a_case_insensitive_alias_of_an_owned_name()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("generated");
+        fs::create_dir_all(source.join("TestCases")).unwrap();
+        let destination = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+
+        let result = copy_unmanaged_siblings_no_follow(root, &source, &destination, &["testcases"]);
+
+        assert!(result.is_err(), "expected an error, got: {result:?}");
+        assert!(!destination.join("TestCases").exists());
+    }
+
+    /// A FIFO is neither a directory nor a symlink, so without an explicit
+    /// regular-file check it would fall through to the file-copy branch;
+    /// opening a FIFO for reading blocks until a writer opens it, which
+    /// would hang `generate` indefinitely on nothing more than an ordinary
+    /// user placing a named pipe under `generated/`.
+    #[cfg(unix)]
+    #[test]
+    fn copy_unmanaged_siblings_no_follow_rejects_a_fifo_sibling_instead_of_hanging() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("generated");
+        fs::create_dir_all(&source).unwrap();
+        let fifo_path = source.join("pipe");
+        let path_cstr = CString::new(fifo_path.as_os_str().as_bytes()).unwrap();
+        let mkfifo_result = unsafe { libc::mkfifo(path_cstr.as_ptr(), 0o600) };
+        assert_eq!(
+            mkfifo_result,
+            0,
+            "mkfifo failed: {}",
+            io::Error::last_os_error()
+        );
+        let destination = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+
+        let result = copy_unmanaged_siblings_no_follow(root, &source, &destination, &[]);
+
+        assert!(result.is_err(), "expected an error, got: {result:?}");
+        assert!(!destination.join("pipe").exists());
+    }
+
+    /// A read-only (no write bit) sibling directory with contents must still
+    /// be copyable: the previous implementation applied the source
+    /// directory's permissions to `destination` *before* copying its
+    /// children into it, so a read-only source directory made `destination`
+    /// read-only too early and every child-creation call inside it then
+    /// failed.
+    #[cfg(unix)]
+    #[test]
+    fn copy_unmanaged_siblings_no_follow_copies_into_a_directory_that_will_end_up_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("generated");
+        let read_only_dir = source.join("locked");
+        fs::create_dir_all(&read_only_dir).unwrap();
+        fs::write(read_only_dir.join("inside.txt"), "keep me").unwrap();
+        fs::set_permissions(&read_only_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let destination = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+
+        let result = copy_unmanaged_siblings_no_follow(root, &source, &destination, &[]);
+
+        // Restore write permission before any assertion can panic, so the
+        // tempdir can still be cleaned up regardless of outcome.
+        fs::set_permissions(&read_only_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        result.unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("locked/inside.txt")).unwrap(),
+            "keep me"
+        );
+        let copied_mode = fs::metadata(destination.join("locked"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(copied_mode, 0o555);
+    }
+
+    #[test]
+    fn copy_unmanaged_siblings_no_follow_rejects_a_symlinked_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("generated");
+        fs::create_dir_all(&source).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+        link_dir(&source.join("linked"), outside.path());
+        let destination = root.join("staging");
+        fs::create_dir_all(&destination).unwrap();
+
+        let result = copy_unmanaged_siblings_no_follow(root, &source, &destination, &[]);
+
+        assert!(result.is_err(), "expected an error, got: {result:?}");
+        assert!(!destination.join("linked").exists());
     }
 }
