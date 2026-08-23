@@ -26,7 +26,7 @@ This step is complete when the requested outcome is implemented and every requir
 
 ## 3. Commit locally
 
-Create commits only when the user requests a commit or the requested workflow explicitly includes commits. Use Conventional Commits with a Japanese subject. Never commit directly to `main`; the tracked pre-commit hook enforces this locally.
+Create commits only when the user requests a commit or the requested workflow explicitly includes commits. Before committing, inspect open issues for ones addressed by the change. Use Conventional Commits with a Japanese subject. For every issue whose acceptance criteria are fully satisfied by the change, add `Closes #<number>` as a commit-message footer; use `Refs #<number>` when the change is related but does not complete the issue. Never commit directly to `main`; the tracked pre-commit hook enforces this locally.
 
 This step is complete when the requested commits exist on the working branch and the worktree has no unintended changes.
 
@@ -35,7 +35,7 @@ This step is complete when the requested commits exist on the working branch and
 Treat push, pull-request creation, and merge as separate externally visible actions:
 
 - Push the working branch only when the user explicitly requests it.
-- Open or update a pull request only when the user explicitly requests it. Target `main` and summarize the outcome and verification evidence.
+- Open or update a pull request only when the user explicitly requests it. Target `main` and summarize the outcome and verification evidence. Re-check open issues and include `Closes #<number>` in the pull-request body for every issue fully completed by the complete PR; use `Refs #<number>` for related issues that remain open. Treat the pull-request body as the authoritative auto-close link because GitHub applies its closing keywords when the PR is merged into the default branch.
 - Merge only when the user explicitly requests it and required checks/review are satisfied.
 - Delete the branch only after merge and only when requested or clearly included in the merge workflow.
 
