@@ -8,6 +8,8 @@ markharness が管理するファイルはすべて単一の `.markharness/` 名
 
 設計の背景は [docs/ja/テスト知識管理のGit-nativeモデル_統合版.md](./docs/ja/テスト知識管理のGit-nativeモデル_統合版.md)、プロダクトとしての詳細は [docs/ja/product-operation.md](./docs/ja/product-operation.md) を参照してください。開発への参加方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
 
+全ての永続Knowledge要素(Requirement / Feature / Behavior / Condition / ExpectedResult)は、人間が編集する `id` に加えて不変の `uid`(ULID)を持ちます([ADR 0013](./docs/ja/decisions/0013-immutable-identity-model.md))。`id` は入力・編集する値であり、ChangeEvent・lineage・verify・execution・TestCaseの同一性判定は内部的に `uid` を優先して使います。そのため要素の `id` を変更しても(Featureは `markharness feature rename-id`、他の種別は `markharness identity migrate`/`resolve`/`release`/`retire`/`restore`/`reissue`/`sync`)、削除+追加の2件に分裂せず単一のChangeEventとして版履歴が継続します。identityコマンド一覧は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md) 1.25〜1.33節を参照してください。
+
 ## 最小チュートリアル
 
 このセクションのコマンドは全て `cargo build --release` 後の `target/release/markharness`(Windowsは `.exe`)を指します。以下、`markharness` と表記します。
@@ -73,8 +75,7 @@ markharness verify pending --from v1 --to v2
 
 - 既存TMS(TestRail/Xray等)からのインポータ(UC8) — 未実装。
 - id解決キャッシュの `canonicalization_rule_version` / `id_index_schema_version` — 現状固定値で、実際の改訂運用は未検証。
-- `feature.yml` の `id:` フィールドを書き換えると、ディレクトリのリネームとは異なり同一Featureとして追跡できなくなり版履歴が断絶する。移行手順・エイリアス機構は現状なし(検討結果は[decisions/0004](./docs/ja/decisions/0004-feature-id-change-migration.md))。
-- id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等) — 未実装。
+- ADR 0013の「schema version 2公開cutover後にuidなし要素が追加された場合は通常コマンドを拒否する」検証規則は `markharness validate` にのみ実装されており、`knowledge apply`/`interactive add` 等の生成系コマンドへの拡張は未定。
 - `verify trace` / `verify pending` — 導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用されない(「不明」扱い)。`.markharness/executions/*/results.yml` はJSON Schema検証済み(`.markharness/schema/execution_result.schema.json`)。
 - `markharness backfill run` — 常駐デーモンではなく、呼び出しごとに未処理ペアを1パス処理して終了する設計(CI等からの反復呼び出しを前提とする)。
 

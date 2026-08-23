@@ -8,6 +8,8 @@ All files markharness manages live under the single `.markharness/` namespace (`
 
 For the design background, see [docs/en/git-native-model-for-test-knowledge-management.md](./docs/en/git-native-model-for-test-knowledge-management.md); for product details, see [docs/en/product-operation.md](./docs/en/product-operation.md). For how to contribute, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
+Every persistent Knowledge element (Requirement / Feature / Behavior / Condition / ExpectedResult) also carries an immutable `uid` (a ULID) alongside its human-editable `id` ([ADR 0013](./docs/en/decisions/0013-immutable-identity-model.md)). `id` is what you type and edit; `uid` is what ChangeEvent, lineage, verify, execution, and TestCase tracking actually key off internally, so renaming an element's `id` (`markharness feature rename-id`, or `markharness identity migrate`/`resolve`/`release`/`retire`/`restore`/`reissue`/`sync` for the other kinds) collapses into a single ChangeEvent instead of severing its version history into an add+delete pair. See [docs/en/cli-manual.md](./docs/en/cli-manual.md) §1.25–1.33 for the full identity command set.
+
 ## Minimal tutorial
 
 All commands in this section refer to `target/release/markharness` (`.exe` on Windows) after `cargo build --release`. It is written as `markharness` below.
@@ -76,8 +78,7 @@ See [docs/en/git-native-model-for-test-knowledge-management.md §3.6 Summary of 
 
 - An importer from an existing TMS (TestRail/Xray, etc.) (UC8) — not implemented.
 - The id-resolution cache's `canonicalization_rule_version` / `id_index_schema_version` — currently fixed values; an actual revision workflow is unverified.
-- Rewriting the `id:` field in `feature.yml` breaks tracking as the same Feature (unlike a directory rename), severing version history. There is currently no migration procedure or alias mechanism (see [decisions/0004](./docs/en/decisions/0004-feature-id-change-migration.md) for the discussion).
-- A general-purpose, independent id↔path index layer (e.g. tracking an id change that doesn't change the path) — not implemented.
+- ADR 0013's rule that ordinary commands reject a uid-less element introduced after the schema-version-2 cutover is implemented only in `markharness validate`; extending it to generation-side commands (`knowledge apply`/`interactive add`) is undecided.
 - `verify trace` / `verify pending` are not applied retroactively to existing execution records predating their introduction (those without `verified_feature_tree_shas`) — treated as "unknown". `.markharness/executions/*/results.yml` is JSON-Schema-validated (`.markharness/schema/execution_result.schema.json`).
 - `markharness backfill run` — not a resident daemon; designed to process one pass of unprocessed pairs per invocation and then exit (intended to be invoked repeatedly, e.g. from CI).
 
