@@ -11,6 +11,8 @@ Repository changes use GitHub Flow. Complete the applicable steps in order.
 
 Before the first file mutation, inspect `git status --short` and `git branch --show-current`.
 
+When Codex sessions perform file-writing work in parallel, each session must use its own Git worktree and its own short-lived branch. Do not edit files, switch branches, stage changes, run write-producing verification, or commit from a worktree being used by another active session. Read-only work may share a worktree only when it does not require a stable snapshot; otherwise, use a separate worktree for that work too.
+
 - On `main`, create and switch to a short-lived branch before editing: `feature/<topic>`, `fix/<topic>`, `docs/<topic>`, `refactor/<topic>`, or `chore/<topic>`.
 - If `main` already has uncommitted changes, preserve them and switch them onto the new branch with `git switch -c <branch>` before further edits.
 - On an existing non-main branch, continue there when its purpose matches the task. Create a new branch when it does not.
