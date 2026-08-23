@@ -2,6 +2,26 @@
 
 This document is the source of truth for code-review decisions in this repository. Reviewers must apply it when reviewing code, branches, diffs, pull requests, or implementations against a checklist or specification.
 
+## Project threat model
+
+`markharness` is a local CLI tool run by a single developer against their own working copy. Unless a specific accepted ADR or design document says otherwise for a specific feature, the baseline threat model is:
+
+- The operating system, filesystem, and other processes running as the same user are trusted. A process with the same privileges as `markharness` itself (able to write anywhere `markharness` can write) is **not** an adversary this project defends against — it already has direct, simpler means to cause equivalent or worse damage than any race condition could.
+- The project directory is not shared, over a network filesystem or otherwise, with an untrusted party while `markharness` is running, unless a specific finding's evidence shows this is how the project is actually used.
+- Malicious *input* (a crafted repository, a crafted Knowledge YAML file, a crafted CLI argument) is in scope. A malicious *concurrent process racing filesystem operations with attacker-chosen timing* is out of scope by default.
+
+Apply this threat model when scoring `Reachability` and `Required capability`. A finding whose only path to impact requires an actor who already has adversarial, concurrent, arbitrarily-timed write access to the project directory defaults to `Accepted risk` or `No finding`, not `Should fix` or `Must fix`, unless the actor could reach that position with meaningfully less capability than "already able to write to this project's files." Do not treat "theoretically possible with the right timing" as sufficient reachability on its own.
+
+This does not relax `Must fix` items that are reachable through ordinary use, operator error, or normal (non-adversarial) concurrent use of the CLI by the same operator — those remain in scope regardless of this section.
+
+## YAGNI
+
+Apply YAGNI (You Aren't Gonna Need It) to both implementation and review: build and request only what the current, concrete requirement needs.
+
+- Do not propose or request generalization, configurability, abstraction layers, or extension points for a need that does not yet exist. "This might be needed later" is not, by itself, grounds for a finding or a remediation.
+- Do not propose hardening against a capability or scenario excluded by [Project threat model](#project-threat-model), even if it is technically possible to close. A closable gap is not automatically worth closing — weigh it against `Remediation cost` and `Change risk` like any other finding, and default to `Accepted risk`/`No finding` when the requesting actor's capability is already out of scope.
+- When a finding's proposed remediation would add a new abstraction, dependency, or configuration surface, prefer the version of the fix that solves only the reported condition. Note any broader generalization as a `Follow-up` at most, never as part of the required remediation.
+
 ## Review axes
 
 Review changes independently along both axes. Report findings under the corresponding heading; do not let one axis conceal the other.
@@ -78,6 +98,13 @@ Apply these defaults unless a more specific accepted ADR or design document says
 - A low-cost, portable, deterministic, and testable mitigation normally favors `Should fix` over risk acceptance.
 - A narrow platform-specific residual risk may be accepted when closing it requires unstable or high-risk FFI or substantial dependencies, the actor already needs destructive write access, and the remaining guarantee is documented precisely.
 - A pre-existing issue is `Follow-up` unless the reviewed change worsens it, newly makes it reachable, or depends on the violated behavior for correctness.
+- Adding raw platform FFI (a manual `extern` declaration, direct syscalls, or a new low-level dependency like `libc`/`windows-sys`) to close a race is a `Change risk` signal, not a free action. Prefer `Accepted risk` over adding or expanding raw FFI when the only actor who can trigger the condition already needs the level of access described in [Project threat model](#project-threat-model). Reserve FFI-based hardening for conditions reachable through ordinary use, operator error, or an actor with meaningfully less access than "can already write to this project."
+
+## Avoiding review churn
+
+- When this policy itself changes, or a new requirement (such as the six accepted-risk elements) is introduced, check every existing accepted-risk record against it in one pass and report the complete set of gaps as a single finding (or one finding per affected document, not one per missing element or per language). Do not spread a single policy-compliance gap across multiple sequential review rounds.
+- A finding whose entire content is "this accepted-risk record's prose doesn't literally restate one of the required elements," where the underlying risk determination (condition, capability, reachability, mitigation, acceptance reasoning) is otherwise unchanged and correct, is `No finding` once that determination has already been recorded once in substance — do not require a second round to reformat it into stricter headings or bullet structure.
+- Before opening a new review round on a change that is itself the fix for the previous round's finding, confirm the previous finding's evidence no longer applies. If the fix is correct, the review is done for that finding; do not use the same evidence location to open an adjacent, narrower finding unless it describes a genuinely different condition.
 
 ## Finding format
 

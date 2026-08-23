@@ -12,6 +12,7 @@
   - 常に最善のプロダクトを構築するために以下を実施する
     - 設計の有用性、無用性を検討
     - 設計のデメリットに工数は含めない
+  - **YAGNI(You Aren't Gonna Need It)** — 現時点で要求されていない汎用化・抽象化・将来のための拡張ポイントは実装しない。「いつか必要になるかもしれない」は実装理由にならない。実際に次の要求が来た時点で、その時点の要求に合わせて拡張する。レビューでも同じ基準を適用し、実際に到達しうる脅威・要求に見合わない汎用化・ハードニング(過剰な抽象化、使われない設定オプション、現実的でない攻撃者能力を前提にした防御コード等)は指摘・実装しない。
 - **チェックリスト運用** — 複数ステップの作業は `checklist-<task>.md` で進捗管理する。詳細: [checklist-workflow](./.github/instructions/checklist-workflow.instructions.md)
 - **TDD** — `src/` 配下のコードは Red-Green-Refactor で開発する。テストなしのプロダクションコードは書かない。詳細: [tdd-workflow](./.github/instructions/tdd-workflow.instructions.md)
 - **実装時のレビュー**
