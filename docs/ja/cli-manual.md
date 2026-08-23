@@ -1004,6 +1004,8 @@ markharness validate [--json] [-d, --dir <path>]
 
 **`.markharness/executions/*/results.yml`のスキーマ**: `execution_result.schema.json` は `case_id` / `result`(`pass`/`fail`/`skip`) / `executor` / `executed_at` を必須、`note` / `verified_feature_tree_shas` を任意フィールドとする(1.15節)。`verified_feature_tree_shas` は本仕様導入前に書かれた実行記録には存在しないが、任意フィールドとして定義しているため過去の記録もそのままスキーマ検証を通る。この場合、`verify trace`/`verify pending`(change-event-verification-tracking-spec.md §6)は当該レコードを遡及的に補完せず「不明」として扱う。
 
+**UID modeでの追加検証(ADR 0013、design doc §13 Phase 5)**: `.markharness/config.toml`の`[identity]`markerが`mode = "uid"`(1.26節`identity migrate`が全種類の移行完了時に書き込む)であるプロジェクトでは、Requirement/Feature/Behavior/Condition/ExpectedResultのいずれかが`uid:`を持たない場合、そのファイルパスと`markharness identity migrate`の実行を促すメッセージを検証issueとして報告する。copy/import/手編集でcutover後にuidなし要素が紛れ込んだことを検出するためのガードであり、cutover前(markerなし)のプロジェクトでは適用されない。
+
 **動作**
 
 - 問題が1件もなければ終了コード `0`。人間可読モードでは `.markharness/knowledge/ and .markharness/axes/ are valid`、`--json` では `{"ok":true}` を出力する。
@@ -1136,6 +1138,304 @@ markharness serve [--base <git-ref>] [--head <git-ref>] [--port <port>] [-d, --d
 ```
 
 `127.0.0.1`だけでread-only dashboardを配信する。既定範囲は`HEAD~1`→`HEAD`、既定portは`8787`。画面はStage 2と同じDomain Engineが返すVerification Planのsummary、影響Testのstatus/reason/origin、rule-based proposalを表示し、Feature History APIはGit tree SHAと既存ChangeEventを返す。GUI独自のstatus計算やGit管理ファイルの編集は行わない。frontend assetsはRustバイナリに同梱されるため、利用時にNode.jsは不要。
+
+---
+
+### 1.25 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
+
+```text
+markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
+```
+
+**用途**: Featureの`id:`を`OLD`から`NEW`へ変更する。不変の`uid`(1.26節`identity migrate`で発行)は保持されるため、`changes compute`(1.12節)はrenameの前後を同一Featureとして扱い、delete+addではなく単一のChangeEventとして検出する(ADR 0013、Issue #17)。実体はcrash-recoverableなidentity operation(identity event追加→`feature.yml`書き換え)であり、確認プロンプトなしにそのまま実行される(取り消したい場合は再度`rename-id`で元のidへ戻せばよい)。
+
+**前提条件**: 対象Featureが`identity migrate`(1.26節)で既に`uid`を発行済みであること。
+
+**動作**
+
+- 成功時: `renamed Feature '<old>' to '<new>' (uid preserved)` を出力し終了コード `0`。
+- `<OLD>` のFeatureが存在しない、`<NEW>` が既に別Featureに使われている、対象Featureがまだmigrateされていない(`Run \`markharness identity migrate\` first` と案内)、`feature.yml` の `id:` とidentity eventのreplay結果が食い違っている(手動編集等で整合性が壊れている)、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+
+**使用例**
+
+```console
+$ markharness feature rename-id todo todo-v2
+renamed Feature 'todo' to 'todo-v2' (uid preserved)
+```
+
+**ユースケース対応**: ADR 0013(不変uidモデル)、Issue #17(id変更をChangeEventが正しく追跡できない問題)。
+
+---
+
+### 1.26 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
+
+```text
+markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
+```
+
+**用途**: `.markharness/knowledge/`配下のRequirement/Feature/Behavior/Condition/ExpectedResultのうち、まだ`uid:`を持たない要素全てへ新規UIDを発行し、root `Issued` identity eventを記録する。冪等な操作であり、copy/import/手編集で後からuidなし要素が混入した場合も安全に再実行できる。TestCaseの`case_id`→`case_uid`対応(migration manifest、`.markharness/identity-migration-manifest.yml`)もあわせて記録する。
+
+5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 2`・`mode = "uid"`を書き込み、schema version 2への公開cutoverを完了する(design doc §13 Phase 5)。cutover後は`markharness validate`(1.18節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
+
+**前提条件**: 対象ディレクトリがgitリポジトリであること。legacy snapshot identityとして`.markharness/knowledge`のtree SHAをmigration manifestへ記録するため、内部で一時indexを使った`git write-tree`相当の処理を行う(実リポジトリのstaging areaは変更しない)。
+
+**動作**
+
+- `--dry-run`: lock・staging・identity event・Knowledge fileのいずれも書き込まず、予定するUID割当と変更対象ファイルの一覧のみ表示する。
+- 通常実行: 全kindを2パスで処理する(id/uid重複検出→問題なければ全kind分のIssued eventを1つのbatchとしてcrash-recoverableに記録)。kind間で同じidを使うのは許容されるが、kind内の重複idは競合として拒否される(終了コード `2`)。
+- 同時実行中の別identity operationを検知した場合: 終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+- `--json`: `{"audit_scope":"working_tree","dry_run":bool,"migrated":[{"kind","id","uid"}],"conflicts":[string],"changed_files":[string]}` を出力する。`audit_scope`は、`changes compute`・`verify`系(1.6/1.12節)の`"two_snapshot"`や`identity audit`(1.29節)の`"full_history"`と対比される値で、`identity migrate`が working tree 1点のみを検査する操作であることを示す機械可読フィールド(design doc §11)。
+
+**使用例**
+
+```console
+$ markharness identity migrate --dry-run
+would migrate requirement 'req-todo' -> uid 01M0M862TX3X878T44WXBCQDQF
+would migrate feature 'todo' -> uid 01M0M862TYP26CAAB5RWHKWC2B
+would migrate behavior 'todo-add-task' -> uid 01M0M862TYD5B5H95VGXAXYKN3
+would migrate condition 'todo-add-task-empty-input' -> uid 01M0M862TYDND4EQJT6A25KAG4
+would migrate expected_result 'todo-add-task-empty-input-001' -> uid 01M0M862TYQKXDCTGDYPE8BBWY
+would change .markharness/knowledge/req-todo/requirement.yml
+would change .markharness/identity-events/requirements/01M0M862TX3X878T44WXBCQDQF/01M0M862TYKGXCZV3TECPDQGWS.yml
+... (以下、変更対象ファイルを全kind分列挙)
+
+$ markharness identity migrate
+migrated requirement 'req-todo' -> uid 01M0M8632NP9SY6T1X1NK7Z9XE
+migrated feature 'todo' -> uid 01M0M8632N73PB010A2TQQYG84
+migrated behavior 'todo-add-task' -> uid 01M0M8632N0KDPK15MAK34TZKC
+migrated condition 'todo-add-task-empty-input' -> uid 01M0M8632N94PXJREJEJNMKETY
+migrated expected_result 'todo-add-task-empty-input-001' -> uid 01M0M8632NWZAW5VM0HZ2AWNMV
+
+$ markharness identity migrate --json
+{"audit_scope":"working_tree","changed_files":[],"conflicts":[],"dry_run":false,"migrated":[]}
+```
+
+(2回目の`--json`実行は全要素が既にmigrate済みのため、`migrated`が空のno-op応答になっている。)
+
+**ユースケース対応**: ADR 0013「移行」節、design doc §12(migration時のrecorded_at・crash-recovery)・§13 Phase 4(全要素migration)/Phase 5(schema version 2公開cutover)。
+
+---
+
+### 1.27 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
+
+```text
+markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
+```
+
+`<KIND>` は `requirement` / `feature` / `behavior` / `condition` / `expected-result` のいずれか。
+
+**用途**: 同一entityに対し、同じ先行eventから分岐した複数のidentity event(branch divergence、design doc §7)が存在する場合に、どちらの結果(id/status)を正とするかを明示的に選び、`Resolved` identity eventを記録する。divergenceは、複数branchで独立にidentity操作(rename/retire等)が行われた履歴をmergeした場合などに発生しうる。branch divergence自体は通常の単一branch運用では発生しにくく、本コマンドは複数branchでの並行identity操作をmergeした場合の復旧手段として用意されている。
+
+**動作**
+
+- 成功時: `resolved divergence for <uid>, keeping <keep>` を出力し終了コード `0`。
+- 対象entityに未解決のdivergenceが無い、`--keep`に指定したevent uidがdivergent headのいずれでもない(候補一覧をエラーメッセージに表示)、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+
+**ユースケース対応**: ADR 0013 design doc §7(branch divergenceの解決)。
+
+---
+
+### 1.28 `markharness identity release` — retireされたentityの旧idを再利用可能にする(ADR 0013、design doc §9)
+
+```text
+markharness identity release <KIND> <UID> <OLD_ID> [-d, --dir <path>]
+```
+
+**用途**: `Retired`状態のentityが過去に使っていた`OLD_ID`を、別の新規entityが使えるよう明示的に解禁する(`Released` identity eventを記録)。`rename-id`(1.25節)と同様、確認フラグなしでそのまま実行される — 同一性に関わる操作の監査証跡はコマンド実行自体とGit差分・identity eventに委ねる方針で一貫しており、`release`だけを特別扱いしない(design doc §9)。取り消し可能な操作(再度別のUIDへ発行し直せば実質的に取り消せる)である点も踏まえた設計。
+
+**動作**
+
+- 成功時: `released '<old_id>' for reuse (was held by <uid>)` を出力し終了コード `0`。
+- 対象entityが`Retired`状態ではない、`<OLD_ID>`が対象entityの`id_history`に含まれていない、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+
+**ユースケース対応**: ADR 0013 design doc §9(release eventの実行摩擦)。永続的な再利用禁止は行わず、外部連携ではuidを正準とする方針(ADR 0013「エイリアス機構は採用しない」節)を補完する。
+
+---
+
+### 1.29 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
+
+```text
+markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
+```
+
+**用途**: `<ref>`(既定`HEAD`)のfirst-parent history全体を走査し、`.markharness/identity-events/`が持つべき2つの性質を検証する: (1) identity eventはappend-onlyであること(一度commitされたeventファイルが後のcommitで消失・内容変更されていないか)、(2) 各commit時点のevent集合が矛盾なくreplayできること(causal chain contradiction)。`changes compute`・`verify`・`identity migrate`(1.6/1.12/1.26節)がいずれも高々2つの`.markharness` snapshotしか見ない軽量な比較であるのに対し、`identity audit`だけがGit commit history全体を走査する重い処理であり、独立したトップレベルコマンドとして分離されている(design doc §11)。
+
+走査は現在checkoutしているbranchのfirst-parent history(`git log --first-parent`相当)に限定される。まだmergeされていないside branch上の変更はこのプロジェクトの公開履歴ではないため、対象に含めない。
+
+**動作**
+
+- 違反が1件もなければ終了コード `0`。人間可読モードでは`no identity-history violations found (<N> commits scanned)`、`--json`では`violations`が空配列。
+- 違反があれば違反ごとに1行出力して終了コード `1`。
+- `--json`: `{"audit_scope":"full_history","commits_scanned":<N>,"violations":[...]}`。各`violations`要素は`type`フィールド(`event_disappeared` / `event_content_changed` / `causal_chain_contradiction`)でタグ付けされる。
+- Gitオブジェクトの読取失敗などの基盤障害が発生した場合はコマンド自体がエラー終了する(監査対象の矛盾としては報告しない)。
+
+**使用例**
+
+```console
+$ markharness identity audit
+no identity-history violations found (3 commits scanned)
+
+$ markharness identity audit --json
+{"audit_scope":"full_history","commits_scanned":3,"violations":[]}
+```
+
+identity eventファイルが後から削除されるなど、履歴が改ざんされた場合:
+
+```console
+$ markharness identity audit
+event disappeared: feature '01M0M8632N73PB010A2TQQYG84' event '01M0M8632N666JSS1BXY1NCH30' is missing as of commit a021aed5d2159dbe718b111e9aaf679130ee823b (.markharness/identity-events/features/01M0M8632N73PB010A2TQQYG84/01M0M8632N666JSS1BXY1NCH30.yml)
+causal chain contradiction: feature '01M0M8632N73PB010A2TQQYG84' at commit a021aed5d2159dbe718b111e9aaf679130ee823b: NoRootEvent
+$ echo $?
+1
+```
+
+**ユースケース対応**: ADR 0013 検証規則(「`IdentityAuditor`だけがGit commit history全体を走査し、repository全体のevent append-only性と、選択2 snapshotの外側にある削除・過去改変を検証すること」)、design doc §11。
+
+---
+
+### 1.30 `markharness identity retire` — 削除済みKnowledge要素をretired状態として記録する(ADR 0013、design doc §2・§4.2)
+
+```text
+markharness identity retire <KIND> <UID> [-d, --dir <path>]
+```
+
+**用途**: 既に(ユーザー自身が)`.markharness/knowledge/`から削除したKnowledge要素について、`Retired` identity eventを記録する。ファイル自体を削除する処理は行わない — 「削除はユーザーの操作、その記録がこのコマンド」という役割分担であり、削除を自動検出するfilesystem watcher等は無い。旧idは`release`(1.28節)を実行するまで別entityへの再割り当てが予約されたままになる。
+
+**前提条件**: 対象entityがまだ`.markharness/knowledge/`に存在する場合は拒否される(先にファイルを削除すること)。既に`Retired`状態の場合も拒否される。
+
+**動作**
+
+- 成功時: `retired <uid>` を出力し終了コード `0`。
+- 対象entityに`uid`が無い、Knowledge要素がまだ存在する、既にretired、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+
+**使用例**
+
+```console
+$ rm .markharness/knowledge/req-todo/todo/feature.yml
+$ markharness identity retire feature 01M0M9DE51V68FDX22SC6A6TM7
+retired 01M0M9DE51V68FDX22SC6A6TM7
+```
+
+**ユースケース対応**: ADR 0013 design doc §2(background)・§4.2(`Retired` mutation)。
+
+---
+
+### 1.31 `markharness identity restore` — retiredなentityをactiveへ戻す(ADR 0013、design doc §2)
+
+```text
+markharness identity restore <KIND> <UID> [-d, --dir <path>]
+```
+
+**用途**: `identity retire`(1.30節)を取り消し、`Restored` identity eventを記録してentityのstatusを`active`へ戻す。Knowledge要素のファイル自体は再作成しない。ファイルを`restore`より**前**に復元(または同じidで新規作成)していれば、`restore`自身のroll-forwardが即座に`uid:`を書き戻す。`restore`より**後**にファイルを復元した場合は自動では同期されないため、`identity sync`(1.32節)を実行すること。
+
+**動作**
+
+- 成功時: `restored <uid>` を出力し終了コード `0`。
+- 対象entityに`uid`が無い、`Retired`状態ではない、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+
+**使用例**
+
+```console
+$ markharness identity restore feature 01M0M9DE51V68FDX22SC6A6TM7
+restored 01M0M9DE51V68FDX22SC6A6TM7
+```
+
+**ユースケース対応**: ADR 0013 design doc §2(background)。
+
+---
+
+### 1.32 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
+
+```text
+markharness identity sync <KIND> <UID> [-d, --dir <path>]
+```
+
+**用途**: `<UID>`のidentity eventを現在の状態までreplayし、その結果の`id`を持つKnowledge fileへ`uid:`を書き戻す(欠けていれば追加、古ければ訂正)。新しいidentity eventは一切記録しない — 既にdurableなevent logからファイル状態を再導出するだけの操作。`identity migrate`をはじめ他の全identity操作が内部で行っている「roll-forwardによるKnowledge file同期」を、単体で呼び出せるようにしたもの。
+
+**前提条件**: `identity restore`(1.31節)の**後**にファイルを復元・再作成した場合など、他の操作の副作用としては同期が起きなかったケースを埋めるためのコマンド。`rename-id`(1.25節)はFeatureにしか存在せず、かつファイルが既に`uid:`を持っていることを要求するため、uidなしファイルの汎用的な再同期手段にはならない — `identity sync`は5種類全kindに対応し、ファイルがuidを持っているかどうかを問わない。対象entityのstatusが`active`である場合のみ実行できる — `retired`のentityに対しては拒否される。`Restored` eventを経ずにKnowledge fileへ`uid:`を書き戻すと、retire済みのentityがKnowledge上へ無断で再出現してしまうため。
+
+**動作**
+
+- 成功時: `synced <uid>` を出力し終了コード `0`。
+- 対象entityに`uid`が無い、対象entityが`active`ではない(`retired`)、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+
+**使用例**
+
+```console
+$ markharness identity sync feature 01M0MJQ5C4CJ3HHVG7PBYAQEBR
+synced 01M0MJQ5C4CJ3HHVG7PBYAQEBR
+$ cat .markharness/knowledge/req-todo/todo/feature.yml
+id: todo
+requirement: req-todo
+label: todo
+axis: []
+uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
+```
+
+**ユースケース対応**: `identity restore`(design doc §2)の操作順序に依存しない一般的な後始末。
+
+---
+
+### 1.33 `markharness identity reissue` — 既存要素へ新規uidを強制発行する(ADR 0013「copy、import、repository統合の規則」)
+
+```text
+markharness identity reissue <KIND> <ID> [--json] [-d, --dir <path>]
+```
+
+**用途**: `<ID>`を持つKnowledge要素へ、現在の`uid:`(あれば)を引き継がずに全く新しいuidを発行し、root `Reissued` identity eventを記録する。既存の`uid:`は`source_uid`として監査目的でのみeventに記録され、このprojectでentityとして解決されることはない。別repositoryからのcopy/importで、継続ではなく別entityとして取り込みたい場合や、2つのrepositoryを統合する際に同じUIDを持つ要素の一方を明示的に別entityへ切り替えたい場合に使う(`rename-id`が同一性を保持したまま`id`だけ変えるのとは正反対の操作)。
+
+**前提条件**: `<ID>`が、このprojectのローカルidentity event logにおいて明示的に`release`されていない場合は拒否される。ADR本文の「一度idがUIDへ発行されたら、明示的なreleaseがそのidの予約を解除するまで、別のUIDへは割り当てられない」という規則どおりで、**旧UIDをretireしただけでは不十分**であり(旧idは`identity release`を実行するまで予約されたまま)、`identity retire`に続けて`identity release <kind> <old-uid> <id>`まで実行しておく必要がある。この判定はKnowledge要素自身の現在の`uid:`だけでなく、この`kind`のローカルに存在する全UIDのidentity event logを対象に行う — Knowledge fileが`uid:`を持たない(手編集やcopy/importで再作成された)状態であっても、`.markharness/identity-events/<kind>/`配下の別UIDがまだ`<ID>`を未release状態で保持していれば同じく拒否される。別repositoryからcopyしてきた(このprojectではローカルなevent logを一度も持ったことがない)`uid:`はこの制限を受けない。
+
+**動作**
+
+- 成功時: 人間可読モードでは`reissued '<id>' -> uid <new-uid>`(旧uidがあれば`(source_uid: <old-uid>)`を付加)、`--json`では`{"uid":"<new-uid>","source_uid":"<old-uid-or-null>"}`を出力し終了コード `0`。
+- `<ID>`のKnowledge要素が存在しない、`<ID>`がローカルのどこかのUIDでまだreleaseされていない(前提条件参照)、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
+- ファイルシステムエラー: 終了コード `3`。
+
+**使用例**
+
+```console
+$ markharness identity reissue feature todo
+reissued 'todo' -> uid 01M0MKNNQ84CPQPP2XFT0ZDDFE (source_uid: 01FOREIGN00000000000000000)
+```
+
+拒否される例(`todo2`は`identity migrate`済みでreleaseされていないローカルuidを持つ):
+
+```console
+$ markharness identity reissue feature todo2
+error: 'todo2' has not been released from '01M0MKNNWNCNE5B8SX4NXHW3AD'; run `markharness identity retire feature 01M0MKNNWNCNE5B8SX4NXHW3AD` then `markharness identity release feature 01M0MKNNWNCNE5B8SX4NXHW3AD todo2` first
+```
+
+`retire`→`release`まで済ませてから再度実行すると成功する:
+
+```console
+$ markharness identity retire feature 01M0MKNNWNCNE5B8SX4NXHW3AD
+retired 01M0MKNNWNCNE5B8SX4NXHW3AD
+$ markharness identity release feature 01M0MKNNWNCNE5B8SX4NXHW3AD todo2
+released 'todo2' for reuse (was held by 01M0MKNNWNCNE5B8SX4NXHW3AD)
+$ markharness identity reissue feature todo2
+reissued 'todo2' -> uid 01M0MKNPCD1PFM7WXYFMC9SE3X (source_uid: 01M0MKNNWNCNE5B8SX4NXHW3AD)
+```
+
+Knowledge fileが`uid:`を持たない(再作成された)状態でも、同じ拒否が働く例(`todo`は`identity migrate`済みでretireされたが、releaseはまだのuidを持つ):
+
+```console
+$ markharness identity reissue feature todo
+error: 'todo' is still reserved by '01M0MTAP7839QFJ2NNWEEPBDKY'; run `markharness identity retire feature 01M0MTAP7839QFJ2NNWEEPBDKY` then `markharness identity release feature 01M0MTAP7839QFJ2NNWEEPBDKY todo` first
+$ markharness identity release feature 01M0MTAP7839QFJ2NNWEEPBDKY todo
+released 'todo' for reuse (was held by 01M0MTAP7839QFJ2NNWEEPBDKY)
+$ markharness identity reissue feature todo
+reissued 'todo' -> uid 01M0MTAPRVG79QSZWZN4YM06AM (source_uid: 01M0MTAP7839QFJ2NNWEEPBDKY)
+```
+
+**ユースケース対応**: ADR 0013「copy、import、repository統合の規則」(「別要素として取り込む場合は新UIDを発行し、reissue eventを記録する」「異なる要素が同じUIDを持つrepositoryを統合する場合、一方を明示的にreissueしてから統合する」)、「一度idがUIDへ発行されたら明示的なreleaseまで別UIDへ割り当てられない」制約。
 
 ---
 

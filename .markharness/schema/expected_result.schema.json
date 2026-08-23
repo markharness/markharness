@@ -19,7 +19,8 @@
       },
       "required": ["human_review"],
       "additionalProperties": false
-    }
+    },
+    "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
   "required": ["id", "condition", "description"],
   "additionalProperties": false

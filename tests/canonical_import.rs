@@ -153,3 +153,40 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
             .any(|artifact| artifact.external_id == "working-tree-only")
     );
 }
+
+/// ADR 0013: a Feature artifact must carry its `uid` (when the Feature has
+/// one) alongside `external_id`, so a consumer holding two snapshots taken
+/// at different times can recognize the same Feature across a rename
+/// instead of relying solely on `external_id`.
+#[test]
+fn native_import_carries_the_feature_uid_when_the_feature_has_one() {
+    const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q", "-b", "main"]);
+    git(repo.path(), &["config", "user.email", "test@example.com"]);
+    git(repo.path(), &["config", "user.name", "Test"]);
+    fs::create_dir_all(repo.path().join(".markharness/knowledge/checkout/pay")).unwrap();
+    fs::write(
+        repo.path()
+            .join(".markharness/knowledge/checkout/requirement.yml"),
+        "id: checkout\nlabel: Checkout\naxis: []\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.path()
+            .join(".markharness/knowledge/checkout/pay/feature.yml"),
+        format!("id: pay\nrequirement: checkout\nlabel: Pay\naxis: []\nuid: {UID}\n"),
+    )
+    .unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-qm", "fixture"]);
+
+    let snapshot = import_native(repo.path(), "HEAD").unwrap();
+
+    let feature = snapshot
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == ArtifactKind::Feature)
+        .unwrap();
+    assert_eq!(feature.uid.as_deref(), Some(UID));
+}

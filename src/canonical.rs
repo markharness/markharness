@@ -38,6 +38,15 @@ pub struct CanonicalArtifact {
     pub kind: ArtifactKind,
     pub version: ArtifactVersion,
     pub provenance: Provenance,
+    /// The artifact's immutable identity (ADR 0013), when the source
+    /// system tracks one. `external_id` still reflects the current,
+    /// human-readable id — `uid` lets a consumer correlate this artifact
+    /// across snapshots even after `external_id` changes (a rename).
+    /// `None` for artifact kinds that don't carry a `uid` yet (Condition
+    /// and TestCase, until Phase 3/4 of ADR 0013's migration) and for
+    /// importers (e.g. junit) with no concept of one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -160,10 +169,10 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
     let _ = git::remove_worktree(root, &worktree);
     let knowledge = loaded?;
     let testcases = generate::compile_testcases(&knowledge);
-    let feature_versions: BTreeMap<String, String> =
+    let feature_versions: BTreeMap<String, id_cache::FeatureVersion> =
         id_cache::resolve_feature_versions(root, git_ref, false)?
             .into_iter()
-            .map(|version| (version.id, version.tree_sha))
+            .map(|version| (version.id.clone(), version))
             .collect();
     let provenance = Provenance {
         importer: "markharness-native".to_string(),
@@ -172,17 +181,18 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
     };
 
     let mut artifacts = Vec::new();
-    for (feature_id, git_oid) in &feature_versions {
+    for (feature_id, version) in &feature_versions {
         artifacts.push(CanonicalArtifact {
             canonical_id: canonical_id(ArtifactKind::Feature, feature_id),
             source: "markharness-native".to_string(),
             external_id: feature_id.clone(),
             kind: ArtifactKind::Feature,
             version: ArtifactVersion {
-                git_oid: Some(git_oid.clone()),
+                git_oid: Some(version.tree_sha.clone()),
                 canonical_hash: None,
             },
             provenance: provenance.clone(),
+            uid: version.uid.clone(),
         });
     }
 
@@ -197,7 +207,9 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
             continue;
         };
         let version = ArtifactVersion {
-            git_oid: feature_versions.get(&case.feature_id).cloned(),
+            git_oid: feature_versions
+                .get(&case.feature_id)
+                .map(|v| v.tree_sha.clone()),
             canonical_hash: None,
         };
         artifacts.push(CanonicalArtifact {
@@ -207,6 +219,7 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
             kind: ArtifactKind::Condition,
             version: version.clone(),
             provenance: provenance.clone(),
+            uid: None,
         });
         artifacts.push(CanonicalArtifact {
             canonical_id: canonical_id(ArtifactKind::TestCase, &testcase.case_id),
@@ -215,6 +228,7 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
             kind: ArtifactKind::TestCase,
             version,
             provenance: provenance.clone(),
+            uid: None,
         });
         relations.push(CanonicalRelation {
             from: canonical_id(ArtifactKind::TestCase, &testcase.case_id),
@@ -288,6 +302,7 @@ pub fn import_junit(
                     canonical_hash: Some(canonical_hash(&format!("junit:test_case:{external_id}"))),
                 },
                 provenance: provenance.clone(),
+                uid: None,
             });
             let result = if case.failure.is_some() {
                 EvidenceResult::Fail

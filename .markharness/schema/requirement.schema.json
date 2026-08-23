@@ -9,7 +9,8 @@
     "axis": { "type": "array", "items": { "type": "string" } },
     "description": { "type": "string" },
     "source": { "type": "string" },
-    "related_issues": { "type": "array", "items": { "type": "string" } }
+    "related_issues": { "type": "array", "items": { "type": "string" } },
+    "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
   "required": ["id", "label", "axis"],
   "additionalProperties": false

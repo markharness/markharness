@@ -1,6 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Requirement {
     pub id: String,
     pub label: String,
@@ -11,9 +11,14 @@ pub struct Requirement {
     pub source: Option<String>,
     #[serde(default)]
     pub related_issues: Vec<String>,
+    /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
+    /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
+    /// プロジェクトや`identity migrate`未実行のRequirementでは`None`(§後方互換)。
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Feature {
     pub id: String,
     pub requirement: String,
@@ -24,30 +29,45 @@ pub struct Feature {
     /// 概念的な派生元Feature id(§3.1)。Git履歴に現れないドメイン知識のため手動記述。
     #[serde(default)]
     pub forked_from: Option<String>,
+    /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
+    /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
+    /// プロジェクトや`identity migrate`未実行のFeatureでは`None`(§後方互換)。
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Behavior {
     pub id: String,
     pub feature: String,
     pub label: String,
     pub axis: Vec<String>,
     pub description: String,
+    /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
+    /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
+    /// プロジェクトや`identity migrate`未実行のBehaviorでは`None`(§後方互換)。
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Condition {
     pub id: String,
     pub behavior: String,
     pub label: String,
     pub description: String,
+    /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
+    /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
+    /// プロジェクトや`identity migrate`未実行のConditionでは`None`(§後方互換)。
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
 /// How an `ExpectedResult`'s content was produced. Omitting the field
 /// (`Option::None`) means unknown, not `Manual`; a `knowledge/` file
 /// written before this field existed round-trips to `None` via
 /// `#[serde(default)]`, and that must not be read as "written manually".
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedBy {
     Manual,
@@ -58,12 +78,12 @@ pub enum GeneratedBy {
 /// A human review gate on an `ExpectedResult`. Omitting the whole
 /// `verified_by` field means not (yet) reviewed; `human_review` is
 /// required whenever the object is present (no ambiguous partial state).
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VerifiedBy {
     pub human_review: bool,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ExpectedResult {
     pub id: String,
     pub condition: String,
@@ -72,6 +92,11 @@ pub struct ExpectedResult {
     pub generated_by: Option<GeneratedBy>,
     #[serde(default)]
     pub verified_by: Option<VerifiedBy>,
+    /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
+    /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
+    /// プロジェクトや`identity migrate`未実行のExpectedResultでは`None`(§後方互換)。
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
 pub fn parse_requirement(yaml: &str) -> Result<Requirement, serde_yaml_ng::Error> {
@@ -96,6 +121,15 @@ pub fn parse_expected_result(yaml: &str) -> Result<ExpectedResult, serde_yaml_ng
 
 fn yaml_flow_array(items: &[String]) -> String {
     format!("[{}]", items.join(", "))
+}
+
+/// Appends a trailing `uid: <value>\n` line when `uid` is present, shared
+/// by every `serialize_*` function (ADR 0013: all five Knowledge element
+/// kinds carry the same optional `uid:` field, always written last).
+fn append_uid_line(out: &mut String, uid: &Option<String>) {
+    if let Some(uid) = uid {
+        out.push_str(&format!("uid: {uid}\n"));
+    }
 }
 
 /// `text` の全行に `indent` を付与し、`key: |\n` の後に続けられる形にする。
@@ -126,6 +160,7 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
         out.push_str("description: |\n");
         out.push_str(&indent_block_scalar(description, "  "));
     }
+    append_uid_line(&mut out, &requirement.uid);
     out
 }
 
@@ -146,6 +181,7 @@ pub fn serialize_feature(feature: &Feature) -> String {
     if let Some(forked_from) = &feature.forked_from {
         out.push_str(&format!("forked_from: {forked_from}\n"));
     }
+    append_uid_line(&mut out, &feature.uid);
     out
 }
 
@@ -160,6 +196,7 @@ pub fn serialize_behavior(behavior: &Behavior) -> String {
         yaml_flow_array(&behavior.axis)
     );
     out.push_str(&indent_block_scalar(&behavior.description, "  "));
+    append_uid_line(&mut out, &behavior.uid);
     out
 }
 
@@ -171,6 +208,7 @@ pub fn serialize_condition(condition: &Condition) -> String {
         condition.id, condition.behavior, condition.label
     );
     out.push_str(&indent_block_scalar(&condition.description, "  "));
+    append_uid_line(&mut out, &condition.uid);
     out
 }
 
@@ -180,6 +218,7 @@ pub fn serialize_expected_result(expected: &ExpectedResult) -> String {
         expected.id, expected.condition
     );
     out.push_str(&indent_block_scalar(&expected.description, "  "));
+    append_uid_line(&mut out, &expected.uid);
     out
 }
 
@@ -267,6 +306,7 @@ mod tests {
             description: None,
             source: None,
             related_issues: Vec::new(),
+            uid: None,
         };
 
         let yaml = serialize_requirement(&requirement);
@@ -286,6 +326,7 @@ mod tests {
             description: Some("Account related requirements.".to_string()),
             source: None,
             related_issues: Vec::new(),
+            uid: None,
         };
 
         let yaml = serialize_requirement(&requirement);
@@ -307,12 +348,59 @@ mod tests {
             ),
             source: None,
             related_issues: Vec::new(),
+            uid: None,
         };
 
         let yaml = serialize_requirement(&requirement);
         let reparsed: Requirement = parse_requirement(&yaml).unwrap();
 
         assert_eq!(reparsed.description, requirement.description);
+    }
+
+    /// ADR 0013: a `requirement.yml` written before `uid:` existed has no
+    /// such key and must still parse, with `uid` defaulting to `None` —
+    /// not an error, and not confused with an empty string.
+    #[test]
+    fn parses_requirement_yaml_without_uid_as_none() {
+        let yaml = "id: account-management\nlabel: account-management\naxis: [security]\n";
+
+        let requirement: Requirement = parse_requirement(yaml).unwrap();
+
+        assert_eq!(requirement.uid, None);
+    }
+
+    #[test]
+    fn parses_requirement_yaml_with_uid() {
+        let yaml = "id: account-management\nlabel: account-management\naxis: [security]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n";
+
+        let requirement: Requirement = parse_requirement(yaml).unwrap();
+
+        assert_eq!(
+            requirement.uid,
+            Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string())
+        );
+    }
+
+    #[test]
+    fn serializes_requirement_with_uid_when_present() {
+        let requirement = Requirement {
+            id: "account-management".to_string(),
+            label: "account-management".to_string(),
+            axis: vec!["security".to_string()],
+            description: None,
+            source: None,
+            related_issues: Vec::new(),
+            uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
+        };
+
+        let yaml = serialize_requirement(&requirement);
+
+        assert_eq!(
+            yaml,
+            "id: account-management\nlabel: account-management\naxis: [security]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+        );
+        let reparsed: Requirement = parse_requirement(&yaml).unwrap();
+        assert_eq!(reparsed, requirement);
     }
 
     #[test]
@@ -373,6 +461,7 @@ mod tests {
             axis: vec!["gameplay".to_string(), "animation".to_string()],
             description: None,
             forked_from: None,
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -392,6 +481,7 @@ mod tests {
             axis: vec!["gameplay".to_string()],
             description: Some("Jump related behaviors.".to_string()),
             forked_from: None,
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -413,6 +503,7 @@ mod tests {
                 "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
             ),
             forked_from: None,
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -449,6 +540,7 @@ mod tests {
             axis: vec!["gameplay".to_string()],
             description: None,
             forked_from: Some("player-jump".to_string()),
+            uid: None,
         };
 
         let yaml = serialize_feature(&feature);
@@ -459,6 +551,51 @@ mod tests {
         );
     }
 
+    /// Backward compatibility (ADR 0013 design doc §2, §11): a `feature.yml`
+    /// written before `uid:` existed has no such key and must still parse,
+    /// with `uid` defaulting to `None` — not an error, and not confused
+    /// with an empty string.
+    #[test]
+    fn parses_feature_yaml_without_uid_as_none() {
+        let feature: Feature = parse_feature(
+            "id: player-jump\nrequirement: player-controls\nlabel: player-jump\naxis: [gameplay]\n",
+        )
+        .unwrap();
+
+        assert_eq!(feature.uid, None);
+    }
+
+    #[test]
+    fn parses_feature_yaml_with_uid() {
+        let yaml = "id: task-management\nrequirement: player-controls\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n";
+
+        let feature: Feature = parse_feature(yaml).unwrap();
+
+        assert_eq!(feature.uid, Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()));
+    }
+
+    #[test]
+    fn serializes_feature_with_uid_when_present() {
+        let feature = Feature {
+            id: "task-management".to_string(),
+            requirement: "player-controls".to_string(),
+            label: "task-management".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: None,
+            forked_from: None,
+            uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
+        };
+
+        let yaml = serialize_feature(&feature);
+
+        assert_eq!(
+            yaml,
+            "id: task-management\nrequirement: player-controls\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+        );
+        let reparsed: Feature = parse_feature(&yaml).unwrap();
+        assert_eq!(reparsed, feature);
+    }
+
     #[test]
     fn serializes_behavior_to_deterministic_yaml() {
         let behavior = Behavior {
@@ -467,6 +604,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "Player presses jump.".to_string(),
+            uid: None,
         };
 
         let yaml = serialize_behavior(&behavior);
@@ -485,6 +623,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            uid: None,
         };
 
         let yaml = serialize_behavior(&behavior);
@@ -494,12 +633,43 @@ mod tests {
     }
 
     #[test]
+    fn serializes_behavior_with_uid_when_present() {
+        let behavior = Behavior {
+            id: "player-jump-jump".to_string(),
+            feature: "player-jump".to_string(),
+            label: "jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: "Player presses jump.".to_string(),
+            uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
+        };
+
+        let yaml = serialize_behavior(&behavior);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+        );
+        let reparsed: Behavior = parse_behavior(&yaml).unwrap();
+        assert_eq!(reparsed.uid, behavior.uid);
+    }
+
+    #[test]
+    fn parses_behavior_yaml_without_uid_as_none() {
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n";
+
+        let behavior: Behavior = parse_behavior(yaml).unwrap();
+
+        assert_eq!(behavior.uid, None);
+    }
+
+    #[test]
     fn serializes_condition_to_deterministic_yaml() {
         let condition = Condition {
             id: "player-jump-jump-ground".to_string(),
             behavior: "player-jump-jump".to_string(),
             label: "ground".to_string(),
             description: "Jump from the ground and land.".to_string(),
+            uid: None,
         };
 
         let yaml = serialize_condition(&condition);
@@ -517,12 +687,42 @@ mod tests {
             behavior: "player-jump-jump".to_string(),
             label: "ground".to_string(),
             description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            uid: None,
         };
 
         let yaml = serialize_condition(&condition);
         let reparsed: Condition = parse_condition(&yaml).unwrap();
 
         assert_eq!(reparsed.description, condition.description);
+    }
+
+    #[test]
+    fn serializes_condition_with_uid_when_present() {
+        let condition = Condition {
+            id: "player-jump-jump-ground".to_string(),
+            behavior: "player-jump-jump".to_string(),
+            label: "ground".to_string(),
+            description: "Jump from the ground and land.".to_string(),
+            uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
+        };
+
+        let yaml = serialize_condition(&condition);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+        );
+        let reparsed: Condition = parse_condition(&yaml).unwrap();
+        assert_eq!(reparsed.uid, condition.uid);
+    }
+
+    #[test]
+    fn parses_condition_yaml_without_uid_as_none() {
+        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\n";
+
+        let condition: Condition = parse_condition(yaml).unwrap();
+
+        assert_eq!(condition.uid, None);
     }
 
     #[test]
@@ -533,6 +733,7 @@ mod tests {
             description: "Lands safely.".to_string(),
             generated_by: None,
             verified_by: None,
+            uid: None,
         };
 
         let yaml = serialize_expected_result(&expected);
@@ -551,12 +752,43 @@ mod tests {
             description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
             generated_by: None,
             verified_by: None,
+            uid: None,
         };
 
         let yaml = serialize_expected_result(&expected);
         let reparsed: ExpectedResult = parse_expected_result(&yaml).unwrap();
 
         assert_eq!(reparsed.description, expected.description);
+    }
+
+    #[test]
+    fn serializes_expected_result_with_uid_when_present() {
+        let expected = ExpectedResult {
+            id: "player-jump-jump-ground-001".to_string(),
+            condition: "player-jump-jump-ground".to_string(),
+            description: "Lands safely.".to_string(),
+            generated_by: None,
+            verified_by: None,
+            uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
+        };
+
+        let yaml = serialize_expected_result(&expected);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+        );
+        let reparsed: ExpectedResult = parse_expected_result(&yaml).unwrap();
+        assert_eq!(reparsed.uid, expected.uid);
+    }
+
+    #[test]
+    fn parses_expected_result_yaml_without_uid_as_none() {
+        let yaml = "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\n";
+
+        let expected: ExpectedResult = parse_expected_result(yaml).unwrap();
+
+        assert_eq!(expected.uid, None);
     }
 
     #[test]

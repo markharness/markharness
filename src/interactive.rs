@@ -159,6 +159,7 @@ pub fn run_add<R: BufRead, W: Write>(
             description: None,
             source: None,
             related_issues: Vec::new(),
+            uid: None,
         };
         replace_file(
             root,
@@ -191,6 +192,7 @@ pub fn run_add<R: BufRead, W: Write>(
             axis,
             description: None,
             forked_from: None,
+            uid: None,
         };
         replace_file(root, &feature_path, serialize_feature(&feature).as_bytes())?;
     }
@@ -223,6 +225,7 @@ pub fn run_add<R: BufRead, W: Write>(
             label: behavior_label,
             axis,
             description,
+            uid: None,
         };
         replace_file(
             root,
@@ -269,6 +272,7 @@ pub fn run_add<R: BufRead, W: Write>(
             behavior: behavior_id.clone(),
             label: condition_label,
             description,
+            uid: None,
         };
         replace_file(
             root,
@@ -296,6 +300,7 @@ pub fn run_add<R: BufRead, W: Write>(
         description,
         generated_by: None,
         verified_by: None,
+        uid: None,
     };
     let expected_path = expected_dir.join(format!("{seq:03}.yml"));
     replace_file(

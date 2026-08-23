@@ -19,6 +19,9 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
         ChangeEvent {
             event_id: "checkout--base--head".to_string(),
             feature_id: "checkout".to_string(),
+            feature_uid: None,
+            feature_id_at_from: None,
+            feature_id_at_to: None,
             from_milestone: "base".to_string(),
             to_milestone: "head".to_string(),
             from_tree_sha: Some("old".to_string()),
@@ -31,6 +34,9 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
         ChangeEvent {
             event_id: "search--base--head".to_string(),
             feature_id: "search".to_string(),
+            feature_uid: None,
+            feature_id_at_from: None,
+            feature_id_at_to: None,
             from_milestone: "base".to_string(),
             to_milestone: "head".to_string(),
             from_tree_sha: Some("old-search".to_string()),
@@ -131,6 +137,9 @@ fn optional_proposal_adapter_adds_reviewable_proposals_without_changing_the_base
     let change = ChangeEvent {
         event_id: "checkout--base--head".to_string(),
         feature_id: "checkout".to_string(),
+        feature_uid: None,
+        feature_id_at_from: None,
+        feature_id_at_to: None,
         from_milestone: "base".to_string(),
         to_milestone: "head".to_string(),
         from_tree_sha: Some("old".to_string()),
@@ -163,6 +172,9 @@ fn plan_engine_uses_stored_traces_as_affected_existing_tests() {
     let change = ChangeEvent {
         event_id: "checkout--base--head".to_string(),
         feature_id: "checkout".to_string(),
+        feature_uid: None,
+        feature_id_at_from: None,
+        feature_id_at_to: None,
         from_milestone: "base".to_string(),
         to_milestone: "head".to_string(),
         from_tree_sha: Some("old".to_string()),

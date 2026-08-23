@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (reconsideration proposed in [0013](./0013-immutable-identity-model.md))
 
 ## Background
 

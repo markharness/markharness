@@ -14,5 +14,16 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10.0"
 sha2 = "0.10.9"
+sha1 = "0.10.6"
 tempfile = "3.27.0"
+toml = "1.1.4"
+ulid = "1.1.2"
 wana_kana = "5.0.0"
+
+[target.'cfg(unix)'.dependencies]
+# MIT OR Apache-2.0, compatible with this crate's MIT license. Needed only
+# for `libc::O_NOFOLLOW` (src/fs_safety.rs's `open_lock_file_no_follow`) —
+# `std::os::unix::fs::OpenOptionsExt::custom_flags` takes a raw flag value
+# with no portable std constant for it, and the correct bit differs across
+# Unix flavors, so this is not something to hand-roll per-target.
+libc = "0.2"

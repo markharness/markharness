@@ -124,6 +124,70 @@ pub fn show_blob_by_sha(root: &Path, sha: &str) -> io::Result<String> {
     run_git(root, &["cat-file", "-p", sha])
 }
 
+/// The git blob SHA `path_in_repo` would be given if committed right now
+/// from the working tree, via `git hash-object` — the same content filters
+/// (e.g. line-ending normalization) `git add` would apply, applied without
+/// writing anything to the object database (no `-w`). This is git's own
+/// real object identity for a file's current content, computed the same
+/// way whether `root` is the top of the repository or a linked worktree
+/// (`add_detached_worktree`) checked out from it — used by
+/// `identity::migration_manifest` to capture a legacy (pre-migration)
+/// snapshot's file identity without needing to write it to the object
+/// database or touch the index/staging area.
+pub fn hash_object(root: &Path, path_in_repo: &str) -> io::Result<String> {
+    let raw = run_git(root, &["hash-object", "--", path_in_repo])?;
+    Ok(raw.trim().to_string())
+}
+
+/// The git tree SHA `path_in_repo` (e.g. `.markharness/knowledge`,
+/// repo-relative) would have if the *working tree* were committed right
+/// now — the real tree object `git commit` would create for that exact
+/// subtree, including any uncommitted edits. Computed via a disposable
+/// temporary index (`GIT_INDEX_FILE`) populated from the working tree with
+/// `git add -A`, then `git write-tree --prefix=path_in_repo` against that
+/// temporary index, so the repository's real staging area is never
+/// touched. Unlike [`tree_sha`], which reads a *committed* ref, this
+/// reflects the working tree as it stands right now — used by
+/// `identity::migration_manifest::capture_case_signatures` to capture
+/// `.markharness/knowledge`'s legacy (pre-migration) snapshot identity
+/// before `feature_ops::migrate_all` writes anything, which is not
+/// guaranteed to be committed yet. `write-tree` may write ordinary,
+/// content-addressed loose objects to the object database as a side
+/// effect — the same objects git would create if this content were
+/// actually committed — but never mutates the repository's real index or
+/// `HEAD`. Requires `root` to already be a git repository.
+pub fn write_tree_prefix(root: &Path, path_in_repo: &str) -> io::Result<String> {
+    // The path must not exist yet: git treats a zero-byte file as a
+    // corrupt index ("index file smaller than expected"), but happily
+    // creates a fresh one at a path that doesn't exist at all.
+    let temp_dir = tempfile::tempdir()?;
+    let index_path = temp_dir.path().join("index");
+    let add_status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .env("GIT_INDEX_FILE", &index_path)
+        .args(["add", "-A", "--", path_in_repo])
+        .status()?;
+    if !add_status.success() {
+        return Err(io::Error::other(format!(
+            "git add -A -- {path_in_repo} failed while building a temporary index"
+        )));
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .env("GIT_INDEX_FILE", index_path)
+        .args(["write-tree", &format!("--prefix={path_in_repo}")])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "git write-tree --prefix={path_in_repo} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// The parent commit SHAs of `commit`, in order (empty for a root commit,
 /// one for a normal commit, two for a merge commit), via `git log --format=%P`.
 /// Used by the §3.2 merge-base lineage audit to find a merge commit's P1/P2.
@@ -263,6 +327,85 @@ pub fn notes_add(root: &Path, notes_ref: &str, git_ref: &str, message: &str) -> 
         ],
     )?;
     Ok(())
+}
+
+/// One line of `git diff --name-status`'s output: whether a path was
+/// added, deleted, or had its content modified between the two commits
+/// compared. Rename detection is explicitly disabled (`--no-renames`) — a
+/// path that disappears at one commit and reappears at another under a
+/// different name (or with sufficiently similar content) must be reported
+/// as a plain delete, not folded away as a single `R100` rename line this
+/// parser doesn't understand, so `identity::audit`'s append-only check
+/// sees it. Simply omitting `-M`/`--find-renames` is not enough: a
+/// repository (or the user's global config) with `diff.renames` enabled
+/// turns rename detection on by default even without either flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffStatus {
+    Added,
+    Deleted,
+    Modified,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffEntry {
+    pub status: DiffStatus,
+    pub path: String,
+}
+
+/// Every added/deleted/modified path under `path_in_repo` between `from`
+/// and `to`, via `git diff --name-status`. Used by `identity::audit` to
+/// find, commit pair by commit pair, exactly which identity event files
+/// changed — far cheaper than re-listing the whole tree at every commit.
+pub fn diff_name_status(
+    root: &Path,
+    from: &str,
+    to: &str,
+    path_in_repo: &str,
+) -> io::Result<Vec<DiffEntry>> {
+    reject_option_like(from)?;
+    reject_option_like(to)?;
+    let raw = run_git(
+        root,
+        &[
+            "diff",
+            "--no-renames",
+            "--name-status",
+            from,
+            to,
+            "--",
+            path_in_repo,
+        ],
+    )?;
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let status = match parts.next() {
+            Some("A") => DiffStatus::Added,
+            Some("D") => DiffStatus::Deleted,
+            Some("M") => DiffStatus::Modified,
+            _ => continue,
+        };
+        if let Some(path) = parts.next() {
+            entries.push(DiffEntry {
+                status,
+                path: path.to_string(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// Every commit from the repository root up to `git_ref`, following only
+/// first parents (i.e. skipping commits that only ever existed on a
+/// branch that was merged in), oldest first. Used by `identity::audit` to
+/// walk exactly the linear history that ended up on `git_ref`, matching
+/// what a `git log` on that branch would show.
+pub fn first_parent_history(root: &Path, git_ref: &str) -> io::Result<Vec<String>> {
+    reject_option_like(git_ref)?;
+    let raw = run_git(root, &["log", "--first-parent", "--format=%H", git_ref])?;
+    let mut commits: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+    commits.reverse();
+    Ok(commits)
 }
 
 #[cfg(test)]
@@ -623,6 +766,133 @@ mod tests {
     }
 
     #[test]
+    fn hash_object_matches_the_blob_sha_git_itself_records_once_committed() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\nlabel: v1\n",
+        )
+        .unwrap();
+
+        let before_commit =
+            hash_object(dir.path(), ".markharness/knowledge/req/feat/feature.yml").unwrap();
+
+        commit_all(dir.path(), "add feature");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+        let entries = ls_tree_recursive(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
+        let committed_sha = entries
+            .iter()
+            .find(|e| e.kind == ObjectKind::Blob)
+            .unwrap()
+            .sha
+            .clone();
+
+        assert_eq!(before_commit, committed_sha);
+        assert_eq!(before_commit.len(), 40);
+    }
+
+    #[test]
+    fn hash_object_does_not_write_to_the_object_database() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        fs::write(dir.path().join("untracked.txt"), "not committed\n").unwrap();
+
+        let sha = hash_object(dir.path(), "untracked.txt").unwrap();
+
+        // `git cat-file -e` fails if the object was never written (no `-w`
+        // was passed to `hash-object`), proving this was a pure computation.
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["cat-file", "-e", &sha])
+            .status()
+            .unwrap();
+        assert!(!status.success());
+    }
+
+    #[test]
+    fn write_tree_prefix_reflects_uncommitted_working_tree_content() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\nlabel: v1\n",
+        )
+        .unwrap();
+        commit_all(dir.path(), "v1");
+
+        let before_edit =
+            write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+
+        // Uncommitted edit: the tree SHA must change without a commit.
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\nlabel: v2\n",
+        )
+        .unwrap();
+        let after_edit =
+            write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+
+        assert_eq!(before_edit.len(), 40);
+        assert_ne!(before_edit, after_edit);
+    }
+
+    #[test]
+    fn write_tree_prefix_matches_the_committed_tree_sha_once_actually_committed() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/req/feat/feature.yml"),
+            "id: feat\n",
+        )
+        .unwrap();
+
+        let live =
+            write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+        commit_all(dir.path(), "add feature");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+        let committed = tree_sha(
+            dir.path(),
+            "m1",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(live, committed);
+    }
+
+    #[test]
+    fn write_tree_prefix_does_not_touch_the_real_staging_area() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/knowledge/untracked.yml"),
+            "id: x\n",
+        )
+        .unwrap();
+
+        write_tree_prefix(dir.path(), crate::project_root::KNOWLEDGE_PATH_IN_REPO).unwrap();
+
+        let status = run_git(dir.path(), &["status", "--porcelain"]).unwrap();
+        assert!(
+            status.contains("??"),
+            "the file must still show as untracked in the real index, got: {status}"
+        );
+    }
+
+    #[test]
     fn parents_returns_empty_for_a_root_commit() {
         let dir = init_repo();
         fs::write(dir.path().join("README.md"), "hello\n").unwrap();
@@ -776,5 +1046,167 @@ mod tests {
         let result = is_ancestor(dir.path(), "HEAD", &malicious);
         assert!(result.is_err());
         assert!(!victim.exists());
+    }
+
+    #[test]
+    fn diff_name_status_reports_added_deleted_and_modified_paths() {
+        let dir = init_repo();
+        fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        fs::write(dir.path().join("b.txt"), "keep\n").unwrap();
+        commit_all(dir.path(), "first");
+        let from = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        fs::remove_file(dir.path().join("b.txt")).unwrap();
+        fs::write(dir.path().join("c.txt"), "new\n").unwrap();
+        commit_all(dir.path(), "second");
+        let to = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let mut entries = diff_name_status(dir.path(), &from, &to, ".").unwrap();
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        assert_eq!(
+            entries,
+            vec![
+                DiffEntry {
+                    status: DiffStatus::Modified,
+                    path: "a.txt".to_string()
+                },
+                DiffEntry {
+                    status: DiffStatus::Deleted,
+                    path: "b.txt".to_string()
+                },
+                DiffEntry {
+                    status: DiffStatus::Added,
+                    path: "c.txt".to_string()
+                },
+            ]
+        );
+    }
+
+    /// If the repository (or the user's global config) has
+    /// `diff.renames` enabled, plain `git diff --name-status` collapses a
+    /// delete+add pair with similar content into a single `R100` line
+    /// instead of separate `D`/`A` lines — invisible to `identity::audit`,
+    /// which only understands `A`/`D`/`M`. `diff_name_status` must force
+    /// rename detection off regardless of that config, so a genuine
+    /// deletion is never silently hidden behind a detected "rename".
+    #[test]
+    fn diff_name_status_never_folds_a_delete_and_add_into_a_rename_even_with_diff_renames_enabled()
+    {
+        let dir = init_repo();
+        run_git(dir.path(), &["config", "diff.renames", "true"]).unwrap();
+        let content = "identical content that is long enough for git's \
+            similarity heuristic to treat this as a rename by default\n"
+            .repeat(5);
+        fs::write(dir.path().join("old_name.txt"), &content).unwrap();
+        commit_all(dir.path(), "first");
+        let from = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        fs::remove_file(dir.path().join("old_name.txt")).unwrap();
+        fs::write(dir.path().join("new_name.txt"), &content).unwrap();
+        commit_all(dir.path(), "second");
+        let to = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let mut entries = diff_name_status(dir.path(), &from, &to, ".").unwrap();
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        assert_eq!(
+            entries,
+            vec![
+                DiffEntry {
+                    status: DiffStatus::Added,
+                    path: "new_name.txt".to_string()
+                },
+                DiffEntry {
+                    status: DiffStatus::Deleted,
+                    path: "old_name.txt".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_name_status_rejects_option_like_revisions() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        let victim = dir.path().join("victim.txt");
+        let malicious = format!("--output={}", victim.display());
+
+        let result = diff_name_status(dir.path(), &malicious, "HEAD", ".");
+        assert!(result.is_err());
+        assert!(!victim.exists());
+    }
+
+    #[test]
+    fn first_parent_history_returns_commits_oldest_first() {
+        let dir = init_repo();
+        fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        commit_all(dir.path(), "first");
+        let first = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        commit_all(dir.path(), "second");
+        let second = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let history = first_parent_history(dir.path(), "HEAD").unwrap();
+
+        assert_eq!(history, vec![first, second]);
+    }
+
+    #[test]
+    fn first_parent_history_skips_commits_only_reachable_via_a_merged_side_branch() {
+        let dir = init_repo();
+        fs::write(dir.path().join("a.txt"), "base\n").unwrap();
+        commit_all(dir.path(), "base");
+        let base = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        run_git(dir.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        fs::write(dir.path().join("b.txt"), "side\n").unwrap();
+        commit_all(dir.path(), "side commit");
+
+        run_git(dir.path(), &["checkout", "-q", "main"]).unwrap();
+        fs::write(dir.path().join("c.txt"), "main\n").unwrap();
+        commit_all(dir.path(), "main commit");
+        run_git(
+            dir.path(),
+            &["merge", "-q", "--no-ff", "side", "-m", "merge"],
+        )
+        .unwrap();
+        let merge = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let history = first_parent_history(dir.path(), "HEAD").unwrap();
+
+        assert_eq!(
+            history.len(),
+            3,
+            "expected base, main commit, merge only: {history:?}"
+        );
+        assert_eq!(history[0], base);
+        assert_eq!(history[2], merge);
     }
 }

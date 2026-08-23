@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod application;
+pub mod audit_scope;
 pub mod axes;
 pub mod backfill;
 pub mod canonical;
@@ -17,6 +18,7 @@ pub mod fs_safety;
 pub mod generate;
 pub mod git;
 pub mod id_cache;
+pub mod identity;
 pub mod init;
 pub mod interactive;
 pub mod knowledge;

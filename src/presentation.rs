@@ -192,7 +192,8 @@ impl Presenter for JsonPresenter {
             }
             CommandOutcome::ChangesComputed { count, to } => PresentedResult {
                 stdout: format!(
-                    "{{\"schema_version\":1,\"outcome\":\"changes_computed\",\"changes\":{count},\"to\":{}}}\n",
+                    "{{\"schema_version\":1,\"outcome\":\"changes_computed\",\"audit_scope\":\"{}\",\"changes\":{count},\"to\":{}}}\n",
+                    crate::audit_scope::AuditScope::TwoSnapshot,
                     serde_json::to_string(to).expect("milestone serialization is infallible")
                 ),
                 stderr: String::new(),
@@ -205,6 +206,7 @@ impl Presenter for JsonPresenter {
                 let stdout = serde_json::json!({
                     "schema_version": 1,
                     "outcome": "pending",
+                    "audit_scope": crate::audit_scope::AuditScope::TwoSnapshot,
                     "pending": report.pending,
                     "stale": report.stale,
                 });

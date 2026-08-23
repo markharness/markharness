@@ -89,6 +89,7 @@ pub fn apply_draft(
             description: draft.requirement.description.clone(),
             source: None,
             related_issues: Vec::new(),
+            uid: None,
         };
         pending.push((
             requirement_path,
@@ -108,6 +109,7 @@ pub fn apply_draft(
             axis: draft.feature.axis.clone().unwrap_or_default(),
             description: draft.feature.description.clone(),
             forked_from: draft.feature.forked_from.clone(),
+            uid: None,
         };
         pending.push((feature_path, knowledge::serialize_feature(&feature)));
     }
@@ -123,6 +125,7 @@ pub fn apply_draft(
                 .unwrap_or_else(|| draft.behavior.id.clone()),
             axis: draft.behavior.axis.clone().unwrap_or_default(),
             description: draft.behavior.description.clone().unwrap_or_default(),
+            uid: None,
         };
         pending.push((behavior_path, knowledge::serialize_behavior(&behavior)));
     }
@@ -137,6 +140,7 @@ pub fn apply_draft(
                 .clone()
                 .unwrap_or_else(|| effective_condition_id.clone()),
             description: draft.condition.description.clone().unwrap_or_default(),
+            uid: None,
         };
         pending.push((condition_path, knowledge::serialize_condition(&condition)));
     }
@@ -150,6 +154,7 @@ pub fn apply_draft(
             description: expected_draft.description.clone(),
             generated_by: None,
             verified_by: None,
+            uid: None,
         };
         let expected_path = expected_dir.join(format!("{seq:03}.yml"));
         pending.push((

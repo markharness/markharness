@@ -18,15 +18,30 @@ pub struct IndexPaths {
 }
 
 #[derive(Serialize)]
+struct FeatureIndexEntry {
+    tree_sha: String,
+    /// The Feature's immutable identity (ADR 0013), when it has one at
+    /// `git_ref` — lets an external consumer correlate this entry with
+    /// ones from an index rebuilt at a later `git_ref`, even across a
+    /// rename that changed the `by_id` key itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uid: Option<String>,
+}
+
+#[derive(Serialize)]
 struct FeatureIndex<'a> {
     schema_version: u32,
     git_ref: &'a str,
-    by_id: BTreeMap<String, String>,
+    by_id: BTreeMap<String, FeatureIndexEntry>,
 }
 
 #[derive(Serialize)]
 struct ChangeEventIndex {
     schema_version: u32,
+    /// Keyed by Feature identity (ADR 0013: `uid` when the ChangeEvent has
+    /// one, else `feature_id`) rather than `feature_id` alone, so a
+    /// Feature's ChangeEvents recorded before and after a rename land under
+    /// the same key instead of being split across two.
     by_feature: BTreeMap<String, Vec<String>>,
 }
 
@@ -62,7 +77,15 @@ pub fn rebuild_indexes(root: &Path, git_ref: &str) -> io::Result<IndexPaths> {
         git_ref,
         by_id: id_cache::resolve_feature_versions(root, git_ref, false)?
             .into_iter()
-            .map(|feature| (feature.id, feature.tree_sha))
+            .map(|feature| {
+                (
+                    feature.id,
+                    FeatureIndexEntry {
+                        tree_sha: feature.tree_sha,
+                        uid: feature.uid,
+                    },
+                )
+            })
             .collect(),
     };
 
@@ -83,7 +106,7 @@ pub fn rebuild_indexes(root: &Path, git_ref: &str) -> io::Result<IndexPaths> {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         for event in events {
             by_feature
-                .entry(event.feature_id)
+                .entry(event.identity_key().to_string())
                 .or_default()
                 .push(event.event_id);
         }

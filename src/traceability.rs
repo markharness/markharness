@@ -48,14 +48,17 @@ pub fn serialize_index(index: &TraceabilityIndex) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generate::GeneratedFrom;
+    use crate::generate::{CaseFilePaths, GeneratedFrom};
 
     fn sample_testcase() -> TestCase {
         TestCase {
             case_id: "tc-todo-add-task-empty-input-001".to_string(),
+            case_uid: None,
+            case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement: "req-todo".to_string(),
                 feature: "todo".to_string(),
+                feature_uid: None,
                 behavior: "todo-add-task".to_string(),
                 condition: "todo-add-task-empty-input".to_string(),
                 expected_results: vec!["todo-add-task-empty-input-001".to_string()],

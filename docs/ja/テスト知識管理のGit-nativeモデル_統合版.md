@@ -68,7 +68,7 @@ flowchart LR
 
 ### 1.3 貢献
 
-1. **設計上の中核メカニズム**：(a)Featureの識別子をディレクトリパスではなく`feature.yml`の`id:`フィールドから読み取るパス独立なID解決、(b)比較単位を`feature.yml`単体のblob SHAではなくFeatureディレクトリ全体のtree SHAとすることで、Condition/ExpectedResultのみの変更もfeature.yml非経由で検知する仕組み、(c)`knowledge/`のtree SHAと正規化ルール・スキーマ・ツールの各バージョンを合成した内容アドレス方式のid解決キャッシュ(Gitの`commit-graph`補助キャッシュと同じ設計思想)、の3点を、コミットグラフの祖先探索(`git merge-base`)と組み合わせ、ブランチ運用に依存せずマイルストーン境界で版履歴を導出するモデルの設計(第3章)。ただし「ブランチ運用に依存しない」のは最終tree差分による主系譜(`changes compute`)に限られ、祖先探索を用いるマージの系譜監査(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とする副次機能であり、squash/rebase運用では機能しない(第3.4節・表2)。パスベースの履歴追跡(`git diff`・`git log --follow`等)はディレクトリのリネーム・再配置に弱く、木構造化されたテスト知識の論理的な同一性を保証しないのに対し、本モデルは(a)によってこの制約を回避する。
+1. **設計上の中核メカニズム**：(a)人間向けの可変IDとKnowledge要素の不変な論理Identity(UID)の分離、(b)内容版の比較単位をFeatureディレクトリ全体のtree SHAとすることでCondition/ExpectedResultのみの変更も検知する仕組み、(c)tree SHAと正規化ルール・スキーマ・ツールの各バージョンを合成した内容アドレス方式の非commitキャッシュ、(d)snapshotだけでは意図を復元できないrename等に限定したGit管理のidentity宣言、の4点を組み合わせ、マイルストーン境界で版履歴を導出するモデルの設計(第3章)。UIDは時間をまたぐ論理的同一性、tree SHAは特定時点のcontent versionを担い、内容`ChangeEvent`は2 snapshot差分から引き続き自動導出する。ただしマージの系譜監査はマージコミットの保持を前提とする副次機能である(第3.4節・表2)。この統合モデルは個々の要素の新規性ではなく、Git上の論理Identity、content-addressed version、snapshot差分、version-bound execution evidenceの組合せを評価対象とする。
 2. **実装設計上の特徴**：横断的観点(Axis)を物理ディレクトリ構造から独立させ、木構造を保持したまま多対多関係を表現する構成(第3.5節)。これは一般的なモデリング手法の適用であり、単独の研究的新規性としては主張しない。
 3. 既存の大規模リポジトリへの段階的な導入を狙って設計した、マイルストーン単位の非同期バックフィルアーキテクチャ(第4章)。ただしこの設計が実際の大規模リポジトリでも意図通り機能するかは、本ドラフト時点では実データによる検証(ケーススタディ)を経ていない仮説である(第6章Threats to Validity・第7章Future Work参照)。
 4. 対象組織の実際の現状運用を対照群とし、正解データを当時の成果物から再構成した、実データに基づく評価設計(第5章)。
@@ -79,7 +79,7 @@ flowchart LR
 
 - **研究上**：Markharnessは「世界初のテスト管理方式」の完成を主張するものではなく、test knowledge derivationとversion-aware verificationが複数世代の変更影響識別を改善するかという仮説を検証するためのreference implementationである。現時点では設計・中核機能の実装までであり、有効性は未検証である。
 - **OSSとして**：Git-native / knowledge-firstという設計思想を持つTMSの一選択肢である。Doorstop、StrictDoc、tmt/fmf、GTMや既存TMSを置き換える普遍的な上位方式とは位置づけず、用途と必要な意味論が異なる代替案として提供する。
-- **プロダクトとして**：TestRail等とのfeature parityを目指さず、専用サーバー不要・専用DB不要・Gitをsource of truthとするdeveloper-oriented test managementに焦点を置く。将来GUIを提供する場合も、汎用TMSの画面群の複製ではなく、ChangeEvent、影響TestCase、version-bound evidence、pending/staleを中心としたrelease verification UIを主眼とする。
+- **プロダクトとして**：TestRail等とのfeature parityを目指さず、専用サーバー、外部データベースプロセス、Git外の正準永続化サービスを必要としないdeveloper-oriented test managementに焦点を置く。Gitリポジトリを唯一の永続化境界とし、Knowledge fileとGit管理の軽量identity event storeをリポジトリ内の正準データ、Registryを破棄可能な非commit cacheとする。したがって「専用DB不要」は永続的な構造化ストア自体を持たないという意味ではなく、clone/checkoutだけで全正準入力が揃い、Git外のembedded databaseや別永続化層を正準にしないという意味である。identity event storeはADR 0013のProposed設計であり、本稿時点で未実装である。将来GUIを提供する場合も、汎用TMSの画面群の複製ではなく、ChangeEvent、影響TestCase、version-bound evidence、pending/staleを中心としたrelease verification UIを主眼とする。
 
 **注**：開発者が作業ブランチ上で即座に行える差分照会(第3.2節の構造的生成グラフを使う実装上の利便機能)は、版履歴のChangeEventモデルを使わないため本研究の核心的貢献・RQ1の評価対象には含めない(検討経緯は付録A参照)。
 
@@ -101,7 +101,7 @@ Classification Tree Method(CTM)は、分類木からのテストケース生成�
 
 ### 2.4 イベントベースの変更伝播モデル(Event-Based Traceability)
 
-Cleland-Huang, Chang, Christensen(2003)のEvent-Based Traceability(EBT)は、進化するartifactの変更をeventとして扱い、traceability linkを介してその影響を関係者・依存artifactへ伝播させる枠組みを確立している。したがって「変更イベントから影響artifactを求める」という発想自体は新規ではない。EBTは主にartifactの編集操作(editing operation)の観測を起点として変更を伝播させるのに対し、本モデルはマイルストーン境界の2 snapshot間のtree SHA差分から`ChangeEvent`を事後的・機械的に再構成する(第3.2〜3.4節)。中間の編集操作列を必要とせず、branch/merge/squash/rebaseの経路に依存しない(第3.4節、ただし主系譜`changes compute`に限る点は第1.3節・第3.4節参照)という性質は、operationログの継続的な追跡を前提とするEBTとは異なる設計選択であり、利点(中間操作列への非依存)と欠点(最終状態から消えた一時的変更・編集意図を表せないこと)の双方を伴う。
+Cleland-Huang, Chang, Christensen(2003)のEvent-Based Traceability(EBT)は、進化するartifactの変更をeventとして扱い、traceability linkを介してその影響を関係者・依存artifactへ伝播させる枠組みを確立している。したがって「変更イベントから影響artifactを求める」発想自体は新規ではない。EBTが主にartifactの編集操作(editing operation)の観測を起点に変更を伝播させるのに対し、本モデルの内容`ChangeEvent`はマイルストーン境界の2 snapshot間のtree SHA差分から事後的・機械的に再構成する(第3.2〜3.4節)。通常の内容編集に中間操作列は必要ない。一方、rename・retire・restore等のsnapshotだけでは意図を一意に復元できない同一性操作は、稀なidentity宣言としてGit snapshot内に保持する。これは全編集操作の継続的観測ではなく、ChangeEvent導出の前に論理Identityを解決するcontrol-plane入力である。したがって中間編集経路への非依存性は維持するが、「あらゆる操作宣言が不要」とは主張しない。
 
 ### 2.5 要件ベースの回帰テスト選択(Requirements-Based Regression Test Selection)
 
@@ -157,7 +157,7 @@ Rahimiら(2018)のTrace Link Evolver(TLE)は、連続するソフトウェアver
 本研究が検証対象として提案する差分は、個別の構成要素ではなく、次の性質の**統合**である。
 
 ```text
-Feature集約のcontent-addressed version identity(tree SHA、第3.1〜3.3節)
+不変UIDによる論理IdentityとFeature集約のcontent-addressed version identity(tree SHA、第3.1〜3.3節)
   + 決定論的なTestCase派生(第3.1節)
   + マイルストーンsnapshot差分によるChangeEvent導出(第3.2〜3.4節)
   + 影響TestCaseの導出(第3.5節)
@@ -205,12 +205,17 @@ erDiagram
   CHANGEEVENT }o--|| FEATURE : affects
   CHANGEEVENT ||--o{ TESTCASE : impacts
 
-  REQUIREMENT { string requirement_id PK }
-  FEATURE { string feature_id PK
+  REQUIREMENT { string requirement_uid PK
+                string requirement_id }
+  FEATURE { string feature_uid PK
+            string feature_id
             string label }
-  BEHAVIOR { string behavior_id PK }
-  CONDITION { string condition_id PK }
-  EXPECTEDRESULT { string result_id PK }
+  BEHAVIOR { string behavior_uid PK
+             string behavior_id }
+  CONDITION { string condition_uid PK
+              string condition_id }
+  EXPECTEDRESULT { string result_uid PK
+                   string result_id }
   AXIS { string axis_id PK }
   TESTCASE { string case_id PK }
   TESTEXECUTION { string execution_id PK
@@ -219,7 +224,9 @@ erDiagram
   CHANGEEVENT { string event_id PK }
 ```
 
-`FEATURE`は版番号を人間が手動で管理するフィールド(`version`整数)を持たない。系譜計算に使う識別子は、front matterに書く値ではなく、**Gitのオブジェクトストアが既に保持している識別子**であり、`label`は表示専用(系譜計算には使わない)。この識別子解決はディレクトリ名やパスではなく`feature.yml`の`id:`フィールドを正準ソースとするため(第3.3節)、単純なパスベースの`git log --follow`と異なり、ディレクトリのリネーム・再配置後も同一Featureとして追跡できる。
+`FEATURE`は版番号を人間が手動で管理するフィールド(`version`整数)を持たない。UIDは内容が変わっても維持される論理的同一性を表し、Git tree SHAはその要素の特定時点のcontent versionを表す。可変`id`と`label`は人間向けの表示・CLI解決用であり、系譜の正準キーにしない。Requirement、Feature、Behavior、Condition、ExpectedResultはすべて不変UIDを持ち、親子参照もUIDを使う。これによりpathだけでなくID自体の変更後も同一要素として追跡できる。
+
+rename、retire、restore、release、reissueのように、2つの最終snapshotだけからは同一性に関する意図を一意に復元できない変更だけをidentity宣言としてGit管理する。通常の内容編集はidentity eventにしない。identity eventは要素ごとの因果graphを持ち、通常eventは単一の先行event UID、競合解決eventは複数の先行event UIDを参照してdivergent headをjoinする。順序は時刻やfilenameではなくこの先行参照で決定する。Registryはidentity eventから再構築できる非commit cacheとし、正準情報源にしない。
 
 なお、上記ER図の`derived_from`自己参照エッジは概念上のモデルであり、`FEATURE`エンティティ自体が版ノード・辺を持つ永続的なグラフ構造として実装されているわけではない。実際にはマイルストーン境界ごとに`ChangeEvent`のfrom_tree_sha/to_tree_shaを比較することで、この関係を都度導出する(3.2節)。
 
@@ -244,6 +251,8 @@ flowchart LR
 
 **(B) 版履歴のChangeEventモデル(derived_from、マイルストーン境界で確定)**：同一Featureが前後のマイルストーンでどう変化してきたかを、`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として表す、本研究の核心的なモデル。マイルストーン区間ごとに独立して計算するモデルであり、版ノード・辺を持つ永続的なグラフ構造として保持するわけではない(永続グラフへの拡張は第7章 Future Workを参照)。調査した公開仕様では同じ統合は確認できなかったが、非存在を主張するものではない。RQ1が検証する対象はこちらに限定する。
 
+ここでいう「同一Feature」は人間向けIDの一致ではなく、両snapshotのidentity宣言から同じroot発行eventを持つと検証されたUIDの一致で決める。identity event自体は内容変更の伝播を表さず、`ChangeEvent`を導出する前の同一性解決にだけ使う。
+
 版履歴のChangeEventモデル(B)の導出は以下の通り。
 
 - **tree SHAが担うこと**：Featureディレクトリ内のentry名・mode・参照先objectを含むGit treeに対する、実用上衝突耐性を持つcontent identifier。通常の運用では異なるGit treeを異なるSHAとして識別でき、人間が手動で整数を上げる場合の番号競合を回避できる。ただしハッシュ衝突が数学的に不可能という意味ではなく、SHAだけでは「どのtreeがどのtreeから派生したか」という親子関係もわからない。
@@ -259,11 +268,13 @@ flowchart LR
 
 **統合(2026-08追記)**：`changes compute`は、`from_milestone..to_milestone`の区間全体を`git rev-list --ancestry-path`で走査し、区間内に存在する全ての2親マージコミットそれぞれについて上記の`lineage`判定ロジックを内部で呼び出す。当該Featureがいずれかのマージで`true_divergence`と判定された場合、`ChangeEvent`に新設した`true_divergences: Vec<TrueDivergence>`フィールド(`TrueDivergence`は監査用の`merge_commit`と`parent_tree_shas: [tree(P1), tree(P2)]`を持つ)へ、区間内で発生した順(古い順)に記録する。同一Featureが区間内で複数回真の分岐を起こした場合も、マージごとに1エントリずつ蓄積されるため取りこぼさない。この統合は加算的な変更であり、`changes/*.yaml`の既存レコード(`true_divergences`を持たない)は`#[serde(default)]`によりそのまま読み込める。当初は`to_milestone`タグが直接マージコミットを指す場合のみの部分統合だったが、区間内の任意の位置でのマージを検出できるよう一般化した。
 
-### 3.3 id解決：非コミットキャッシュとキャッシュキー・破棄条件
+### 3.3 Identity解決：Git管理の宣言と非コミットキャッシュ
 
 本節の設計上の中核は、単純なパスベースの`git diff`/`git log --follow`では代替できないパス独立なID解決と、それを実用速度で成立させる内容アドレス方式のキャッシュキー(後述)の組み合わせである。`id`はパスに依存しない設計(第3.5節)のため、「あるコミット時点でid Xのファイルがどのパスにあったか」を知るには、単純には全木走査が必要になり、大規模リポジトリでは計算量が破綻する。かといって、id→パスの対応をコミット対象の単一マニフェストファイルとして持つと、複数ブランチが同時にテスト知識を追加するたびにこのファイルがマージコンフリクトを起こし、Gitの並行開発の強みを殺してしまう。
 
 **対応方針**：Gitが同種の問題(コミットグラフ上の祖先探索の高速化)を`commit-graph`ファイル(バージョン管理対象外の補助キャッシュ)で解決しているのと同じ設計思想を採る。id解決の結果を**コミット対象から外し**、各開発者のローカル環境・各CIランナーが必要に応じて独自に再構築する非コミットキャッシュとして扱う。
+
+UID modeでは、各Knowledge要素のUIDと`.markharness/identity-events/`の限定的なidentity宣言を正準入力にする。各要素の発行eventをrootとし、後続eventは`previous_identity_event_uid`で因果順序を指定する。両snapshotに同じUIDがある場合はroot発行eventと共通eventのcanonical contentの一致を検証し、異なるrootや書換え済みの共通eventをidentity conflictとする。Git commit historyを走査しない2-ref比較が保証するのは選択snapshotの整合性と共通identityの一致までであり、選択snapshotの外側にevent削除・過去改変がないことは別の全履歴監査が検証する。
 
 **キャッシュキーの構成**
 
@@ -289,11 +300,11 @@ cache_key = hash(
 
 読み込み時は格納されているキーが現在の状態と完全に一致するかを検証し、不一致なら静かに再計算する。これにより異なるCIランナー間でキャッシュを共有しても、古い/破損したキャッシュを誤って信頼するリスクを避ける。
 
-**実装状況**：CLI実装の`.markharness-cache/<ref>.json`は、本節で述べた内容アドレス方式キャッシュキー(`tree_sha(knowledge/)` + `canonicalization_rule_version` + `id_index_schema_version` + `tool_version`の合成)を実装している(`src/id_cache.rs`の`CacheKey`/`compute_cache_key`)。読み込み時に格納されているキーを再計算した現在のキーと比較し、不一致なら静かに再計算・上書きする。`tree_sha`は`git rev-parse <ref>:knowledge`で取得し、`tool_version`はビルド時のcrateバージョン(`CARGO_PKG_VERSION`)を用いる。ただし`canonicalization_rule_version`・`id_index_schema_version`は現状固定値"1"で、これらのバージョンを実際に上げる正規化ルール改訂・フォーマット改訂はまだ発生していない。作業ツリーの未コミット変更を`git hash-object`で仮想的にキーへ含める処理、およびCI共有ストレージ側のTTL安全網は未実装(そもそもCLI単体の責務外)である。また、id自体も「idはパスに依存しない」という設計方針に沿って改修され、現状は**feature.ymlの`id:`フィールドを正準ソースとする**(id_cache.rsがディレクトリ名ではなくfeature.ymlの内容を`git show`で読んでidを決定する)。これにより、Featureディレクトリをリネームしても`id:`フィールドが変わらなければ同一Featureとして追跡できる(最小限のリネーム追跡)。同一idを持つ複数のFeatureディレクトリが存在する場合はエラーとして検出する。ただし、id⇔pathの汎用的な独立インデックス層(パス変更を伴わない任意のid変更の追跡等)までは実装しておらず、目標設計の完全な実現ではない(第3.6節)。
+**実装状況**：CLI実装の`.markharness-cache/<ref>.json`は、本節で述べた内容アドレス方式キャッシュキー(`tree_sha(knowledge/)` + `canonicalization_rule_version` + `id_index_schema_version` + `tool_version`の合成)を実装している(`src/id_cache.rs`の`CacheKey`/`compute_cache_key`)。読み込み時に格納されているキーを再計算した現在のキーと比較し、不一致なら静かに再計算・上書きする。`tree_sha`は`git rev-parse <ref>:knowledge`で取得し、`tool_version`はビルド時のcrateバージョン(`CARGO_PKG_VERSION`)を用いる。ただし`canonicalization_rule_version`・`id_index_schema_version`は現状固定値"1"で、これらのバージョンを実際に上げる正規化ルール改訂・フォーマット改訂はまだ発生していない。作業ツリーの未コミット変更を`git hash-object`で仮想的にキーへ含める処理、およびCI共有ストレージ側のTTL安全網は未実装(そもそもCLI単体の責務外)である。現行実装は**feature.ymlの`id:`フィールドを正準ソースとする**(id_cache.rsがディレクトリ名ではなくfeature.ymlの内容を`git show`で読んでidを決定する)ため、`id:`が不変な限りディレクトリリネームに追従し、同一idの重複をエラーにするが、`id:`値自体の変更は追跡しない。従来候補のid⇔path独立indexとalias方式は置き換え済みの代替案であり、このgapを埋める採用設計はADR 0013の不変UID・identity宣言モデルであるが、現在はProposed・未実装である(第3.6節)。
 
 ### 3.4 マイルストーン境界での系譜確定
 
-系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各idについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をid解決経由で比較し、差分があれば`derived_from`関係が成立したとみなして`ChangeEvent`を生成する(実装ではfrom_tree_sha/to_tree_shaとして記録、第3.5節)。
+系譜の確定タイミングはコミットごとではなく、マイルストーン確定時(リリースタグ等)にのみ行う。各UIDについて「前回マイルストーン時点のtree」と「今回マイルストーン時点のtree」をidentity解決経由で比較し、差分があれば`derived_from`関係が成立したとみなして内容`ChangeEvent`を生成する(実装ではfrom_tree_sha/to_tree_shaとして記録、第3.5節)。identity eventはこの差分結果ではなく、比較前に同一UIDを解決するための入力である。
 
 **主系譜(`changes compute`)とマージ監査(`changes lineage`)でブランチ戦略への依存が異なる点に注意**：この最終tree差分によるChangeEvent生成(主系譜)は、2つのマイルストーンタグが指すtree同士を直接比較するだけであり、その間のコミットグラフの形状(merge commitを残すか、squashで潰すか、rebaseで書き換えるか)に一切依存しない。一方、第3.2節で述べた`git merge-base`祖先探索による系譜監査(`changes lineage`、`true_divergences`)は、マイルストーン区間内に2親を持つマージコミットが実際に存在することを前提とする。squash mergeやfast-forward mergeでは元ブランチの分岐履歴がコミットグラフ上から失われるため、そのマイルストーン区間では`true_divergences`は検出されない(空配列のまま)。つまり「ブランチ戦略に依存しない」という主張が成り立つのは主系譜(tree差分によるChangeEvent生成)に限られ、監査用の`true_divergences`はマージコミットの保持を前提とする副次機能である。
 
@@ -410,12 +421,12 @@ forked_from: null # 概念的な派生元がある場合のみ手動記述(例�
 
 | 分類 | 内容 |
 |---|---|
-| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`expected_result.schema.json`の`generated_by`/`verified_by`フィールド(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーション(`executions/*/results.yml`用の`execution_result.schema.json`を含む)とaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節) |
-| 設計から簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。id⇔pathの汎用的な独立インデックス層(パスを変えないid変更の追跡等)までは実装していない(3.3節)。Feature `id:`自体を変更した場合の移行手順・エイリアス機構は未実装であり、現状は運用側で`id:`を変更しないことを前提とする(decisions/0004)。`verify trace`/`verify pending`は導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用しない(3.7節) |
+| 実装済み・設計と一致 | 版履歴キーとしてGitオブジェクトのハッシュを使う(ただし単位はblobではなくFeatureディレクトリのtree、3.1節)、TestCaseをknowledge/から分離した派生物として管理、ChangeEventのマイルストーン境界自動計算、id解決キャッシュの非コミット化・内容アドレス方式キー化と自動破棄(3.3節)、idのfeature.yml `id:`フィールドへの統一とディレクトリリネーム耐性(3.3節)、`git notes`によるバックフィル進捗管理(第4章)、`forked_from`フィールド自体の提供、`change_type`フィールドと事後アノテーションコマンド(3.5節)、`related_events`フィールドと`changes annotate --related`(製品化提案、3.5節)、`requirement.yml`の`source`/`related_issues`フィールド(製品化提案、3.1節)、`expected_result.schema.json`の`generated_by`/`verified_by`フィールド(製品化提案、3.5節)、`schema/`のJSON Schemaバリデーション(`executions/*/results.yml`用の`execution_result.schema.json`を含む)とaxis/forked_from相互参照チェック(3.5節)、`git merge-base`による祖先探索・2親分岐判定(監査用副次コマンドとして、3.2節)、マイルストーン区間内の任意の位置で発生した全マージへの`lineage`判定と`changes compute`の統合(`true_divergences`フィールド、3.2節)、`verify trace`/`verify pending`によるTestExecutionとChangeEventの自動突合・未再検証テストのpending/stale判定(3.7節)、ADR 0013の不変identityモデル(5種類全Knowledge要素への不変UID発行・identity event log・`identity migrate`による全要素移行とschema version 2公開cutover・`identity resolve`/`release`によるbranch divergence解決と旧id再利用解禁・`identity retire`/`restore`によるKnowledge要素削除時のUID退役と復元・`identity reissue`によるcopy/import/repository統合時の新規UID強制発行(対象idがこのkindのローカルのいずれかのUIDでまだ`release`されていない場合は、Knowledge fileが`uid:`を持つか否かによらず拒否)・`identity sync`によるKnowledge fileのuid/id再同期・`feature rename-id`のUID保持による単一ChangeEvent化・TestCaseの`case_uid`とmigration manifestによる移行境界をまたぐ同一性解決・`identity audit`(IdentityAuditor)によるcommit history全体のevent append-only性検証、CLI manual 1.25〜1.33節) |
+| 実装済み設計からの簡略化 | id解決キャッシュの`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用は未検証(3.3節)。`verify trace`/`verify pending`は導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用しない(3.7節)。ADR 0013の「UID modeへの移行後にUIDなし要素が追加された場合は通常コマンドを拒否する」検証規則は`markharness validate`にのみ実装されており、`knowledge apply`/`interactive add`等の生成系コマンドへの拡張は未定(要フォローアップ、checklist-immutable-identity-model.md参照) |
 | 未実装 | 既存TMS(TestRail/Xray等)からのインポータ(UC8) |
 | 設計に無い追加要素 | `REQUIREMENT`の`requirement.yml`としての明示ファイル化と`knowledge/<requirement>/<feature>/...`階層(3.1節) |
 
-これらのうち「設計から簡略化」の項目は、RQ1が主に対象とするマイルストーン境界の線形比較には直接関与しない。`git merge-base`による分岐判定は、マイルストーン区間内の全マージについて`changes compute`の主系譜へ自動反映する実装となっている。ただし、複雑な実リポジトリにおける検出精度は未評価であり、第5章のケーススタディで確認する必要がある。
+これらのうち「設計から簡略化」の項目は、RQ1が主に対象とするマイルストーン境界の線形比較には直接関与しない。`git merge-base`による分岐判定は、マイルストーン区間内の全マージについて`changes compute`の主系譜へ自動反映する実装となっている。ただし、複雑な実リポジトリにおける検出精度は未評価であり、第5章のケーススタディで確認する必要がある。ADR 0013の不変identityモデルは実装済みだが、実プロジェクトでの有用性・生産性への効果は未検証であり、第7章のFuture Workに引き続き位置づける。
 
 ### 3.7 変更検知に基づく再検証トラッキング
 
@@ -550,22 +561,24 @@ flowchart TB
 - 実装上の利便機能(構造的生成グラフに基づくリアルタイム照会、第3.2節(A))の開発者体験・生産性への効果の検証。
 - バックフィルアーキテクチャ(第4章)を実際の大規模リポジトリに適用した場合の性能実測。
 - id解決キャッシュのキー設計(第3.3節)・co-changeノイズ除去基準(第5.4節)を、実装・データ収集を通じて検証・調整すること自体を今後の実証課題とする(`canonicalization_rule_version`/`id_index_schema_version`は現状固定値で、実際の改訂運用を経た検証がまだない)。
-- id⇔pathの汎用的な独立インデックス層の実装(パスを変えないid変更の追跡等、第3.3節で現状は「id=feature.ymlのid:フィールド」への統一に留まると整理した項目)。
+- ADR 0013のschema version 2 identityモデル(全永続Knowledge要素の不変UID、限定的なidentity宣言、UIDベースのTestCase/Execution/ChangeEvent継続性、legacy migration、crash recovery)は実装済み(3.6節、CLI manual 1.25〜1.33節)であり、Acceptedへ移行した。従来候補のid⇔path独立indexとalias方式は並行するFuture Workではなく、置き換え済みの代替案である。残る課題は実プロジェクトへの適用による有用性・生産性への効果の評価、およびrepository統合(複数repositoryが同じUIDを持つ場合の明示的reissue運用、decisions/0013「copy、import、repository統合の規則」)の実運用検証である。
 - 既存TMS(TestRail/Xray等)からのインポータの実装(第3.6節で未実装と整理した項目)。
 - Condition/ExpectedResult差分に基づく候補抽出の精密化。現行実装はFeature単位の保守的な候補抽出であり(第3.5節)、Feature内のどのCondition/ExpectedResultが変わったかまでは絞り込まない。これによる適合率低下の実測は第5章の評価計画で確認する。
 - LLMによる文脈供給・Markdown手順書の自動生成・更新への応用可能性(検討経緯・不採用理由は付録A参照。本研究の評価対象外)。
 - 構造からのテストケース自動生成の網羅率評価、Git粒度分割によるレビュー性向上の検証(検討まとめ第4章の案2・3)。
 - 他ドメイン・他組織での追試による一般化可能性の検証。
-- 版ノード・辺を持つ永続的な版履歴グラフ(Version DAG)としてderived_from関係を明示的に保存・クエリ可能にする拡張。現状はマイルストーン区間ごとに`ChangeEvent`のfrom_tree_sha/to_tree_sha比較として都度導出しており、永続グラフ構造としては保持していない(第3.2節)。
+- 版ノード・辺を持つ永続的な版履歴グラフ(Version DAG)として`derived_from`関係を明示的に保存・クエリ可能にする拡張。これはADR 0013のidentity lifecycle因果graph(`identity-events/`、実装済み)とは異なる概念のまま残っている。後者は比較対象の論理的同一性を解決するが、`derived_from`は引き続きマイルストーン区間ごとの`ChangeEvent` tree SHA比較から都度導出するcontent-version関係であり、永続化されたgraphとしては保存しない(第3.2節)。
 - `generated_by`/`verified_by`(第3.5節)を読む将来のCIゲート(例：`generated_by: llm`かつ`verified_by`未設定の`ExpectedResult`が存在する場合に`markharness verify`が警告する)は未実装。現状は離散的な事実情報を記録するだけで、それを消費するロジックは本研究のスコープ外としている。
 
 ---
 
 ## 8. Conclusion
 
-本研究は、Gitのコンテンツアドレス(tree SHA)・非コミットのid解決キャッシュ・コミットグラフの祖先探索(`git merge-base`)を組み合わせ、マイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。既存研究・ツールにはcontent fingerprint、trace-link freshness、test result traceability等の関連機構が存在する(第2.4〜2.8節)。本モデルはそれらの個別要素の新規性を主張せず、Feature集約version、テスト派生、変更影響、version-bound execution evidence、再検証状態をGit上で統合する設計仮説と、そのreference implementationを提示する。
+本研究は、Git管理の不変な論理Identity(UID)、Gitのcontent-addressed version(tree SHA)、非コミットのidentity解決キャッシュ、コミットグラフの祖先探索(`git merge-base`)を組み合わせ、マイルストーン境界でテスト知識の版履歴(`derived_from`)を導出するモデルを設計した(第3章)。通常の内容変更は2 snapshotから事後導出し、snapshotだけで意図を復元できない同一性操作だけをidentity宣言として保持する。既存研究・ツールにはimmutable identifier、event-based traceability、content fingerprint、trace-link freshness、test result traceability等の関連機構が存在する。本モデルはそれらの個別要素の新規性を主張せず、論理Identity、Feature集約version、テスト派生、snapshot差分による変更影響、version-bound execution evidence、再検証状態をGit上で統合する設計仮説として位置づける。
 
 この設計は`markharness`(Rust実装、本リポジトリ)としてリファレンス実装され、`changes compute`によるマイルストーン境界の版履歴自動計算(区間内の任意の位置で発生した全マージへの`lineage`統合を含む、第3.2節「統合(2026-08追記)」)、`changes lineage`による`git merge-base`ベースの分岐監査、`verify trace`/`verify pending`による実行結果との自動突合(第3.7節)を含む中核機能が動作することを確認した。第3.6節にまとめた通り、設計から意図的に簡略化した箇所(id解決キャッシュのバージョン改訂運用が未検証等)と、未実装のまま残した箇所(既存TMSからのインポータ)がある。
+
+不変UID・identity event・UIDベースのTestCase/Execution/ChangeEvent追跡は、当初ADR 0013のProposed設計だったが、本稿時点のreference implementationに実装済み(3.6節)であり、ADR 0013はAcceptedへ移行した。`markharness identity migrate`によるschema version 2公開cutoverにより、`feature.yml`の`id:`が変わってもUIDにより同一Featureを追跡できる。したがって、UIDモデルの実装品質は動作確認済みだが、実プロジェクトでの有用性は今後の検証対象である。
 
 **本研究の現時点での性質**：本ドラフトは、RQ1(「明示的な版履歴を持つモデルは、複数世代にわたる変更影響識別タスクにおいて既存の複合運用より正答率・所要時間を改善するか」)を検証する**設計提案とリファレンス実装のレポート**であり、第5章に計画した被験者実験による実証的評価は本ドラフト時点では未実施である。したがって、RQ1に対する肯定的な結論を本ドラフトでは主張しない。第3章で述べたモデル構造(版履歴の第一級化)が、既存運用にはない情報(過去世代からの派生関係)をテスターに提供しうるという設計上の期待は成り立つが、これが実際の正答率・所要時間の改善に結びつくかどうかは、第5章の評価計画に沿った被験者実験を経て初めて判断できる。
 
@@ -651,6 +664,32 @@ LLM生成の手順書にテスターが直接手を加えた場合の運用と�
 ## 変更履歴(Changelog)
 
 **運用ルール**：本節は2026-08-11以降、本資料に実質的な変更(記述内容の追加・修正・削除)を加えるたびに追記する。参照リンクの張り替えやファイル名の統一など、内容に実質的な変更を伴わない編集は追記しない。2026-08-11より前の履歴は`git log --follow`で本ファイルのコミット履歴を辿れるため、以下では簡潔な要約のみ記載する。
+
+- **2026-08-23(12)**：Standards/Spec形式レビューの指摘(「共通のdirectory削除・再作成リスクに再検討条件がありません」「全platform共通のAccepted riskが記録要件を満たしていません」)に対応。十一度目のレビュー対応で追記した全platform共通のAccepted-risk記録(`.markharness/`を通常directoryとして削除・再作成するsplit-brain変種、design doc §6.4)には、直後に追加したWindows固有記録とは異なり、明示的な再検討トリガーが欠けていた。design doc §6.4(ja/en)へ、`docs/review-policy.md`のAccepted-risk記録要件に沿って、次の4件の再検討トリガーを追記した: (1) 祖先ディレクトリの同一性を安全かつ低コストに固定できる手段が利用可能になった場合、(2) この変種がより低い権限で到達可能になると判明した場合、(3) threat modelがuntrusted workspace writerを含むよう変更された場合、(4) 実運用でincidentが発生した場合。コードの機能的な変更は無く、design doc(ja/en)修正のみ。571 tests green(件数変更なし)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
+- **2026-08-23(11)**：Stop hook Codexレビューの指摘(「Windows accepted-risk record overstates the post-open mitigation」)に対応。直前に追加したWindows固有Accepted-risk記録の「既存の緩和策」項が、open後の事後検証(`is_dir()`/`is_symlink()`/`FILE_ATTRIBUTE_REPARSE_POINT`/`GetFileType`)を「symlink・junction・非ディスクファイルへ追従した結果を検出・拒否する」と記述していたが、これは記録が対象とする**祖先置換**の変種に対しては誤りだった。置換された祖先の指す先(攻撃者の制御下にあるディレクトリ)に攻撃者が通常の正規ファイルを置いておけば、追従した結果のopenは事後検証を素通りする(場所が違うだけの本物のファイルであるため)。事後検証が実際に効くのは「最終要素自体が非通常ファイルである」という別のケース(既存の、この変種とは無関係な防御)であり、この変種の検出手段にはなっていなかった。design doc §6.4(ja/en)の該当記述を、事後検証はこの変種に対しては実効的な緩和にならない旨を明記する記述へ修正し、実効的な緩和策はチェックとopenの間の窓を狭めることのみである、と正確に記載した。コードの機能的な変更は無く、design doc(ja/en)のAccepted-risk記述修正のみ。571 tests green(件数変更なし)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
+- **2026-08-23(10)**：`docs/review-policy.md`(Codexレビューゲート自身が新設)に基づく形式レビューの指摘(「Accepted-risk記録がWindows固有の競合と再検討条件を網羅していません」「Accepted-risk記録に再検討トリガーがありません」)に対応。design doc §6.4の既存Accepted-risk記録は、Unix限定の`openat`による解決を前提に「祖先の削除・再作成」変種のみを記録しており、Windows版`open_lock_file_no_follow`が`openat`相当を持たずstat-then-open方式のままであるため**symlink置換の変種自体も未解決のまま残っている**という、より広い事実を記録していなかった。記録形式も、review-policyが要求する6項目(条件と影響・必要な能力と到達性・既存の緩和策・却下した緩和策とそのコスト/リスク・受容の理由・再検討トリガー)を明示的には満たしていなかった。design doc §6.4(ja/en)へ、Windows固有のAccepted-risk記録を新規段落として6項目を明示的に構造化して追加し、再検討トリガー(安全な相対path解決手段の利用可能化、より低い権限での到達可能性の判明、実incidentの発生)を明記した。`src/fs_safety.rs`のdoc commentからもこの記録への参照を追記した。コードの機能的な変更は無く、doc comment・design doc(ja/en)修正のみ。571 tests green(件数変更なし)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
+- **2026-08-23(9)**：Stop hook Codexレビューの十四度目の指摘(「Windows 側が依然として通常ファイル性を保証していません」)に対応。直前の対応で追加した`FILE_ATTRIBUTE_REPARSE_POINT`判定は属性ベースの検査であり、Windowsのレガシーな予約デバイス名(`NUL`・`CON`・`AUX`・`PRN`・`COM1`〜`COM9`・`LPT1`〜`LPT9`)には無力だと判明した。これらの名前は、verbatim(`\\?\`)形式でない短いpathであればディレクトリの前置きに関わらず`CreateFile`によって名前解決の時点でデバイスへ横取りされ、ファイルシステムに一切到達しないため、返るhandleにはNTFS属性そのものが存在しない。これを検出できる唯一の方法として、Win32 `GetFileType` APIでhandleの種別を直接確認する`is_disk_file`ヘルパーを追加し、`FILE_TYPE_DISK`以外を拒否するようにした。`kernel32.dll`は全Windows Rustバイナリへ常にリンクされているため、新規crate依存は追加せず、この関数1つのためだけの最小限のローカル`unsafe extern "system"`宣言とした。回帰テスト`open_lock_file_no_follow_rejects_a_path_that_is_a_reserved_device_name`(tempdir配下の短いpathで`NUL`を指定し拒否を確認)を追加、この開発機で実際にpassすることを確認した。571 tests green(570→571)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
+- **2026-08-23(8)**：Standards/Spec形式レビューの十三度目の指摘(「`open_lock_file_no_follow`はdoc commentで『通常ファイルであることを検証する』と記載しているが、実装はdirectoryとsymlinkだけを拒否しており不完全(Unixで FIFO・socket・device、Windowsでsymlink以外のreparse pointが素通りし得る)」)に対応。Unix側の判定を`file_type.is_dir() || file_type.is_symlink()`から`!file_type.is_file()`へ変更し、通常ファイル以外を包括的に拒否するようにした(追加依存不要)。Windows側は`is_symlink()`が特定のreparse tagしか認識しないため、`std::os::windows::fs::MetadataExt::file_attributes()`(標準ライブラリ)で生の`FILE_ATTRIBUTE_REPARSE_POINT`ビットを直接確認する判定を追加し、tagの種類によらずreparse point全般を拒否するようにした。回帰テストとして、Unix限定でFIFOを配置して拒否を確認するテストと、Windowsでfile symlink(作成失敗時はグレースフルにskip)を配置してreparse point判定の拒否を確認するテストを追加した。570 tests green(569→570、Windows実行分)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
+- **2026-08-23(7)**：Stop hook Codexレビューの十二度目の指摘(「`IdentityLock`のdoc commentがまだ、全ての`acquire`が同一ファイルへ解決されるという広すぎる主張をしている」)に対応。前回`fs_safety::open_lock_file_no_follow`側のdoc commentは修正したが、`src/identity/lock.rs`の`IdentityLock`構造体自身のdoc commentに同じ過大主張(このコードベース自身が守る不変条件であって敵対的な並行書込み者への保証ではない、という限定が欠けている)が残っていた欠陥を修正した。同じ表現が独立してdesign doc §6.4(ja/en)にもコピーされていたため、そちらも合わせて修正し、「この不変条件はこのモジュール自身の保証であり、あらゆる並行書込み者に対して成り立つわけではない」旨を明記した。コードの機能的な変更は無く、doc comment修正のみ(`lock.rs`・design doc ja/en の3箇所)。569 tests green(件数変更なし)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
+- **2026-08-23(6)**：Stop hook Codexレビューの十一度目の指摘(「Unix `openat` traversal still permits split-brain locking」)に対応。前回追加したUnix版`open_lock_file_no_follow`のdoc commentが過大に主張していたと判明した: `O_NOFOLLOW`+`openat`は祖先の**symlink置換**は確実に閉じるが、祖先(`.markharness/`)が**削除されてから通常のディレクトリとして再作成される**という別の変種までは閉じない。この置換が2つのプロセスの呼び出しの間で起きると、それぞれの呼び出しは内部的に一貫していても、2つのプロセスが異なる実体のlockを保持してしまう(split-brain)。この変種を完全に閉じるにはOSレベルの削除禁止機構等、アプリケーションのpathベースAPIでは実現できない仕組みが必要で、POSIX `flock`を含むあらゆる名前ベースのlocking方式に共通する原理的な限界と判断した。この変種を突く攻撃者は、より直接的で単純な攻撃手段(`.markharness/identity-events/*.yml`の直接改ざん等)を既に持っているため、この非対称性を踏まえて残存リスクとして明示的に許容した。過大主張だったdoc commentを、閉じている変種と閉じていない変種を明確に区別する記述へ修正し、design doc §6.4(ja/en)にこの決定(受容の判断とその理由)を記録した。コードの機能的な変更は無く、doc comment修正のみ。569 tests green(件数変更なし)、clippy clean、`cargo fmt --check`clean。
+- **2026-08-23(5)**：Stop hook Codexレビューの十度目の指摘(「lock-file symlink protection remains TOCTOU-vulnerable」、前回の`open_lock_file_no_follow`新設だけでは不十分)に対応。stat-then-open方式(祖先を`ensure_no_symlink_ancestor`でチェックしてから、最終要素だけを`O_NOFOLLOW`/`FILE_FLAG_OPEN_REPARSE_POINT`でatomicにopenする)は、祖先ディレクトリ自体がチェックと実際のopenの間で入れ替えられうるという原理的なTOCTOU窓を残すと判明した。Unix版を`libc`の`openat`/`mkdirat`を用いて各経路要素を直前の要素の生fd相対で解決する完全原子的な実装へ全面書き換えし、この窓を閉じた(一度openしたディレクトリのfdは、名前空間上で何が起きようと同じディレクトリを指し続けるため)。Windows側はWin32 APIにopenat相当の安全な手段が無く(`ntdll.dll`へのFFIという大きな追加依存になるため見送り)、祖先の窓が残ることを正直に文書化した。実OSスレッドで祖先を継続的にsymlinkへ入れ替え続ける回帰テスト(Unix限定)を追加。この開発機がWindowsのため、Unix実装は`cargo check --target x86_64-unknown-linux-gnu --all-targets`による型検査のみ確認できた(実行検証はできていない)。design doc §6.4(ja/en)へ追記。569 tests green(568→569)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean。
+- **2026-08-23(4)**：Standards/Spec形式レビューの九度目の指摘に対応。(1) **重大**: `IdentityLock::acquire`が`.identity.lock`を通常の`OpenOptions::open`で開いており、symlink/junctionに置き換えられていた場合にリンク先を追随して書込み・lockしてしまう欠陥を修正。`fs_safety::open_lock_file_no_follow`を新設し、Unix `O_NOFOLLOW`(`libc`クレートをUnix限定依存として追加、MIT OR Apache-2.0)・Windows `FILE_FLAG_OPEN_REPARSE_POINT`を用いてopenし、open後に非通常ファイル(ディレクトリ・symlink)を拒否する。診断用PID書込みの失敗も無視せず伝播するよう修正。(2) **中**: `run_startup_recovery`が`IdentityLock::acquire`の失敗種別を問わず`OperationInProgress`として扱い、permission denied等の真の障害を誤報告していた欠陥を修正し、`io::ErrorKind::WouldBlock`のみを lock競合として扱うようにした。(3) **重大**: `run_startup_recovery`がrecovery完了後にlockを解放し、呼び出し元が別途lockを再取得していたため生じていたhandoffの隙間(その隙間で別プロセスがcommit後・roll-forward前にcrashしても、既に完了済みのrecoveryスキャンが気づけない)を修正。`StartupRecovery::Recovered(outcomes)`を`Ready { outcomes, lock }`へ変更し、recoveryが取得したlockを呼び出し元がそのままcheck-and-commitへ流用するAPIへ再構成、全8つのidentity operationから2回目のacquire呼び出しを削除した。エラー経路の確実なunlockのため`IdentityLock`へ`Drop`実装も追加。回帰テストとして、handoffの隙間が無いことを直接検証するテストと、`retire`対`reissue`という異種操作の組合せ(無関係な2entityで並行実行し破損しないことを検証)を追加した。design doc §6.4(ja/en)へ記録。568 tests green(561→568)、clippy clean、`cargo fmt --check`clean、`cargo check --target x86_64-unknown-linux-gnu --all-targets`clean(Unix分岐の型検査、この開発機はWindowsのため実行はできない)。
+- **2026-08-23(3)**：Stop hook Codexレビューの八度目の指摘(「再確認後の削除もTOCTOU競合を残し、生存中lockを削除し得ます」)に対応。直前の対応(削除直前の再読込+内容一致チェック)でも、再読込と実際の削除呼び出しの間には理論上なお置換の余地が残り、std の path ベースAPIだけではこれを完全に閉じる原子的プリミティブが無いことが判明した。根本原因である「このlockはdeadプロセスの残骸か」をPID読み取りで判定する設計そのものを見直し、OSのadvisory file lock(`std::fs::File::try_lock`、Rust 1.89で安定化)へ全面的に置き換えた。プロセスが(クラッシュを含め)終了するとOSが自動的にlockを解放するため、staleness判定という概念自体が不要になった。lockファイルはもう削除されず(削除→再作成では真の排他性を失うため)lock/unlockのみを行うよう変更し、恒常的に存在しうる非コミットファイルとして`.gitignore`へ追加した。design doc §6.4(ja/en)にこの設計変更を記録。561 tests green(563→561、PIDベース設計向けテスト5件削除・新設計向け3件追加の純減)、clippy clean、`cargo fmt --check`clean。
+- **2026-08-23(2)**：Stop hook Codexレビューの七度目の指摘(「stale-lock clearingにまだTOCTOU競合が残っている」)に対応。`clear_if_stale`が、lock file内容を読んでPIDの死亡を判定してから実際に削除するまでの間(特に一部プラットフォームで外部プロセス起動を伴い遅くなりうる`pid_is_alive`のliveness確認自体が窓に含まれていた)、別プロセスが同じstale lockを削除して新たに生きているlockを獲得しているかもしれず、無条件削除だと稼働中operationのlockを誤って奪う欠陥を修正した。stdに移植可能な原子的delete-if-unchangedが無いため完全な原子性は達成できないが、削除直前に同じpathを再読込し最初の内容とbyte-for-byte一致する場合のみ削除するよう変更し、窓を「1回の読込+遅くなりうるliveness確認」から「2回の連続読込+削除」まで縮小した。実OSスレッドによる回帰テストを追加。当初は固定300イテレーションで実装したところ1回の実行が約225秒かかる非現実的な遅さになったため、壁時計時間(750ms)で打ち切る方式へ変更し約1.2〜1.9秒まで短縮した。563 tests green(562→563)、clippy clean、`cargo fmt --check`clean。
+- **2026-08-23**：Standards/Spec形式レビューの六度目の指摘(「`run_startup_recovery`はstale lock削除後にlockを再取得せずrecoveryを実行しており、複数プロセスのrecovery同士や通常operationとの競合でKnowledge projectionを並行更新しうる」)に対応。`recover_incomplete_operations`自身のdoc commentが明記する「lock取得後に呼ぶこと」という契約を、それを呼び出す`run_startup_recovery`自身が守っていなかった欠陥を修正し、stale lock解除後に自らlockを取得してrecovery実行中ずっと保持するよう再構成した。実OSスレッドによる回帰テストを追加する過程で、stale lockの削除→即時再作成というNTFS特有の競合が稀に`PermissionDenied`を引き起こし、staging残存によるroll-forwardの二重実行を招く副次的なWindows固有バグも発見・修正した(`src/fs_safety.rs`に共通retry helperを追加し、`create_new_no_follow`/`remove_file_no_follow`/`remove_dir_all_no_follow`へ適用)。562 tests green(561→562)、clippy clean、`cargo fmt --check`clean。
+- **2026-08-22(9)**：Stop hook Codexレビューの五度目の指摘(「追加された並行回帰テストが正しい直列実行を誤って失敗扱いし、CIで不安定になり得ます」)に対応。`restore_and_release_never_diverge_under_concurrent_calls`の`release`結果検証が、lock競合エラーのみを許容し、`restore`が`release`開始前に完全に直列完了した場合に正しく返る`ReleaseError::NotRetired`(`restore`の前提条件は`release`の有無に左右されないが、逆は成り立たないという非対称性による、実際に起こりうる正当な結果)を許容していなかったため、この直列パターンが発生するCI環境で偽陽性の失敗を起こしうる欠陥を修正。30回連続実行で安定を確認。561 tests green(件数変更なし、assertion修正のみ)、clippy clean、`cargo fmt --check`clean。
+- **2026-08-22(8)**：Stop hook Codexレビューの四度目の指摘(「異種操作間のTOCTOU競合が残っています」)に対応。同一操作同士(retire×retire等)の競合は前回修正済みだったが、`rename_id`・`resolve_divergence`・`release_id`・`sync_entity`はまだevent読込・状態検証をlock取得より前に行っており、これらと他の操作の間の競合が残っていた。4関数すべてを、読込・検証・commit全体をlock保持区間の内側で行う構成へ揃えた。異種操作(`restore_entity`と`release_id`)を同一entityへ実OSスレッドで同時実行する回帰テストを追加し、`IdentityLock`のfail-fast設計(design doc §6)により負けた側が正しく`OperationInProgress`等で拒否されつつ、event logに一切divergenceが生じないことを確認した。561 tests green(560→561)、clippy clean、`cargo fmt --check`clean。
+- **2026-08-22(7)**：Standards/Spec形式のコードレビュー指摘に対応。(1) `retire_entity`・`restore_entity`が、event読込・replay・状態検証を`IdentityLock`取得より前に行っていたTOCTOU競合を修正(`reissue_entity`と同じく、読込から commit までを lock 保持区間の内側で行うよう再構成)。同一predecessorから2本の`Retired`/`Restored`eventが生成されbranch divergenceを起こしうる欠陥だった。実OSスレッドによる回帰テストを追加。(2) `commit_rename`/`commit_resolution`/`commit_release`/`commit_retire`/`commit_restore`/`commit_reissue`の6箇所に重複していたevent commit手順を、共通helper `commit_single_event`へ集約。(3) 論文changelogの2026-08-22(4)エントリが古い(既に(6)で修正済みの)挙動を記述したままだった点を、エントリ本文は残しつつ注記で補足。560 tests green(558→560)、clippy clean、`cargo fmt --check`clean。
+- **2026-08-22(6)**：Stop hook Codexレビューの三度目の指摘(「Knowledge fileがUIDを含んでいてもreissueが予約をすり抜ける」)に対応。原因は、予約判定が「ファイル自身の`uid:`のみ」を確認する分岐と、uidなしの場合にのみ全UID走査を行う分岐とに分かれていたこと。ファイルが他repositoryからcopyしてきたforeign uid(ローカルevent logを持たない)を保持している場合、その1件だけを見て「event logが空=予約なし」と誤判定し、全UID走査そのものをスキップしていたため、同じidを実際にローカルの別UIDが未release状態で予約していてもすり抜けてしまっていた。`source_uid`の有無で分岐する構造をやめ、全ローカルUID走査を常に実行するよう`reissue_entity`を再構成した。回帰テストを追加。557→558 tests green、clippy clean、`cargo fmt --check`clean。
+- **2026-08-22(5)**：Stop hook Codexレビューの再指摘(「新しい予約判定はイベント順序と同時実行を正しく扱えていません」)に対応。(1) 予約判定が「対象idを名指しした`Released`eventがログ内のどこかに存在するか」という順不同スキャンだったため、`retire`→`release`→`restore`(releaseなしでの再claimを認めるADR 0013の唯一の例外)→再`retire`という順序を経ると、過去の無効な`Released`eventを根拠に誤って「released済み」と判定してしまう欠陥を修正した。`engine.rs`に`causal_order`(原因順のevent列を返す)を追加し、`current_id`を追跡しながら対象idの予約状態を順序どおりに再計算する方式へ置き換えた。(2) 予約判定が`IdentityLock`取得より前に行われていたため、同じ未予約idへの2つの並行`reissue`呼び出しが両方とも「予約なし」と判定した後、順にlockを取得してそれぞれcommitしてしまうと二重reissueが起こりうるTOCTOU競合を修正し、判定からcommitまで全体をlock保持区間の内側で行うよう再構成した。実OSスレッドによる並行呼び出しの回帰テストを追加。554→557 tests green、clippy clean、`cargo fmt --check`clean。
+- **2026-08-22(4)**：Codex adversarial reviewの指摘に対応。`identity reissue`の予約id判定が、Knowledge file自身の`uid:`フィールドしか見ておらず、ファイルがuidなしで再作成された場合に、他のUIDがそのidをretired・未release状態で保持していてもすり抜けてしまう欠陥を修正した。`find_unreleased_reservation_holder`を追加し、Knowledge fileが`uid:`を持たない場合は`.markharness/identity-events/<kind>/`配下の全UIDのevent logを走査して未release状態の予約を検出するようにし、見つかった場合は新設の`ReissueError::IdReservedByAnotherUid`で拒否する。無条件成功を期待していた既存テストを、拒否を確認するテストと、release後の成功を確認するテストへ置き換えた。CLI manual 1.33節(ja/en)へ実バイナリで採取したトランスクリプトを追加。554 tests green(553→554)、clippy clean、`cargo fmt --check`clean。この時点の「uidなしの場合のみ走査する」という条件分岐は、下の2026-08-22(6)でさらに「常に走査する」よう修正されている(現在の実装は本entryの記述ではなく(6)が最終)。
+- **2026-08-22(3)**：レビュー指摘に対応。(1) `identity reissue`が「旧UIDのretireのみ」で新UIDへのid再割当を許可していたのを、ADR本文(「一度idがUIDへ発行されたら、明示的なreleaseがそのidの予約を解除するまで、別のUIDへは割り当てられない」)どおり「idが明示的にreleaseされていること」を要求するよう修正(`ReissueError::SourceIdNotReleased`)。(2) retire/restore/reissueのcrash-recovery境界テストに、commit前(intent staging済み・未commit)の境界を追加(既存はcommit後・roll-forward前の1境界のみだった)。あわせてdesign doc §6.3・ADR「Acceptedへ変更する条件」の該当項目を、実際に採用している検証方式(実OSプロセスへのkill注入ではなく状態直接構築による2境界の検証)を正確に記述するよう修正した(ja/en)。(3) 新設`identity sync`がstatusを無視してKnowledge fileへUIDを書き戻していたため、retire後に同じidのファイルを再作成してsyncすると、`Restored` eventなしでretired entityがKnowledge上へ再出現できてしまう欠陥を修正(`SyncError::NotActive`でActive以外を拒否)。(4) 本ファイル・CLI manualの節番号参照を「1.25〜1.32」から、`identity sync`挿入後の実際の節番号に合わせた「1.25〜1.33」へ再修正。
+- **2026-08-22(2)**：ADR 0013 Acceptedへの移行条件を再点検した際、`identity retire`/`restore`/`reissue`(design docの共有Identity Module Interfaceが要求する残り3つのmutation)がAccepted移行後に追加実装されたことを§3.6実装状況表・§7 Future Work該当箇所へ反映。CLI manual節番号の参照を「1.25〜1.29」から、新設の`identity sync`を含む「1.25〜1.32」へ更新。
+- **2026-08-22**：ADR 0013の不変identityモデル(design doc §13 Phase 1〜5)の実装完了とAccepted移行を反映(checklist-immutable-identity-model.md参照)。§3.6実装状況表の「Proposed・未実装」行を「実装済み・設計と一致」へ統合し、`identity migrate`/`resolve`/`release`/`audit`・`feature rename-id`・schema version 2公開cutoverを実装済み項目として明記。「実装済み設計からの簡略化」行に、UID mode検証規則が`markharness validate`のみに限定されている旨(生成系コマンドへの拡張は未定)を追加。§7 Future Workの該当2項目(schema version 2 identityモデルの実装評価、Version DAGとidentity lifecycle因果graphの対比)を実装完了後の記述へ更新。§8 Conclusionの「ADR 0013はProposedで未実装」という記述を実態(実装済み・Accepted)に合わせて修正。
+- **2026-08-20(3)**：Gitを唯一の永続化境界と定義し、Knowledgeとidentity eventをリポジトリ内の正準データ、Registryを破棄可能なcacheとし、Git外のembedded databaseや永続化サービスを正準にしないことを明記。§3.6で現行実装の制約とADR 0013のProposed設計を分離し、旧id⇔path独立indexのFuture WorkをADR 0013の実装・評価に置換し、identity lifecycle因果graphと将来の永続`derived_from` Version DAGを別概念とした。
+- **2026-08-20(2)**：§1.4の製品ポジショニングを修正。「専用DB不要」を「外部DBプロセス不要」の意味に限定し、Gitで管理された軽量identity event store(ADR 0013、Proposed、本稿時点で未実装)を設計上内蔵する旨を明記した。
+
+- **2026-08-20**：ADR 0013の可変ID/不変UID分離を反映。UIDを論理Identity、tree SHAをcontent versionとして役割分離し、通常の内容`ChangeEvent`は2 snapshot差分から導出する一方、snapshotだけで意図を復元できないrename等のidentity宣言のみをGit管理する二層モデルに改訂。IdentityEvent自体の新規性は主張せず、論理Identity・content-addressed version・snapshot差分・version-bound execution evidenceの統合を設計仮説の中心とした。
 
 - **2026-08-18(3)**：再レビュー指摘に対応。商用TMS比較の未調査項目を「なし」から「未確認」へ変更し、本文に残る非存在断定を限定。§5.4を候補外TestCaseの追加を許すopen-world reviewへ変更。§5.5とConclusionの事前登録状態を「骨格」に修正。tree SHAを数学的に衝突しない識別子とする表現と、実リポジトリで精度確保済みとする表現を修正。旧変更履歴のDoorstop評価は本改訂および2026-08-18(2)で訂正された。
 - **2026-08-18(2)**：レビュー指摘に対応。DoorstopのSHA-256 item fingerprint・reviewed fingerprint・suspect linkをcontent-derived identity/freshnessの先行機構として再評価し、表1と§2.8〜2.9の比較を修正。StrictDocのtest result traceability、tmtのGit ref/Stories/Results等を踏まえて断定を緩和。「原理的に答えられない」「構造的欠落」を、対象運用では複数情報源の手動照合を要するという検証可能な仮説へ修正。§1.4に研究・OSS・プロダクトの三層の位置づけを追加。§5.4のground truth構築から提案モデル自身による選別を除去し、§5.5の固定人数目安をpower analysisへ変更。Conclusionと参考文献を同期更新。
