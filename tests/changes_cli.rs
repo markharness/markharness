@@ -49,6 +49,7 @@ fn init_project_with_two_milestones() -> tempfile::TempDir {
     run_git(dir.path(), &["init", "-q"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     write_feature(dir.path(), "v1");
     run_git(dir.path(), &["add", "-A"]);
@@ -327,6 +328,7 @@ fn changes_compute_records_both_parent_tree_shas_when_to_milestone_is_a_true_div
     run_git(dir.path(), &["init", "-q", "-b", "main"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     write_feature(dir.path(), "base");
     run_git(dir.path(), &["add", "-A"]);
@@ -386,6 +388,7 @@ fn changes_compute_records_both_parent_tree_shas_when_merge_occurs_within_the_mi
     run_git(dir.path(), &["init", "-q", "-b", "main"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     write_feature(dir.path(), "base");
     run_git(dir.path(), &["add", "-A"]);
@@ -450,6 +453,7 @@ fn changes_compute_records_a_true_divergence_entry_for_each_merge_when_the_inter
     run_git(dir.path(), &["init", "-q", "-b", "main"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     write_feature(dir.path(), "base");
     run_git(dir.path(), &["add", "-A"]);

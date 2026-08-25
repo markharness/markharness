@@ -1,0 +1,3 @@
+# Normalize all text files to LF regardless of each developer's local
+# core.autocrlf setting, so line endings never differ by OS/environment.
+* text=auto eol=lf

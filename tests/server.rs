@@ -24,6 +24,7 @@ fn repository() -> tempfile::TempDir {
     git(dir.path(), &["init", "-q"]);
     git(dir.path(), &["config", "user.email", "test@example.com"]);
     git(dir.path(), &["config", "user.name", "Test"]);
+    git(dir.path(), &["config", "core.autocrlf", "false"]);
     write(
         dir.path(),
         ".markharness/knowledge/checkout/requirement.yml",
@@ -122,6 +123,7 @@ fn feature_history_api_includes_change_events_recorded_before_a_uid_preserving_r
     git(dir.path(), &["init", "-q"]);
     git(dir.path(), &["config", "user.email", "test@example.com"]);
     git(dir.path(), &["config", "user.name", "Test"]);
+    git(dir.path(), &["config", "core.autocrlf", "false"]);
     write(
         dir.path(),
         ".markharness/knowledge/checkout/requirement.yml",

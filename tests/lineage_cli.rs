@@ -55,6 +55,7 @@ fn changes_lineage_reports_linear_when_only_one_branch_changed_the_feature() {
     run_git(dir.path(), &["init", "-q", "-b", "main"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     write_feature(dir.path(), "base");
     commit_all(dir.path(), "base");
@@ -102,6 +103,7 @@ fn changes_lineage_exits_two_when_commit_is_not_a_merge_commit() {
     run_git(dir.path(), &["init", "-q", "-b", "main"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
     write_feature(dir.path(), "v1");
     commit_all(dir.path(), "v1");
 

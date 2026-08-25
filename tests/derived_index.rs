@@ -21,6 +21,7 @@ fn indexes_are_reconstructible_from_git_changes_and_executions() {
     git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
+    git(&["config", "core.autocrlf", "false"]);
     std::fs::create_dir_all(repo.path().join(".markharness/knowledge/shop/checkout")).unwrap();
     std::fs::write(
         repo.path()
@@ -80,6 +81,7 @@ fn change_event_index_groups_by_uid_across_a_rename() {
     git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
+    git(&["config", "core.autocrlf", "false"]);
     std::fs::create_dir_all(repo.path().join(".markharness/knowledge/shop/checkout")).unwrap();
     std::fs::write(
         repo.path()

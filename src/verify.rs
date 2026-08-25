@@ -779,6 +779,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
         write_feature(dir.path(), "v1");
         commit_and_tag_milestone(dir.path(), "test1", 1);
@@ -845,6 +846,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         write_feature(dir.path(), "v1");
         commit_and_tag_milestone(dir.path(), "test1", 1);
         write_feature(dir.path(), "v2");
@@ -869,6 +871,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         write_feature(dir.path(), "v1");
         commit_and_tag_milestone(dir.path(), "test1", 1);
         write_feature(dir.path(), "v2");
@@ -901,6 +904,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
         write_feature_with_uid(dir.path(), "todo-edit", "v1", UID);
         commit_and_tag_milestone(dir.path(), "test1", 1);

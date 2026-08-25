@@ -2807,6 +2807,7 @@ mod tests {
         run_git_for_test(dir.path(), &["init", "-q"]);
         run_git_for_test(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git_for_test(dir.path(), &["config", "user.name", "Test"]);
+        run_git_for_test(dir.path(), &["config", "core.autocrlf", "false"]);
         fs::write(dir.path().join("README.md"), "hello\n").unwrap();
         run_git_for_test(dir.path(), &["add", "-A"]);
         run_git_for_test(dir.path(), &["commit", "-q", "-m", "init"]);

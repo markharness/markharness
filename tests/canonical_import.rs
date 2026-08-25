@@ -90,6 +90,7 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
     git(repo.path(), &["init", "-q", "-b", "main"]);
     git(repo.path(), &["config", "user.email", "test@example.com"]);
     git(repo.path(), &["config", "user.name", "Test"]);
+    git(repo.path(), &["config", "core.autocrlf", "false"]);
     let base = repo
         .path()
         .join(".markharness/knowledge/checkout/pay/card/valid-card");
@@ -165,6 +166,7 @@ fn native_import_carries_the_feature_uid_when_the_feature_has_one() {
     git(repo.path(), &["init", "-q", "-b", "main"]);
     git(repo.path(), &["config", "user.email", "test@example.com"]);
     git(repo.path(), &["config", "user.name", "Test"]);
+    git(repo.path(), &["config", "core.autocrlf", "false"]);
     fs::create_dir_all(repo.path().join(".markharness/knowledge/checkout/pay")).unwrap();
     fs::write(
         repo.path()

@@ -66,6 +66,7 @@ fn legacy_case_id_and_change_event_identity_survive_migration_and_a_later_rename
     run_git(dir.path(), &["init", "-q"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     // 1. Pre-migration: no uid anywhere. Record an execution under the
     // legacy case_id, matching what a real project's history looks like

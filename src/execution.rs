@@ -359,6 +359,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         let feature_dir = dir
             .path()
             .join(".markharness/knowledge/controls")
@@ -446,6 +447,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         let feature_dir = dir
             .path()
             .join(".markharness/knowledge/controls")

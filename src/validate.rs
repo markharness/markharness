@@ -378,6 +378,7 @@ mod tests {
         assert!(git_status(&["init", "-q"]).success());
         assert!(git_status(&["config", "user.email", "test@example.com"]).success());
         assert!(git_status(&["config", "user.name", "Test"]).success());
+        assert!(git_status(&["config", "core.autocrlf", "false"]).success());
         crate::identity::migrate_entities(dir.path()).unwrap();
 
         let issues = validate_all(dir.path()).unwrap();

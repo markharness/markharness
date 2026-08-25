@@ -624,6 +624,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         dir
     }
 

@@ -92,6 +92,7 @@ fn init_project_with_pending_change() -> tempfile::TempDir {
     run_git(dir.path(), &["init", "-q"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     write_full_chain(dir.path(), "v1");
     commit_all_with_date(dir.path(), "v1", 1);
