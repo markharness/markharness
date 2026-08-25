@@ -41,7 +41,17 @@ fn read_milestone_audit(root: &Path, name: &str) -> io::Result<Option<MilestoneA
 /// (an arbitrary commit ref, not a named milestone) or when the recorded
 /// audit predates these fields (both `None` — "milestone.yml にバージョン
 /// 情報がない | tag内の正本を使用する", so the tag alone is trusted).
-pub fn verify_audit_matches_tag(root: &Path, name: &str) -> io::Result<()> {
+///
+/// Takes `name`'s already-resolved `resolved_schema` rather than resolving
+/// it again internally — the caller (`changes::compute_changes_with_warnings`)
+/// needs that same resolution for the fail-closed gate and the legacy
+/// warning anyway, and re-resolving here would reintroduce the duplicate
+/// Git read/drift risk `compute_changes_with_warnings` exists to avoid.
+pub fn verify_audit_matches_tag(
+    root: &Path,
+    name: &str,
+    resolved_schema: &crate::knowledge_schema::ResolvedSchemaVersion,
+) -> io::Result<()> {
     let Some(audit) = read_milestone_audit(root, name)? else {
         return Ok(());
     };
@@ -56,17 +66,16 @@ pub fn verify_audit_matches_tag(root: &Path, name: &str) -> io::Result<()> {
             ));
         }
     }
-    if let Some(recorded_version) = audit.knowledge_schema_version {
-        let actual = crate::knowledge_schema::resolve(root, name)?;
-        if recorded_version != actual.version {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "milestone.yml for '{name}' recorded knowledge_schema_version {recorded_version}, but the tag now resolves to {}. The tag may have moved, or milestone.yml was hand-edited.",
-                    actual.version
-                ),
-            ));
-        }
+    if let Some(recorded_version) = audit.knowledge_schema_version
+        && recorded_version != resolved_schema.version
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "milestone.yml for '{name}' recorded knowledge_schema_version {recorded_version}, but the tag now resolves to {}. The tag may have moved, or milestone.yml was hand-edited.",
+                resolved_schema.version
+            ),
+        ));
     }
     Ok(())
 }
@@ -227,8 +236,9 @@ mod tests {
         fs::write(dir.path().join("README.md"), "hello\n").unwrap();
         commit_all(dir.path(), "init");
         run_git(dir.path(), &["tag", "m1"]);
+        let resolved = crate::knowledge_schema::resolve(dir.path(), "m1").unwrap();
 
-        assert!(verify_audit_matches_tag(dir.path(), "m1").is_ok());
+        assert!(verify_audit_matches_tag(dir.path(), "m1", &resolved).is_ok());
     }
 
     #[test]
@@ -238,8 +248,9 @@ mod tests {
         commit_all(dir.path(), "init");
         run_git(dir.path(), &["tag", "m1"]);
         milestone_init(dir.path(), "m1").unwrap();
+        let resolved = crate::knowledge_schema::resolve(dir.path(), "m1").unwrap();
 
-        assert!(verify_audit_matches_tag(dir.path(), "m1").is_ok());
+        assert!(verify_audit_matches_tag(dir.path(), "m1", &resolved).is_ok());
     }
 
     #[test]
@@ -251,8 +262,9 @@ mod tests {
         let milestone_path = dir.path().join(".markharness/executions/m1/milestone.yml");
         fs::create_dir_all(milestone_path.parent().unwrap()).unwrap();
         fs::write(&milestone_path, "id: m1\n").unwrap();
+        let resolved = crate::knowledge_schema::resolve(dir.path(), "m1").unwrap();
 
-        assert!(verify_audit_matches_tag(dir.path(), "m1").is_ok());
+        assert!(verify_audit_matches_tag(dir.path(), "m1", &resolved).is_ok());
     }
 
     #[test]
@@ -268,8 +280,9 @@ mod tests {
             "id: m1\ncommit_oid: 0000000000000000000000000000000000000000\nknowledge_schema_version: 1\n",
         )
         .unwrap();
+        let resolved = crate::knowledge_schema::resolve(dir.path(), "m1").unwrap();
 
-        let err = verify_audit_matches_tag(dir.path(), "m1").unwrap_err();
+        let err = verify_audit_matches_tag(dir.path(), "m1", &resolved).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
@@ -289,8 +302,9 @@ mod tests {
             format!("id: m1\ncommit_oid: {commit_oid}\nknowledge_schema_version: 2\n"),
         )
         .unwrap();
+        let resolved = crate::knowledge_schema::resolve(dir.path(), "m1").unwrap();
 
-        let err = verify_audit_matches_tag(dir.path(), "m1").unwrap_err();
+        let err = verify_audit_matches_tag(dir.path(), "m1", &resolved).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }

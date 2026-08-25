@@ -315,15 +315,15 @@ pub fn compute_changes_with_warnings(
     to_milestone: &str,
     options: ChangeOptions,
 ) -> io::Result<ComputeChangesOutcome> {
+    let from_schema = crate::knowledge_schema::resolve(root, from_milestone)?;
+    let to_schema = crate::knowledge_schema::resolve(root, to_milestone)?;
+
     // issue #29's version-resolution policy table: "milestone.yml とtag内の
     // 正本が不一致 | エラーとして報告する". A ref with no milestone.yml (an
     // arbitrary commit, or a milestone predating the audit fields) is not
-    // checked.
-    crate::milestone::verify_audit_matches_tag(root, from_milestone)?;
-    crate::milestone::verify_audit_matches_tag(root, to_milestone)?;
-
-    let from_schema = crate::knowledge_schema::resolve(root, from_milestone)?;
-    let to_schema = crate::knowledge_schema::resolve(root, to_milestone)?;
+    // checked. Reuses the resolution just above rather than re-resolving.
+    crate::milestone::verify_audit_matches_tag(root, from_milestone, &from_schema)?;
+    crate::milestone::verify_audit_matches_tag(root, to_milestone, &to_schema)?;
     crate::knowledge_schema::ensure_compatible(&from_schema, &to_schema)?;
     let warnings = [
         crate::knowledge_schema::legacy_warning(from_milestone, &from_schema),
