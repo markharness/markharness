@@ -172,6 +172,7 @@ fn compute_changes_use_case_writes_change_events_and_returns_an_outcome() {
     run_git(root.path(), &["init", "-q"]);
     run_git(root.path(), &["config", "user.email", "test@example.com"]);
     run_git(root.path(), &["config", "user.name", "Test"]);
+    run_git(root.path(), &["config", "core.autocrlf", "false"]);
     std::fs::write(root.path().join("README.md"), "one\n").unwrap();
     run_git(root.path(), &["add", "-A"]);
     run_git(root.path(), &["commit", "-q", "-m", "m1"]);

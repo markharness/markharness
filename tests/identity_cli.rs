@@ -36,6 +36,7 @@ fn init_project() -> tempfile::TempDir {
     assert!(git_status(&["init", "-q"]).success());
     assert!(git_status(&["config", "user.email", "test@example.com"]).success());
     assert!(git_status(&["config", "user.name", "Test"]).success());
+    assert!(git_status(&["config", "core.autocrlf", "false"]).success());
     dir
 }
 

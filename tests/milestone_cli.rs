@@ -34,6 +34,7 @@ fn init_git_repo() -> tempfile::TempDir {
     run_git(dir.path(), &["init", "-q"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
     std::fs::write(dir.path().join("README.md"), "hello\n").unwrap();
     run_git(dir.path(), &["add", "-A"]);
     run_git(dir.path(), &["commit", "-q", "-m", "init"]);

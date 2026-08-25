@@ -226,6 +226,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         let feature_dir = dir
             .path()
             .join(crate::project_root::MARKHARNESS_DIR)
@@ -332,6 +333,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         let feature_dir = dir
             .path()
             .join(crate::project_root::MARKHARNESS_DIR)

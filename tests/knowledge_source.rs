@@ -55,6 +55,7 @@ fn working_tree_and_git_tree_adapters_load_the_same_snapshot_interface() {
     git(repo.path(), &["init", "-q", "-b", "main"]);
     git(repo.path(), &["config", "user.email", "test@example.com"]);
     git(repo.path(), &["config", "user.name", "Test"]);
+    git(repo.path(), &["config", "core.autocrlf", "false"]);
     write_chain(repo.path(), "Committed card.");
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-qm", "base"]);

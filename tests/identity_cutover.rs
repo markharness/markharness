@@ -26,6 +26,7 @@ fn init_git_repo(dir: &Path) {
     assert!(status(&["init", "-q"]).success());
     assert!(status(&["config", "user.email", "test@example.com"]).success());
     assert!(status(&["config", "user.name", "Test"]).success());
+    assert!(status(&["config", "core.autocrlf", "false"]).success());
 }
 
 #[test]

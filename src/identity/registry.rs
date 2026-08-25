@@ -221,6 +221,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         let events_dir = dir
             .path()
             .join(".markharness/identity-events/features")
@@ -267,6 +268,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "user.email", "test@example.com"]);
         run_git(dir.path(), &["config", "user.name", "Test"]);
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         fs::write(dir.path().join("README.md"), "x").unwrap();
         run_git(dir.path(), &["add", "-A"]);
         run_git(dir.path(), &["commit", "-q", "-m", "init"]);

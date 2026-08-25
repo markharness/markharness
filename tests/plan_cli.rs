@@ -63,6 +63,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
     git(repo.path(), &["init", "-q", "-b", "main"]);
     git(repo.path(), &["config", "user.email", "test@example.com"]);
     git(repo.path(), &["config", "user.name", "Test"]);
+    git(repo.path(), &["config", "core.autocrlf", "false"]);
     write_knowledge(repo.path(), "A valid card.");
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-qm", "base"]);

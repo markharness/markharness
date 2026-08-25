@@ -424,6 +424,7 @@ mod tests {
         run_git(dir.path(), &["init", "-q", "-b", "main"]).unwrap();
         run_git(dir.path(), &["config", "user.email", "test@example.com"]).unwrap();
         run_git(dir.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(dir.path(), &["config", "core.autocrlf", "false"]).unwrap();
         dir
     }
 
