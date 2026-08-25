@@ -2850,7 +2850,8 @@ mod tests {
         let content =
             fs::read_to_string(dir.path().join(".markharness/executions/m1/milestone.yml"))
                 .unwrap();
-        assert_eq!(content, "id: m1\n");
+        assert!(content.starts_with("id: m1\ncommit_oid: "));
+        assert!(content.contains("knowledge_schema_version: 1\n"));
     }
 
     fn write_generated_testcase_for_test(

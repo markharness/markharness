@@ -36,7 +36,14 @@ pub fn milestone_init(root: &Path, tag: &str) -> Result<MilestoneInitOutcome, Mi
         return Ok(MilestoneInitOutcome::AlreadyInitialized);
     }
 
-    replace_file(root, &milestone_path, format!("id: {tag}\n").as_bytes())?;
+    let commit_oid = git::resolve_commit_oid(root, tag)?;
+    let knowledge_schema_version = crate::knowledge_schema::resolve(root, tag)?.version;
+    replace_file(
+        root,
+        &milestone_path,
+        format!("id: {tag}\ncommit_oid: {commit_oid}\nknowledge_schema_version: {knowledge_schema_version}\n")
+            .as_bytes(),
+    )?;
     Ok(MilestoneInitOutcome::Created)
 }
 
@@ -129,6 +136,7 @@ mod tests {
         fs::write(dir.path().join("README.md"), "hello\n").unwrap();
         commit_all(dir.path(), "init");
         run_git(dir.path(), &["tag", "m1"]);
+        let commit_oid = crate::git::resolve_commit_oid(dir.path(), "m1").unwrap();
 
         let result = milestone_init(dir.path(), "m1");
 
@@ -136,7 +144,30 @@ mod tests {
         let written =
             fs::read_to_string(dir.path().join(".markharness/executions/m1/milestone.yml"))
                 .unwrap();
-        assert_eq!(written, "id: m1\n");
+        assert_eq!(
+            written,
+            format!("id: m1\ncommit_oid: {commit_oid}\nknowledge_schema_version: 1\n")
+        );
+    }
+
+    #[test]
+    fn milestone_init_records_the_knowledge_schema_version_recorded_at_the_tag() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/config.toml"),
+            "schema_version = 1\n\n[knowledge]\nschema_version = 2\n",
+        )
+        .unwrap();
+        commit_all(dir.path(), "init");
+        run_git(dir.path(), &["tag", "m1"]);
+
+        milestone_init(dir.path(), "m1").unwrap();
+
+        let written =
+            fs::read_to_string(dir.path().join(".markharness/executions/m1/milestone.yml"))
+                .unwrap();
+        assert!(written.contains("knowledge_schema_version: 2\n"));
     }
 
     #[test]

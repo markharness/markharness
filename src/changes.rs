@@ -298,6 +298,10 @@ fn compute_changes_between_refs(
     to_milestone: &str,
     options: ChangeOptions,
 ) -> io::Result<Vec<ChangeEvent>> {
+    let from_schema = crate::knowledge_schema::resolve(root, from_milestone)?;
+    let to_schema = crate::knowledge_schema::resolve(root, to_milestone)?;
+    crate::knowledge_schema::ensure_compatible(&from_schema, &to_schema)?;
+
     let use_cache = options.cache == CachePolicy::Use;
     let from_versions = by_identity_key(id_cache::resolve_feature_versions(
         root,
@@ -615,6 +619,46 @@ mod tests {
         run_git(root, &["add", "-A"]);
         run_git(root, &["commit", "-q", "-m", message]);
         run_git(root, &["tag", tag]);
+    }
+
+    fn write_config_toml(root: &Path, knowledge_schema_version: u32) {
+        fs::create_dir_all(root.join(".markharness")).unwrap();
+        fs::write(
+            root.join(".markharness/config.toml"),
+            format!(
+                "schema_version = 1\n\n[knowledge]\nschema_version = {knowledge_schema_version}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Issue #29 §5: a schema-only migration must not be diffed by raw tree
+    /// SHA as if it were a real content change — `compute_changes` must
+    /// refuse (fail closed) rather than silently generate a `ChangeEvent`
+    /// for every Feature.
+    #[test]
+    fn compute_changes_fails_closed_when_knowledge_schema_versions_differ() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        write_full_chain(dir.path(), "v2");
+        write_config_toml(dir.path(), 2);
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let err = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 
     /// ADR 0013 / Issue #17's core motivating scenario: a Feature whose

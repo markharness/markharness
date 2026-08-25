@@ -18,6 +18,10 @@ pub struct BackfillReport {
     pub processed: Vec<String>,
     /// to-milestone names for pairs already backfilled in a previous run.
     pub skipped: Vec<String>,
+    /// to-milestone names for pairs whose Knowledge schema versions
+    /// couldn't be compared safely (issue #29 §5) — not recorded in git
+    /// notes, so a later run retries them (e.g. once a converter exists).
+    pub incompatible: Vec<String>,
     /// True when a pair or time limit left at least one unprocessed pair.
     pub stopped_by_limit: bool,
 }
@@ -132,7 +136,7 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
             break;
         }
 
-        let events = changes::compute_changes(
+        let events = match changes::compute_changes(
             root,
             from_milestone,
             to_milestone,
@@ -144,7 +148,14 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
                 },
                 impact_source: changes::ImpactSource::HistoricalTree,
             },
-        )?;
+        ) {
+            Ok(events) => events,
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => {
+                report.incompatible.push(to_milestone.clone());
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         let changes_dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
             .join("changes");
@@ -235,6 +246,41 @@ mod tests {
             .unwrap();
         assert!(status.success(), "git commit failed");
         run_git(root, &["tag", milestone]);
+    }
+
+    fn write_config_toml(root: &Path, knowledge_schema_version: u32) {
+        fs::create_dir_all(root.join(".markharness")).unwrap();
+        fs::write(
+            root.join(".markharness/config.toml"),
+            format!(
+                "schema_version = 1\n\n[knowledge]\nschema_version = {knowledge_schema_version}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Issue #29 §backfill policy: a pair whose Knowledge schema versions
+    /// differ (no converter yet) must not abort the whole run — it is
+    /// skipped so unrelated pairs still get their `changes/<to>.yaml`.
+    #[test]
+    fn backfill_run_skips_an_incompatible_pair_and_continues_with_the_rest() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1");
+        write_config_toml(dir.path(), 2); // unknown to this CLI build (CURRENT_KNOWLEDGE_SCHEMA_VERSION == 1)
+        commit_and_tag_milestone(dir.path(), "v1", "m1", 1);
+        write_feature(dir.path(), "v2");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag_milestone(dir.path(), "v2", "m2", 2);
+        write_feature(dir.path(), "v3");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag_milestone(dir.path(), "v3", "m3", 3);
+
+        let report = backfill_run(dir.path(), false).unwrap();
+
+        assert_eq!(report.processed, vec!["m3".to_string()]);
+        assert_eq!(report.incompatible, vec!["m2".to_string()]);
+        assert!(dir.path().join(".markharness/changes/m3.yaml").is_file());
+        assert!(!dir.path().join(".markharness/changes/m2.yaml").is_file());
     }
 
     #[test]

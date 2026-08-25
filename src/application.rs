@@ -218,9 +218,20 @@ pub fn compute_changes(
             .join(format!("{to}.yaml")),
         changes::serialize_changes(&events).as_bytes(),
     )?;
+    let warnings = [
+        crate::knowledge_schema::legacy_warning(
+            from,
+            &crate::knowledge_schema::resolve(root, from)?,
+        ),
+        crate::knowledge_schema::legacy_warning(to, &crate::knowledge_schema::resolve(root, to)?),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     Ok(CommandOutcome::ChangesComputed {
         count: events.len(),
         to: to.to_string(),
+        warnings,
     })
 }
 
