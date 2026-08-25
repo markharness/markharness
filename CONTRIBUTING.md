@@ -14,6 +14,8 @@ cargo build
 
 This project develops `src/` code with Red-Green-Refactor TDD: write a failing test first, make it pass with the minimal change, then refactor. Do not add production code without a covering test.
 
+Before considering a function or feature done, self-audit rather than waiting for review to find these by sweeping later: for a function that parses or validates an external value (a config file, YAML/TOML, user input), enumerate the ways it can be malformed — wrong type, out-of-range, negative, a value that's syntactically valid but never actually assigned (e.g. `0` when versions start at `1`), a container of the wrong shape — before calling validation coverage complete, rather than adding one case per review round. When a change deduplicates a resource fetch/computation, check whether the same commit introduces a fresh duplicate of it elsewhere. In an error-handling branch that catches a detailed error and reports something simpler, check whether information the caller actually needs (e.g. a required diagnostic like specific version numbers) is being discarded rather than passed through.
+
 This repository uses GitHub Flow. Enable the tracked hooks once after cloning:
 
 ```sh
@@ -44,7 +46,7 @@ Before adding a new crate, check its license. Only licenses listed in `deny.toml
 
 ## Documentation layout
 
-- `docs/en/decisions/` (Japanese source: `docs/ja/decisions/`) — Architecture Decision Records (ADRs), one sequential number space, one directory per language (Michael Nygard's ADR convention / MADR). Each file starts with a `## Status`/`## ステータス` section (Proposed / Accepted / Rejected / Deprecated / Superseded, or a project-specific note like "Accepted, partially executed"). In-progress or not-yet-finalized decisions stay here too — status changes are edits to that section, not moves to another directory.
+- `docs/en/decisions/` (Japanese source: `docs/ja/decisions/`) — Architecture Decision Records (ADRs), one sequential number space, one directory per language (Michael Nygard's ADR convention / MADR). Each file starts with a `## Status`/`## ステータス` section (Proposed / Accepted / Rejected / Deprecated / Superseded, or a project-specific note like "Accepted, partially executed"). In-progress or not-yet-finalized decisions stay here too — status changes are edits to that section, not moves to another directory. Keep an ADR's "Response taken" section at the level of what changed (files, public types, behavior) rather than narrating specific call order or which function calls which — that detail tracks the current implementation closely and goes stale on the next refactor; if it needs recording at all, it belongs in `docs/en/design/` or a code comment, not the decision record.
 - `docs/en/design/` (Japanese source: `docs/ja/design/`) — implementation-level design docs aimed at contributors.
 - English and Japanese docs under `docs/en/` and `docs/ja/` are updated together — a change to one language's docs should be mirrored in the other in the same PR.
 - Transient documents (investigation notes, superseded drafts) should be deleted once they've served their purpose rather than left to accumulate.

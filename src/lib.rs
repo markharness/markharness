@@ -25,6 +25,7 @@ pub mod knowledge;
 pub mod knowledge_apply;
 pub mod knowledge_draft;
 pub mod knowledge_edit;
+pub mod knowledge_schema;
 pub mod knowledge_source;
 pub mod lineage;
 pub mod milestone;

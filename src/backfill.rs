@@ -12,12 +12,32 @@ use crate::git;
 /// never collides with notes a human or another tool might attach.
 const NOTES_REF: &str = "markharness-backfill";
 
+/// A pair skipped because its Knowledge schema versions couldn't be
+/// compared safely (issue #29 §5). `reason` is the fail-closed gate's own
+/// error message verbatim — issue #29 §5 requires it to name both sides'
+/// versions and state that a CLI update or migration is needed, and
+/// discarding it in favor of a generic message would lose that (Spec
+/// review).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncompatiblePair {
+    pub to_milestone: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct BackfillReport {
     /// to-milestone names for pairs newly computed by this run, most recent first.
     pub processed: Vec<String>,
     /// to-milestone names for pairs already backfilled in a previous run.
     pub skipped: Vec<String>,
+    /// Pairs whose Knowledge schema versions couldn't be compared safely —
+    /// not recorded in git notes, so a later run retries them (e.g. once a
+    /// converter exists).
+    pub incompatible: Vec<IncompatiblePair>,
+    /// Legacy-schema-version-fallback warnings collected across every
+    /// processed pair (issue #29 §6) — the same warnings `changes compute`
+    /// surfaces, so `backfill run` uses an identical policy.
+    pub warnings: Vec<String>,
     /// True when a pair or time limit left at least one unprocessed pair.
     pub stopped_by_limit: bool,
 }
@@ -132,7 +152,7 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
             break;
         }
 
-        let events = changes::compute_changes(
+        let outcome = match changes::compute_changes_with_warnings(
             root,
             from_milestone,
             to_milestone,
@@ -144,14 +164,25 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
                 },
                 impact_source: changes::ImpactSource::HistoricalTree,
             },
-        )?;
+        ) {
+            Ok(outcome) => outcome,
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => {
+                report.incompatible.push(IncompatiblePair {
+                    to_milestone: to_milestone.clone(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        report.warnings.extend(outcome.warnings);
         let changes_dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
             .join("changes");
         replace_file(
             root,
             &changes_dir.join(format!("{to_milestone}.yaml")),
-            changes::serialize_changes(&events).as_bytes(),
+            changes::serialize_changes(&outcome.events).as_bytes(),
         )?;
         git::notes_add(
             root,
@@ -236,6 +267,67 @@ mod tests {
             .unwrap();
         assert!(status.success(), "git commit failed");
         run_git(root, &["tag", milestone]);
+    }
+
+    fn write_config_toml(root: &Path, knowledge_schema_version: u32) {
+        fs::create_dir_all(root.join(".markharness")).unwrap();
+        fs::write(
+            root.join(".markharness/config.toml"),
+            format!(
+                "schema_version = 1\n\n[knowledge]\nschema_version = {knowledge_schema_version}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Issue #29 §backfill policy: a pair whose Knowledge schema versions
+    /// differ (no converter yet) must not abort the whole run — it is
+    /// skipped so unrelated pairs still get their `changes/<to>.yaml`.
+    #[test]
+    fn backfill_run_skips_an_incompatible_pair_and_continues_with_the_rest() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1");
+        write_config_toml(dir.path(), 2); // unknown to this CLI build (CURRENT_KNOWLEDGE_SCHEMA_VERSION == 1)
+        commit_and_tag_milestone(dir.path(), "v1", "m1", 1);
+        write_feature(dir.path(), "v2");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag_milestone(dir.path(), "v2", "m2", 2);
+        write_feature(dir.path(), "v3");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag_milestone(dir.path(), "v3", "m3", 3);
+
+        let report = backfill_run(dir.path(), false).unwrap();
+
+        assert_eq!(report.processed, vec!["m3".to_string()]);
+        assert_eq!(report.incompatible.len(), 1);
+        assert_eq!(report.incompatible[0].to_milestone, "m2");
+        assert!(
+            report.incompatible[0].reason.contains('1')
+                && report.incompatible[0].reason.contains('2'),
+            "expected the reason to name both schema versions, got: {}",
+            report.incompatible[0].reason
+        );
+        assert!(dir.path().join(".markharness/changes/m3.yaml").is_file());
+        assert!(!dir.path().join(".markharness/changes/m2.yaml").is_file());
+    }
+
+    /// Spec review of issue #29 §6: `backfill run` must use the same
+    /// legacy-schema-version-warning policy as `changes compute`, not just
+    /// the same fail-closed gate.
+    #[test]
+    fn backfill_run_collects_legacy_schema_version_warnings_across_pairs() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1"); // no config.toml at all: legacy v1
+        commit_and_tag_milestone(dir.path(), "v1", "m1", 1);
+        write_feature(dir.path(), "v2");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag_milestone(dir.path(), "v2", "m2", 2);
+
+        let report = backfill_run(dir.path(), false).unwrap();
+
+        assert_eq!(report.processed, vec!["m2".to_string()]);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("m1"));
     }
 
     #[test]

@@ -323,6 +323,16 @@ pub fn tag_exists(root: &Path, tag: &str) -> io::Result<bool> {
     Ok(status.success())
 }
 
+/// Resolves `git_ref` (e.g. a milestone tag) to the full commit SHA it
+/// points at, via `git rev-parse`. Used to record `milestone.yml`'s audit
+/// `commit_oid` (issue #29 §3) at `milestone init` time.
+pub fn resolve_commit_oid(root: &Path, git_ref: &str) -> io::Result<String> {
+    reject_option_like(git_ref)?;
+    let target = format!("{git_ref}^{{commit}}");
+    let raw = run_git(root, &["rev-parse", "--verify", &target])?;
+    Ok(raw.trim().to_string())
+}
+
 /// Overwrites (or creates) the git notes entry under `notes_ref` for `git_ref`.
 pub fn notes_add(root: &Path, notes_ref: &str, git_ref: &str, message: &str) -> io::Result<()> {
     reject_option_like(git_ref)?;
@@ -1023,6 +1033,22 @@ mod tests {
         commit_all(dir.path(), "init");
 
         assert!(!tag_exists(dir.path(), "nope").unwrap());
+    }
+
+    #[test]
+    fn resolve_commit_oid_returns_the_full_commit_sha_a_tag_points_at() {
+        let dir = init_repo();
+        fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        commit_all(dir.path(), "init");
+        run_git(dir.path(), &["tag", "m1"]).unwrap();
+        let expected = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let oid = resolve_commit_oid(dir.path(), "m1").unwrap();
+
+        assert_eq!(oid, expected);
     }
 
     #[test]

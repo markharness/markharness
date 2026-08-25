@@ -198,6 +198,10 @@ fn compute_changes_use_case_writes_change_events_and_returns_an_outcome() {
         CommandOutcome::ChangesComputed {
             count: 0,
             to: "m2".to_string(),
+            warnings: vec![
+                "Knowledge schema version is not recorded at ref m1; assuming legacy schema version 1.".to_string(),
+                "Knowledge schema version is not recorded at ref m2; assuming legacy schema version 1.".to_string(),
+            ],
         }
     );
     assert!(root.path().join(".markharness/changes/m2.yaml").is_file());
