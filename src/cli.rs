@@ -1050,9 +1050,10 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 println!("warning: {warning}");
             }
             if !report.incompatible.is_empty() {
-                for to_milestone in &report.incompatible {
+                for pair in &report.incompatible {
                     println!(
-                        "skipped {to_milestone}: Knowledge schema version incompatible with its predecessor; not recorded, will retry on next run"
+                        "skipped {}: {} (not recorded, will retry on next run)",
+                        pair.to_milestone, pair.reason
                     );
                 }
                 process::exit(1);

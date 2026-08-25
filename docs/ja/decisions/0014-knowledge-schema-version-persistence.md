@@ -43,7 +43,7 @@ knowledge_schema_version: 1
 
 ### 4. `changes compute`と`backfill run`は比較前にバージョンを解決する
 
-両者とも同じ`changes::compute_changes_between_refs`(`ChangeAnalyzer::compute` → `compute_changes`、`backfill_run_with_policy`はこれを直接呼ぶ)を経由するため、バージョンゲートは1箇所に実装するだけで両方に自動的に適用される。
+両者とも同じ`changes::compute_changes_with_warnings`を経由する(`application::compute_changes`と`backfill_run_with_policy`がそれぞれ直接呼ぶ。`ChangeAnalyzer::compute`/`compute_changes`/`compute_changes_between_refs`は、ChangeEventだけを必要とする呼び出し元向けの薄いラッパー)。そのためバージョンゲートは1箇所に実装するだけで全ての呼び出し元に自動的に適用される。
 
 ### 5. 未対応のバージョン組み合わせはfail closedにする
 
@@ -69,6 +69,10 @@ knowledge_schema_version: 1
 
 `backfill run`も、`changes compute`と同じlegacy schema versionのwarningを収集する(ペアごとに`compute_changes_with_warnings`を1回呼ぶ)。`backfill run`には現状`--json`モードがないため、`warning: ...`行として出力し、非互換としてスキップした各ペアの名前も列挙する — fail-closedゲートだけでなく`changes compute`と同じポリシーに従う。バージョン非互換なペアは、run自体は成功していても実際には未処理の作業を残すため、`BackfillReport.incompatible`が空でない場合`backfill run`は終了コード`0`ではなく`1`で終了する。見落とされかねない「クリーンな成功」を報告しないようにするためである。
 
+### 10. スキップされたペアの診断情報は汎用メッセージに置き換えず保持する
+
+`BackfillReport.incompatible`は名前だけでなく`IncompatiblePair { to_milestone, reason }`を保持する — `reason`はfail-closedゲート自身の`io::Error`メッセージそのもの(Specレビューでの指摘: 以前のバージョンは`Unsupported`エラーを捕捉した上で捨て、代わりに汎用的な「非互換」の1行だけを出力していた)。issue #29 §5は、fail-closedの診断が両側のバージョンを名指しし、CLI更新またはmigrationが必要であることを述べることを要求している。`backfill run`はスキップした各ペアについてこの同じメッセージを出力し、利用者が理由を知るために手動で`changes compute`を再実行する必要がないようにする。`compute_changes_with_warnings`は、該当するlegacy fallbackのwarningテキストも、その同じ`Unsupported`エラーのメッセージに折り込んでから返す(§6のwarningは`ComputeChangesOutcome`の`Ok`パスにしか存在しないため、そうしないとゲートに失敗したペアはそのコンテキストを完全に失ってしまう)。
+
 ### 対象外
 
 issue #29が明示した対象外と一致する: 異なるスキーマ間のconverter、schema-only migrationを除外する意味的差分(semantic diff)、semantic hashおよびcanonicalization rule versionの変更、`--allow-raw-schema-diff`のようなescape hatch、既存Knowledgeを新スキーマへ書き換えるmigrationコマンド。本ADRはバージョンを解決可能にし、未対応の比較を無言で行わず安全に停止させることのみを行う。
@@ -78,8 +82,8 @@ issue #29が明示した対象外と一致する: 異なるスキーマ間のcon
 - `src/knowledge_schema.rs`(新規): `resolve`(ref → `ResolvedSchemaVersion { version, is_legacy }`。記録された値が不正(非整数、u32範囲外、`[knowledge]`自体がテーブルでない)な場合は「未記録」と黙って同一視せずハードエラーにする)、`ensure_compatible`(fail closedのゲート。相違・未来バージョンに加えversion 0も拒否)、`legacy_warning`、`CURRENT_KNOWLEDGE_SCHEMA_VERSION`。
 - `src/git.rs`: `milestone.yml`の監査用`commit_oid`のために`resolve_commit_oid`を追加。
 - `src/milestone.rs`: `milestone_init`が`id`に加えて`commit_oid`と`knowledge_schema_version`を書き込む。冪等性の挙動は変更なし。`milestone.yml`の記録値をtagの現在の解決結果と突き合わせる`verify_audit_matches_tag`を追加。
-- `src/changes.rs`: `compute_changes_with_warnings`を追加(各refのスキーマバージョンを一度だけ解決し、`milestone::verify_audit_matches_tag`と`knowledge_schema::ensure_compatible`を実行した上でChangeEventとlegacy warningの両方を返す)。`compute_changes`/`compute_changes_between_refs`はこれを呼ぶ薄いラッパーとなり、全呼び出し元が単一の解決経路を共有する。
-- `src/backfill.rs`: `BackfillReport`に`incompatible: Vec<String>`と`warnings: Vec<String>`を追加。`backfill_run_with_policy`は`compute_changes_with_warnings`を呼び、`ErrorKind::Unsupported`のペアをrunの中断ではなくスキップとして扱い、warningを収集する。
+- `src/changes.rs`: `compute_changes_with_warnings`を追加(各refのスキーマバージョンを一度だけ解決し、`milestone::verify_audit_matches_tag`と`knowledge_schema::ensure_compatible`を実行した上でChangeEventとlegacy warningの両方を返す。fail closedで`Err`となった場合も、該当するlegacy warningのテキストをその同じエラーのメッセージに折り込んでから返し、破棄しない)。`compute_changes`/`compute_changes_between_refs`はこれを呼ぶ薄いラッパーとなり、全呼び出し元が単一の解決経路を共有する。
+- `src/backfill.rs`: `BackfillReport`に`incompatible: Vec<IncompatiblePair>`(`{ to_milestone, reason }`。`reason`はfail-closedゲートのエラーメッセージそのもの)と`warnings: Vec<String>`を追加。`backfill_run_with_policy`は`compute_changes_with_warnings`を呼び、`ErrorKind::Unsupported`のペアをrunの中断ではなくスキップとして扱い(エラーテキストは破棄せず保持する)、warningを収集する。
 - `src/application.rs` / `src/presentation.rs`: `CommandOutcome::ChangesComputed`に`warnings: Vec<String>`を追加し、両Presenterでレンダリングする。`JsonPresenter`は空の場合`"warnings":[]`ではなくキー自体を省略する。
-- `src/cli.rs`: `backfill run`は収集したwarningと非互換としてスキップした各ペア名を出力し、1件でもスキップがあれば終了コード`1`で終了する。
+- `src/cli.rs`: `backfill run`は収集したwarningと非互換ペアの実際の理由を出力し、1件でもスキップがあれば終了コード`1`で終了する。
 - `src/init.rs`: `markharness init`が既存のトップレベル`schema_version = 1`に加えて`[knowledge]\nschema_version = 1`を書き込む。

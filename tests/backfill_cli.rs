@@ -98,8 +98,8 @@ fn backfill_run_exits_non_zero_and_reports_an_incompatible_pair() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("m2"),
-        "expected the incompatible pair to be reported, stdout: {stdout}"
+        stdout.contains("m2") && stdout.contains("schema 2") && stdout.contains("schema 1"),
+        "expected the incompatible pair and both schema versions to be reported, stdout: {stdout}"
     );
 }
 

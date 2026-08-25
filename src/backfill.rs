@@ -12,16 +12,28 @@ use crate::git;
 /// never collides with notes a human or another tool might attach.
 const NOTES_REF: &str = "markharness-backfill";
 
+/// A pair skipped because its Knowledge schema versions couldn't be
+/// compared safely (issue #29 §5). `reason` is the fail-closed gate's own
+/// error message verbatim — issue #29 §5 requires it to name both sides'
+/// versions and state that a CLI update or migration is needed, and
+/// discarding it in favor of a generic message would lose that (Spec
+/// review).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncompatiblePair {
+    pub to_milestone: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct BackfillReport {
     /// to-milestone names for pairs newly computed by this run, most recent first.
     pub processed: Vec<String>,
     /// to-milestone names for pairs already backfilled in a previous run.
     pub skipped: Vec<String>,
-    /// to-milestone names for pairs whose Knowledge schema versions
-    /// couldn't be compared safely (issue #29 §5) — not recorded in git
-    /// notes, so a later run retries them (e.g. once a converter exists).
-    pub incompatible: Vec<String>,
+    /// Pairs whose Knowledge schema versions couldn't be compared safely —
+    /// not recorded in git notes, so a later run retries them (e.g. once a
+    /// converter exists).
+    pub incompatible: Vec<IncompatiblePair>,
     /// Legacy-schema-version-fallback warnings collected across every
     /// processed pair (issue #29 §6) — the same warnings `changes compute`
     /// surfaces, so `backfill run` uses an identical policy.
@@ -155,7 +167,10 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
         ) {
             Ok(outcome) => outcome,
             Err(e) if e.kind() == io::ErrorKind::Unsupported => {
-                report.incompatible.push(to_milestone.clone());
+                report.incompatible.push(IncompatiblePair {
+                    to_milestone: to_milestone.clone(),
+                    reason: e.to_string(),
+                });
                 continue;
             }
             Err(e) => return Err(e),
@@ -283,7 +298,14 @@ mod tests {
         let report = backfill_run(dir.path(), false).unwrap();
 
         assert_eq!(report.processed, vec!["m3".to_string()]);
-        assert_eq!(report.incompatible, vec!["m2".to_string()]);
+        assert_eq!(report.incompatible.len(), 1);
+        assert_eq!(report.incompatible[0].to_milestone, "m2");
+        assert!(
+            report.incompatible[0].reason.contains('1')
+                && report.incompatible[0].reason.contains('2'),
+            "expected the reason to name both schema versions, got: {}",
+            report.incompatible[0].reason
+        );
         assert!(dir.path().join(".markharness/changes/m3.yaml").is_file());
         assert!(!dir.path().join(".markharness/changes/m2.yaml").is_file());
     }

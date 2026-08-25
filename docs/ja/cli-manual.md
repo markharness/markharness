@@ -800,7 +800,7 @@ markharness backfill run [--no-cache] [--max-pairs <count>] [--time-budget <dura
 
 - 最も古いマイルストーンは比較対象がないためスキップされる。
 - 各マイルストーン(to側)の処理完了は `git notes --ref=markharness-backfill` に記録され、次回実行時に同じペアは再計算されずスキップされる(§4.3)。
-- Knowledgeスキーマバージョンを安全に比較できないペア(`changes compute`と同じfail closedの判定、1.12節、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))は、run全体を中断せずそのペアだけスキップする — 残りのペアは処理が続く。このスキップは`git notes`には記録されないため、後続のrunで自動的に再試行される(例: 該当スキーマバージョンのconverterが実装された時点で)。スキップされた各ペアは`skipped <to-milestone>: ...`として出力され、1件でもスキップがあればコマンドは終了コード`1`で終了する — 非互換ペアを未処理のまま残したrunを、クリーンな成功として報告しない。
+- Knowledgeスキーマバージョンを安全に比較できないペア(`changes compute`と同じfail closedの判定、1.12節、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))は、run全体を中断せずそのペアだけスキップする — 残りのペアは処理が続く。このスキップは`git notes`には記録されないため、後続のrunで自動的に再試行される(例: 該当スキーマバージョンのconverterが実装された時点で)。スキップされた各ペアは`skipped <to-milestone>: <reason>`として出力される。`<reason>`はそのペアに対して`changes compute`が表示するのと同じfail-closedエラーそのもの(両側のスキーマバージョンと、CLI更新またはmigrationが必要であること — issue #29 §5)であり、汎用メッセージではない。手動で`changes compute`を再実行しなくても理由が分かるようにするため。1件でもスキップがあればコマンドは終了コード`1`で終了する — 非互換ペアを未処理のまま残したrunを、クリーンな成功として報告しない。
 - `milestone.yml`の記録された`commit_oid`/`knowledge_schema_version`が、そのtagの現在の解決結果と食い違っている場合(tagの移動、または手編集)は、そのペアに関してハードエラーとなる。上記のfail-closedスキップとは異なりrun全体が停止する — 古い・改ざんされた監査コピーは自動リトライではなく人間の確認を必要とするため。
 - ペア処理中に検出されたlegacyスキーマバージョンのwarning(そのrefに対して`changes compute`が表示するのと同じwarning)は`warning: ...`行として出力される。
 - `--no-cache` を指定しない場合、`changes compute` と同じ `.markharness-cache/` を共有する。
