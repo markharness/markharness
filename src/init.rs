@@ -51,7 +51,15 @@ pub fn run_init(root: &Path) -> io::Result<()> {
 fn ensure_project_root_marker(root: &Path) -> io::Result<()> {
     let path = root.join(crate::project_root::MARKER_FILE);
     if !path.exists() {
-        replace_file(root, &path, b"schema_version = 1\n")?;
+        replace_file(
+            root,
+            &path,
+            format!(
+                "schema_version = 1\n\n[knowledge]\nschema_version = {}\n",
+                crate::knowledge_schema::CURRENT_KNOWLEDGE_SCHEMA_VERSION
+            )
+            .as_bytes(),
+        )?;
     }
     Ok(())
 }
@@ -178,6 +186,19 @@ mod tests {
         let content =
             fs::read_to_string(dir.path().join(crate::project_root::MARKER_FILE)).unwrap();
         assert!(content.contains("schema_version = 1"));
+    }
+
+    #[test]
+    fn creates_a_project_root_marker_with_the_knowledge_schema_version() {
+        let dir = tempfile::tempdir().unwrap();
+
+        run_init(dir.path()).unwrap();
+
+        let content =
+            fs::read_to_string(dir.path().join(crate::project_root::MARKER_FILE)).unwrap();
+        let parsed: toml::Table = content.parse().unwrap();
+        let knowledge = parsed["knowledge"].as_table().unwrap();
+        assert_eq!(knowledge["schema_version"].as_integer(), Some(1));
     }
 
     #[test]

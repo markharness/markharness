@@ -44,11 +44,70 @@ fn json_presenter_marks_changes_computed_with_the_two_snapshot_audit_scope() {
     let result = JsonPresenter.present(&CommandOutcome::ChangesComputed {
         count: 3,
         to: "v2".to_string(),
+        warnings: Vec::new(),
     });
 
     assert_eq!(result.exit_code, 0);
     assert!(
         result.stdout.contains("\"audit_scope\":\"two_snapshot\""),
+        "unexpected stdout: {}",
+        result.stdout
+    );
+}
+
+/// Issue #29 §6: a legacy-schema-version fallback must be machine-readable
+/// in JSON output, not just a human-facing message, so a caller consuming
+/// `--json` can still see it.
+#[test]
+fn json_presenter_includes_warnings_for_changes_computed() {
+    let result = JsonPresenter.present(&CommandOutcome::ChangesComputed {
+        count: 0,
+        to: "v2".to_string(),
+        warnings: vec!["legacy schema version 1 assumed at ref v1".to_string()],
+    });
+
+    assert!(
+        result
+            .stdout
+            .contains("\"warnings\":[\"legacy schema version 1 assumed at ref v1\"]"),
+        "unexpected stdout: {}",
+        result.stdout
+    );
+}
+
+/// Standards review: `docs/en/design/verification-plan-canonical-model-design.md`
+/// §5 allows only *optional* field additions within one `schema_version` —
+/// a field that is always present, even as an empty array, is a required
+/// field in practice and changes the v1 contract's shape for every
+/// existing consumer. `warnings` must be omitted, not emitted as `[]`,
+/// when there's nothing to report.
+#[test]
+fn json_presenter_omits_warnings_for_changes_computed_when_there_are_none() {
+    let result = JsonPresenter.present(&CommandOutcome::ChangesComputed {
+        count: 3,
+        to: "v2".to_string(),
+        warnings: Vec::new(),
+    });
+
+    assert!(
+        !result.stdout.contains("warnings"),
+        "unexpected stdout: {}",
+        result.stdout
+    );
+}
+
+#[test]
+fn human_presenter_prints_warnings_for_changes_computed() {
+    let result = HumanPresenter.present(&CommandOutcome::ChangesComputed {
+        count: 0,
+        to: "v2".to_string(),
+        warnings: vec!["legacy schema version 1 assumed at ref v1".to_string()],
+    });
+
+    assert!(
+        result
+            .stdout
+            .contains("warning: legacy schema version 1 assumed at ref v1\n"),
         "unexpected stdout: {}",
         result.stdout
     );
