@@ -57,11 +57,11 @@ knowledge_schema_version: 1
 
 ### 7. `milestone.yml`の監査コピーは書き込むだけでなく検証もする
 
-`changes compute`・`backfill run`はいずれも、単一の共有関数`compute_changes_with_warnings`を通じて各refのKnowledgeスキーマバージョンを解決する。この関数は解決処理に入る前に、各ref自身の`.markharness/executions/<name>/milestone.yml`(その名前のものが存在する場合)を、その名前が指すはずのtagと突き合わせて検証する — 記録された`commit_oid`と`knowledge_schema_version`が、そのtagが今実際に解決する値と一致していなければならない(バージョン解決ポリシー表の「`milestone.yml` とtag内の正本が不一致 | エラーとして報告する」行。従来は未実装だった)。これらのフィールドを持たない`milestone.yml`(本ADR以前のもの)は検証対象外とし、表の次の行の通りtagの正本のみを信頼する。不一致(tagの移動、または手編集)はfail closedの`Unsupported`スキップではなく、ハードな`InvalidData`エラーとする。そのため`backfill run`は、未対応スキーマバージョンのペアのように黙ってスキップし後で再試行する、という扱いをしない — 古い・改ざんされた監査コピーはconverterではなく人間の確認を必要とするため。
+`changes compute`・`backfill run`はいずれも、単一の共有関数`compute_changes_with_warnings`を通じて各refのKnowledgeスキーマバージョンを解決する。この関数は各refのバージョンを解決した直後(§8参照。監査検証はその解決結果をそのまま再利用し、再解決はしない)、各ref自身の`.markharness/executions/<name>/milestone.yml`(その名前のものが存在する場合)を、その名前が指すはずのtagと突き合わせて検証する — 記録された`commit_oid`と`knowledge_schema_version`が、そのtagが今実際に解決する値と一致していなければならない(バージョン解決ポリシー表の「`milestone.yml` とtag内の正本が不一致 | エラーとして報告する」行。従来は未実装だった)。これらのフィールドを持たない`milestone.yml`(本ADR以前のもの)は検証対象外とし、表の次の行の通りtagの正本のみを信頼する。不一致(tagの移動、または手編集)はfail closedの`Unsupported`スキップではなく、ハードな`InvalidData`エラーとする。そのため`backfill run`は、未対応スキーマバージョンのペアのように黙ってスキップし後で再試行する、という扱いをしない — 古い・改ざんされた監査コピーはconverterではなく人間の確認を必要とするため。
 
 ### 8. バージョン解決は関心事ごとではなくref単位で一度だけ行う
 
-`compute_changes_with_warnings`は各refのKnowledgeスキーマバージョンをちょうど一度だけ解決し、その同じ`ResolvedSchemaVersion`をfail-closedゲートとlegacy warningのテキストの両方で再利用する。以前は`application::compute_changes`が、`changes::compute_changes`が内部で既に解決した後にもう一度独立して解決し直していた(Standardsレビューでの指摘: Git読み取りの重複に加え、2回の解決結果が(例えばtag更新と競合した場合などに)食い違えば、ゲートの判定と表示されるwarningが一致しなくなるリスクが実在した)。
+`compute_changes_with_warnings`は各refのKnowledgeスキーマバージョンをちょうど一度だけ解決し、その同じ`ResolvedSchemaVersion`を3つの利用箇所すべて — §7の`milestone.yml`監査検証、fail-closedゲート、legacy warningのテキスト — で再利用する。それぞれが独立に再解決することはしない(Standardsレビューでの指摘: 最初は`application::compute_changes`と`changes::compute_changes`の間で、次に`milestone::verify_audit_matches_tag`とその呼び出し元の間で、同じ重複が2回検出された。Git読み取りの重複に加え、2回の解決結果が(例えばtag更新と競合した場合などに)食い違えば、3つのうち2つが一致しなくなるリスクが実在した)。そのため`verify_audit_matches_tag`は自ら解決するのではなく、呼び出し元が既に解決した`ResolvedSchemaVersion`を引数として受け取る。
 
 ### 9. `warnings`はoptionalなJSONフィールドとし、`backfill run`も`changes compute`と同じ情報を報告する
 
