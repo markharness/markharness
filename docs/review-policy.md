@@ -10,7 +10,7 @@ This document is the source of truth for code-review decisions in this repositor
 - The project directory is not shared, over a network filesystem or otherwise, with an untrusted party while `markharness` is running, unless a specific finding's evidence shows this is how the project is actually used.
 - Malicious *input* (a crafted repository, a crafted Knowledge YAML file, a crafted CLI argument) is in scope. A malicious *concurrent process racing filesystem operations with attacker-chosen timing* is out of scope by default.
 
-Apply this threat model when scoring `Reachability` and `Required capability`. A finding whose only path to impact requires an actor who already has adversarial, concurrent, arbitrarily-timed write access to the project directory defaults to `Accepted risk` or `No finding`, not `Should fix` or `Must fix`, unless the actor could reach that position with meaningfully less capability than "already able to write to this project's files." Do not treat "theoretically possible with the right timing" as sufficient reachability on its own.
+Apply this threat model when scoring reachability. A finding whose only path to impact requires an actor who already has adversarial, concurrent, arbitrarily-timed write access to the project directory defaults to `Accepted risk` or `No finding`, not `Must fix`, unless the actor could reach that position with meaningfully less capability than "already able to write to this project's files." Do not treat "theoretically possible with the right timing" as sufficient reachability on its own.
 
 This does not relax `Must fix` items that are reachable through ordinary use, operator error, or normal (non-adversarial) concurrent use of the CLI by the same operator — those remain in scope regardless of this section.
 
@@ -19,7 +19,7 @@ This does not relax `Must fix` items that are reachable through ordinary use, op
 Apply YAGNI (You Aren't Gonna Need It) to both implementation and review: build and request only what the current, concrete requirement needs.
 
 - Do not propose or request generalization, configurability, abstraction layers, or extension points for a need that does not yet exist. "This might be needed later" is not, by itself, grounds for a finding or a remediation.
-- Do not propose hardening against a capability or scenario excluded by [Project threat model](#project-threat-model), even if it is technically possible to close. A closable gap is not automatically worth closing — weigh it against `Remediation cost` and `Change risk` like any other finding, and default to `Accepted risk`/`No finding` when the requesting actor's capability is already out of scope.
+- Do not propose hardening against a capability or scenario excluded by [Project threat model](#project-threat-model), even if it is technically possible to close. A closable gap is not automatically worth closing — weigh it against remediation cost and change risk like any other finding, and default to `Accepted risk`/`No finding` when the requesting actor's capability is already out of scope.
 - When a finding's proposed remediation would add a new abstraction, dependency, or configuration surface, prefer the version of the fix that solves only the reported condition. Note any broader generalization as a `Follow-up` at most, never as part of the required remediation.
 
 ## Review axes
@@ -34,24 +34,27 @@ Determine whether the change follows repository instructions, `CONTRIBUTING.md`,
 
 Determine whether the change implements the requested checklist, issue, or specification completely and correctly. Report missing or partial requirements, incorrect behavior, and material behavior outside the requested scope.
 
-## Decision axes
+## Scaling review depth to change size
 
-Evaluate every candidate finding using all applicable axes:
+Not every change needs the full decision-axis workout below. Scale effort to size and risk:
 
-| Axis | Question |
-|---|---|
-| Contract | Does it violate an explicit specification, invariant, accepted ADR, or documented interface? |
-| Impact | Can it cause data/evidence corruption, incorrect results, writes outside the project root, loss of recovery, denial of service, or misleading diagnostics? |
-| Reachability | Is it reachable through ordinary use, operator error, abnormal environment state, or only adversarial filesystem/process control? |
-| Required capability | What access must an actor already possess, and could that access cause equal or greater harm more directly? |
-| Recoverability | Is recovery automatic, manual and reliable, uncertain, or impossible? |
-| Likelihood | How plausible is the required timing, state, platform, and usage pattern? |
-| Remediation cost | Is the fix local and testable, or does it require substantial platform-specific code, FFI, dependencies, or architectural complexity? |
-| Change risk | Could the proposed fix introduce greater portability, correctness, or maintenance risk than the condition being fixed? |
-| Verification | Can a deterministic automated test demonstrate the failure and constrain the fix? |
-| Scope | Did this change introduce, worsen, or newly expose the problem, or is it an unrelated pre-existing condition? |
+- **Small** (a handful of lines, no touched invariant, no security-sensitive path): check Standards/Spec directly; skip the full axis walkthrough unless something looks off.
+- **Normal**: apply [Deciding a disposition](#deciding-a-disposition) to each candidate finding.
+- **Security-, identity-, or evidence-sensitive** (anything touching Knowledge/identity events/generated or execution evidence, crash recovery, or a documented invariant): always run the full axis walkthrough, regardless of diff size.
 
-Do not rely on a numerical score alone. State the evidence and make a reasoned disposition from these axes.
+## Deciding a disposition
+
+For each candidate finding, reason through these questions. State the evidence and make a reasoned call — do not reduce this to a numerical score.
+
+| Question | Feeds into |
+| --- | --- |
+| Does it violate an explicit spec, invariant, accepted ADR, or documented interface? | Must fix vs. everything else |
+| What is the worst-case impact, and can the affected state recover automatically, manually, or not at all? | Severity |
+| Is it reachable through ordinary use/operator error, or only through adversarial/arbitrarily-timed access ([threat model](#project-threat-model))? | Must fix vs. Accepted risk |
+| Is the fix local and testable, or does it require significant new complexity (FFI, new dependencies, broad refactors), and could the fix itself introduce more risk than the condition it closes? | Should fix vs. Accepted risk |
+| Did this change introduce, worsen, or newly expose the condition, or is it pre-existing and untouched? | Should fix vs. Follow-up |
+
+Default to **approve**: a single `Should fix`-level issue, on its own, does not block. Reserve blocking for `Must fix` items — spec/invariant violations, or credible risk of data/evidence corruption, writes outside the project root, unrecoverable state, or a documented invariant broken by ordinary concurrent use.
 
 ## Dispositions
 
@@ -59,11 +62,11 @@ Assign every reported item exactly one disposition.
 
 ### Must fix
 
-The change must be corrected before merge. Use this for specification violations and credible risks of data/evidence corruption, writes outside the project root, unrecoverable state, broken crash convergence, or ordinary concurrent operations violating identity invariants.
+Blocks merge. Spec/invariant violations, and credible risk of data/evidence corruption, writes outside the project root, unrecoverable state, broken crash convergence, or ordinary concurrent operations violating identity invariants.
 
 ### Should fix
 
-The remediation is proportionate and its benefit exceeds its implementation and change risk. The item does not block merge automatically; identify the concrete fix and verification needed.
+Real and proportionate to fix, but does not block merge on its own. Identify the concrete fix and verification needed.
 
 ### Accepted risk
 
@@ -80,11 +83,11 @@ Record feature-specific accepted risks in the relevant accepted ADR or design do
 
 ### Follow-up
 
-The issue is credible but outside the reviewed scope and was not introduced, worsened, or newly exposed by the change. Report it separately from blocking findings and identify where it will be tracked.
+Credible but outside the reviewed scope, and not introduced, worsened, or newly exposed by the change. Report it separately from blocking findings and identify where it will be tracked.
 
 ### No finding
 
-Do not report stylistic preference, tooling-enforced formatting, unsupported speculation, or behavior already covered by an applicable accepted-risk record. If a comment or design document promises a stronger guarantee than the implementation provides, that mismatch remains a finding even when the underlying risk could otherwise be accepted: either strengthen the implementation or narrow the documented guarantee.
+The default for anything not reported. Do not report stylistic preference, tooling-enforced formatting, unsupported speculation, or behavior already covered by an applicable accepted-risk record. If a comment or design document promises a stronger guarantee than the implementation provides, that mismatch remains a finding even when the underlying risk could otherwise be accepted: either strengthen the implementation or narrow the documented guarantee.
 
 ## Repository defaults
 
@@ -95,10 +98,9 @@ Apply these defaults unless a more specific accepted ADR or design document says
 - A race reachable through ordinary concurrent CLI use that violates a documented invariant is `Must fix`.
 - Following a symlink or junction to write outside the project root is `Must fix`.
 - Loss of error cause that turns a persistent filesystem or Git failure into a normal/retryable result is at least `Should fix` and becomes `Must fix` when it can permit unsafe continuation.
-- A low-cost, portable, deterministic, and testable mitigation normally favors `Should fix` over risk acceptance.
 - A narrow platform-specific residual risk may be accepted when closing it requires unstable or high-risk FFI or substantial dependencies, the actor already needs destructive write access, and the remaining guarantee is documented precisely.
 - A pre-existing issue is `Follow-up` unless the reviewed change worsens it, newly makes it reachable, or depends on the violated behavior for correctness.
-- Adding raw platform FFI (a manual `extern` declaration, direct syscalls, or a new low-level dependency like `libc`/`windows-sys`) to close a race is a `Change risk` signal, not a free action. Prefer `Accepted risk` over adding or expanding raw FFI when the only actor who can trigger the condition already needs the level of access described in [Project threat model](#project-threat-model). Reserve FFI-based hardening for conditions reachable through ordinary use, operator error, or an actor with meaningfully less access than "can already write to this project."
+- Adding raw platform FFI (a manual `extern` declaration, direct syscalls, or a new low-level dependency like `libc`/`windows-sys`) to close a race is a change-risk signal, not a free action. Prefer `Accepted risk` over adding or expanding raw FFI when the only actor who can trigger the condition already needs the level of access described in [Project threat model](#project-threat-model). Reserve FFI-based hardening for conditions reachable through ordinary use, operator error, or an actor with meaningfully less access than "can already write to this project."
 
 ## Avoiding review churn
 
