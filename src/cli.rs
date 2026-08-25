@@ -1046,6 +1046,18 @@ pub fn run(cli: Cli) -> io::Result<()> {
             if report.stopped_by_limit {
                 println!("backfill stopped at the configured limit");
             }
+            for warning in &report.warnings {
+                println!("warning: {warning}");
+            }
+            if !report.incompatible.is_empty() {
+                for pair in &report.incompatible {
+                    println!(
+                        "skipped {}: {} (not recorded, will retry on next run)",
+                        pair.to_milestone, pair.reason
+                    );
+                }
+                process::exit(1);
+            }
             Ok(())
         }
         Command::Milestone(MilestoneCommand::Init { tag, dir, json }) => {
@@ -2850,7 +2862,8 @@ mod tests {
         let content =
             fs::read_to_string(dir.path().join(".markharness/executions/m1/milestone.yml"))
                 .unwrap();
-        assert_eq!(content, "id: m1\n");
+        assert!(content.starts_with("id: m1\ncommit_oid: "));
+        assert!(content.contains("knowledge_schema_version: 1\n"));
     }
 
     fn write_generated_testcase_for_test(

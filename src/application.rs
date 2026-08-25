@@ -209,18 +209,19 @@ pub fn compute_changes(
     to: &str,
     options: ChangeOptions,
 ) -> io::Result<CommandOutcome> {
-    let events = changes::compute_changes(root, from, to, options)?;
+    let outcome = changes::compute_changes_with_warnings(root, from, to, options)?;
     replace_file(
         root,
         &root
             .join(crate::project_root::MARKHARNESS_DIR)
             .join("changes")
             .join(format!("{to}.yaml")),
-        changes::serialize_changes(&events).as_bytes(),
+        changes::serialize_changes(&outcome.events).as_bytes(),
     )?;
     Ok(CommandOutcome::ChangesComputed {
-        count: events.len(),
+        count: outcome.events.len(),
         to: to.to_string(),
+        warnings: outcome.warnings,
     })
 }
 

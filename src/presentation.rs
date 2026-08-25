@@ -15,6 +15,11 @@ pub enum CommandOutcome {
     ChangesComputed {
         count: usize,
         to: String,
+        /// Non-fatal issues surfaced alongside a successful computation
+        /// (issue #29 §6: a legacy Knowledge schema version assumed for a
+        /// ref that predates `[knowledge].schema_version`). Empty when
+        /// nothing needs the user's attention.
+        warnings: Vec<String>,
     },
     Pending {
         report: PendingReport,
@@ -99,13 +104,23 @@ impl Presenter for HumanPresenter {
                 stderr: String::new(),
                 exit_code: 0,
             },
-            CommandOutcome::ChangesComputed { count, to } => PresentedResult {
-                stdout: format!(
+            CommandOutcome::ChangesComputed {
+                count,
+                to,
+                warnings,
+            } => {
+                let mut stdout = format!(
                     "computed {count} change event(s) into .markharness/changes/{to}.yaml\n"
-                ),
-                stderr: String::new(),
-                exit_code: 0,
-            },
+                );
+                for warning in warnings {
+                    stdout.push_str(&format!("warning: {warning}\n"));
+                }
+                PresentedResult {
+                    stdout,
+                    stderr: String::new(),
+                    exit_code: 0,
+                }
+            }
             CommandOutcome::Pending {
                 report,
                 fail_on_pending,
@@ -190,15 +205,31 @@ impl Presenter for JsonPresenter {
                     exit_code: 0,
                 }
             }
-            CommandOutcome::ChangesComputed { count, to } => PresentedResult {
-                stdout: format!(
-                    "{{\"schema_version\":1,\"outcome\":\"changes_computed\",\"audit_scope\":\"{}\",\"changes\":{count},\"to\":{}}}\n",
-                    crate::audit_scope::AuditScope::TwoSnapshot,
-                    serde_json::to_string(to).expect("milestone serialization is infallible")
-                ),
-                stderr: String::new(),
-                exit_code: 0,
-            },
+            CommandOutcome::ChangesComputed {
+                count,
+                to,
+                warnings,
+            } => {
+                let mut stdout = serde_json::json!({
+                    "schema_version": 1,
+                    "outcome": "changes_computed",
+                    "audit_scope": crate::audit_scope::AuditScope::TwoSnapshot,
+                    "changes": count,
+                    "to": to,
+                });
+                // Optional field (design doc §5: only optional fields may be
+                // added within one schema_version) — omitted, not `[]`, when
+                // there's nothing to report, so existing v1 consumers see an
+                // unchanged shape.
+                if !warnings.is_empty() {
+                    stdout["warnings"] = serde_json::json!(warnings);
+                }
+                PresentedResult {
+                    stdout: format!("{stdout}\n"),
+                    stderr: String::new(),
+                    exit_code: 0,
+                }
+            }
             CommandOutcome::Pending {
                 report,
                 fail_on_pending,

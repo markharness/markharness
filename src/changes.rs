@@ -292,7 +292,78 @@ pub fn compute_changes(
     )
 }
 
+/// The result of `compute_changes_with_warnings`: the computed
+/// `ChangeEvent`s alongside any non-fatal issues found while resolving the
+/// two refs' Knowledge schema versions (issue #29 §6 — a legacy fallback).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputeChangesOutcome {
+    pub events: Vec<ChangeEvent>,
+    pub warnings: Vec<String>,
+}
+
+/// Like `compute_changes`, but also returns the legacy-schema-version
+/// warnings collected while resolving `from_milestone`/`to_milestone`
+/// (issue #29 §6). Resolves each ref's Knowledge schema version exactly
+/// once and reuses that same result for both the fail-closed gate and the
+/// warning text — `application::compute_changes` and
+/// `backfill::backfill_run_with_policy` call this instead of re-resolving
+/// independently (Standards review: avoids duplicate Git reads and the
+/// risk of the gate decision and the displayed warning disagreeing).
+pub fn compute_changes_with_warnings(
+    root: &Path,
+    from_milestone: &str,
+    to_milestone: &str,
+    options: ChangeOptions,
+) -> io::Result<ComputeChangesOutcome> {
+    let from_schema = crate::knowledge_schema::resolve(root, from_milestone)?;
+    let to_schema = crate::knowledge_schema::resolve(root, to_milestone)?;
+
+    // issue #29's version-resolution policy table: "milestone.yml とtag内の
+    // 正本が不一致 | エラーとして報告する". A ref with no milestone.yml (an
+    // arbitrary commit, or a milestone predating the audit fields) is not
+    // checked. Reuses the resolution just above rather than re-resolving.
+    crate::milestone::verify_audit_matches_tag(root, from_milestone, &from_schema)?;
+    crate::milestone::verify_audit_matches_tag(root, to_milestone, &to_schema)?;
+
+    let legacy_warnings: Vec<String> = [
+        crate::knowledge_schema::legacy_warning(from_milestone, &from_schema),
+        crate::knowledge_schema::legacy_warning(to_milestone, &to_schema),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    // Spec review of issue #29 §6: a legacy-fallback warning must not be
+    // lost just because the pair also fails the §5 fail-closed gate —
+    // `ComputeChangesOutcome.warnings` only exists on the `Ok` path, so the
+    // only way to carry it on `Err` is folding it into the error message.
+    if let Err(e) = crate::knowledge_schema::ensure_compatible(&from_schema, &to_schema) {
+        let mut message = e.to_string();
+        for warning in &legacy_warnings {
+            message.push(' ');
+            message.push_str(warning);
+        }
+        return Err(io::Error::new(e.kind(), message));
+    }
+    let warnings = legacy_warnings;
+
+    let events = diff_events(root, from_milestone, to_milestone, options)?;
+    Ok(ComputeChangesOutcome { events, warnings })
+}
+
 fn compute_changes_between_refs(
+    root: &Path,
+    from_milestone: &str,
+    to_milestone: &str,
+    options: ChangeOptions,
+) -> io::Result<Vec<ChangeEvent>> {
+    Ok(compute_changes_with_warnings(root, from_milestone, to_milestone, options)?.events)
+}
+
+/// The tree-SHA diff itself, once `from_milestone`/`to_milestone` are
+/// already known to be schema-compatible (`compute_changes_with_warnings`
+/// is the only caller — it runs the fail-closed gate first).
+fn diff_events(
     root: &Path,
     from_milestone: &str,
     to_milestone: &str,
@@ -615,6 +686,81 @@ mod tests {
         run_git(root, &["add", "-A"]);
         run_git(root, &["commit", "-q", "-m", message]);
         run_git(root, &["tag", tag]);
+    }
+
+    fn write_config_toml(root: &Path, knowledge_schema_version: u32) {
+        fs::create_dir_all(root.join(".markharness")).unwrap();
+        fs::write(
+            root.join(".markharness/config.toml"),
+            format!(
+                "schema_version = 1\n\n[knowledge]\nschema_version = {knowledge_schema_version}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Issue #29 §5: a schema-only migration must not be diffed by raw tree
+    /// SHA as if it were a real content change — `compute_changes` must
+    /// refuse (fail closed) rather than silently generate a `ChangeEvent`
+    /// for every Feature.
+    #[test]
+    fn compute_changes_fails_closed_when_knowledge_schema_versions_differ() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        write_full_chain(dir.path(), "v2");
+        write_config_toml(dir.path(), 2);
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let err = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    /// Spec review of issue #29 §6: the legacy-schema-version-fallback
+    /// warning must not be lost when the fail-closed gate rejects the
+    /// comparison — `compute_changes_with_warnings`' `ComputeChangesOutcome`
+    /// only carries `warnings` on the `Ok` path, so the only way to keep
+    /// this information on the `Err` path is folding it into the error
+    /// message itself.
+    #[test]
+    fn compute_changes_with_warnings_error_message_names_a_legacy_fallback_side() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1"); // no config.toml at all: legacy v1
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        write_full_chain(dir.path(), "v2");
+        write_config_toml(dir.path(), 2); // unknown to this CLI build
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let err = compute_changes_with_warnings(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        let message = err.to_string();
+        assert!(
+            message.contains("m1") && message.contains("legacy"),
+            "expected the legacy-fallback side to be named in the error, got: {message}"
+        );
     }
 
     /// ADR 0013 / Issue #17's core motivating scenario: a Feature whose
