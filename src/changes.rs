@@ -292,16 +292,69 @@ pub fn compute_changes(
     )
 }
 
+/// The result of `compute_changes_with_warnings`: the computed
+/// `ChangeEvent`s alongside any non-fatal issues found while resolving the
+/// two refs' Knowledge schema versions (issue #29 §6 — a legacy fallback).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputeChangesOutcome {
+    pub events: Vec<ChangeEvent>,
+    pub warnings: Vec<String>,
+}
+
+/// Like `compute_changes`, but also returns the legacy-schema-version
+/// warnings collected while resolving `from_milestone`/`to_milestone`
+/// (issue #29 §6). Resolves each ref's Knowledge schema version exactly
+/// once and reuses that same result for both the fail-closed gate and the
+/// warning text — `application::compute_changes` and
+/// `backfill::backfill_run_with_policy` call this instead of re-resolving
+/// independently (Standards review: avoids duplicate Git reads and the
+/// risk of the gate decision and the displayed warning disagreeing).
+pub fn compute_changes_with_warnings(
+    root: &Path,
+    from_milestone: &str,
+    to_milestone: &str,
+    options: ChangeOptions,
+) -> io::Result<ComputeChangesOutcome> {
+    // issue #29's version-resolution policy table: "milestone.yml とtag内の
+    // 正本が不一致 | エラーとして報告する". A ref with no milestone.yml (an
+    // arbitrary commit, or a milestone predating the audit fields) is not
+    // checked.
+    crate::milestone::verify_audit_matches_tag(root, from_milestone)?;
+    crate::milestone::verify_audit_matches_tag(root, to_milestone)?;
+
+    let from_schema = crate::knowledge_schema::resolve(root, from_milestone)?;
+    let to_schema = crate::knowledge_schema::resolve(root, to_milestone)?;
+    crate::knowledge_schema::ensure_compatible(&from_schema, &to_schema)?;
+    let warnings = [
+        crate::knowledge_schema::legacy_warning(from_milestone, &from_schema),
+        crate::knowledge_schema::legacy_warning(to_milestone, &to_schema),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let events = diff_events(root, from_milestone, to_milestone, options)?;
+    Ok(ComputeChangesOutcome { events, warnings })
+}
+
 fn compute_changes_between_refs(
     root: &Path,
     from_milestone: &str,
     to_milestone: &str,
     options: ChangeOptions,
 ) -> io::Result<Vec<ChangeEvent>> {
-    let from_schema = crate::knowledge_schema::resolve(root, from_milestone)?;
-    let to_schema = crate::knowledge_schema::resolve(root, to_milestone)?;
-    crate::knowledge_schema::ensure_compatible(&from_schema, &to_schema)?;
+    Ok(compute_changes_with_warnings(root, from_milestone, to_milestone, options)?.events)
+}
 
+/// The tree-SHA diff itself, once `from_milestone`/`to_milestone` are
+/// already known to be schema-compatible (`compute_changes_with_warnings`
+/// is the only caller — it runs the fail-closed gate first).
+fn diff_events(
+    root: &Path,
+    from_milestone: &str,
+    to_milestone: &str,
+    options: ChangeOptions,
+) -> io::Result<Vec<ChangeEvent>> {
     let use_cache = options.cache == CachePolicy::Use;
     let from_versions = by_identity_key(id_cache::resolve_feature_versions(
         root,

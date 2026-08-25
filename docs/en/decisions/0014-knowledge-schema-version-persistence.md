@@ -55,16 +55,31 @@ When `from` and `to` report different known versions, or either reports a versio
 
 `.markharness/knowledge/` predates this feature everywhere it hasn't been touched yet, so a ref whose `config.toml` has no `[knowledge]` table (or no `config.toml` at all) is treated as legacy schema version 1, and `changes compute` surfaces that assumption as a warning rather than silently guessing. The warning is a structured field (`CommandOutcome::ChangesComputed.warnings: Vec<String>`) rendered by both `HumanPresenter` (`warning: ...` lines) and `JsonPresenter` (a `"warnings"` array in the existing JSON envelope) — adding a field to an already-versioned JSON contract is additive and does not require bumping that envelope's own `schema_version` (`docs/en/design/verification-plan-canonical-model-design.md`'s existing convention: only removing/renaming a field does).
 
+### 7. `milestone.yml`'s audit copy is verified, not just written
+
+Both `changes compute` and `backfill run` resolve each ref's Knowledge schema version through a single shared function, `compute_changes_with_warnings`, which — before resolving anything — also checks each ref's own `.markharness/executions/<name>/milestone.yml` (when one exists for that name) against the tag it claims to describe: its recorded `commit_oid` and `knowledge_schema_version` must agree with what the tag actually resolves to right now (the version-resolution policy table's "`milestone.yml` とtag内の正本が不一致 | エラーとして報告する" row, previously unimplemented). A `milestone.yml` with no such fields (predating this ADR) is not checked — the tag alone is trusted, per the table's next row. A mismatch (a moved tag, or a hand-edited file) is a hard `InvalidData` error, not a fail-closed `Unsupported` skip: `backfill run` therefore does not silently skip it and retry later the way it does an unsupported schema-version pair — a stale or tampered audit copy needs a human to look at it, not a converter.
+
+### 8. Version resolution happens once per ref, not once per concern
+
+`compute_changes_with_warnings` resolves each ref's Knowledge schema version exactly once and reuses that same `ResolvedSchemaVersion` for both the fail-closed gate and the legacy-warning text, rather than `application::compute_changes` re-resolving independently after `changes::compute_changes` already did so internally (a Standards-review finding: duplicate Git reads, and a real risk of the gate's decision and the displayed warning disagreeing if the two resolutions ever produced different `ResolvedSchemaVersion`s — e.g. under a concurrent tag update between the two calls).
+
+### 9. `warnings` is an optional JSON field, and `backfill run` reports the same information `changes compute` does
+
+The `"warnings"` key is omitted from `changes compute --json`'s output entirely when there is nothing to warn about, rather than emitted as `"warnings":[]` — the design doc's JSON contract rule (§5) permits only *optional* field additions within one `schema_version`, and a field that is always present (even as an empty array) is a required field in practice, changing the v1 contract's shape for every existing consumer.
+
+`backfill run` collects the same legacy-schema-version warnings `changes compute` does (one call to `compute_changes_with_warnings` per pair), and — since it currently has no `--json` mode — prints them as `warning: ...` lines and lists each skipped-as-incompatible pair by name, matching `changes compute`'s policy rather than only its fail-closed gate. Because a version-incompatible pair leaves real work undone even though the rest of the run succeeded, `backfill run` exits `1` (not `0`) whenever `BackfillReport.incompatible` is non-empty, instead of reporting a clean success that would let the gap go unnoticed.
+
 ### Out of scope
 
 Matches issue #29's stated exclusions: cross-schema converters, semantic diffing that ignores schema-only migrations, semantic-hash/canonicalization-rule-version changes, an `--allow-raw-schema-diff` escape hatch, and a command that rewrites existing Knowledge into a new schema version. This ADR only makes the version resolvable and makes an unsupported comparison fail safely instead of silently.
 
 ## Response taken
 
-- `src/knowledge_schema.rs` (new): `resolve` (ref → `ResolvedSchemaVersion { version, is_legacy }`), `ensure_compatible` (the fail-closed gate), `legacy_warning`, and `CURRENT_KNOWLEDGE_SCHEMA_VERSION`.
+- `src/knowledge_schema.rs` (new): `resolve` (ref → `ResolvedSchemaVersion { version, is_legacy }`, hard-erroring on a malformed — non-integer, out-of-`u32`-range, or non-table `[knowledge]` — recorded value rather than silently treating it as absent), `ensure_compatible` (the fail-closed gate, rejecting version `0` alongside differing/future versions), `legacy_warning`, and `CURRENT_KNOWLEDGE_SCHEMA_VERSION`.
 - `src/git.rs`: added `resolve_commit_oid` for `milestone.yml`'s audit `commit_oid`.
-- `src/milestone.rs`: `milestone_init` now writes `commit_oid` and `knowledge_schema_version` alongside `id`; unchanged idempotency behavior.
-- `src/changes.rs`: `compute_changes_between_refs` calls `ensure_compatible` before any tree-SHA comparison.
-- `src/backfill.rs`: `BackfillReport` gained `incompatible: Vec<String>`; `backfill_run_with_policy` skips a pair on `ErrorKind::Unsupported` instead of propagating it.
-- `src/application.rs` / `src/presentation.rs`: `CommandOutcome::ChangesComputed` gained `warnings: Vec<String>`, rendered by both presenters.
+- `src/milestone.rs`: `milestone_init` now writes `commit_oid` and `knowledge_schema_version` alongside `id`; unchanged idempotency behavior. Added `verify_audit_matches_tag`, checking a `milestone.yml`'s recorded audit fields against the tag's live resolution.
+- `src/changes.rs`: added `compute_changes_with_warnings` (resolves each ref's schema version once, runs `milestone::verify_audit_matches_tag` and `knowledge_schema::ensure_compatible`, and returns both the `ChangeEvent`s and any legacy-version warnings); `compute_changes`/`compute_changes_between_refs` are now thin wrappers over it, so every caller shares one resolution path.
+- `src/backfill.rs`: `BackfillReport` gained `incompatible: Vec<String>` and `warnings: Vec<String>`; `backfill_run_with_policy` calls `compute_changes_with_warnings`, skips a pair on `ErrorKind::Unsupported` instead of propagating it, and collects its warnings.
+- `src/application.rs` / `src/presentation.rs`: `CommandOutcome::ChangesComputed` gained `warnings: Vec<String>`, rendered by both presenters — `JsonPresenter` omits the key entirely when empty rather than emitting `"warnings":[]`.
+- `src/cli.rs`: `backfill run` prints each collected warning and each incompatible-pair name, and exits `1` when any pair was skipped as incompatible.
 - `src/init.rs`: `markharness init` now writes `[knowledge]\nschema_version = 1` alongside the existing top-level `schema_version = 1`.

@@ -1046,6 +1046,17 @@ pub fn run(cli: Cli) -> io::Result<()> {
             if report.stopped_by_limit {
                 println!("backfill stopped at the configured limit");
             }
+            for warning in &report.warnings {
+                println!("warning: {warning}");
+            }
+            if !report.incompatible.is_empty() {
+                for to_milestone in &report.incompatible {
+                    println!(
+                        "skipped {to_milestone}: Knowledge schema version incompatible with its predecessor; not recorded, will retry on next run"
+                    );
+                }
+                process::exit(1);
+            }
             Ok(())
         }
         Command::Milestone(MilestoneCommand::Init { tag, dir, json }) => {

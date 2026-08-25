@@ -210,14 +210,20 @@ impl Presenter for JsonPresenter {
                 to,
                 warnings,
             } => {
-                let stdout = serde_json::json!({
+                let mut stdout = serde_json::json!({
                     "schema_version": 1,
                     "outcome": "changes_computed",
                     "audit_scope": crate::audit_scope::AuditScope::TwoSnapshot,
                     "changes": count,
                     "to": to,
-                    "warnings": warnings,
                 });
+                // Optional field (design doc §5: only optional fields may be
+                // added within one schema_version) — omitted, not `[]`, when
+                // there's nothing to report, so existing v1 consumers see an
+                // unchanged shape.
+                if !warnings.is_empty() {
+                    stdout["warnings"] = serde_json::json!(warnings);
+                }
                 PresentedResult {
                     stdout: format!("{stdout}\n"),
                     stderr: String::new(),

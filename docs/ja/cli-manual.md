@@ -745,7 +745,8 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
   - **`--current-tree`指定時**：現在の作業ツリーの`.markharness/knowledge/`から構築する(従来動作)。作業ツリーが変化し続ける限り、同じ区間の再計算結果も変わりうる。
 - `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.16節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.11節)。
-- 成功時、人間向け出力にはlegacyスキーマバージョン1へフォールバックした側ごとに`warning: ...`行が追加される。`--json`出力では同じメッセージが既存のJSON envelope内の`"warnings"`配列として含まれる。両refが`[knowledge].schema_version`を記録している場合はどちらも空になる。
+- 成功時、人間向け出力にはlegacyスキーマバージョン1へフォールバックした側ごとに`warning: ...`行が追加される。`--json`出力では同じメッセージが既存のJSON envelope内の`"warnings"`配列として含まれる。両refが`[knowledge].schema_version`を記録している場合はどちらも出力されない — JSON側の`"warnings"`キーは`[]`としてではなく、キー自体を省略する。同一`schema_version`内での追加はoptionalなフィールドに限られるため([verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)§5)。
+- `from-milestone`・`to-milestone`のいずれかに`.markharness/executions/<name>/milestone.yml`が存在し、その記録された`commit_oid`/`knowledge_schema_version`がそのtagの現在の解決結果と食い違っている場合(tagの移動、または手編集)、何も計算せずエラー終了する([decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))。これらのフィールドを持たない`milestone.yml`は検証対象外。
 - `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.17節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
 - **ブランチ戦略への依存に注意**：`from_tree_sha`/`to_tree_sha`の差分検出そのものはブランチ戦略(merge/squash/rebase/fast-forward)に依存しないが、`true_divergences`はマイルストーン区間内に2親を持つマージコミットが実際に残っていることが前提であり、squash mergeやrebase・fast-forward mergeでは元ブランチの分岐関係がコミットグラフから失われるため検出されない(空配列のまま。論文§3.4表2)。
 
@@ -799,12 +800,21 @@ markharness backfill run [--no-cache] [--max-pairs <count>] [--time-budget <dura
 
 - 最も古いマイルストーンは比較対象がないためスキップされる。
 - 各マイルストーン(to側)の処理完了は `git notes --ref=markharness-backfill` に記録され、次回実行時に同じペアは再計算されずスキップされる(§4.3)。
-- Knowledgeスキーマバージョンを安全に比較できないペア(`changes compute`と同じfail closedの判定、1.12節、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))は、run全体を中断せずそのペアだけスキップする — 残りのペアは処理が続く。このスキップは`git notes`には記録されないため、後続のrunで自動的に再試行される(例: 該当スキーマバージョンのconverterが実装された時点で)。
+- Knowledgeスキーマバージョンを安全に比較できないペア(`changes compute`と同じfail closedの判定、1.12節、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))は、run全体を中断せずそのペアだけスキップする — 残りのペアは処理が続く。このスキップは`git notes`には記録されないため、後続のrunで自動的に再試行される(例: 該当スキーマバージョンのconverterが実装された時点で)。スキップされた各ペアは`skipped <to-milestone>: ...`として出力され、1件でもスキップがあればコマンドは終了コード`1`で終了する — 非互換ペアを未処理のまま残したrunを、クリーンな成功として報告しない。
+- `milestone.yml`の記録された`commit_oid`/`knowledge_schema_version`が、そのtagの現在の解決結果と食い違っている場合(tagの移動、または手編集)は、そのペアに関してハードエラーとなる。上記のfail-closedスキップとは異なりrun全体が停止する — 古い・改ざんされた監査コピーは自動リトライではなく人間の確認を必要とするため。
+- ペア処理中に検出されたlegacyスキーマバージョンのwarning(そのrefに対して`changes compute`が表示するのと同じwarning)は`warning: ...`行として出力される。
 - `--no-cache` を指定しない場合、`changes compute` と同じ `.markharness-cache/` を共有する。
 - `--max-pairs`は1回の実行で新規処理するペア数を制限する。既処理としてスキップしたペアは件数に含めない。
 - `--time-budget`は未処理ペアの開始前に時間予算を判定する。単位は`ms`、`s`、`m`、`h`(例: `30s`、`5m`)。ペア処理中の強制中断は行わない。
 
 対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.12節と同じく解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
+
+**終了コード**
+
+| コード | 意味                                                       |
+| ------ | ------------------------------------------------------------ |
+| 0      | 成功 — 全ペアが処理済みか既に最新                           |
+| 1      | Knowledgeスキーマ非互換により1件以上のペアがスキップされた |
 
 **使用例**
 

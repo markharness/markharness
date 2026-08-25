@@ -22,6 +22,10 @@ pub struct BackfillReport {
     /// couldn't be compared safely (issue #29 §5) — not recorded in git
     /// notes, so a later run retries them (e.g. once a converter exists).
     pub incompatible: Vec<String>,
+    /// Legacy-schema-version-fallback warnings collected across every
+    /// processed pair (issue #29 §6) — the same warnings `changes compute`
+    /// surfaces, so `backfill run` uses an identical policy.
+    pub warnings: Vec<String>,
     /// True when a pair or time limit left at least one unprocessed pair.
     pub stopped_by_limit: bool,
 }
@@ -136,7 +140,7 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
             break;
         }
 
-        let events = match changes::compute_changes(
+        let outcome = match changes::compute_changes_with_warnings(
             root,
             from_milestone,
             to_milestone,
@@ -149,20 +153,21 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
                 impact_source: changes::ImpactSource::HistoricalTree,
             },
         ) {
-            Ok(events) => events,
+            Ok(outcome) => outcome,
             Err(e) if e.kind() == io::ErrorKind::Unsupported => {
                 report.incompatible.push(to_milestone.clone());
                 continue;
             }
             Err(e) => return Err(e),
         };
+        report.warnings.extend(outcome.warnings);
         let changes_dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
             .join("changes");
         replace_file(
             root,
             &changes_dir.join(format!("{to_milestone}.yaml")),
-            changes::serialize_changes(&events).as_bytes(),
+            changes::serialize_changes(&outcome.events).as_bytes(),
         )?;
         git::notes_add(
             root,
@@ -281,6 +286,25 @@ mod tests {
         assert_eq!(report.incompatible, vec!["m2".to_string()]);
         assert!(dir.path().join(".markharness/changes/m3.yaml").is_file());
         assert!(!dir.path().join(".markharness/changes/m2.yaml").is_file());
+    }
+
+    /// Spec review of issue #29 §6: `backfill run` must use the same
+    /// legacy-schema-version-warning policy as `changes compute`, not just
+    /// the same fail-closed gate.
+    #[test]
+    fn backfill_run_collects_legacy_schema_version_warnings_across_pairs() {
+        let dir = init_repo();
+        write_feature(dir.path(), "v1"); // no config.toml at all: legacy v1
+        commit_and_tag_milestone(dir.path(), "v1", "m1", 1);
+        write_feature(dir.path(), "v2");
+        write_config_toml(dir.path(), 1);
+        commit_and_tag_milestone(dir.path(), "v2", "m2", 2);
+
+        let report = backfill_run(dir.path(), false).unwrap();
+
+        assert_eq!(report.processed, vec!["m2".to_string()]);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("m1"));
     }
 
     #[test]

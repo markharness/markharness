@@ -75,6 +75,27 @@ fn json_presenter_includes_warnings_for_changes_computed() {
     );
 }
 
+/// Standards review: `docs/en/design/verification-plan-canonical-model-design.md`
+/// §5 allows only *optional* field additions within one `schema_version` —
+/// a field that is always present, even as an empty array, is a required
+/// field in practice and changes the v1 contract's shape for every
+/// existing consumer. `warnings` must be omitted, not emitted as `[]`,
+/// when there's nothing to report.
+#[test]
+fn json_presenter_omits_warnings_for_changes_computed_when_there_are_none() {
+    let result = JsonPresenter.present(&CommandOutcome::ChangesComputed {
+        count: 3,
+        to: "v2".to_string(),
+        warnings: Vec::new(),
+    });
+
+    assert!(
+        !result.stdout.contains("warnings"),
+        "unexpected stdout: {}",
+        result.stdout
+    );
+}
+
 #[test]
 fn human_presenter_prints_warnings_for_changes_computed() {
     let result = HumanPresenter.present(&CommandOutcome::ChangesComputed {

@@ -745,7 +745,8 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   - **When `--current-tree` is given**: Built from `.markharness/knowledge/` in the current working tree (legacy behavior). As long as the working tree keeps changing, recomputation results for the same interval can also change.
 - `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.16) (§3.5).
 - Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.11), keyed by content-addressing.
-- On success, human output appends one `warning: ...` line per side that fell back to legacy schema version 1; `--json` output includes the same messages as a `"warnings"` array in the existing JSON envelope. Both are empty when both refs have a recorded `[knowledge].schema_version`.
+- On success, human output appends one `warning: ...` line per side that fell back to legacy schema version 1; `--json` output includes the same messages as a `"warnings"` array in the existing JSON envelope. Neither appears when both refs have a recorded `[knowledge].schema_version` — the JSON `"warnings"` key is omitted entirely rather than emitted as `[]`, since only optional field additions are allowed within one `schema_version` (§5 of [verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)).
+- If either `from-milestone` or `to-milestone` has a `.markharness/executions/<name>/milestone.yml` whose recorded `commit_oid`/`knowledge_schema_version` disagrees with what that tag now resolves to, the command errors out before computing anything (a moved tag, or a hand-edited file — [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)). A `milestone.yml` predating those fields is not checked.
 - The `from-milestone..to-milestone` interval is traversed with `git rev-list --ancestry-path`, and for every two-parent merge commit present within the interval, the section 1.17 `lineage` determination logic is internally run using `git merge-base` (oldest first). If a target Feature is judged a `true_divergence` (true divergence) at any of the merges, an entry consisting of `merge_commit` (the merge commit SHA, for auditing) and `parent_tree_shas: [P1, P2]` is appended to the `true_divergences` field, in the order they occurred (§3.2). If the same Feature undergoes true divergence multiple times within the interval, all of them are recorded. For a normal linear history, or when there is no merge within the interval, it remains an empty array.
 - **Note on branch-strategy dependence**: The `from_tree_sha`/`to_tree_sha` diff detection itself does not depend on the branch strategy (merge/squash/rebase/fast-forward), but `true_divergences` presupposes that a two-parent merge commit actually remains within the milestone interval; with squash merges, rebases, or fast-forward merges, the divergence relationship of the original branch is lost from the commit graph, so it is not detected (remains an empty array; paper §3.4 Table 2).
 
@@ -799,12 +800,21 @@ markharness backfill run [--no-cache] [--max-pairs <count>] [--time-budget <dura
 
 - The oldest milestone has nothing to compare against, so it is skipped.
 - Completion of processing for each milestone (the "to" side) is recorded in `git notes --ref=markharness-backfill`; on the next run, the same pair is not recomputed and is skipped (§4.3).
-- A pair whose Knowledge schema versions can't be compared safely (the same fail-closed check as `changes compute`, section 1.12, [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)) is skipped rather than aborting the whole run — the rest of the pairs still get processed. This skip is *not* recorded in `git notes`, so a later run retries it automatically (e.g. once a converter for that schema version exists).
+- A pair whose Knowledge schema versions can't be compared safely (the same fail-closed check as `changes compute`, section 1.12, [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)) is skipped rather than aborting the whole run — the rest of the pairs still get processed. This skip is *not* recorded in `git notes`, so a later run retries it automatically (e.g. once a converter for that schema version exists). Each skipped pair is printed as `skipped <to-milestone>: ...`, and the command exits with code `1` if any pair was skipped this way — a run that leaves an incompatible pair unprocessed is not reported as a clean success.
+- A `milestone.yml` whose recorded `commit_oid`/`knowledge_schema_version` disagrees with what its tag now resolves to (a moved tag, or a hand-edited file) is a hard error for the pair involving it — this is *not* the fail-closed skip above; the whole run stops, since a stale or tampered audit copy needs a human to look at it rather than being retried automatically.
+- Any legacy-schema-version warning encountered while processing a pair (the same warning `changes compute` would show for that ref) is printed as a `warning: ...` line.
 - Unless `--no-cache` is given, it shares the same `.markharness-cache/` as `changes compute`.
 - `--max-pairs` limits newly processed pairs per run; already-processed skipped pairs do not consume the limit.
 - `--time-budget` checks the remaining budget before starting each unprocessed pair. Units are `ms`, `s`, `m`, and `h` (for example `30s` or `5m`). It does not interrupt a pair in progress.
 
 The constraint for when the target project directory (`-d`/`--dir`) is a subdirectory of the git repository is resolved the same way as in section 1.12 ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
+
+**Exit codes**
+
+| Code | Meaning                                                                    |
+| ---- | --------------------------------------------------------------------------- |
+| 0    | Success — every pair was either processed or already up to date            |
+| 1    | At least one pair was skipped as Knowledge-schema-incompatible             |
 
 **Example**
 

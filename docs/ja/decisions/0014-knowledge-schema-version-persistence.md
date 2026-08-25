@@ -53,7 +53,21 @@ knowledge_schema_version: 1
 
 ### 6. バージョンが記録されていないrefはlegacyスキーマバージョン1とみなす
 
-`.markharness/knowledge/`は本機能導入以前の全ての未変更refにおいてバージョン情報を持たない。そのため`config.toml`に`[knowledge]`テーブルがない(あるいは`config.toml`自体が存在しない)refは、legacyスキーマバージョン1とみなし、`changes compute`はこの推定を無言で行わずwarningとして表示する。このwarningは構造化フィールド(`CommandOutcome::ChangesComputed.warnings: Vec<String>`)であり、`HumanPresenter`(`warning: ...`行)と`JsonPresenter`(既存JSON envelope内の`"warnings"`配列)の両方でレンダリングされる。既にバージョン管理されたJSON contractへのフィールド追加は非破壊であり、そのenvelope自体の`schema_version`のbumpは不要(`docs/ja/design/verification-plan-canonical-model-design.md`の既存規約: フィールドの削除・リネームのみがbumpを要する)。
+`.markharness/knowledge/`は本機能導入以前の全ての未変更refにおいてバージョン情報を持たない。そのため`config.toml`に`[knowledge]`テーブルがない(あるいは`config.toml`自体が存在しない)refは、legacyスキーマバージョン1とみなし、`changes compute`はこの推定を無言で行わずwarningとして表示する。このwarningは構造化フィールド(`CommandOutcome::ChangesComputed.warnings: Vec<String>`)であり、`HumanPresenter`(`warning: ...`行)と`JsonPresenter`(既存JSON envelope内の`"warnings"`配列。ただし何も警告がない場合は`[]`ではなくキー自体を省略する — §9参照)の両方でレンダリングされる。
+
+### 7. `milestone.yml`の監査コピーは書き込むだけでなく検証もする
+
+`changes compute`・`backfill run`はいずれも、単一の共有関数`compute_changes_with_warnings`を通じて各refのKnowledgeスキーマバージョンを解決する。この関数は解決処理に入る前に、各ref自身の`.markharness/executions/<name>/milestone.yml`(その名前のものが存在する場合)を、その名前が指すはずのtagと突き合わせて検証する — 記録された`commit_oid`と`knowledge_schema_version`が、そのtagが今実際に解決する値と一致していなければならない(バージョン解決ポリシー表の「`milestone.yml` とtag内の正本が不一致 | エラーとして報告する」行。従来は未実装だった)。これらのフィールドを持たない`milestone.yml`(本ADR以前のもの)は検証対象外とし、表の次の行の通りtagの正本のみを信頼する。不一致(tagの移動、または手編集)はfail closedの`Unsupported`スキップではなく、ハードな`InvalidData`エラーとする。そのため`backfill run`は、未対応スキーマバージョンのペアのように黙ってスキップし後で再試行する、という扱いをしない — 古い・改ざんされた監査コピーはconverterではなく人間の確認を必要とするため。
+
+### 8. バージョン解決は関心事ごとではなくref単位で一度だけ行う
+
+`compute_changes_with_warnings`は各refのKnowledgeスキーマバージョンをちょうど一度だけ解決し、その同じ`ResolvedSchemaVersion`をfail-closedゲートとlegacy warningのテキストの両方で再利用する。以前は`application::compute_changes`が、`changes::compute_changes`が内部で既に解決した後にもう一度独立して解決し直していた(Standardsレビューでの指摘: Git読み取りの重複に加え、2回の解決結果が(例えばtag更新と競合した場合などに)食い違えば、ゲートの判定と表示されるwarningが一致しなくなるリスクが実在した)。
+
+### 9. `warnings`はoptionalなJSONフィールドとし、`backfill run`も`changes compute`と同じ情報を報告する
+
+`changes compute --json`の出力では、報告すべき警告が何もない場合`"warnings"`キー自体を省略し、`"warnings":[]`としては出力しない — 設計ドキュメントのJSON contract規約(§5)は、同一`schema_version`内での追加を*optionalなフィールド*に限って許可しており、常に存在するフィールド(空配列であっても)は実質的にrequiredなフィールドであり、既存の全利用者に対してv1 contractの形を変えてしまう。
+
+`backfill run`も、`changes compute`と同じlegacy schema versionのwarningを収集する(ペアごとに`compute_changes_with_warnings`を1回呼ぶ)。`backfill run`には現状`--json`モードがないため、`warning: ...`行として出力し、非互換としてスキップした各ペアの名前も列挙する — fail-closedゲートだけでなく`changes compute`と同じポリシーに従う。バージョン非互換なペアは、run自体は成功していても実際には未処理の作業を残すため、`BackfillReport.incompatible`が空でない場合`backfill run`は終了コード`0`ではなく`1`で終了する。見落とされかねない「クリーンな成功」を報告しないようにするためである。
 
 ### 対象外
 
@@ -61,10 +75,11 @@ issue #29が明示した対象外と一致する: 異なるスキーマ間のcon
 
 ## 対応内容
 
-- `src/knowledge_schema.rs`(新規): `resolve`(ref → `ResolvedSchemaVersion { version, is_legacy }`)、`ensure_compatible`(fail closedのゲート)、`legacy_warning`、`CURRENT_KNOWLEDGE_SCHEMA_VERSION`。
+- `src/knowledge_schema.rs`(新規): `resolve`(ref → `ResolvedSchemaVersion { version, is_legacy }`。記録された値が不正(非整数、u32範囲外、`[knowledge]`自体がテーブルでない)な場合は「未記録」と黙って同一視せずハードエラーにする)、`ensure_compatible`(fail closedのゲート。相違・未来バージョンに加えversion 0も拒否)、`legacy_warning`、`CURRENT_KNOWLEDGE_SCHEMA_VERSION`。
 - `src/git.rs`: `milestone.yml`の監査用`commit_oid`のために`resolve_commit_oid`を追加。
-- `src/milestone.rs`: `milestone_init`が`id`に加えて`commit_oid`と`knowledge_schema_version`を書き込む。冪等性の挙動は変更なし。
-- `src/changes.rs`: `compute_changes_between_refs`がtree SHA比較の前に`ensure_compatible`を呼ぶ。
-- `src/backfill.rs`: `BackfillReport`に`incompatible: Vec<String>`を追加。`backfill_run_with_policy`は`ErrorKind::Unsupported`のペアをrunの中断ではなくスキップとして扱う。
-- `src/application.rs` / `src/presentation.rs`: `CommandOutcome::ChangesComputed`に`warnings: Vec<String>`を追加し、両Presenterでレンダリングする。
+- `src/milestone.rs`: `milestone_init`が`id`に加えて`commit_oid`と`knowledge_schema_version`を書き込む。冪等性の挙動は変更なし。`milestone.yml`の記録値をtagの現在の解決結果と突き合わせる`verify_audit_matches_tag`を追加。
+- `src/changes.rs`: `compute_changes_with_warnings`を追加(各refのスキーマバージョンを一度だけ解決し、`milestone::verify_audit_matches_tag`と`knowledge_schema::ensure_compatible`を実行した上でChangeEventとlegacy warningの両方を返す)。`compute_changes`/`compute_changes_between_refs`はこれを呼ぶ薄いラッパーとなり、全呼び出し元が単一の解決経路を共有する。
+- `src/backfill.rs`: `BackfillReport`に`incompatible: Vec<String>`と`warnings: Vec<String>`を追加。`backfill_run_with_policy`は`compute_changes_with_warnings`を呼び、`ErrorKind::Unsupported`のペアをrunの中断ではなくスキップとして扱い、warningを収集する。
+- `src/application.rs` / `src/presentation.rs`: `CommandOutcome::ChangesComputed`に`warnings: Vec<String>`を追加し、両Presenterでレンダリングする。`JsonPresenter`は空の場合`"warnings":[]`ではなくキー自体を省略する。
+- `src/cli.rs`: `backfill run`は収集したwarningと非互換としてスキップした各ペア名を出力し、1件でもスキップがあれば終了コード`1`で終了する。
 - `src/init.rs`: `markharness init`が既存のトップレベル`schema_version = 1`に加えて`[knowledge]\nschema_version = 1`を書き込む。
