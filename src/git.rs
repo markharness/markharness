@@ -167,6 +167,8 @@ pub fn write_tree_prefix(root: &Path, path_in_repo: &str) -> io::Result<String> 
         .arg(root)
         .env("GIT_INDEX_FILE", &index_path)
         .args(["add", "-A", "--", path_in_repo])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()?;
     if !add_status.success() {
         return Err(io::Error::other(format!(
@@ -241,6 +243,8 @@ pub fn add_detached_worktree(root: &Path, destination: &Path, git_ref: &str) -> 
         .args(["worktree", "add", "--detach", "-q"])
         .arg(destination)
         .arg(git_ref)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()?;
     if status.success() {
         Ok(())
@@ -258,6 +262,8 @@ pub fn remove_worktree(root: &Path, worktree: &Path) -> io::Result<()> {
         .arg(root)
         .args(["worktree", "remove", "--force"])
         .arg(worktree)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()?;
     if status.success() {
         Ok(())
