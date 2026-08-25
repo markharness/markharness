@@ -39,8 +39,17 @@ This step is complete when the requested commits exist on the working branch and
 Treat push, pull-request creation, and merge as separate externally visible actions:
 
 - Push the working branch only when the user explicitly requests it.
-- Open or update a pull request only when the user explicitly requests it. Target `main` and summarize the outcome and verification evidence. Re-check open issues and include `Closes #<number>` in the pull-request body for every issue fully completed by the complete PR; use `Refs #<number>` for related issues that remain open. Treat the pull-request body as the authoritative auto-close link because GitHub applies its closing keywords when the PR is merged into the default branch.
+- Open or update a pull request only when the user explicitly requests it. Target `main` and summarize the outcome and verification evidence. Re-check open issues and include `Closes #<number>` in the pull-request body for every issue fully completed by the complete PR; use `Refs #<number>` for related issues that remain open. Treat the pull-request body as the authoritative auto-close link because GitHub applies its closing keywords when the PR is merged into the default branch. When the task used a separate worktree, the PR handoff must also report the PR number or URL, branch name, absolute worktree path, worktree status, and that cleanup is pending after merge.
 - Merge only when the user explicitly requests it and required checks/review are satisfied.
-- Delete the branch only after merge and only when requested or clearly included in the merge workflow.
+- The PR-creation session does not need to remain open until merge. A later session may perform the post-merge cleanup using the recorded handoff information.
+- Delete the branch only after merge and only when requested or clearly included in the merge workflow. Follow the post-merge cleanup checks below before deleting a worktree or its branch.
 
 This step is complete at the boundary the user authorized. Report the branch name, local commits, checks, any unexpected verification side effects and their disposition, and any remaining push/PR/merge action.
+
+## 5. Clean up a merged worktree
+
+Post-merge cleanup may be performed in a separate session. First update the local `main` from its remote, then verify that the recorded pull request is merged on GitHub; do not rely only on Git ancestry because squash and rebase merges may replace commit identities.
+
+Before removing anything, verify that the candidate path is the recorded task worktree, it is not the current worktree, and `git status --short` is empty in it. Present the verified PR, branch, and absolute worktree path to the user and obtain explicit authorization to delete them. If the worktree has changes, the PR is not confirmed merged, or the identity of the worktree is unclear, do not remove it; report the condition instead. Never use forced worktree or branch deletion to bypass these checks.
+
+After authorization, remove the task worktree, then delete its local branch only when it is no longer checked out and the PR is confirmed merged. Prune stale worktree metadata only after the registered paths have been inspected. Report exactly what was removed and whether any remote branch or other cleanup remains.
