@@ -163,6 +163,7 @@ pub fn backfill_run_with_policy(root: &Path, policy: BackfillPolicy) -> io::Resu
                     changes::CachePolicy::Bypass
                 },
                 impact_source: changes::ImpactSource::HistoricalTree,
+                granularity: changes::Granularity::Feature,
             },
         ) {
             Ok(outcome) => outcome,

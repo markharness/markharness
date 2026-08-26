@@ -727,7 +727,7 @@ removed .markharness-cache/ under /path/to/project
 ### 1.12 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
 
 ```text
-markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [-d, --dir <path>]
+markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [--granularity <feature|behavior|condition>] [-d, --dir <path>]
 ```
 
 **用途**: 2つのマイルストーン(git tag名をそのまま使用。マイルストーン境界の判定はタグ名一致のみで、`.markharness/executions/*/milestone.yml` との対応は呼び出し側の責務)間で、`.markharness/knowledge/` 配下の各Featureディレクトリのtree SHAを `git ls-tree -r <tag> -- .markharness/knowledge` で比較し、変化したFeatureごとに `ChangeEvent` を算出して `.markharness/changes/<to-milestone>.yaml` に書き込む。Feature idは各`feature.yml`の`id:`フィールドを正準ソースとし、ディレクトリ名とは独立に追跡する(論文§3.3)。
@@ -743,6 +743,13 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 - `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.5節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `.markharness/knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4も参照)。
   - **既定(`--current-tree`未指定)**：`to-milestone`タグが指す`.markharness/knowledge/`ツリーをGit blobから直接読み込んで構築する。同じ区間を後日再計算しても常に同じ結果になる。
   - **`--current-tree`指定時**：現在の作業ツリーの`.markharness/knowledge/`から構築する(従来動作)。作業ツリーが変化し続ける限り、同じ区間の再計算結果も変わりうる。
+- **`--granularity <feature|behavior|condition>`(既定: `feature`)**：`impacted_testcases`を絞り込む単位を選択する(issue #15)。
+  - **`feature`(既定)**：従来通り、変更が検出されたFeatureに由来する全TestCaseを候補として含める(保守的・安全側)。
+  - **`behavior`**：Feature配下のBehaviorディレクトリ(`behavior.yml`)ごとにtree SHAを比較し、実際に変化した(または追加/削除された)Behaviorに由来するTestCaseのみを候補に含める。変化していない兄弟Behaviorの分は除外される。
+  - **`condition`**：同様にConditionディレクトリ(`condition.yml`)単位でさらに絞り込む。
+  - `behavior`/`condition`はFeature単位の変更検出そのもの(どのFeatureに`ChangeEvent`を1件生成するか、rename追跡、`true_divergences`判定)には影響しない。影響するのは`impacted_testcases`の絞り込みのみ。
+  - **注意(false negativeのリスク)**: Behavior/Conditionのスキーマには兄弟間の依存関係を表すフィールドが存在せず、本コマンドはそれを検出・推論しない。Feature境界には著者が暗黙に込めた関連性(共有のセットアップ、前提条件等)が含まれている可能性があり、`behavior`/`condition`はその関連性を意図的に無視した上で再現率(recall)を精度(precision)と引き換える機能である。この判断はツール側では保証できないため、利用者が個々のプロジェクトの実情に応じて選択する必要がある。
+  - 選択した粒度と、絞り込みの根拠は算出された各`ChangeEvent`の`impact_reason`フィールド(`granularity`と`changed_paths`)に記録される(後述の出力例を参照)。`changed_paths`は`behavior`/`condition`のときのみ、実際にtree SHAが変化した(または追加/削除された)Behavior/Conditionのマーカーファイルパス(`behavior.yml`/`condition.yml`)の一覧であり、`feature`のときは空配列になる(Feature単位では個々のBehavior/Conditionを解決しないため)。
 - `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.16節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.11節)。
 - 成功時、人間向け出力にはlegacyスキーマバージョン1へフォールバックした側ごとに`warning: ...`行が追加される。`--json`出力では同じメッセージが既存のJSON envelope内の`"warnings"`配列として含まれる。両refが`[knowledge].schema_version`を記録している場合はどちらも出力されない — JSON側の`"warnings"`キーは`[]`としてではなく、キー自体を省略する。同一`schema_version`内での追加はoptionalなフィールドに限られるため([verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)§5)。
@@ -761,6 +768,9 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
   to_tree_sha: 4d5e6f...
   impacted_testcases:
     - tc-ground-001
+  impact_reason:
+    granularity: feature
+    changed_paths: []
   change_type: null
   true_divergences: []
 ```
@@ -776,12 +786,34 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
   to_tree_sha: 7c8d9e...
   impacted_testcases:
     - tc-ground-001
+  impact_reason:
+    granularity: feature
+    changed_paths: []
   change_type: null
   true_divergences:
     - merge_commit: 9f8e7d...
       parent_tree_shas:
         - 2b3c4d...
         - 5e6f7a...
+```
+
+**出力例**(`--granularity behavior`指定時、Feature配下の一部Behaviorのみが変更された場合)
+
+```yaml
+- event_id: player-jump--m1--m2
+  feature_id: player-jump
+  from_milestone: m1
+  to_milestone: m2
+  from_tree_sha: 1a2b3c...
+  to_tree_sha: 4d5e6f...
+  impacted_testcases:
+    - tc-ground-001
+  impact_reason:
+    granularity: behavior
+    changed_paths:
+      - .markharness/knowledge/controls/player-jump/jump/behavior.yml
+  change_type: null
+  true_divergences: []
 ```
 
 **ユースケース対応**: UC5「ChangeEventを自動計算する」。本モデルの核心的貢献(§3.2〜3.4)の簡易実装。

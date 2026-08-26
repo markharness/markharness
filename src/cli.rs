@@ -448,6 +448,28 @@ impl From<ChangeTypeArg> for changes::ChangeType {
     }
 }
 
+/// The unit `impacted_testcases` is narrowed down to (issue #15). `Feature`
+/// is the default and matches the tool's behavior before this flag
+/// existed; `Behavior`/`Condition` trade recall for precision (see
+/// `changes::Granularity`'s doc comment).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GranularityArg {
+    #[default]
+    Feature,
+    Behavior,
+    Condition,
+}
+
+impl From<GranularityArg> for changes::Granularity {
+    fn from(value: GranularityArg) -> Self {
+        match value {
+            GranularityArg::Feature => changes::Granularity::Feature,
+            GranularityArg::Behavior => changes::Granularity::Behavior,
+            GranularityArg::Condition => changes::Granularity::Condition,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum ChangesCommand {
     /// Diff Feature blob SHAs between two milestone git tags and write changes/<to>.yaml
@@ -465,6 +487,9 @@ pub enum ChangesCommand {
         /// Derive impacted_testcases from the current knowledge/ working tree instead of the `to` milestone's committed tree (legacy behavior; recomputing the same past interval later can then yield a different result)
         #[arg(long)]
         current_tree: bool,
+        /// The unit impacted_testcases is narrowed down to. `feature` (default) keeps every TestCase generated from a changed Feature; `behavior`/`condition` narrow further, trading recall for precision (no coupling between siblings is detected — see docs/ja/cli-manual.md 1.12節)
+        #[arg(long, value_enum, default_value = "feature")]
+        granularity: GranularityArg,
     },
     /// Set change_type and/or related_events on an existing ChangeEvent under changes/ (§3.5, filled in by a human after compute)
     Annotate {
@@ -940,6 +965,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             dir,
             no_cache,
             current_tree,
+            granularity,
         }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let outcome = application::compute_changes(
@@ -957,6 +983,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     } else {
                         changes::ImpactSource::HistoricalTree
                     },
+                    granularity: granularity.into(),
                 },
             )?;
             presentation::emit(HumanPresenter.present(&outcome))?;
@@ -2661,6 +2688,8 @@ mod tests {
             "sample",
             "--no-cache",
             "--current-tree",
+            "--granularity",
+            "behavior",
         ]);
 
         match cli.command {
@@ -2670,12 +2699,28 @@ mod tests {
                 dir,
                 no_cache,
                 current_tree,
+                granularity,
             }) => {
                 assert_eq!(from, "m1");
                 assert_eq!(to, "m2");
                 assert_eq!(dir, Some(PathBuf::from("sample")));
                 assert!(no_cache);
                 assert!(current_tree);
+                assert_eq!(granularity, GranularityArg::Behavior);
+            }
+            _ => panic!("expected Changes Compute command"),
+        }
+    }
+
+    /// issue #15: `--granularity` defaults to `feature`, matching the
+    /// tool's behavior before this flag existed (safe-side default).
+    #[test]
+    fn parses_changes_compute_defaults_granularity_to_feature_when_omitted() {
+        let cli = Cli::parse_from(["markharness", "changes", "compute", "m1", "m2"]);
+
+        match cli.command {
+            Command::Changes(ChangesCommand::Compute { granularity, .. }) => {
+                assert_eq!(granularity, GranularityArg::Feature);
             }
             _ => panic!("expected Changes Compute command"),
         }

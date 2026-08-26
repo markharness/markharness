@@ -53,6 +53,11 @@ pub struct ChangeEvent {
     pub from_tree_sha: Option<String>,
     pub to_tree_sha: Option<String>,
     pub impacted_testcases: Vec<String>,
+    /// The granularity `impacted_testcases` was narrowed down to, and the
+    /// specific evidence for it when narrower than Feature (issue #15). See
+    /// `ImpactReason`'s doc comment.
+    #[serde(default)]
+    pub impact_reason: ImpactReason,
     #[serde(default)]
     pub change_type: Option<ChangeType>,
     /// One entry per two-parent merge commit found in the
@@ -103,10 +108,51 @@ pub enum ImpactSource {
     CurrentWorkingTree,
 }
 
+/// The unit at which `impacted_testcases` is narrowed down (issue #15).
+/// `Feature` (the default, and the only behavior before this option
+/// existed) keeps every TestCase generated from a changed Feature as a
+/// candidate — safe-side, but over-inclusive when only some of a Feature's
+/// Behaviors/Conditions actually changed. `Behavior`/`Condition` narrow the
+/// candidate set to only the Behaviors/Conditions whose own subtree
+/// actually changed, trading recall for precision: this tool has no way to
+/// detect coupling between sibling Behaviors/Conditions that isn't
+/// expressed in the schema, so choosing a finer granularity is an
+/// explicit, opt-in risk the user takes on (see the design discussion on
+/// issue #15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Granularity {
+    #[default]
+    Feature,
+    Behavior,
+    Condition,
+}
+
+/// Why each of a `ChangeEvent`'s `impacted_testcases` was selected (issue
+/// #15): the `Granularity` `changes compute` was run with, plus the
+/// repo-relative marker-file paths (`behavior.yml`/`condition.yml`) whose
+/// content actually differed between `from_milestone` and `to_milestone`
+/// and drove the narrowing decision. `changed_paths` is empty for
+/// `Granularity::Feature` — narrowing isn't attempted at that granularity
+/// (every TestCase generated from the changed Feature is included, exactly
+/// as before this option existed), so there's no per-subunit evidence to
+/// record; the Feature-level `from_tree_sha`/`to_tree_sha` already serve as
+/// that granularity's own reason. `#[serde(default)]` on `ChangeEvent`'s
+/// `impact_reason` field means a `ChangeEvent` written before this field
+/// existed round-trips as `Feature` with no `changed_paths` — exactly the
+/// behavior it had.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ImpactReason {
+    pub granularity: Granularity,
+    #[serde(default)]
+    pub changed_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChangeOptions {
     pub cache: CachePolicy,
     pub impact_source: ImpactSource,
+    pub granularity: Granularity,
 }
 
 impl Default for ChangeOptions {
@@ -114,6 +160,7 @@ impl Default for ChangeOptions {
         Self {
             cache: CachePolicy::Use,
             impact_source: ImpactSource::HistoricalTree,
+            granularity: Granularity::Feature,
         }
     }
 }
@@ -222,6 +269,149 @@ fn find_merge_commits_in_interval(
     git::merge_commits_between(root, from_milestone, to_milestone)
 }
 
+/// Separates the components of a `subunit_key` composite key. Not a
+/// character any `id:` field may contain (ids are lowercase alphanumeric
+/// and hyphens only — `docs/ja/cli-manual.md` 1.12節), so it can't collide
+/// with real id text.
+const SUBUNIT_KEY_SEP: char = '\u{1}';
+
+/// The key `impacted` (the per-`Granularity` testcase grouping below) and
+/// the "which subunits changed" computation in `diff_events` both use to
+/// refer to the same Behavior/Condition, so the two sides always agree.
+/// `Granularity::Feature` never calls this — `impacted` stays keyed by
+/// plain `feature_id`, as it always has been.
+fn subunit_key(feature_id: &str, behavior_id: &str, condition_id: Option<&str>) -> String {
+    match condition_id {
+        Some(condition_id) => {
+            format!("{feature_id}{SUBUNIT_KEY_SEP}{behavior_id}{SUBUNIT_KEY_SEP}{condition_id}")
+        }
+        None => format!("{feature_id}{SUBUNIT_KEY_SEP}{behavior_id}"),
+    }
+}
+
+/// `id_cache::resolve_behavior_versions`/`resolve_condition_versions`
+/// results (issue #15), grouped by the Feature directory each subunit
+/// belongs to — `diff_events` resolves this once per side of the interval,
+/// then looks up only the slice relevant to the Feature it's currently
+/// processing.
+struct SubunitsByFeatureDir(BTreeMap<String, Vec<id_cache::SubunitVersion>>);
+
+impl SubunitsByFeatureDir {
+    fn new(versions: Vec<id_cache::SubunitVersion>) -> Self {
+        let mut by_dir: BTreeMap<String, Vec<id_cache::SubunitVersion>> = BTreeMap::new();
+        for version in versions {
+            by_dir
+                .entry(version.parent_feature_dir.clone())
+                .or_default()
+                .push(version);
+        }
+        Self(by_dir)
+    }
+
+    fn under(&self, feature_dir: Option<&str>) -> &[id_cache::SubunitVersion] {
+        feature_dir
+            .and_then(|dir| self.0.get(dir))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
+/// The result of narrowing a Feature's `impacted_testcases` at Behavior/
+/// Condition granularity: the narrowed candidate set, plus the evidence for
+/// it (`ImpactReason::changed_paths`, issue #15).
+struct SubunitNarrowing {
+    testcases: Vec<String>,
+    changed_paths: Vec<String>,
+}
+
+/// Narrows a Feature's `impacted_testcases` down to only the Behaviors/
+/// Conditions that actually changed within it (issue #15), instead of
+/// every TestCase generated from the Feature. `from_here`/`to_here` are
+/// already scoped to this one Feature (`SubunitsByFeatureDir::under`).
+/// Keyed by `(parent_behavior_id, id)` rather than bare `id` because a
+/// Condition's `id` is only unique among its own Behavior's siblings (see
+/// `id_cache::resolve_marker_versions`'s doc comment) — without the
+/// Behavior discriminant, two Conditions with the same id under different
+/// Behaviors of the same Feature would collide.
+fn changed_subunit_impacted_testcases(
+    feature_id: &str,
+    granularity: Granularity,
+    from_here: &[id_cache::SubunitVersion],
+    to_here: &[id_cache::SubunitVersion],
+    impacted: &BTreeMap<String, Vec<String>>,
+) -> io::Result<SubunitNarrowing> {
+    let marker_file = match granularity {
+        Granularity::Behavior => "behavior.yml",
+        Granularity::Condition => "condition.yml",
+        Granularity::Feature => {
+            unreachable!("diff_events only calls this for Behavior/Condition granularity")
+        }
+    };
+    let from_by_key: BTreeMap<(Option<&str>, &str), &id_cache::SubunitVersion> = from_here
+        .iter()
+        .map(|v| ((v.parent_behavior_id.as_deref(), v.id.as_str()), v))
+        .collect();
+    let to_by_key: BTreeMap<(Option<&str>, &str), &id_cache::SubunitVersion> = to_here
+        .iter()
+        .map(|v| ((v.parent_behavior_id.as_deref(), v.id.as_str()), v))
+        .collect();
+    let all_keys: BTreeSet<(Option<&str>, &str)> = from_by_key
+        .keys()
+        .chain(to_by_key.keys())
+        .cloned()
+        .collect();
+
+    let mut testcases = Vec::new();
+    let mut changed_paths = Vec::new();
+    for key @ (parent_behavior_id, id) in all_keys {
+        let from_version = from_by_key.get(&key).copied();
+        let to_version = to_by_key.get(&key).copied();
+        let from_sha = from_version.map(|v| &v.tree_sha);
+        let to_sha = to_version.map(|v| &v.tree_sha);
+        if from_sha == to_sha {
+            continue;
+        }
+        // The changed subunit's directory itself, whichever side still has
+        // it (`to` when it exists there — the current, post-change state;
+        // `from` for a deletion) — evidence for `ImpactReason::changed_paths`.
+        let subunit_dir = to_version.or(from_version).map(|v| v.path.as_str());
+        if let Some(subunit_dir) = subunit_dir {
+            changed_paths.push(format!("{subunit_dir}/{marker_file}"));
+        }
+        let subunit_key_value = match granularity {
+            Granularity::Behavior => subunit_key(feature_id, id, None),
+            Granularity::Condition => {
+                // A `condition.yml` whose directory isn't beneath a
+                // resolvable `behavior.yml` (malformed `knowledge/`) — not
+                // this project's structural invariant to enforce silently,
+                // so fail with a clear error rather than panic on
+                // untrusted/external Knowledge content.
+                let Some(behavior_id) = parent_behavior_id else {
+                    let offending_path = to_version
+                        .or(from_version)
+                        .map(|v| v.path.as_str())
+                        .unwrap_or(id);
+                    return Err(io::Error::other(format!(
+                        "condition '{id}' at '{offending_path}' has no resolvable parent Behavior id; \
+                         --granularity condition requires every Condition directory to sit under a valid behavior.yml"
+                    )));
+                };
+                subunit_key(feature_id, behavior_id, Some(id))
+            }
+            Granularity::Feature => {
+                unreachable!("diff_events only calls this for Behavior/Condition granularity")
+            }
+        };
+        if let Some(case_ids) = impacted.get(&subunit_key_value) {
+            testcases.extend(case_ids.iter().cloned());
+        }
+    }
+    Ok(SubunitNarrowing {
+        testcases,
+        changed_paths,
+    })
+}
+
 /// Maps each Feature id to the `case_id`s of testcases generated from it,
 /// using the *current* `knowledge/` working tree as the structural
 /// generation graph (§3.2(A): `CONDITION`→`TESTCASE`, does not need version
@@ -229,12 +419,18 @@ fn find_merge_commits_in_interval(
 /// behavior, opted into via `ImpactSource::CurrentWorkingTree`: recomputing
 /// the same past `from_milestone..to_milestone` interval later can yield a
 /// different `impacted_testcases` set as the working tree keeps changing.
-fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec<String>>> {
+fn impacted_testcases_by_feature(
+    root: &Path,
+    granularity: Granularity,
+) -> io::Result<BTreeMap<String, Vec<String>>> {
     let source = WorkingTreeKnowledgeSource::new(
         root.join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge"),
     );
-    testcases_by_feature(generate::compile_testcases(&source.load_snapshot()?))
+    Ok(testcases_by_key(
+        generate::compile_testcases(&source.load_snapshot()?),
+        granularity,
+    ))
 }
 
 /// Maps each Feature id to the `case_id`s of testcases generated from it, as
@@ -249,22 +445,41 @@ fn impacted_testcases_by_feature(root: &Path) -> io::Result<BTreeMap<String, Vec
 fn historical_testcases_by_feature(
     root: &Path,
     milestone: &str,
+    granularity: Granularity,
 ) -> io::Result<BTreeMap<String, Vec<String>>> {
     let source = GitTreeKnowledgeSource::new(root, milestone);
-    testcases_by_feature(generate::compile_testcases(&source.load_snapshot()?))
+    Ok(testcases_by_key(
+        generate::compile_testcases(&source.load_snapshot()?),
+        granularity,
+    ))
 }
 
-fn testcases_by_feature(
+/// Groups `case_id`s by the id text at `granularity` (issue #15): plain
+/// `feature_id` for `Granularity::Feature` (unchanged from before this
+/// option existed), or a `subunit_key` composite for `Behavior`/
+/// `Condition` so `diff_events` can narrow the candidate set to only the
+/// Behaviors/Conditions it independently determined actually changed.
+fn testcases_by_key(
     testcases: Vec<generate::TestCase>,
-) -> io::Result<BTreeMap<String, Vec<String>>> {
-    let mut by_feature: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    granularity: Granularity,
+) -> BTreeMap<String, Vec<String>> {
+    let mut by_key: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for testcase in testcases {
-        by_feature
-            .entry(testcase.generated_from.feature.clone())
-            .or_default()
-            .push(testcase.case_id);
+        let generated_from = &testcase.generated_from;
+        let key = match granularity {
+            Granularity::Feature => generated_from.feature.clone(),
+            Granularity::Behavior => {
+                subunit_key(&generated_from.feature, &generated_from.behavior, None)
+            }
+            Granularity::Condition => subunit_key(
+                &generated_from.feature,
+                &generated_from.behavior,
+                Some(&generated_from.condition),
+            ),
+        };
+        by_key.entry(key).or_default().push(testcase.case_id);
     }
-    Ok(by_feature)
+    by_key
 }
 
 /// Computes `derived_from`-style change events between `from_milestone` and
@@ -381,8 +596,27 @@ fn diff_events(
         use_cache,
     )?);
     let impacted = match options.impact_source {
-        ImpactSource::HistoricalTree => historical_testcases_by_feature(root, to_milestone)?,
-        ImpactSource::CurrentWorkingTree => impacted_testcases_by_feature(root)?,
+        ImpactSource::HistoricalTree => {
+            historical_testcases_by_feature(root, to_milestone, options.granularity)?
+        }
+        ImpactSource::CurrentWorkingTree => {
+            impacted_testcases_by_feature(root, options.granularity)?
+        }
+    };
+    // Only resolved when narrower than Feature granularity is requested
+    // (issue #15): an extra `git ls-tree` per side that a `Feature`-only
+    // run (the default, and every run before this option existed) must not
+    // pay for.
+    let subunits = match options.granularity {
+        Granularity::Feature => None,
+        Granularity::Behavior => Some((
+            SubunitsByFeatureDir::new(id_cache::resolve_behavior_versions(root, from_milestone)?),
+            SubunitsByFeatureDir::new(id_cache::resolve_behavior_versions(root, to_milestone)?),
+        )),
+        Granularity::Condition => Some((
+            SubunitsByFeatureDir::new(id_cache::resolve_condition_versions(root, from_milestone)?),
+            SubunitsByFeatureDir::new(id_cache::resolve_condition_versions(root, to_milestone)?),
+        )),
     };
     let merge_commits = find_merge_commits_in_interval(root, from_milestone, to_milestone)?;
     let mut true_divergences_by_key: BTreeMap<String, Vec<TrueDivergence>> = BTreeMap::new();
@@ -441,12 +675,27 @@ fn diff_events(
         // `impacted` is keyed by the literal id text `generate.rs` wrote
         // into `generated_from.feature` at the relevant tree state
         // (§2.1), never by uid — look it up by display id, not `key`.
-        let impacted_testcases = raw_id_at_to
-            .as_ref()
-            .or(raw_id_at_from.as_ref())
-            .and_then(|id| impacted.get(id))
-            .cloned()
-            .unwrap_or_default();
+        let (impacted_testcases, changed_paths) = match &subunits {
+            None => (
+                raw_id_at_to
+                    .as_ref()
+                    .or(raw_id_at_from.as_ref())
+                    .and_then(|id| impacted.get(id))
+                    .cloned()
+                    .unwrap_or_default(),
+                Vec::new(),
+            ),
+            Some((from_subunits, to_subunits)) => {
+                let narrowing = changed_subunit_impacted_testcases(
+                    &feature_id,
+                    options.granularity,
+                    from_subunits.under(from.map(|v| v.path.as_str())),
+                    to_subunits.under(to.map(|v| v.path.as_str())),
+                    &impacted,
+                )?;
+                (narrowing.testcases, narrowing.changed_paths)
+            }
+        };
         events.push(ChangeEvent {
             event_id: format!("{feature_id}--{from_milestone}--{to_milestone}"),
             feature_id,
@@ -458,6 +707,10 @@ fn diff_events(
             from_tree_sha,
             to_tree_sha,
             impacted_testcases,
+            impact_reason: ImpactReason {
+                granularity: options.granularity,
+                changed_paths,
+            },
             change_type: None,
             true_divergences,
             related_events: Vec::new(),
@@ -483,7 +736,58 @@ pub fn read_changes(root: &Path, milestone: &str) -> io::Result<Vec<ChangeEvent>
         return Ok(Vec::new());
     }
     let content = fs::read_to_string(path)?;
-    serde_yaml_ng::from_str(&content).map_err(io::Error::other)
+    parse_change_events(&content)
+}
+
+/// Every reader of a `changes/*.yaml` file's content — `read_changes` and
+/// the `annotate_*` functions below, which read-modify-write the same
+/// files — must go through this, not `serde_yaml_ng::from_str` directly:
+/// only this path runs `migrate_legacy_granularity_field`. An `annotate_*`
+/// call that bypassed it would read a legacy `ChangeEvent` with its
+/// granularity already silently lost to `impact_reason`'s
+/// `#[serde(default)]`, then *write that loss back to disk* — turning a
+/// transient read-time gap into permanent data loss (Codex review on PR
+/// #36).
+fn parse_change_events(content: &str) -> io::Result<Vec<ChangeEvent>> {
+    let mut value: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(content).map_err(io::Error::other)?;
+    migrate_legacy_granularity_field(&mut value);
+    serde_yaml_ng::from_value(value).map_err(io::Error::other)
+}
+
+/// Migrates a `ChangeEvent` written with issue #15's short-lived
+/// intermediate shape — a top-level `granularity` scalar, from before the
+/// `impact_reason` follow-up fix (PR #36) — into the current
+/// `impact_reason.granularity` shape. Without this, `#[serde(default)]` on
+/// `impact_reason` would silently discard the recorded granularity and
+/// reset every such `ChangeEvent` to `Feature`, misrepresenting what
+/// `changes compute` was actually run with (a plain schema-evolution
+/// oversight caught by Codex review, not an intentional legacy-fallback
+/// policy elsewhere in this codebase). `changed_paths` cannot be
+/// recovered — that intermediate shape never recorded it — so it migrates
+/// to empty, same as `Granularity::Feature`'s.
+fn migrate_legacy_granularity_field(value: &mut serde_yaml_ng::Value) {
+    let Some(events) = value.as_sequence_mut() else {
+        return;
+    };
+    for event in events {
+        let Some(mapping) = event.as_mapping_mut() else {
+            continue;
+        };
+        if mapping.contains_key("impact_reason") {
+            continue;
+        }
+        let Some(granularity) = mapping.remove("granularity") else {
+            continue;
+        };
+        let mut impact_reason = serde_yaml_ng::Mapping::new();
+        impact_reason.insert("granularity".into(), granularity);
+        impact_reason.insert(
+            "changed_paths".into(),
+            serde_yaml_ng::Value::Sequence(Vec::new()),
+        );
+        mapping.insert("impact_reason".into(), impact_reason.into());
+    }
 }
 
 /// Why `markharness changes annotate` failed to set a `change_type` or
@@ -515,8 +819,7 @@ pub fn annotate_change_type(
 ) -> Result<(), AnnotateError> {
     for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
-        let mut events: Vec<ChangeEvent> =
-            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let mut events = parse_change_events(&content)?;
         let Some(event) = events.iter_mut().find(|e| e.event_id == event_id) else {
             continue;
         };
@@ -557,8 +860,7 @@ pub fn validate_annotate_ids(
     let mut known_ids: BTreeSet<String> = BTreeSet::new();
     for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
-        let events: Vec<ChangeEvent> =
-            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let events = parse_change_events(&content)?;
         known_ids.extend(events.into_iter().map(|e| e.event_id));
     }
 
@@ -590,8 +892,7 @@ pub fn annotate_related_events(
 
     for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
-        let mut events: Vec<ChangeEvent> =
-            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let mut events = parse_change_events(&content)?;
         let Some(event) = events.iter_mut().find(|e| e.event_id == event_id) else {
             continue;
         };
@@ -683,6 +984,43 @@ mod tests {
         .unwrap();
     }
 
+    /// Like `write_full_chain`, but the Feature has two Behaviors (`jump`,
+    /// `duck`), each with one Condition/ExpectedResult — for issue #15's
+    /// `--granularity` narrowing tests, where a single-Behavior Feature
+    /// can't distinguish "narrowed to the changed Behavior" from "not
+    /// narrowed at all".
+    fn write_two_behavior_chain(root: &Path, jump_label: &str, duck_label: &str) {
+        write_full_chain(root, "player-jump");
+        let duck_dir = root.join(".markharness/knowledge/controls/player-jump/duck");
+        let duck_base = duck_dir.join("low");
+        fs::create_dir_all(&duck_base).unwrap();
+        fs::write(
+            root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
+            format!(
+                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  {jump_label}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            duck_dir.join("behavior.yml"),
+            format!(
+                "id: duck\nfeature: player-jump\nlabel: duck\naxis: [gameplay]\ndescription: |\n  {duck_label}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            duck_base.join("condition.yml"),
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck low.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(duck_base.join("expected")).unwrap();
+        fs::write(
+            duck_base.join("expected/001.yml"),
+            "id: low-001\ncondition: low\ndescription: |\n  ducks safely\n",
+        )
+        .unwrap();
+    }
+
     fn commit_and_tag(root: &Path, message: &str, tag: &str) {
         run_git(root, &["add", "-A"]);
         run_git(root, &["commit", "-q", "-m", message]);
@@ -722,6 +1060,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap_err();
@@ -752,6 +1091,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap_err();
@@ -795,6 +1135,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -844,6 +1185,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -872,6 +1214,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -895,6 +1238,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -947,6 +1291,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -995,6 +1340,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::CurrentWorkingTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1011,6 +1357,240 @@ mod tests {
                 "tc-controls-player-jump-jump-air".to_string(),
                 "tc-controls-player-jump-jump-ground".to_string(),
             ]
+        );
+    }
+
+    /// The core value of issue #15: with `--granularity behavior`, editing
+    /// only one Behavior's Condition must not pull in TestCases generated
+    /// from an untouched sibling Behavior under the same Feature — the
+    /// default `Granularity::Feature` behavior this test's twin below
+    /// contrasts against.
+    #[test]
+    fn granularity_behavior_narrows_impacted_testcases_to_the_changed_behavior_only() {
+        let dir = init_repo();
+        write_two_behavior_chain(dir.path(), "jump v1", "duck v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        // Only the `duck` Behavior's Condition changes; `jump` is untouched.
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/duck/low/condition.yml"),
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Behavior,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(events.len(), 1, "expected one ChangeEvent, got {events:?}");
+        let event = &events[0];
+        assert_eq!(event.feature_id, "player-jump");
+        assert_eq!(event.impact_reason.granularity, Granularity::Behavior);
+        assert_eq!(
+            event.impacted_testcases,
+            vec!["tc-controls-player-jump-duck-low".to_string()],
+            "the untouched jump Behavior's TestCase must not be included"
+        );
+        assert_eq!(
+            event.impact_reason.changed_paths,
+            vec![".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string()],
+            "changed_paths must name the duck Behavior as the evidence, not jump"
+        );
+    }
+
+    /// Contrasts with the test above: the same edit, but with the default
+    /// `Granularity::Feature`, must still include both Behaviors' TestCases
+    /// — confirming `--granularity` is opt-in and doesn't change default
+    /// behavior.
+    #[test]
+    fn granularity_feature_default_still_includes_every_behavior_under_the_changed_feature() {
+        let dir = init_repo();
+        write_two_behavior_chain(dir.path(), "jump v1", "duck v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/duck/low/condition.yml"),
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
+            },
+        )
+        .unwrap();
+
+        let event = &events[0];
+        let mut impacted = event.impacted_testcases.clone();
+        impacted.sort();
+        assert_eq!(
+            impacted,
+            vec![
+                "tc-controls-player-jump-duck-low".to_string(),
+                "tc-controls-player-jump-jump-ground".to_string(),
+            ]
+        );
+    }
+
+    /// `--granularity condition` narrows even further than `behavior`: a
+    /// second Condition added under the *same* Behavior as an untouched
+    /// one must not pull the untouched Condition's TestCase in.
+    #[test]
+    fn granularity_condition_narrows_impacted_testcases_to_the_changed_condition_only() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        let air = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/jump/air");
+        fs::create_dir_all(&air).unwrap();
+        fs::write(
+            air.join("condition.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(air.join("expected")).unwrap();
+        fs::write(
+            air.join("expected/001.yml"),
+            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        // Only the `air` Condition changes; `ground` is untouched.
+        fs::write(
+            air.join("condition.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air, higher.\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Condition,
+            },
+        )
+        .unwrap();
+
+        let event = &events[0];
+        assert_eq!(event.impact_reason.granularity, Granularity::Condition);
+        assert_eq!(
+            event.impacted_testcases,
+            vec!["tc-controls-player-jump-jump-air".to_string()],
+            "the untouched ground Condition's TestCase must not be included"
+        );
+        assert_eq!(
+            event.impact_reason.changed_paths,
+            vec![".markharness/knowledge/controls/player-jump/jump/air/condition.yml".to_string()],
+            "changed_paths must name the air Condition as the evidence, not ground"
+        );
+    }
+
+    /// Malformed `knowledge/`: a `condition.yml` directory that doesn't sit
+    /// beneath a `behavior.yml` (here, directly under the Feature). Codex
+    /// review flagged an earlier version of this code for panicking
+    /// (`.expect`) on this input instead of failing gracefully —
+    /// `CONTRIBUTING.md` requires malformed external content to error, not
+    /// crash the process.
+    #[test]
+    fn granularity_condition_errors_instead_of_panicking_on_a_condition_with_no_parent_behavior() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        // Same depth as a well-formed `<feature>/<behavior>/<condition>/`
+        // (so it resolves to the real `player-jump` Feature, and isn't
+        // silently dropped as belonging to no Feature), but `not-a-behavior`
+        // has no `behavior.yml` of its own.
+        let stray = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/not-a-behavior/stray");
+        fs::create_dir_all(&stray).unwrap();
+        fs::write(
+            stray.join("condition.yml"),
+            "id: stray\nbehavior: nonexistent\nlabel: stray\ndescription: |\n  Not under a Behavior.\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let err = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Condition,
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("stray"),
+            "expected the error to name the offending Condition, got: {err}"
+        );
+    }
+
+    /// A Behavior added between milestones must have its TestCases show up
+    /// as impacted at `--granularity behavior` (added, not just modified,
+    /// subunits must be treated as changed).
+    #[test]
+    fn granularity_behavior_includes_a_newly_added_behavior() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        // `write_full_chain`'s fixed jump Behavior description, passed
+        // through unchanged, so `jump` is byte-identical at m1 and m2 —
+        // only the newly added `duck` Behavior differs.
+        write_two_behavior_chain(dir.path(), "Player presses jump.", "duck v1");
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Behavior,
+            },
+        )
+        .unwrap();
+
+        let event = &events[0];
+        assert_eq!(
+            event.impacted_testcases,
+            vec!["tc-controls-player-jump-duck-low".to_string()],
+            "the newly added duck Behavior's TestCase must be included, \
+             and the untouched jump Behavior's must not"
+        );
+        assert_eq!(
+            event.impact_reason.changed_paths,
+            vec![".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string()],
+            "changed_paths must name the newly added duck Behavior"
         );
     }
 
@@ -1037,6 +1617,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1067,6 +1648,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1092,6 +1674,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1117,6 +1700,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1137,6 +1721,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
+            impact_reason: ImpactReason::default(),
             change_type: Some(ChangeType::SpecChange),
             true_divergences: Vec::new(),
             related_events: Vec::new(),
@@ -1170,6 +1755,114 @@ mod tests {
         assert_eq!(read[0].change_type, None);
     }
 
+    /// Same as above for `granularity` (issue #15): a `ChangeEvent` written
+    /// before this field existed has no `granularity` key, and must be
+    /// read back as `Feature` — exactly the behavior it had.
+    #[test]
+    fn read_changes_defaults_granularity_to_feature_for_files_written_before_the_field_existed() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n",
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert_eq!(read[0].impact_reason.granularity, Granularity::Feature);
+    }
+
+    /// Codex review on PR #36: a `ChangeEvent` written with issue #15's
+    /// short-lived intermediate shape (a top-level `granularity: behavior`
+    /// scalar, before the `impact_reason` follow-up fix) must migrate its
+    /// recorded granularity into `impact_reason.granularity`, not silently
+    /// discard it as `#[serde(default)]` would reset it to `Feature`.
+    #[test]
+    fn read_changes_migrates_the_legacy_top_level_granularity_field_into_impact_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: behavior\n",
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert_eq!(read[0].impact_reason.granularity, Granularity::Behavior);
+        assert!(
+            read[0].impact_reason.changed_paths.is_empty(),
+            "changed_paths was never recorded in the intermediate shape, so it migrates to empty"
+        );
+    }
+
+    /// A `ChangeEvent` already written in the current `impact_reason` shape
+    /// must not be affected by the legacy-`granularity` migration (no
+    /// top-level `granularity` key to accidentally reinterpret).
+    #[test]
+    fn read_changes_leaves_the_current_impact_reason_shape_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  impact_reason:\n    granularity: condition\n    changed_paths: [foo/condition.yml]\n",
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert_eq!(read[0].impact_reason.granularity, Granularity::Condition);
+        assert_eq!(
+            read[0].impact_reason.changed_paths,
+            vec!["foo/condition.yml".to_string()]
+        );
+    }
+
+    /// `changes compute` records the granularity and the changed-path
+    /// evidence it was run with (issue #15) so a reader of
+    /// `changes/<to>.yaml` doesn't have to guess whether/why
+    /// `impacted_testcases` was narrowed below Feature level.
+    #[test]
+    fn impact_reason_serializes_granularity_as_snake_case_and_carries_changed_paths() {
+        let events = vec![ChangeEvent {
+            impact_reason: ImpactReason {
+                granularity: Granularity::Behavior,
+                changed_paths: vec![
+                    ".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string(),
+                ],
+            },
+            ..sample_event("player-jump--m1--m2")
+        }];
+
+        let yaml = serialize_changes(&events);
+
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(
+            parsed[0]["impact_reason"]["granularity"].as_str(),
+            Some("behavior")
+        );
+        assert_eq!(
+            parsed[0]["impact_reason"]["changed_paths"][0].as_str(),
+            Some(".markharness/knowledge/controls/player-jump/duck/behavior.yml")
+        );
+    }
+
     #[test]
     fn serialize_changes_produces_valid_yaml() {
         let events = vec![ChangeEvent {
@@ -1183,6 +1876,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
+            impact_reason: ImpactReason::default(),
             change_type: None,
             true_divergences: Vec::new(),
             related_events: Vec::new(),
@@ -1214,6 +1908,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
+            impact_reason: ImpactReason::default(),
             change_type: None,
             true_divergences: Vec::new(),
             related_events: Vec::new(),
@@ -1250,6 +1945,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
+            impact_reason: ImpactReason::default(),
             change_type: None,
             true_divergences: Vec::new(),
             related_events: Vec::new(),
@@ -1275,6 +1971,40 @@ mod tests {
 
         let events = read_changes(dir.path(), "m2").unwrap();
         assert_eq!(events[0].change_type, Some(ChangeType::BugFix));
+    }
+
+    /// Codex review on PR #36: `annotate_change_type` reads, mutates, and
+    /// *rewrites* `changes/*.yaml` — if it read a legacy `granularity:
+    /// behavior` event without migrating it first, the granularity would
+    /// silently reset to `Feature` in memory and that loss would then be
+    /// written back to disk permanently, unlike a plain read which only
+    /// loses the information transiently. Verifies the fix in
+    /// `parse_change_events` (shared by `read_changes` and every
+    /// `annotate_*` function) covers this path too.
+    #[test]
+    fn annotate_change_type_preserves_legacy_granularity_through_a_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: behavior\n",
+        )
+        .unwrap();
+
+        annotate_change_type(dir.path(), "player-jump--m1--m2", ChangeType::BugFix).unwrap();
+
+        let events = read_changes(dir.path(), "m2").unwrap();
+        assert_eq!(events[0].change_type, Some(ChangeType::BugFix));
+        assert_eq!(
+            events[0].impact_reason.granularity,
+            Granularity::Behavior,
+            "the rewrite by annotate_change_type must not have discarded the legacy granularity"
+        );
     }
 
     #[test]
@@ -1361,6 +2091,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1429,6 +2160,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1455,6 +2187,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             },
         )
         .unwrap();
@@ -1517,6 +2250,43 @@ mod tests {
         let read = read_changes(dir.path(), "m2").unwrap();
 
         assert!(read[0].related_events.is_empty());
+    }
+
+    /// Same as `annotate_change_type_preserves_legacy_granularity_through_a_rewrite`,
+    /// for `annotate_related_events`'s rewrite path.
+    #[test]
+    fn annotate_related_events_preserves_legacy_granularity_through_a_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: condition\n- event_id: other-feature--m1--m2\n  feature_id: other-feature\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: ccc\n  to_tree_sha: ddd\n  impacted_testcases: []\n",
+        )
+        .unwrap();
+
+        annotate_related_events(
+            dir.path(),
+            "player-jump--m1--m2",
+            &["other-feature--m1--m2".to_string()],
+        )
+        .unwrap();
+
+        let events = read_changes(dir.path(), "m2").unwrap();
+        let annotated = events
+            .iter()
+            .find(|e| e.event_id == "player-jump--m1--m2")
+            .unwrap();
+        assert_eq!(annotated.related_events, vec!["other-feature--m1--m2"]);
+        assert_eq!(
+            annotated.impact_reason.granularity,
+            Granularity::Condition,
+            "the rewrite by annotate_related_events must not have discarded the legacy granularity"
+        );
     }
 
     #[test]
@@ -1613,6 +2383,7 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Use,
                 impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Feature,
             }
         );
     }

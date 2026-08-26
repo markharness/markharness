@@ -2,7 +2,7 @@
 #![allow(clippy::disallowed_methods)]
 
 use markharness::application;
-use markharness::changes::{CachePolicy, ChangeOptions, ImpactSource};
+use markharness::changes::{CachePolicy, ChangeOptions, Granularity, ImpactSource};
 use markharness::presentation::CommandOutcome;
 use std::path::Path;
 use std::process::Command;
@@ -189,6 +189,7 @@ fn compute_changes_use_case_writes_change_events_and_returns_an_outcome() {
         ChangeOptions {
             cache: CachePolicy::Bypass,
             impact_source: ImpactSource::HistoricalTree,
+            granularity: Granularity::Feature,
         },
     )
     .unwrap();
