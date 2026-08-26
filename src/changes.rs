@@ -736,7 +736,45 @@ pub fn read_changes(root: &Path, milestone: &str) -> io::Result<Vec<ChangeEvent>
         return Ok(Vec::new());
     }
     let content = fs::read_to_string(path)?;
-    serde_yaml_ng::from_str(&content).map_err(io::Error::other)
+    let mut value: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+    migrate_legacy_granularity_field(&mut value);
+    serde_yaml_ng::from_value(value).map_err(io::Error::other)
+}
+
+/// Migrates a `ChangeEvent` written with issue #15's short-lived
+/// intermediate shape — a top-level `granularity` scalar, from before the
+/// `impact_reason` follow-up fix (PR #36) — into the current
+/// `impact_reason.granularity` shape. Without this, `#[serde(default)]` on
+/// `impact_reason` would silently discard the recorded granularity and
+/// reset every such `ChangeEvent` to `Feature`, misrepresenting what
+/// `changes compute` was actually run with (a plain schema-evolution
+/// oversight caught by Codex review, not an intentional legacy-fallback
+/// policy elsewhere in this codebase). `changed_paths` cannot be
+/// recovered — that intermediate shape never recorded it — so it migrates
+/// to empty, same as `Granularity::Feature`'s.
+fn migrate_legacy_granularity_field(value: &mut serde_yaml_ng::Value) {
+    let Some(events) = value.as_sequence_mut() else {
+        return;
+    };
+    for event in events {
+        let Some(mapping) = event.as_mapping_mut() else {
+            continue;
+        };
+        if mapping.contains_key("impact_reason") {
+            continue;
+        }
+        let Some(granularity) = mapping.remove("granularity") else {
+            continue;
+        };
+        let mut impact_reason = serde_yaml_ng::Mapping::new();
+        impact_reason.insert("granularity".into(), granularity);
+        impact_reason.insert(
+            "changed_paths".into(),
+            serde_yaml_ng::Value::Sequence(Vec::new()),
+        );
+        mapping.insert("impact_reason".into(), impact_reason.into());
+    }
 }
 
 /// Why `markharness changes annotate` failed to set a `change_type` or
@@ -1728,6 +1766,62 @@ mod tests {
         let read = read_changes(dir.path(), "m2").unwrap();
 
         assert_eq!(read[0].impact_reason.granularity, Granularity::Feature);
+    }
+
+    /// Codex review on PR #36: a `ChangeEvent` written with issue #15's
+    /// short-lived intermediate shape (a top-level `granularity: behavior`
+    /// scalar, before the `impact_reason` follow-up fix) must migrate its
+    /// recorded granularity into `impact_reason.granularity`, not silently
+    /// discard it as `#[serde(default)]` would reset it to `Feature`.
+    #[test]
+    fn read_changes_migrates_the_legacy_top_level_granularity_field_into_impact_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: behavior\n",
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert_eq!(read[0].impact_reason.granularity, Granularity::Behavior);
+        assert!(
+            read[0].impact_reason.changed_paths.is_empty(),
+            "changed_paths was never recorded in the intermediate shape, so it migrates to empty"
+        );
+    }
+
+    /// A `ChangeEvent` already written in the current `impact_reason` shape
+    /// must not be affected by the legacy-`granularity` migration (no
+    /// top-level `granularity` key to accidentally reinterpret).
+    #[test]
+    fn read_changes_leaves_the_current_impact_reason_shape_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  impact_reason:\n    granularity: condition\n    changed_paths: [foo/condition.yml]\n",
+        )
+        .unwrap();
+
+        let read = read_changes(dir.path(), "m2").unwrap();
+
+        assert_eq!(read[0].impact_reason.granularity, Granularity::Condition);
+        assert_eq!(
+            read[0].impact_reason.changed_paths,
+            vec!["foo/condition.yml".to_string()]
+        );
     }
 
     /// `changes compute` records the granularity and the changed-path
