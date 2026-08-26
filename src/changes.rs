@@ -736,8 +736,21 @@ pub fn read_changes(root: &Path, milestone: &str) -> io::Result<Vec<ChangeEvent>
         return Ok(Vec::new());
     }
     let content = fs::read_to_string(path)?;
+    parse_change_events(&content)
+}
+
+/// Every reader of a `changes/*.yaml` file's content — `read_changes` and
+/// the `annotate_*` functions below, which read-modify-write the same
+/// files — must go through this, not `serde_yaml_ng::from_str` directly:
+/// only this path runs `migrate_legacy_granularity_field`. An `annotate_*`
+/// call that bypassed it would read a legacy `ChangeEvent` with its
+/// granularity already silently lost to `impact_reason`'s
+/// `#[serde(default)]`, then *write that loss back to disk* — turning a
+/// transient read-time gap into permanent data loss (Codex review on PR
+/// #36).
+fn parse_change_events(content: &str) -> io::Result<Vec<ChangeEvent>> {
     let mut value: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        serde_yaml_ng::from_str(content).map_err(io::Error::other)?;
     migrate_legacy_granularity_field(&mut value);
     serde_yaml_ng::from_value(value).map_err(io::Error::other)
 }
@@ -806,8 +819,7 @@ pub fn annotate_change_type(
 ) -> Result<(), AnnotateError> {
     for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
-        let mut events: Vec<ChangeEvent> =
-            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let mut events = parse_change_events(&content)?;
         let Some(event) = events.iter_mut().find(|e| e.event_id == event_id) else {
             continue;
         };
@@ -848,8 +860,7 @@ pub fn validate_annotate_ids(
     let mut known_ids: BTreeSet<String> = BTreeSet::new();
     for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
-        let events: Vec<ChangeEvent> =
-            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let events = parse_change_events(&content)?;
         known_ids.extend(events.into_iter().map(|e| e.event_id));
     }
 
@@ -881,8 +892,7 @@ pub fn annotate_related_events(
 
     for path in changes_yaml_paths(root)? {
         let content = fs::read_to_string(&path)?;
-        let mut events: Vec<ChangeEvent> =
-            serde_yaml_ng::from_str(&content).map_err(io::Error::other)?;
+        let mut events = parse_change_events(&content)?;
         let Some(event) = events.iter_mut().find(|e| e.event_id == event_id) else {
             continue;
         };
@@ -1963,6 +1973,40 @@ mod tests {
         assert_eq!(events[0].change_type, Some(ChangeType::BugFix));
     }
 
+    /// Codex review on PR #36: `annotate_change_type` reads, mutates, and
+    /// *rewrites* `changes/*.yaml` — if it read a legacy `granularity:
+    /// behavior` event without migrating it first, the granularity would
+    /// silently reset to `Feature` in memory and that loss would then be
+    /// written back to disk permanently, unlike a plain read which only
+    /// loses the information transiently. Verifies the fix in
+    /// `parse_change_events` (shared by `read_changes` and every
+    /// `annotate_*` function) covers this path too.
+    #[test]
+    fn annotate_change_type_preserves_legacy_granularity_through_a_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: behavior\n",
+        )
+        .unwrap();
+
+        annotate_change_type(dir.path(), "player-jump--m1--m2", ChangeType::BugFix).unwrap();
+
+        let events = read_changes(dir.path(), "m2").unwrap();
+        assert_eq!(events[0].change_type, Some(ChangeType::BugFix));
+        assert_eq!(
+            events[0].impact_reason.granularity,
+            Granularity::Behavior,
+            "the rewrite by annotate_change_type must not have discarded the legacy granularity"
+        );
+    }
+
     #[test]
     fn annotate_change_type_preserves_other_events_in_the_same_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -2206,6 +2250,43 @@ mod tests {
         let read = read_changes(dir.path(), "m2").unwrap();
 
         assert!(read[0].related_events.is_empty());
+    }
+
+    /// Same as `annotate_change_type_preserves_legacy_granularity_through_a_rewrite`,
+    /// for `annotate_related_events`'s rewrite path.
+    #[test]
+    fn annotate_related_events_preserves_legacy_granularity_through_a_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("changes"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/changes/m2.yaml"),
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: condition\n- event_id: other-feature--m1--m2\n  feature_id: other-feature\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: ccc\n  to_tree_sha: ddd\n  impacted_testcases: []\n",
+        )
+        .unwrap();
+
+        annotate_related_events(
+            dir.path(),
+            "player-jump--m1--m2",
+            &["other-feature--m1--m2".to_string()],
+        )
+        .unwrap();
+
+        let events = read_changes(dir.path(), "m2").unwrap();
+        let annotated = events
+            .iter()
+            .find(|e| e.event_id == "player-jump--m1--m2")
+            .unwrap();
+        assert_eq!(annotated.related_events, vec!["other-feature--m1--m2"]);
+        assert_eq!(
+            annotated.impact_reason.granularity,
+            Granularity::Condition,
+            "the rewrite by annotate_related_events must not have discarded the legacy granularity"
+        );
     }
 
     #[test]
