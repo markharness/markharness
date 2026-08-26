@@ -727,7 +727,7 @@ Read-optimized derivative indexes can be rebuilt with `markharness cache index [
 ### 1.12 `markharness changes compute` — Computing ChangeEvents (UC5: automatically compute ChangeEvent)
 
 ```text
-markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [-d, --dir <path>]
+markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [--granularity <feature|behavior|condition>] [-d, --dir <path>]
 ```
 
 **Purpose**: Between two milestones (using the git tag name as-is; milestone boundaries are determined purely by tag-name match, and correspondence with `.markharness/executions/*/milestone.yml` is the caller's responsibility), compares the tree SHA of each Feature directory under `.markharness/knowledge/` via `git ls-tree -r <tag> -- .markharness/knowledge`, computes a `ChangeEvent` for each changed Feature, and writes it to `.markharness/changes/<to-milestone>.yaml`. The Feature id uses the `id:` field of each `feature.yml` as the canonical source, and is tracked independently of the directory name (paper §3.3).
@@ -743,6 +743,13 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
 - `impacted_testcases` lists the `TestCase.case_id`s originating from the changed Feature, enumerated from the same generation graph as `generate` (section 1.5) (the structural generation graph of §3.2(A); version history is not used). Which point in time's `.markharness/knowledge/` this generation graph is built from splits into two modes as of 2026-08 (as of 2026-08-12; see also [change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4).
   - **Default (`--current-tree` not given)**: Built by loading the `.markharness/knowledge/` tree pointed to by the `to-milestone` tag directly from Git blobs. Recomputing the same interval later always yields the same result.
   - **When `--current-tree` is given**: Built from `.markharness/knowledge/` in the current working tree (legacy behavior). As long as the working tree keeps changing, recomputation results for the same interval can also change.
+- **`--granularity <feature|behavior|condition>` (default: `feature`)**: Selects the unit `impacted_testcases` is narrowed down to (issue #15).
+  - **`feature` (default)**: Unchanged from before this option existed — includes every TestCase originating from a changed Feature as a candidate (conservative, safe-side).
+  - **`behavior`**: Compares tree SHAs per Behavior directory (`behavior.yml`) under the Feature, and includes only the TestCases originating from a Behavior that actually changed (or was added/removed). TestCases from an untouched sibling Behavior are excluded.
+  - **`condition`**: Narrows further still, at the Condition directory (`condition.yml`) level.
+  - `behavior`/`condition` do not affect Feature-level change *detection* itself (which Feature gets a `ChangeEvent`, rename tracking, `true_divergences`) — only the narrowing of `impacted_testcases`.
+  - **Caveat (false-negative risk)**: The Behavior/Condition schema has no field expressing dependencies between siblings, and this command does not detect or infer any. A Feature boundary may encode an author's implicit coupling (shared setup, preconditions, etc.) that `behavior`/`condition` deliberately ignores in exchange for precision over recall. Since the tool cannot guarantee this trade-off is safe for any given project, the choice is left to the user's judgment of their own project.
+  - The chosen granularity is recorded on each computed `ChangeEvent`'s `granularity` field (see the output examples below).
 - `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.16) (§3.5).
 - Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.11), keyed by content-addressing.
 - On success, human output appends one `warning: ...` line per side that fell back to legacy schema version 1; `--json` output includes the same messages as a `"warnings"` array in the existing JSON envelope. Neither appears when both refs have a recorded `[knowledge].schema_version` — the JSON `"warnings"` key is omitted entirely rather than emitted as `[]`, since only optional field additions are allowed within one `schema_version` (§5 of [verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)).
@@ -761,6 +768,7 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   to_tree_sha: 4d5e6f...
   impacted_testcases:
     - tc-ground-001
+  granularity: feature
   change_type: null
   true_divergences: []
 ```
@@ -776,6 +784,7 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   to_tree_sha: 7c8d9e...
   impacted_testcases:
     - tc-ground-001
+  granularity: feature
   change_type: null
   true_divergences:
     - merge_commit: 9f8e7d...

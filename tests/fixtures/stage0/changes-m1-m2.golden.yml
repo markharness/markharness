@@ -5,6 +5,7 @@
   from_tree_sha: <tree-sha>
   to_tree_sha: <tree-sha>
   impacted_testcases: []
+  granularity: feature
   change_type: null
   true_divergences: []
   related_events: []
