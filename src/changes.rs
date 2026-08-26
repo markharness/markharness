@@ -53,12 +53,11 @@ pub struct ChangeEvent {
     pub from_tree_sha: Option<String>,
     pub to_tree_sha: Option<String>,
     pub impacted_testcases: Vec<String>,
-    /// The granularity at which `impacted_testcases` was narrowed down
-    /// (issue #15). `#[serde(default)]` so a `ChangeEvent` written before
-    /// this field existed round-trips as `Feature` — exactly the behavior
-    /// it had.
+    /// The granularity `impacted_testcases` was narrowed down to, and the
+    /// specific evidence for it when narrower than Feature (issue #15). See
+    /// `ImpactReason`'s doc comment.
     #[serde(default)]
-    pub granularity: Granularity,
+    pub impact_reason: ImpactReason,
     #[serde(default)]
     pub change_type: Option<ChangeType>,
     /// One entry per two-parent merge commit found in the
@@ -127,6 +126,26 @@ pub enum Granularity {
     Feature,
     Behavior,
     Condition,
+}
+
+/// Why each of a `ChangeEvent`'s `impacted_testcases` was selected (issue
+/// #15): the `Granularity` `changes compute` was run with, plus the
+/// repo-relative marker-file paths (`behavior.yml`/`condition.yml`) whose
+/// content actually differed between `from_milestone` and `to_milestone`
+/// and drove the narrowing decision. `changed_paths` is empty for
+/// `Granularity::Feature` — narrowing isn't attempted at that granularity
+/// (every TestCase generated from the changed Feature is included, exactly
+/// as before this option existed), so there's no per-subunit evidence to
+/// record; the Feature-level `from_tree_sha`/`to_tree_sha` already serve as
+/// that granularity's own reason. `#[serde(default)]` on `ChangeEvent`'s
+/// `impact_reason` field means a `ChangeEvent` written before this field
+/// existed round-trips as `Feature` with no `changed_paths` — exactly the
+/// behavior it had.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ImpactReason {
+    pub granularity: Granularity,
+    #[serde(default)]
+    pub changed_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,6 +316,14 @@ impl SubunitsByFeatureDir {
     }
 }
 
+/// The result of narrowing a Feature's `impacted_testcases` at Behavior/
+/// Condition granularity: the narrowed candidate set, plus the evidence for
+/// it (`ImpactReason::changed_paths`, issue #15).
+struct SubunitNarrowing {
+    testcases: Vec<String>,
+    changed_paths: Vec<String>,
+}
+
 /// Narrows a Feature's `impacted_testcases` down to only the Behaviors/
 /// Conditions that actually changed within it (issue #15), instead of
 /// every TestCase generated from the Feature. `from_here`/`to_here` are
@@ -312,7 +339,14 @@ fn changed_subunit_impacted_testcases(
     from_here: &[id_cache::SubunitVersion],
     to_here: &[id_cache::SubunitVersion],
     impacted: &BTreeMap<String, Vec<String>>,
-) -> io::Result<Vec<String>> {
+) -> io::Result<SubunitNarrowing> {
+    let marker_file = match granularity {
+        Granularity::Behavior => "behavior.yml",
+        Granularity::Condition => "condition.yml",
+        Granularity::Feature => {
+            unreachable!("diff_events only calls this for Behavior/Condition granularity")
+        }
+    };
     let from_by_key: BTreeMap<(Option<&str>, &str), &id_cache::SubunitVersion> = from_here
         .iter()
         .map(|v| ((v.parent_behavior_id.as_deref(), v.id.as_str()), v))
@@ -328,11 +362,21 @@ fn changed_subunit_impacted_testcases(
         .collect();
 
     let mut testcases = Vec::new();
+    let mut changed_paths = Vec::new();
     for key @ (parent_behavior_id, id) in all_keys {
-        let from_sha = from_by_key.get(&key).map(|v| &v.tree_sha);
-        let to_sha = to_by_key.get(&key).map(|v| &v.tree_sha);
+        let from_version = from_by_key.get(&key).copied();
+        let to_version = to_by_key.get(&key).copied();
+        let from_sha = from_version.map(|v| &v.tree_sha);
+        let to_sha = to_version.map(|v| &v.tree_sha);
         if from_sha == to_sha {
             continue;
+        }
+        // The changed subunit's directory itself, whichever side still has
+        // it (`to` when it exists there — the current, post-change state;
+        // `from` for a deletion) — evidence for `ImpactReason::changed_paths`.
+        let subunit_dir = to_version.or(from_version).map(|v| v.path.as_str());
+        if let Some(subunit_dir) = subunit_dir {
+            changed_paths.push(format!("{subunit_dir}/{marker_file}"));
         }
         let subunit_key_value = match granularity {
             Granularity::Behavior => subunit_key(feature_id, id, None),
@@ -343,9 +387,8 @@ fn changed_subunit_impacted_testcases(
                 // so fail with a clear error rather than panic on
                 // untrusted/external Knowledge content.
                 let Some(behavior_id) = parent_behavior_id else {
-                    let offending_path = to_by_key
-                        .get(&key)
-                        .or_else(|| from_by_key.get(&key))
+                    let offending_path = to_version
+                        .or(from_version)
                         .map(|v| v.path.as_str())
                         .unwrap_or(id);
                     return Err(io::Error::other(format!(
@@ -363,7 +406,10 @@ fn changed_subunit_impacted_testcases(
             testcases.extend(case_ids.iter().cloned());
         }
     }
-    Ok(testcases)
+    Ok(SubunitNarrowing {
+        testcases,
+        changed_paths,
+    })
 }
 
 /// Maps each Feature id to the `case_id`s of testcases generated from it,
@@ -629,20 +675,26 @@ fn diff_events(
         // `impacted` is keyed by the literal id text `generate.rs` wrote
         // into `generated_from.feature` at the relevant tree state
         // (§2.1), never by uid — look it up by display id, not `key`.
-        let impacted_testcases = match &subunits {
-            None => raw_id_at_to
-                .as_ref()
-                .or(raw_id_at_from.as_ref())
-                .and_then(|id| impacted.get(id))
-                .cloned()
-                .unwrap_or_default(),
-            Some((from_subunits, to_subunits)) => changed_subunit_impacted_testcases(
-                &feature_id,
-                options.granularity,
-                from_subunits.under(from.map(|v| v.path.as_str())),
-                to_subunits.under(to.map(|v| v.path.as_str())),
-                &impacted,
-            )?,
+        let (impacted_testcases, changed_paths) = match &subunits {
+            None => (
+                raw_id_at_to
+                    .as_ref()
+                    .or(raw_id_at_from.as_ref())
+                    .and_then(|id| impacted.get(id))
+                    .cloned()
+                    .unwrap_or_default(),
+                Vec::new(),
+            ),
+            Some((from_subunits, to_subunits)) => {
+                let narrowing = changed_subunit_impacted_testcases(
+                    &feature_id,
+                    options.granularity,
+                    from_subunits.under(from.map(|v| v.path.as_str())),
+                    to_subunits.under(to.map(|v| v.path.as_str())),
+                    &impacted,
+                )?;
+                (narrowing.testcases, narrowing.changed_paths)
+            }
         };
         events.push(ChangeEvent {
             event_id: format!("{feature_id}--{from_milestone}--{to_milestone}"),
@@ -655,7 +707,10 @@ fn diff_events(
             from_tree_sha,
             to_tree_sha,
             impacted_testcases,
-            granularity: options.granularity,
+            impact_reason: ImpactReason {
+                granularity: options.granularity,
+                changed_paths,
+            },
             change_type: None,
             true_divergences,
             related_events: Vec::new(),
@@ -1292,11 +1347,16 @@ mod tests {
         assert_eq!(events.len(), 1, "expected one ChangeEvent, got {events:?}");
         let event = &events[0];
         assert_eq!(event.feature_id, "player-jump");
-        assert_eq!(event.granularity, Granularity::Behavior);
+        assert_eq!(event.impact_reason.granularity, Granularity::Behavior);
         assert_eq!(
             event.impacted_testcases,
             vec!["tc-controls-player-jump-duck-low".to_string()],
             "the untouched jump Behavior's TestCase must not be included"
+        );
+        assert_eq!(
+            event.impact_reason.changed_paths,
+            vec![".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string()],
+            "changed_paths must name the duck Behavior as the evidence, not jump"
         );
     }
 
@@ -1387,11 +1447,16 @@ mod tests {
         .unwrap();
 
         let event = &events[0];
-        assert_eq!(event.granularity, Granularity::Condition);
+        assert_eq!(event.impact_reason.granularity, Granularity::Condition);
         assert_eq!(
             event.impacted_testcases,
             vec!["tc-controls-player-jump-jump-air".to_string()],
             "the untouched ground Condition's TestCase must not be included"
+        );
+        assert_eq!(
+            event.impact_reason.changed_paths,
+            vec![".markharness/knowledge/controls/player-jump/jump/air/condition.yml".to_string()],
+            "changed_paths must name the air Condition as the evidence, not ground"
         );
     }
 
@@ -1473,6 +1538,11 @@ mod tests {
             vec!["tc-controls-player-jump-duck-low".to_string()],
             "the newly added duck Behavior's TestCase must be included, \
              and the untouched jump Behavior's must not"
+        );
+        assert_eq!(
+            event.impact_reason.changed_paths,
+            vec![".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string()],
+            "changed_paths must name the newly added duck Behavior"
         );
     }
 
@@ -1603,7 +1673,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
-            granularity: Granularity::Feature,
+            impact_reason: ImpactReason::default(),
             change_type: Some(ChangeType::SpecChange),
             true_divergences: Vec::new(),
             related_events: Vec::new(),
@@ -1657,23 +1727,36 @@ mod tests {
 
         let read = read_changes(dir.path(), "m2").unwrap();
 
-        assert_eq!(read[0].granularity, Granularity::Feature);
+        assert_eq!(read[0].impact_reason.granularity, Granularity::Feature);
     }
 
-    /// `changes compute` records the granularity it was run with (issue
-    /// #15) so a reader of `changes/<to>.yaml` doesn't have to guess
-    /// whether `impacted_testcases` was narrowed below Feature level.
+    /// `changes compute` records the granularity and the changed-path
+    /// evidence it was run with (issue #15) so a reader of
+    /// `changes/<to>.yaml` doesn't have to guess whether/why
+    /// `impacted_testcases` was narrowed below Feature level.
     #[test]
-    fn granularity_serializes_as_snake_case() {
+    fn impact_reason_serializes_granularity_as_snake_case_and_carries_changed_paths() {
         let events = vec![ChangeEvent {
-            granularity: Granularity::Behavior,
+            impact_reason: ImpactReason {
+                granularity: Granularity::Behavior,
+                changed_paths: vec![
+                    ".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string(),
+                ],
+            },
             ..sample_event("player-jump--m1--m2")
         }];
 
         let yaml = serialize_changes(&events);
 
         let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(parsed[0]["granularity"].as_str(), Some("behavior"));
+        assert_eq!(
+            parsed[0]["impact_reason"]["granularity"].as_str(),
+            Some("behavior")
+        );
+        assert_eq!(
+            parsed[0]["impact_reason"]["changed_paths"][0].as_str(),
+            Some(".markharness/knowledge/controls/player-jump/duck/behavior.yml")
+        );
     }
 
     #[test]
@@ -1689,7 +1772,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
-            granularity: Granularity::Feature,
+            impact_reason: ImpactReason::default(),
             change_type: None,
             true_divergences: Vec::new(),
             related_events: Vec::new(),
@@ -1721,7 +1804,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
-            granularity: Granularity::Feature,
+            impact_reason: ImpactReason::default(),
             change_type: None,
             true_divergences: Vec::new(),
             related_events: Vec::new(),
@@ -1758,7 +1841,7 @@ mod tests {
             from_tree_sha: Some("aaa".to_string()),
             to_tree_sha: Some("bbb".to_string()),
             impacted_testcases: vec!["tc-ground-001".to_string()],
-            granularity: Granularity::Feature,
+            impact_reason: ImpactReason::default(),
             change_type: None,
             true_divergences: Vec::new(),
             related_events: Vec::new(),

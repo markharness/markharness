@@ -749,7 +749,7 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   - **`condition`**: Narrows further still, at the Condition directory (`condition.yml`) level.
   - `behavior`/`condition` do not affect Feature-level change *detection* itself (which Feature gets a `ChangeEvent`, rename tracking, `true_divergences`) — only the narrowing of `impacted_testcases`.
   - **Caveat (false-negative risk)**: The Behavior/Condition schema has no field expressing dependencies between siblings, and this command does not detect or infer any. A Feature boundary may encode an author's implicit coupling (shared setup, preconditions, etc.) that `behavior`/`condition` deliberately ignores in exchange for precision over recall. Since the tool cannot guarantee this trade-off is safe for any given project, the choice is left to the user's judgment of their own project.
-  - The chosen granularity is recorded on each computed `ChangeEvent`'s `granularity` field (see the output examples below).
+  - The chosen granularity, and the evidence for the narrowing, are recorded on each computed `ChangeEvent`'s `impact_reason` field (`granularity` and `changed_paths`; see the output examples below). `changed_paths` is only populated for `behavior`/`condition`: the marker-file paths (`behavior.yml`/`condition.yml`) of the Behaviors/Conditions whose tree SHA actually changed (or was added/removed). It is empty for `feature`, since that granularity doesn't resolve individual Behaviors/Conditions.
 - `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.16) (§3.5).
 - Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.11), keyed by content-addressing.
 - On success, human output appends one `warning: ...` line per side that fell back to legacy schema version 1; `--json` output includes the same messages as a `"warnings"` array in the existing JSON envelope. Neither appears when both refs have a recorded `[knowledge].schema_version` — the JSON `"warnings"` key is omitted entirely rather than emitted as `[]`, since only optional field additions are allowed within one `schema_version` (§5 of [verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)).
@@ -768,7 +768,9 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   to_tree_sha: 4d5e6f...
   impacted_testcases:
     - tc-ground-001
-  granularity: feature
+  impact_reason:
+    granularity: feature
+    changed_paths: []
   change_type: null
   true_divergences: []
 ```
@@ -784,13 +786,34 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   to_tree_sha: 7c8d9e...
   impacted_testcases:
     - tc-ground-001
-  granularity: feature
+  impact_reason:
+    granularity: feature
+    changed_paths: []
   change_type: null
   true_divergences:
     - merge_commit: 9f8e7d...
       parent_tree_shas:
         - 2b3c4d...
         - 5e6f7a...
+```
+
+**Output example** (with `--granularity behavior`, when only some Behaviors under the Feature changed)
+
+```yaml
+- event_id: player-jump--m1--m2
+  feature_id: player-jump
+  from_milestone: m1
+  to_milestone: m2
+  from_tree_sha: 1a2b3c...
+  to_tree_sha: 4d5e6f...
+  impacted_testcases:
+    - tc-ground-001
+  impact_reason:
+    granularity: behavior
+    changed_paths:
+      - .markharness/knowledge/controls/player-jump/jump/behavior.yml
+  change_type: null
+  true_divergences: []
 ```
 
 **Use case mapping**: UC5 "automatically compute ChangeEvent." A simplified implementation of this model's core contribution (§3.2–3.4).
