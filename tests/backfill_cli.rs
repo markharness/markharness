@@ -58,6 +58,7 @@ fn backfill_run_exits_non_zero_and_reports_an_incompatible_pair() {
     run_git(dir.path(), &["init", "-q"]);
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Test"]);
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
     std::fs::write(
         dir.path().join(".markharness/config.toml"),
