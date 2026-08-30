@@ -85,7 +85,7 @@ function generate_testcases(knowledge_root):
                         generated_from: {requirement.id, feature.id, behavior.id, condition.id,
                                           expected_results: [e.id for e in expected_results]},
                         title: condition.description,
-                        steps: [behavior.description],
+                        steps: behavior.steps,
                         expected: [e.description for e in expected_results],
                         axis: union_sorted_dedup(requirement.axis, feature.axis, behavior.axis),  # §3.4
                     })
@@ -113,14 +113,16 @@ The natural-language generation via "fixed template + embedding of short noun ph
 
 ```
 title    = condition.description                         # no processing, verbatim
-steps    = [behavior.description]                         # single-element array
+steps    = behavior.steps                                 # ordered array, transcribed as-is
 expected = [e.description for e in expected_results]      # one element per ExpectedResult
 ```
 
 Reasons:
 
 - Full natural-language generation (via LLM, etc.) remains out of scope for this research (Appendix A.1), but by also not doing string composition via a fixed template, the generation logic becomes the simplest pure function, depending only on the wording on the `knowledge/` side, which makes proving/implementing determinism (Chapter 4) easier.
-- Crafting of template wording (phrasings such as "after ~, becomes ~") was pushed onto the responsibility of the Test Designer at description time, as a matter of how `condition.description`/`behavior.description` are written.
+- Crafting of template wording (phrasings such as "after ~, becomes ~") was pushed onto the responsibility of the Test Designer at description time, as a matter of how `condition.description`/each element of `behavior.steps` is written.
+
+Per [ADR 0015](../decisions/0015-behavior-step-model.md) (Phase 1), `behavior.yml` carries `description` (a human-facing one-sentence summary, not used for generation) and `steps: Vec<String>` (an ordered sequence of operations, one operation per element) as separate fields. `TestCase.steps` used to be, in the implementation, always a single-element array `[behavior.description]` (the behavior this section originally described); from Phase 1 onward it transcribes `behavior.steps` as-is and can therefore have multiple elements.
 
 ### 3.4 Inheritance of axis
 
@@ -182,7 +184,7 @@ This diagram concretizes the "CI->>GEN: Deterministically regenerate TestCase fr
 | A Condition exists but there is no ExpectedResult (`expected/` is empty or absent) | No `TestCase` is generated (`generate.rs` skips via an empty check). |
 | There is a Feature/Behavior with no Condition | No `TestCase` is generated (since, in the ER diagram of §3.1, the origin of `generates` is both `FEATURE` and `CONDITION`). |
 | A Feature that has `forked_from` | Does not affect the generation algorithm. `forked_from` is a manually written notation of conceptual derivation (§3.1) and is information independent of the structural generation graph (§3.2(A)), so the generation logic does not reference this field. |
-| Handling of the Behavior level | **Unlike the initial proposal, the implementation treats the presence of `behavior.yml` as a required level on par with Condition** (explicitly searched for via `find_dirs_with_marker`, using `behavior.description` for `TestCase.steps` and `behavior.axis` as one of the sources composed into `TestCase.axis`). No `TestCase` is generated from a Condition that has no Behavior. |
+| Handling of the Behavior level | **Unlike the initial proposal, the implementation treats the presence of `behavior.yml` as a required level on par with Condition** (explicitly searched for via `find_dirs_with_marker`, using `behavior.steps` for `TestCase.steps` and `behavior.axis` as one of the sources composed into `TestCase.axis`; `behavior.description` is, from [ADR 0015](../decisions/0015-behavior-step-model.md) Phase 1 onward, a human-facing summary not used for generation). No `TestCase` is generated from a Condition that has no Behavior. |
 
 ### Reconfirming the Relationship with CTM (Classification Tree Method)
 
@@ -206,7 +208,7 @@ Manually tracing the algorithm of §3.1 with the fixture used by `generate.rs`'s
 
 - `requirement.yml`: `id: req-todo`, `axis: [security]`
 - `feature.yml` (under `req-todo/todo/`): `id: todo`, `axis: [ui, data]`
-- `behavior.yml` (under `todo/todo-add-task/`): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`
+- `behavior.yml` (under `todo/todo-add-task/`): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`, `steps: ["Click the title field.", "Press the add button."]`
 - `condition.yml` (under `todo-add-task/todo-add-task-empty-input/`): `id: todo-add-task-empty-input`, `description: "Title is empty."`
 - `expected/001.yml` (only one): `id: todo-add-task-empty-input-001`, `description: "Shows a validation error."`
 
@@ -222,7 +224,8 @@ generated_from:
     - todo-add-task-empty-input-001
 title: "Title is empty.\n"
 steps:
-  - "User adds a task.\n"
+  - "Click the title field."
+  - "Press the add button."
 expected:
   - "Shows a validation error.\n"
 axis: [data, security, ui]   # composition of requirement[security] + feature[ui, data] + behavior[ui], deduplicated, sorted

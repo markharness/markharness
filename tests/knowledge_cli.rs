@@ -66,6 +66,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
+  steps:
+    - Press the jump button.
 
 condition:
   id: ground
@@ -163,7 +165,7 @@ fn validate_json_prints_ok_true_on_success() {
 #[test]
 fn validate_exits_one_and_prints_human_error_on_validation_failure() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
-    let draft = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    let draft = VALID_DRAFT.replace("  description: Player presses jump.\n", "");
     let draft_path = write_draft(dir.path(), &draft);
 
     let output = run(&[
@@ -186,7 +188,7 @@ fn validate_exits_one_and_prints_human_error_on_validation_failure() {
 #[test]
 fn validate_json_prints_error_array_on_validation_failure() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
-    let draft = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    let draft = VALID_DRAFT.replace("  description: Player presses jump.\n", "");
     let draft_path = write_draft(dir.path(), &draft);
 
     let output = run(&[
@@ -296,6 +298,8 @@ behavior:
   description: |
     line one about foo.js: bar()
     line two about baz.js: qux()
+  steps:
+    - Press the jump button.
 
 condition:
   id: ground
@@ -340,7 +344,7 @@ expected:
 #[test]
 fn apply_exits_one_and_writes_nothing_on_validation_failure() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
-    let draft = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    let draft = VALID_DRAFT.replace("  description: Player presses jump.\n", "");
     let draft_path = write_draft(dir.path(), &draft);
 
     let output = run(&[
@@ -483,7 +487,7 @@ fn apply_batch_json_reports_which_file_failed_validation() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
-    let draft = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    let draft = VALID_DRAFT.replace("  description: Player presses jump.\n", "");
     write_batch_draft(&drafts_dir, "01-ground.yml", &draft);
 
     let output = run(&[
@@ -582,7 +586,7 @@ fn validate_batch_json_reports_every_failing_file_not_just_the_first() {
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-broken.yml", "not: [valid yaml");
-    let missing_description = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    let missing_description = VALID_DRAFT.replace("  description: Player presses jump.\n", "");
     write_batch_draft(&drafts_dir, "02-invalid.yml", &missing_description);
 
     let output = run(&[
@@ -612,7 +616,7 @@ fn apply_batch_dry_run_json_reports_every_failing_file_not_just_the_first() {
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-broken.yml", "not: [valid yaml");
-    let missing_description = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+    let missing_description = VALID_DRAFT.replace("  description: Player presses jump.\n", "");
     write_batch_draft(&drafts_dir, "02-invalid.yml", &missing_description);
 
     let output = run(&[

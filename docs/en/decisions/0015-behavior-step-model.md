@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-08-30)
+Accepted (2026-08-30). Phase 1 (introducing inline `Behavior.steps`) is implemented and satisfies the "Conditions for changing to Accepted" below.
 
 ## Context
 

@@ -9,8 +9,13 @@
     "label": { "type": "string", "minLength": 1 },
     "axis": { "type": "array", "items": { "type": "string" } },
     "description": { "type": "string", "minLength": 1 },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
-  "required": ["id", "feature", "label", "axis", "description"],
+  "required": ["id", "feature", "label", "axis", "description", "steps"],
   "additionalProperties": false
 }

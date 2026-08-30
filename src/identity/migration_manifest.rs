@@ -650,7 +650,7 @@ mod tests {
             root.join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
             format!(
-                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\n{}",
+                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FB0")
             ),
         )
@@ -764,7 +764,7 @@ mod tests {
             dir.path()
                 .join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
-            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\n",
+            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n",
         )
         .unwrap();
         fs::write(

@@ -91,7 +91,10 @@ pub struct KnowledgeCaseSnapshot {
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
     pub behavior_uid: Option<String>,
+    /// 人間向け要約。ADR 0015 Phase 1以降、テストケース生成には使わない
+    /// (`TestCase.steps`は`behavior_steps`から組み立てる)。
     pub behavior_description: String,
+    pub behavior_steps: Vec<String>,
     pub behavior_axis: Vec<String>,
     pub condition_id: String,
     pub condition_uid: Option<String>,
@@ -375,6 +378,7 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                         behavior_id: behavior.id.clone(),
                         behavior_uid: behavior.uid.clone(),
                         behavior_description: behavior.description.clone(),
+                        behavior_steps: behavior.steps.clone(),
                         behavior_axis: behavior.axis.clone(),
                         condition_id: condition.id,
                         condition_uid: condition.uid.clone(),
@@ -410,7 +414,7 @@ pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
                 expected_results: case.expected.iter().map(|item| item.id.clone()).collect(),
             },
             title: case.condition_description.clone(),
-            steps: vec![case.behavior_description.clone()],
+            steps: case.behavior_steps.clone(),
             expected: case
                 .expected
                 .iter()
@@ -628,6 +632,7 @@ mod tests {
         feature: &str,
         behavior: &str,
         description: &str,
+        steps: &[&str],
     ) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
@@ -636,10 +641,14 @@ mod tests {
             .join(feature)
             .join(behavior);
         fs::create_dir_all(&dir).unwrap();
+        let steps_block: String = steps
+            .iter()
+            .map(|step| format!("  - {}\n", serde_json::to_string(step).unwrap()))
+            .collect();
         fs::write(
             dir.join("behavior.yml"),
             format!(
-                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\n"
+                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\nsteps:\n{steps_block}"
             ),
         )
         .unwrap();
@@ -709,6 +718,7 @@ mod tests {
             "todo",
             "todo-add-task",
             "User adds a task.",
+            &["Click the title field.", "Press the add button."],
         );
         // The directory name is a safe slug, but a malicious repository can
         // still craft the `id:` field inside condition.yml independently of
@@ -777,6 +787,7 @@ mod tests {
             "todo",
             "todo-add-task",
             "User adds a task.",
+            &["Click the title field.", "Press the add button."],
         );
         write_condition(
             dir.path(),
@@ -819,7 +830,13 @@ mod tests {
             vec!["todo-add-task-empty-input-001".to_string()]
         );
         assert_eq!(tc.title, "Title is empty.\n");
-        assert_eq!(tc.steps, vec!["User adds a task.\n".to_string()]);
+        assert_eq!(
+            tc.steps,
+            vec![
+                "Click the title field.".to_string(),
+                "Press the add button.".to_string()
+            ]
+        );
         assert_eq!(tc.expected, vec!["Shows a validation error.\n".to_string()]);
     }
 
@@ -835,6 +852,7 @@ mod tests {
             "todo",
             "todo-complete-task",
             "User checks a task.",
+            &["Press the checkbox."],
         );
         write_condition(
             dir.path(),
@@ -906,6 +924,7 @@ mod tests {
             "todo",
             "todo-add-task",
             "User adds a task.",
+            &["Click the title field.", "Press the add button."],
         );
         write_condition(
             dir.path(),
@@ -934,6 +953,7 @@ mod tests {
             "enemy",
             "enemy-attack",
             "Enemy attacks.",
+            &["Press the attack button."],
         );
         write_condition(
             dir.path(),
@@ -984,6 +1004,7 @@ mod tests {
             "todo",
             "todo-add-task",
             "User adds a task.",
+            &["Click the title field.", "Press the add button."],
         );
         write_condition(
             dir.path(),
@@ -1033,6 +1054,7 @@ mod tests {
             "todo",
             "todo-add-task",
             "User adds a task.",
+            &["Click the title field.", "Press the add button."],
         );
         write_condition(
             dir.path(),
@@ -1132,6 +1154,7 @@ mod tests {
             "todo",
             "todo-add-task",
             "User adds a task.",
+            &["Click the title field.", "Press the add button."],
         );
         write_condition(
             dir.path(),
@@ -1213,7 +1236,7 @@ mod tests {
             root.join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
             format!(
-                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\n{}",
+                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n{}",
                 behavior_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
             ),
         )
@@ -1308,6 +1331,7 @@ mod tests {
             "todo",
             "todo-add-task",
             "User adds a task.",
+            &["Click the title field.", "Press the add button."],
         );
         write_condition(
             dir.path(),

@@ -66,7 +66,7 @@ fn write_full_chain(root: &Path, label: &str) {
     .unwrap();
     std::fs::write(
         dir.parent().unwrap().join("behavior.yml"),
-        "id: edit-existing-todo\nfeature: todo-edit\nlabel: edit-existing-todo\naxis: [ui]\ndescription: |\n  User edits an existing todo.\n",
+        "id: edit-existing-todo\nfeature: todo-edit\nlabel: edit-existing-todo\naxis: [ui]\ndescription: |\n  User edits an existing todo.\nsteps:\n  - \"Press the edit button.\"\n",
     )
     .unwrap();
     std::fs::write(

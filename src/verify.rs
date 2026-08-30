@@ -499,7 +499,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(".markharness/knowledge/req-todo/todo/todo-add-task/behavior.yml"),
-            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\n",
+            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n",
         )
         .unwrap();
         fs::write(

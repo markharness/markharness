@@ -28,7 +28,7 @@ pub fn write_full_tree(root: &Path, feature_id: &str) {
     std::fs::write(
         base.parent().unwrap().join("behavior.yml"),
         format!(
-            "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\n"
+            "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n"
         ),
     )
     .unwrap();

@@ -968,7 +968,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
         )
         .unwrap();
         fs::write(
@@ -997,14 +997,14 @@ mod tests {
         fs::write(
             root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
             format!(
-                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  {jump_label}\n"
+                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  {jump_label}\nsteps:\n  - \"Press the jump button.\"\n"
             ),
         )
         .unwrap();
         fs::write(
             duck_dir.join("behavior.yml"),
             format!(
-                "id: duck\nfeature: player-jump\nlabel: duck\naxis: [gameplay]\ndescription: |\n  {duck_label}\n"
+                "id: duck\nfeature: player-jump\nlabel: duck\naxis: [gameplay]\ndescription: |\n  {duck_label}\nsteps:\n  - \"Press the duck button.\"\n"
             ),
         )
         .unwrap();

@@ -38,6 +38,10 @@ pub struct BehaviorDraft {
     pub axis: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
+    /// ADR 0015 Phase 1: 順序付きの操作手順。既存Behaviorの再利用時
+    /// (`exists`)は`description`同様省略可(`push_missing_steps`参照)。
+    #[serde(default)]
+    pub steps: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -85,6 +89,7 @@ pub enum ValidationErrorCode {
     InvalidSlug,
     MissingAxis,
     MissingDescription,
+    MissingSteps,
     UnknownAxis,
     RedundantPrefix,
     ConflictingExistingValue,
@@ -99,6 +104,7 @@ impl ValidationErrorCode {
             ValidationErrorCode::InvalidSlug => "invalid_slug",
             ValidationErrorCode::MissingAxis => "missing_axis",
             ValidationErrorCode::MissingDescription => "missing_description",
+            ValidationErrorCode::MissingSteps => "missing_steps",
             ValidationErrorCode::UnknownAxis => "unknown_axis",
             ValidationErrorCode::RedundantPrefix => "redundant_prefix",
             ValidationErrorCode::ConflictingExistingValue => "conflicting_existing_value",
@@ -337,6 +343,33 @@ fn push_missing_description(
     }
 }
 
+/// ADR 0015 Phase 1決定内容5(空配列・空文字列要素の拒否)のdraft側での事前
+/// チェック。`push_missing_description`と同じexists-skipパターン: 既存
+/// Behaviorの再利用時は`steps`省略を許容する。
+fn push_missing_steps(
+    errors: &mut Vec<ValidationError>,
+    path: &str,
+    steps: &Option<Vec<String>>,
+    exists: bool,
+) {
+    if exists {
+        return;
+    }
+    let is_missing = match steps {
+        None => true,
+        Some(values) => values.is_empty() || values.iter().any(|s| s.trim().is_empty()),
+    };
+    if is_missing {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::MissingSteps,
+            path: path.to_string(),
+            value: None,
+            message: format!("{path} must contain at least one non-empty step"),
+            suggestion: None,
+        });
+    }
+}
+
 fn push_conflicting_value(
     errors: &mut Vec<ValidationError>,
     path: &str,
@@ -509,6 +542,12 @@ pub fn validate_draft(
         &draft.behavior.description,
         behavior_exists,
     );
+    push_missing_steps(
+        &mut errors,
+        "behavior.steps",
+        &draft.behavior.steps,
+        behavior_exists,
+    );
     push_missing_description(
         &mut errors,
         "condition.description",
@@ -597,6 +636,21 @@ pub fn validate_draft(
                 &existing.description,
             );
         }
+        if let Some(steps) = &draft.behavior.steps
+            && steps != &existing.steps
+        {
+            errors.push(ValidationError {
+                code: ValidationErrorCode::ConflictingExistingValue,
+                path: "behavior.steps".to_string(),
+                value: Some(steps.join(" / ")),
+                message: format!(
+                    "behavior.steps [{}] conflicts with existing value [{}]",
+                    steps.join(" / "),
+                    existing.steps.join(" / ")
+                ),
+                suggestion: Some(existing.steps.join(" / ")),
+            });
+        }
     }
 
     if condition_exists
@@ -646,6 +700,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
+  steps:
+    - Press the jump button.
 
 condition:
   id: ground
@@ -676,6 +732,10 @@ expected:
         assert_eq!(
             draft.behavior.description,
             Some("Player presses jump.".to_string())
+        );
+        assert_eq!(
+            draft.behavior.steps,
+            Some(vec!["Press the jump button.".to_string()])
         );
 
         assert_eq!(draft.condition.id, "ground");
@@ -953,6 +1013,80 @@ expected:
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::MissingDescription
                     && e.path == "behavior.description")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_steps_for_new_behavior_without_steps() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.behavior.steps = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "behavior.steps")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_steps_for_new_behavior_with_empty_steps() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.behavior.steps = Some(Vec::new());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "behavior.steps")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_steps_for_new_behavior_with_blank_step_element() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.behavior.steps = Some(vec![
+            "Press the jump button.".to_string(),
+            "   ".to_string(),
+        ]);
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "behavior.steps")
+        );
+    }
+
+    #[test]
+    fn validate_draft_skips_missing_steps_check_when_behavior_already_exists() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        std::fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/jump"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
+        )
+        .unwrap();
+        let mut draft = full_new_draft();
+        draft.behavior.steps = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps)
         );
     }
 

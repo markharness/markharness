@@ -34,7 +34,7 @@ fn run_with_stdin(args: &[&str], input: &str) -> Output {
     child.wait_with_output().expect("failed to wait on child")
 }
 
-const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n";
+const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n";
 
 #[test]
 fn knowledge_add_writes_full_chain_from_stdin_prompts() {

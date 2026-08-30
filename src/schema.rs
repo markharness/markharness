@@ -300,6 +300,7 @@ expected:
                     label: "jump".to_string(),
                     axis: vec!["gameplay".to_string()],
                     description: "Player presses jump.".to_string(),
+                    steps: vec!["Press the jump button.".to_string()],
                     uid: Some(UID.to_string()),
                 })
                 .unwrap(),

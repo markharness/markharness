@@ -34,7 +34,7 @@ fn write_chain(root: &Path, description: &str) {
     .unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/shop/checkout/pay/behavior.yml"),
-        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\n",
+        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\nsteps:\n  - \"Enter the card number.\"\n",
     )
     .unwrap();
     std::fs::write(

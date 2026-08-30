@@ -107,6 +107,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.   # required (description is required only for Behavior, per the existing schema)
+  steps:                               # required (new for Behavior, ADR 0015 Phase 1): at least one non-empty operation, one per element
+    - Press the jump button.
 
 condition:
   id: ground
@@ -118,7 +120,7 @@ expected:
   - description: takes fall damage if height > 3m
 ```
 
-Field specifications conform to each struct definition in `src/knowledge.rs` (the type and required/optional status of `id`/`label`/`axis`/`description` follow the current structs as-is). Only `expected` is an array (multiple ExpectedResults can be added in one apply; this follows the existing sequential numbering logic `{condition_id}-{seq:03}`).
+Field specifications conform to each struct definition in `src/knowledge.rs` (the type and required/optional status of `id`/`label`/`axis`/`description`/`steps` follow the current structs as-is). Only `expected` is an array (multiple ExpectedResults can be added in one apply; this follows the existing sequential numbering logic `{condition_id}-{seq:03}`).
 
 ## 5. List of Validation Rules
 
@@ -129,11 +131,12 @@ Each rule corresponds to an error code in §6.
 | 1 | All ids | Must satisfy `is_valid_slug` (lowercase alphanumerics and hyphens only) | `invalid_slug` |
 | 2 | requirement/feature/behavior | When newly created, `axis` must have 1 or more entries | `missing_axis` |
 | 3 | behavior | `description` must not be empty | `missing_description` |
+| 3b | behavior | `steps` must have at least one entry, and no entry may be empty (added at implementation time, ADR 0015 Phase 1) | `missing_steps` |
 | 4 | condition | `description` must not be empty | `missing_description` |
 | 5 | expected[] | `description` must not be empty (each element) | `missing_description` |
 | 6 | axis in general | Value must match an id already registered in `axes/*.yml` (§8) | `unknown_axis` |
 | 7 | condition.id | If it has a redundant prefix (`{behavior_id}-`) overlapping with the Behavior id, stops unless `--strip-redundant-prefix` is specified (§7) | `redundant_prefix` |
-| 8 | When reusing an existing id | When the provided `axis`/`description`/`label` does not match the value in the existing file (§10.2) | `conflicting_existing_value` |
+| 8 | When reusing an existing id | When the provided `axis`/`description`/`label`/`steps` (behavior only) does not match the value in the existing file (§10.2) | `conflicting_existing_value` |
 | 9 | requirement/feature/behavior/condition | The parent reference (e.g. feature.requirement) must exist. If newly created within the draft, must be consistent with the draft's own value | `parent_not_found` |
 | 10 | feature.forked_from | If a value is specified, it must match the `id` of some Feature under `knowledge/` (added at implementation time; the `forked_from` of paper §3.1, not noted in the initial version of this specification) | `unknown_forked_from` |
 | 11 | label on requirement/feature/behavior/condition | Must not contain a newline. `label` is serialized as a single-line plain scalar, so a multi-line value would corrupt the output YAML (added at implementation time) | `multiline_label` |
@@ -141,6 +144,8 @@ Each rule corresponds to an error code in §6.
 **Notes added at implementation time**: Rule #10 (`unknown_forked_from`) was not in the initial version of this specification, but was added by `knowledge_draft.rs::feature_id_exists` to match the implementation of the `feature.forked_from` field (`knowledge.rs`). Since Feature ids are assumed to be unique across the entire repository even when nested under `requirement`, the search is exhaustive under `knowledge/` across `requirement` levels.
 
 **Notes added at implementation time**: Rule #11 (`multiline_label`) was also not in the initial version of this specification. It was added via `knowledge_draft.rs::push_multiline_label` to close a known gap (previously tracked as a TODO comment) where `knowledge.rs::serialize_requirement` and its siblings emit `label` as a plain scalar rather than a block scalar, so a multi-line value would corrupt the output YAML. Unlike `description`, `label` is a short identifying label with no semantic need to support multiple lines, so the fix is a fail-fast check in `validate_draft` rather than switching `label` to a block scalar.
+
+**Notes added at implementation time**: Rule #3b (`missing_steps`) was added by [ADR 0015](../decisions/0015-behavior-step-model.md) (Phase 1), which introduced `Behavior.steps: Vec<String>` — an ordered sequence of operations (one operation per element) transcribed as-is into `TestCase.steps` by `generate` (`behavior.description` is no longer used for generation, only as a human-facing summary). `knowledge_draft.rs::push_missing_steps` mirrors `push_missing_description`'s exists-skip behavior: omission is allowed only when reusing an existing Behavior (§10.2).
 
 **Notes added at implementation time**: Rule #2 (`missing_axis`) populates `suggestion` with the registered axes (comma-separated, sorted) whenever `axes/*.yml` has at least one registered; when none are registered, there is nothing to suggest, so `suggestion` stays `null` and `message` instead points the caller at `markharness axes add` (`knowledge_draft.rs::missing_axis_error`). The blank draft template `knowledge add --edit`/`knowledge scaffold` emit (`EDIT_TEMPLATE`) used to write `axis: []`; it now writes a blank scalar (`axis:`) like the template's other unfilled fields (`id:`, `label:`) do, since `axis: []` looked filled-in at a glance even though it still triggers this rule for a new entry.
 

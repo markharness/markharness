@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Proposed (2026-08-30)
+Accepted (2026-08-30). Phase 1(inline `Behavior.steps`の導入)の実装が完了し、「Acceptedへ変更する条件」を満たした。
 
 ## 背景
 

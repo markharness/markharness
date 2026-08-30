@@ -123,6 +123,40 @@ fn prompt_axis<R: BufRead, W: Write>(
         .collect())
 }
 
+/// ADR 0015 Phase 1: `steps`は1行1操作、空行で入力終了。少なくとも1つ必須。
+/// stdinがEOFに達した場合、1つもstepが無ければエラーを返す(空行の繰り返し
+/// 要求でハングしないように)。1つ以上あれば、空行での終了と同様にそこまで
+/// 集めたstepsを返す。
+fn prompt_steps<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    label: &str,
+) -> io::Result<Vec<String>> {
+    writeln!(writer, "{label}")?;
+    let mut steps = Vec::new();
+    loop {
+        write!(writer, "  step {}: ", steps.len() + 1)?;
+        writer.flush()?;
+        let mut line = String::new();
+        let bytes_read = reader.read_line(&mut line)?;
+        let trimmed = line.trim().to_string();
+        if bytes_read == 0 || trimmed.is_empty() {
+            if steps.is_empty() {
+                if bytes_read == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "input ended before at least one step was provided",
+                    ));
+                }
+                writeln!(writer, "少なくとも1つのstepを入力してください。")?;
+                continue;
+            }
+            return Ok(steps);
+        }
+        steps.push(trimmed);
+    }
+}
+
 pub fn run_add<R: BufRead, W: Write>(
     root: &Path,
     reader: &mut R,
@@ -219,12 +253,18 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Behavior description (e.g. User adds a new task to the list.): ",
         )?;
+        let steps = prompt_steps(
+            reader,
+            writer,
+            "Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):",
+        )?;
         let behavior = Behavior {
             id: behavior_id.clone(),
             feature: feature_id.clone(),
             label: behavior_label,
             axis,
             description,
+            steps,
             uid: None,
         };
         replace_file(
@@ -331,7 +371,28 @@ mod tests {
         String::from_utf8(writer).unwrap()
     }
 
-    const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n";
+    const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n";
+
+    #[test]
+    fn prompt_steps_errors_instead_of_looping_forever_when_stdin_hits_eof_before_any_step() {
+        let mut reader = Cursor::new(Vec::<u8>::new());
+        let mut writer = Vec::new();
+
+        let result = prompt_steps(&mut reader, &mut writer, "Behavior steps:");
+
+        let err = result.expect_err("EOF before any step must return an error, not loop forever");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn prompt_steps_returns_collected_steps_when_stdin_hits_eof_after_at_least_one_step() {
+        let mut reader = Cursor::new(b"Press the jump button.\n".to_vec());
+        let mut writer = Vec::new();
+
+        let steps = prompt_steps(&mut reader, &mut writer, "Behavior steps:").unwrap();
+
+        assert_eq!(steps, vec!["Press the jump button.".to_string()]);
+    }
 
     #[test]
     fn creates_new_requirement_feature_behavior_condition_and_expected_from_scratch() {
@@ -366,7 +427,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
         );
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
@@ -388,7 +449,7 @@ mod tests {
         // second input line is the behavior id, not an axis list.
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\nair\ngameplay\nPlayer presses jump while airborne.\nspace\nJump while airborne\nlands on platform\n",
+            "controls\nplayer-jump\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nlands on platform\n",
         );
 
         let feature_path = dir
@@ -403,7 +464,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/air/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: air\nfeature: player-jump\nlabel: air\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\n"
+            "id: air\nfeature: player-jump\nlabel: air\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\nsteps:\n  - \"Press the jump button while airborne.\"\n"
         );
     }
 
@@ -456,7 +517,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\n\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\n\nlands safely\n",
         );
 
         let expected_path = dir
@@ -487,7 +548,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nspace\nJump while airborne\nlands on platform\n",
+            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nlands on platform\n",
         );
 
         assert!(output.contains("  1) player-jump\n"));
@@ -566,7 +627,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\njump-ground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nlands safely\n",
         );
 
         assert!(output.contains(
@@ -596,7 +657,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\njump-ground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nlands safely\n",
         );
         // Above run already dedupes to `ground/`; create a legacy dir with the
         // literal redundant name directly on disk to simulate pre-existing data.
@@ -684,7 +745,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n",
         );
 
         let feature_path = dir
@@ -704,7 +765,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\nプレイヤーがジャンプする\n\ngameplay\nPlayer presses jump.\nlanding\nJump while airborne\nlands on platform\n",
+            "controls\nplayer-jump\nプレイヤーがジャンプする\n\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nlanding\nJump while airborne\nlands on platform\n",
         );
 
         let behavior_path = dir
@@ -712,7 +773,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/pureiyaagajanpusuru/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
+            "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
         );
     }
 
@@ -743,7 +804,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "プレイヤーがジャンプする\n\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n",
+            "プレイヤーがジャンプする\n\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n",
         );
 
         let requirement_path = dir
@@ -769,7 +830,7 @@ mod tests {
         // the second input line is the feature id, not an axis list.
         run_with_input(
             dir.path(),
-            "controls\nother-feature\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nlanding\nJump while airborne\nlands on platform\n",
+            "controls\nother-feature\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nlands on platform\n",
         );
 
         let requirement_path = dir
@@ -793,7 +854,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "1\nair-support\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nlanding\nJump while airborne\nlands on platform\n",
+            "1\nair-support\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nlands on platform\n",
         );
 
         assert!(output.contains("  1) controls\n"));
@@ -830,7 +891,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n",
         );
 
         let feature_path = dir
@@ -840,7 +901,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nspace\nJump while airborne\nlands on platform\n",
+            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nlands on platform\n",
         );
 
         let after = fs::read_to_string(&feature_path).unwrap();
@@ -855,7 +916,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nground\nlanded on the ground\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nlanded on the ground\nlands safely\n",
         );
 
         let output = run_with_input_capturing_output(

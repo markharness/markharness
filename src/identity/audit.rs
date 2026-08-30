@@ -343,7 +343,7 @@ mod tests {
         fs::write(
             base.parent().unwrap().join("behavior.yml"),
             format!(
-                "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  d\n"
+                "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  d\nsteps:\n  - \"d\"\n"
             ),
         )
         .unwrap();
