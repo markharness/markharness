@@ -107,6 +107,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.   # 必須(Behaviorのみdescriptionが必須項目、既存スキーマ通り)
+  steps:                               # 必須(Behaviorに新設、ADR 0015 Phase 1): 空でない要素を1つ以上、1要素=1操作
+    - Press the jump button.
 
 condition:
   id: ground
@@ -118,7 +120,7 @@ expected:
   - description: takes fall damage if height > 3m
 ```
 
-フィールド仕様は `src/knowledge.rs` の各構造体定義に準拠する(`id`/`label`/`axis`/`description`の型・必須有無は現行struct通り)。`expected` のみ配列(1回のapplyで複数のExpectedResultを追加可能。既存の連番採番ロジック `{condition_id}-{seq:03}` を踏襲)。
+フィールド仕様は `src/knowledge.rs` の各構造体定義に準拠する(`id`/`label`/`axis`/`description`/`steps`の型・必須有無は現行struct通り)。`expected` のみ配列(1回のapplyで複数のExpectedResultを追加可能。既存の連番採番ロジック `{condition_id}-{seq:03}` を踏襲)。
 
 ## 5. バリデーションルール一覧
 
@@ -129,14 +131,17 @@ expected:
 | 1 | 全id | `is_valid_slug` を満たすこと(小文字英数字とハイフンのみ) | `invalid_slug` |
 | 2 | requirement/feature/behavior | 新規作成時は `axis` が1件以上必要 | `missing_axis` |
 | 3 | behavior | `description` が空でないこと | `missing_description` |
+| 3b | behavior | `steps` が1件以上あり、かついずれの要素も空でないこと(実装時追加、ADR 0015 Phase 1) | `missing_steps` |
 | 4 | condition | `description` が空でないこと | `missing_description` |
 | 5 | expected[] | `description` が空でないこと(各要素) | `missing_description` |
 | 6 | axis全般 | 値が `axes/*.yml` に登録済みのidと一致すること(§8) | `unknown_axis` |
 | 7 | condition.id | Behavior idとの重複接頭辞(`{behavior_id}-`)を持つ場合、`--strip-redundant-prefix` 未指定なら停止(§7) | `redundant_prefix` |
-| 8 | 既存id再利用時 | 提供された `axis`/`description`/`label` が既存ファイルの値と一致しない場合(§10.2) | `conflicting_existing_value` |
+| 8 | 既存id再利用時 | 提供された `axis`/`description`/`label`/`steps`(behaviorのみ) が既存ファイルの値と一致しない場合(§10.2) | `conflicting_existing_value` |
 | 9 | requirement/feature/behavior/condition | 親参照(例: feature.requirement)が実在すること。ドラフト内で新規作成する場合はドラフト自身の値と整合していること | `parent_not_found` |
 | 10 | feature.forked_from | 値が指定されている場合、`knowledge/`配下のいずれかのFeatureの`id`と一致すること(実装時追加。論文§3.1の`forked_from`、本仕様の初版では未記載) | `unknown_forked_from` |
 | 11 | requirement/feature/behavior/condition の label | 改行を含まないこと。labelは単一行のプレーンスカラーとして出力するため、複数行が渡されると出力YAMLが壊れる(実装時追加) | `multiline_label` |
+
+**実装時の追記**：ルール#3b(`missing_steps`)は[ADR 0015](../decisions/0015-behavior-step-model.md)(Phase 1)で追加された`Behavior.steps: Vec<String>`(順序付きの操作手順、1要素=1操作)に対応するもので、`generate`は`TestCase.steps`にこの`steps`をそのまま転記する(`behavior.description`は生成に使わず、人間向け要約のみに用いる)。`knowledge_draft.rs::push_missing_steps`は`push_missing_description`と同じexists-skip挙動を踏襲し、既存Behaviorを再利用する場合のみ省略を許容する(§10.2)。
 
 **実装時の追記**：ルール#10(`unknown_forked_from`)は本仕様の初版になかったが、`feature.forked_from`フィールド(`knowledge.rs`)の実装にあわせて`knowledge_draft.rs::feature_id_exists`で追加された。Feature idは`requirement`配下にネストしていてもリポジトリ全体で一意である前提のため、`knowledge/`配下を`requirement`階層をまたいで全探索する。
 

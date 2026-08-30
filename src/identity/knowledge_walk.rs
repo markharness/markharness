@@ -209,7 +209,7 @@ mod tests {
         .unwrap();
         fs::write(
             base.parent().unwrap().join("behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\n",
+            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\nsteps:\n  - \"d\"\n",
         )
         .unwrap();
         fs::write(
@@ -303,7 +303,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/req/feature/behavior/behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\n",
+            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\nsteps:\n  - \"d\"\n",
         )
         .unwrap();
 

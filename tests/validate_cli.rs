@@ -37,7 +37,7 @@ fn write_valid_tree(root: &Path) {
     .unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-        "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n",
+        "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
     )
     .unwrap();
     std::fs::write(

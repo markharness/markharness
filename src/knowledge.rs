@@ -43,6 +43,9 @@ pub struct Behavior {
     pub label: String,
     pub axis: Vec<String>,
     pub description: String,
+    /// ADR 0015 Phase 1: 順序付きの操作手順。1要素=1操作。テストケース生成には
+    /// この`steps`のみが使われ、`description`は人間向け要約に留まる。
+    pub steps: Vec<String>,
     /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
     /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
     /// プロジェクトや`identity migrate`未実行のBehaviorでは`None`(§後方互換)。
@@ -196,6 +199,10 @@ pub fn serialize_behavior(behavior: &Behavior) -> String {
         yaml_flow_array(&behavior.axis)
     );
     out.push_str(&indent_block_scalar(&behavior.description, "  "));
+    out.push_str("steps:\n");
+    for step in &behavior.steps {
+        out.push_str(&format!("  - {}\n", serde_json::to_string(step).unwrap()));
+    }
     append_uid_line(&mut out, &behavior.uid);
     out
 }
@@ -418,7 +425,7 @@ mod tests {
 
     #[test]
     fn parses_behavior_yaml() {
-        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n";
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n";
 
         let behavior: Behavior = parse_behavior(yaml).unwrap();
 
@@ -427,6 +434,22 @@ mod tests {
         assert_eq!(behavior.label, "jump");
         assert_eq!(behavior.axis, vec!["gameplay"]);
         assert_eq!(behavior.description, "Player presses jump.\n");
+        assert_eq!(behavior.steps, vec!["Press the jump button.".to_string()]);
+    }
+
+    #[test]
+    fn parses_behavior_yaml_with_multiple_steps() {
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Focus the player character.\"\n  - \"Press the jump button.\"\n";
+
+        let behavior: Behavior = parse_behavior(yaml).unwrap();
+
+        assert_eq!(
+            behavior.steps,
+            vec![
+                "Focus the player character.".to_string(),
+                "Press the jump button.".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -604,6 +627,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "Player presses jump.".to_string(),
+            steps: vec!["Press the jump button.".to_string()],
             uid: None,
         };
 
@@ -611,8 +635,33 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
         );
+    }
+
+    #[test]
+    fn serializes_behavior_with_multiple_steps_as_a_block_sequence() {
+        let behavior = Behavior {
+            id: "player-jump-jump".to_string(),
+            feature: "player-jump".to_string(),
+            label: "jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: "Player presses jump.".to_string(),
+            steps: vec![
+                "Focus the player character.".to_string(),
+                "Press the jump button.".to_string(),
+            ],
+            uid: None,
+        };
+
+        let yaml = serialize_behavior(&behavior);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Focus the player character.\"\n  - \"Press the jump button.\"\n"
+        );
+        let reparsed: Behavior = parse_behavior(&yaml).unwrap();
+        assert_eq!(reparsed.steps, behavior.steps);
     }
 
     #[test]
@@ -623,6 +672,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            steps: vec!["Press the jump button.".to_string()],
             uid: None,
         };
 
@@ -640,6 +690,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "Player presses jump.".to_string(),
+            steps: vec!["Press the jump button.".to_string()],
             uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
         };
 
@@ -647,7 +698,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
         );
         let reparsed: Behavior = parse_behavior(&yaml).unwrap();
         assert_eq!(reparsed.uid, behavior.uid);
@@ -655,7 +706,7 @@ mod tests {
 
     #[test]
     fn parses_behavior_yaml_without_uid_as_none() {
-        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n";
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n";
 
         let behavior: Behavior = parse_behavior(yaml).unwrap();
 

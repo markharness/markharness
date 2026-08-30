@@ -33,6 +33,8 @@ behavior:
   label:
   axis:
   description:
+  steps:
+    -
 
 condition:
   id:
@@ -280,6 +282,7 @@ mod tests {
                 label: None,
                 axis: to_vec(behavior_axis),
                 description: None,
+                steps: None,
             },
             condition: knowledge_draft::ConditionDraft {
                 id: "ground".to_string(),
@@ -363,6 +366,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
+  steps:
+    - Press the jump button.
 
 condition:
   id: ground
@@ -448,7 +453,7 @@ expected:
     fn reopens_editor_after_validation_error_then_succeeds() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let tmp_path: PathBuf = dir.path().join("edit.yml");
-        let missing_description = VALID_DRAFT.replace("description: Player presses jump.\n", "");
+        let missing_description = VALID_DRAFT.replace("  description: Player presses jump.\n", "");
         let (editor, call_count) = scripted_editor(vec![
             Box::leak(missing_description.into_boxed_str()),
             VALID_DRAFT,

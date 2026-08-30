@@ -85,6 +85,10 @@ Axis (comma separated, e.g. ui, validation): ui, validation
 Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
+Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
+  step 1: Click the title field.
+  step 2: Press the add button.
+  step 3:
 Condition name (e.g. empty-title): empty-title
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
 Expected result (e.g. shows a validation error): shows a validation error
@@ -107,7 +111,7 @@ Expected result (e.g. shows a validation error): shows a validation error
 3. `Behavior name (e.g. add-task):` — Behavior の slug、または日本語ラベルを入力
    - 選択した Feature 配下に既存の Behavior が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
    - 既存の `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/behavior.yml` があれば再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Behavior axis (...)` と `Behavior description (...)` を入力し、`behavior.yml` を新規作成する
+   - 新規の場合のみ `Behavior axis (...)`・`Behavior description (...)`・`Behavior steps (...)`(1行1操作、空行で入力終了。少なくとも1つ必須)を入力し、`behavior.yml` を新規作成する
 4. `Condition name (e.g. empty-title):` — Condition の slug、または日本語ラベルを入力
    - 選択した Behavior 配下に既存の Condition が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
    - 新規に作成する Condition id が `{behavior_id}-` で始まる場合(Behavior id を重複して含めてしまった場合)、その接頭辞を自動的に除去してから作成し、その旨を通知する(例: Behavior `add-task` に Condition id `add-task-empty-title` と入力すると `empty-title` として作成される)。ただし、入力された id そのままのディレクトリが既に存在する場合は除去せずそのまま再利用する(過去に手動で重複した名前のまま作成されたデータを壊さないため)。
@@ -169,6 +173,9 @@ label: add-task
 axis: [ui]
 description: |
   User adds a new task to the list.
+steps:
+  - "Click the title field."
+  - "Press the add button."
 ```
 
 `condition.yml`:
@@ -201,6 +208,10 @@ Axis (comma separated, e.g. ui, validation): ui, validation
 Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
+Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
+  step 1: Click the title field.
+  step 2: Press the add button.
+  step 3:
 Condition name (e.g. empty-title): empty-title
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
 Expected result (e.g. shows a validation error): shows a validation error
@@ -294,6 +305,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump. # Behaviorのみdescriptionが必須(新規作成時)
+  steps: # 新規作成時は必須。空でない要素を1つ以上、1要素=1操作
+    - Press the jump button.
 
 condition:
   id: ground
@@ -305,7 +318,7 @@ expected:
   - description: takes fall damage if height > 3m
 ```
 
-`axis`/`label`/`description` は、既存id(すでに `.markharness/knowledge/` 配下にファイルが存在するRequirement/Feature/Behavior/Condition)を再利用する場合は省略できる。省略されたフィールドは既存値との比較対象から除外され、指定されたフィールドのみ既存ファイルの値と突合される(`conflicting_existing_value` エラー)。
+`axis`/`label`/`description`/`steps` は、既存id(すでに `.markharness/knowledge/` 配下にファイルが存在するRequirement/Feature/Behavior/Condition)を再利用する場合は省略できる。省略されたフィールドは既存値との比較対象から除外され、指定されたフィールドのみ既存ファイルの値と突合される(`conflicting_existing_value` エラー)。
 
 **バリデーションルール(概要。詳細は spec §5)**
 
@@ -501,7 +514,7 @@ markharness generate [--json] [-d, --dir <path>]
 - **集約モデル**: 1つの `Condition` の `expected/` 配下にある全ファイルを、1つの `TestCase` の `expected` 配列に集約する(1 Condition = 1 TestCase。1 expected ファイルごとに別 TestCase を作る旧モデルからの変更)。
 - `case_id = "tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}"`。`requirement`/`feature`/`behavior`/`condition` の4つのidをすべて連結することで、`condition.id` が別の Behavior で再利用されても `case_id` の衝突が構造的に起こり得ないようにしている。
 - 出力ファイルは `.markharness/generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml` に、`.markharness/knowledge/` と同じ階層でフルミラーして書き込まれる(旧版は `.markharness/generated/testcases/{condition.id}.yml` というフラットな命名で、異なる Behavior 配下で同じ `condition.id` が再利用されると無言で上書きされる欠陥があった)。
-- `title` = `condition.description`、`steps` = `[behavior.description]`、`expected` = 各 `expected/*.yml` の `description` をファイル名のソート順で列挙。
+- `title` = `condition.description`、`steps` = `behavior.steps`(そのまま転記。`behavior.description` は[ADR 0015](decisions/0015-behavior-step-model.md) Phase 1以降、生成には使わない人間向け要約)、`expected` = 各 `expected/*.yml` の `description` をファイル名のソート順で列挙。
 - `generated_from` に `requirement` / `feature` / `behavior` / `condition` の各 id と、集約元の `expected_results`(`expected/*.yml` の `id` の一覧)を記録する。
 - `axis`: `Requirement` / `Feature` / `Behavior` の `axis` を合成(union、重複除去のうえソート)した観点一覧(§3.4「axisの継承」)。
 - 出力は `serde_yaml_ng` によるシリアライズで、同一入力に対して常に同一の出力になる(決定性、CIでの差分検証の前提)。
@@ -532,8 +545,8 @@ generated_from:
 title: |
   Submit the todo form with an empty title
 steps:
-  - |
-    User adds a new task to the list.
+  - "Click the title field."
+  - "Press the add button."
 expected:
   - |
     shows a validation error

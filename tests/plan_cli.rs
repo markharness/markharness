@@ -46,7 +46,7 @@ fn write_knowledge(root: &Path, condition_description: &str) {
     .unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/shop/checkout/pay/behavior.yml"),
-        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\n",
+        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\nsteps:\n  - \"Enter the card number.\"\n",
     )
     .unwrap();
     std::fs::write(base.join("condition.yml"), format!("id: valid-card\nbehavior: pay\nlabel: Valid card\ndescription: {condition_description}\n")).unwrap();

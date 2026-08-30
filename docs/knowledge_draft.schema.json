@@ -46,7 +46,8 @@
         "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
         "label": { "type": "string" },
         "axis": { "type": "array", "items": { "type": "string" } },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "steps": { "type": "array", "items": { "type": "string" } }
       },
       "required": ["id"],
       "additionalProperties": false

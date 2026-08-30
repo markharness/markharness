@@ -85,6 +85,10 @@ Axis (comma separated, e.g. ui, validation): ui, validation
 Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
+Behavior steps (one operation per line, blank line to finish):
+  step 1: Click the title field.
+  step 2: Press the add button.
+  step 3:
 Condition name (e.g. empty-title): empty-title
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
 Expected result (e.g. shows a validation error): shows a validation error
@@ -169,6 +173,9 @@ label: add-task
 axis: [ui]
 description: |
   User adds a new task to the list.
+steps:
+  - "Click the title field."
+  - "Press the add button."
 ```
 
 `condition.yml`:
@@ -201,6 +208,10 @@ Axis (comma separated, e.g. ui, validation): ui, validation
 Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
+Behavior steps (one operation per line, blank line to finish):
+  step 1: Click the title field.
+  step 2: Press the add button.
+  step 3:
 Condition name (e.g. empty-title): empty-title
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
 Expected result (e.g. shows a validation error): shows a validation error
@@ -294,6 +305,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump. # description is required only for Behavior (when newly created)
+  steps: # required only for Behavior (when newly created): at least one non-empty operation, one per element
+    - Press the jump button.
 
 condition:
   id: ground
@@ -305,7 +318,7 @@ expected:
   - description: takes fall damage if height > 3m
 ```
 
-`axis`/`label`/`description` can be omitted when reusing an existing id (a Requirement/Feature/Behavior/Condition for which a file already exists under `.markharness/knowledge/`). Omitted fields are excluded from comparison against the existing value; only specified fields are checked against the existing file's values (`conflicting_existing_value` error).
+`axis`/`label`/`description`/`steps` can be omitted when reusing an existing id (a Requirement/Feature/Behavior/Condition for which a file already exists under `.markharness/knowledge/`). Omitted fields are excluded from comparison against the existing value; only specified fields are checked against the existing file's values (`conflicting_existing_value` error).
 
 **Validation rules (summary; see spec §5 for details)**
 
@@ -501,7 +514,7 @@ markharness generate [--json] [-d, --dir <path>]
 - **Aggregation model**: All files under a single `Condition`'s `expected/` are aggregated into the `expected` array of a single `TestCase` (1 Condition = 1 TestCase; a change from the earlier model that made a separate TestCase per expected file).
 - `case_id = "tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}"`. Concatenating all four ids (`requirement`/`feature`/`behavior`/`condition`) makes a `case_id` collision structurally impossible even if a `condition.id` is reused under a different Behavior.
 - The output file is written to `.markharness/generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml`, fully mirroring `.markharness/knowledge/`'s own hierarchy (the earlier flat `.markharness/generated/testcases/{condition.id}.yml` naming had a defect where reusing the same `condition.id` under a different Behavior silently overwrote the earlier file).
-- `title` = `condition.description`, `steps` = `[behavior.description]`, `expected` = the `description` of each `expected/*.yml`, listed in file-name sort order.
+- `title` = `condition.description`, `steps` = `behavior.steps` (transcribed as-is; `behavior.description` is a human-facing summary not used for generation, per [ADR 0015](decisions/0015-behavior-step-model.md) Phase 1), `expected` = the `description` of each `expected/*.yml`, listed in file-name sort order.
 - `generated_from` records each of the `requirement` / `feature` / `behavior` / `condition` ids, and the source `expected_results` (the list of `id`s of `expected/*.yml`) that were aggregated.
 - `axis`: a list of viewpoints formed by combining (union, deduplicated and sorted) the `axis` of the `Requirement` / `Feature` / `Behavior` (§3.4 "axis inheritance").
 - The output is serialized with `serde_yaml_ng`, and always produces the same output for the same input (determinism, a prerequisite for diff verification in CI).
@@ -532,8 +545,8 @@ generated_from:
 title: |
   Submit the todo form with an empty title
 steps:
-  - |
-    User adds a new task to the list.
+  - "Click the title field."
+  - "Press the add button."
 expected:
   - |
     shows a validation error

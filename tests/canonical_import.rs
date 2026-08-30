@@ -110,7 +110,7 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
     fs::write(
         repo.path()
             .join(".markharness/knowledge/checkout/pay/card/behavior.yml"),
-        "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\n",
+        "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\nsteps:\n  - \"Enter the card number.\"\n",
     )
     .unwrap();
     fs::write(

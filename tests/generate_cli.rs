@@ -71,7 +71,7 @@ fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, co
     std::fs::write(
         dir.parent().unwrap().join("behavior.yml"),
         format!(
-            "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  Behavior.\n"
+            "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  Behavior.\nsteps:\n  - \"Do it.\"\n"
         ),
     )
     .unwrap();

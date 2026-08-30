@@ -85,7 +85,7 @@ function generate_testcases(knowledge_root):
                         generated_from: {requirement.id, feature.id, behavior.id, condition.id,
                                           expected_results: [e.id for e in expected_results]},
                         title: condition.description,
-                        steps: [behavior.description],
+                        steps: behavior.steps,
                         expected: [e.description for e in expected_results],
                         axis: union_sorted_dedup(requirement.axis, feature.axis, behavior.axis),  # 3.4節
                     })
@@ -113,14 +113,16 @@ tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}
 
 ```
 title    = condition.description                         # 加工なし、そのまま
-steps    = [behavior.description]                         # 単一要素の配列
+steps    = behavior.steps                                 # 順序付き配列、そのまま転記
 expected = [e.description for e in expected_results]      # ExpectedResultごとに1要素
 ```
 
 理由：
 
 - 完全な自然文生成(LLM等)は本研究のスコープ外(付録A.1)であることに変わりはないが、固定テンプレートによる文字列合成すら行わないことで、生成ロジックが`knowledge/`側の文言だけに依存する最も単純な純粋関数になり、決定性(4章)の証明・実装が容易になる。
-- テンプレート文言の作り込み(「〜の後、〜となる」等の言い回し)は`condition.description`/`behavior.description`側の書き方の問題として、Test Designerの記述時の責務に寄せた。
+- テンプレート文言の作り込み(「〜の後、〜となる」等の言い回し)は`condition.description`/`behavior.steps`の各要素側の書き方の問題として、Test Designerの記述時の責務に寄せた。
+
+[ADR 0015](../decisions/0015-behavior-step-model.md)(Phase 1)により、`behavior.yml`は`description`(人間向けの1文要約、生成には使わない)と`steps: Vec<String>`(順序付きの操作手順、1要素=1操作)を別フィールドとして持つ。当初`TestCase.steps`は実装上`[behavior.description]`という単一要素の配列にしかならなかったが(本節が元々説明していた挙動)、Phase 1以降は`behavior.steps`をそのまま転記するため複数要素になり得る。
 
 ### 3.4 axisの継承
 
@@ -182,7 +184,7 @@ sequenceDiagram
 | ConditionはあるがExpectedResultが無い(`expected/`が空、または存在しない) | `TestCase`は生成されない(`generate.rs`が空チェックでスキップする)。 |
 | Conditionを持たないFeature/Behaviorがある | `TestCase`は生成されない(§3.1のER図で`generates`の起点は`FEATURE`と`CONDITION`の両方であるため)。 |
 | `forked_from`を持つFeature | 生成アルゴリズムには影響しない。`forked_from`は概念的派生を示す手動記述(§3.1)であり、構造的生成グラフ(§3.2(A))とは独立した情報のため、生成ロジックはこのフィールドを参照しない。 |
-| Behavior階層の扱い | **当初案とは異なり、実装は`behavior.yml`の存在をConditionと同格の必須階層として扱う**(`find_dirs_with_marker`で明示的に探索し、`behavior.description`を`TestCase.steps`に、`behavior.axis`を`TestCase.axis`の合成元に使う)。Behaviorを持たないConditionから`TestCase`は生成されない。 |
+| Behavior階層の扱い | **当初案とは異なり、実装は`behavior.yml`の存在をConditionと同格の必須階層として扱う**(`find_dirs_with_marker`で明示的に探索し、`behavior.steps`を`TestCase.steps`に、`behavior.axis`を`TestCase.axis`の合成元に使う。`behavior.description`は[ADR 0015](../decisions/0015-behavior-step-model.md) Phase 1以降、生成には使わない人間向け要約)。Behaviorを持たないConditionから`TestCase`は生成されない。 |
 
 ### CTM(Classification Tree Method)との関係の再確認
 
@@ -206,7 +208,7 @@ sequenceDiagram
 
 - `requirement.yml`: `id: req-todo`, `axis: [security]`
 - `feature.yml`(`req-todo/todo/`配下): `id: todo`, `axis: [ui, data]`
-- `behavior.yml`(`todo/todo-add-task/`配下): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`
+- `behavior.yml`(`todo/todo-add-task/`配下): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`, `steps: ["Click the title field.", "Press the add button."]`
 - `condition.yml`(`todo-add-task/todo-add-task-empty-input/`配下): `id: todo-add-task-empty-input`, `description: "Title is empty."`
 - `expected/001.yml`(1件のみ): `id: todo-add-task-empty-input-001`, `description: "Shows a validation error."`
 
@@ -222,7 +224,8 @@ generated_from:
     - todo-add-task-empty-input-001
 title: "Title is empty.\n"
 steps:
-  - "User adds a task.\n"
+  - "Click the title field."
+  - "Press the add button."
 expected:
   - "Shows a validation error.\n"
 axis: [data, security, ui]   # requirement[security] + feature[ui, data] + behavior[ui] の合成・重複除去・ソート

@@ -19,6 +19,7 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             behavior_id: "behavior".to_string(),
             behavior_uid: None,
             behavior_description: "perform action".to_string(),
+            behavior_steps: vec!["click the button".to_string()],
             behavior_axis: vec!["ui".to_string()],
             condition_id: "condition".to_string(),
             condition_uid: None,
@@ -38,6 +39,7 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
     assert_eq!(testcases[0].case_id, "tc-req-feature-behavior-condition");
     assert_eq!(testcases[0].axis, vec!["ui", "workflow"]);
     assert_eq!(testcases[0].expected, vec!["result"]);
+    assert_eq!(testcases[0].steps, vec!["click the button"]);
 }
 
 #[test]

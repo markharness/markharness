@@ -125,6 +125,7 @@ pub fn apply_draft(
                 .unwrap_or_else(|| draft.behavior.id.clone()),
             axis: draft.behavior.axis.clone().unwrap_or_default(),
             description: draft.behavior.description.clone().unwrap_or_default(),
+            steps: draft.behavior.steps.clone().unwrap_or_default(),
             uid: None,
         };
         pending.push((behavior_path, knowledge::serialize_behavior(&behavior)));
@@ -445,6 +446,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
+  steps:
+    - Press the jump button.
 
 condition:
   id: ground
@@ -563,7 +566,7 @@ expected:
                     .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml")
             )
             .unwrap(),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n"
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
         );
         assert_eq!(
             fs::read_to_string(
@@ -652,6 +655,8 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
+  steps:
+    - Press the jump button.
 
 condition:
   id: ground
