@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted (2026-08-30). Phase 1(inline `Behavior.steps`の導入)の実装が完了し、「Acceptedへ変更する条件」を満たした。
+Superseded by [0016](./0016-behavior-condition-precondition-step-result-model.md) (2026-08-31)。Phase 1(inline `Behavior.steps`の導入)は実装され「Acceptedへ変更する条件」を一度満たしたが、実データでの利用により`behavior.steps`をConditionの共通粒度とする前提そのものが崩れたため、[0016](./0016-behavior-condition-precondition-step-result-model.md)がこのADRを置き換える。
 
 ## 背景
 

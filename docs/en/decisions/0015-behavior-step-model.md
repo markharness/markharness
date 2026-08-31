@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-08-30). Phase 1 (introducing inline `Behavior.steps`) is implemented and satisfies the "Conditions for changing to Accepted" below.
+Superseded by [0016](./0016-behavior-condition-precondition-step-result-model.md) (2026-08-31). Phase 1 (introducing inline `Behavior.steps`) was implemented and once satisfied the "Conditions for changing to Accepted" below, but real-world use exposed that the underlying premise — sharing `Behavior.steps` as the common granularity across every Condition — did not hold, so [0016](./0016-behavior-condition-precondition-step-result-model.md) supersedes this ADR.
 
 ## Context
 
