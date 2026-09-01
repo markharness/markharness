@@ -388,6 +388,75 @@ fn push_missing_steps(
     }
 }
 
+/// Optional array field where an empty array is itself legitimate (the
+/// field may be omitted or empty), but any element present must be
+/// non-blank — matches `items.minLength: 1` in the JSON Schema. Used for
+/// `condition.additional_preconditions`.
+fn push_blank_elements_in_optional_array(
+    errors: &mut Vec<ValidationError>,
+    path: &str,
+    values: &Option<Vec<String>>,
+) {
+    if let Some(values) = values
+        && values.iter().any(|s| s.trim().is_empty())
+    {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::MissingSteps,
+            path: path.to_string(),
+            value: None,
+            message: format!("{path} must not contain empty elements"),
+            suggestion: None,
+        });
+    }
+}
+
+/// Optional array field that, unlike
+/// `push_blank_elements_in_optional_array`, must itself be non-empty
+/// whenever it is present at all (`minItems: 1` in the JSON Schema) —
+/// omitting the field is the only way to signal "none". An explicit empty
+/// array here would otherwise serialize as a bare `additional_steps:` key
+/// with no items under it, which round-trips as YAML null and fails the
+/// schema's array-type check only later, at `markharness validate` time.
+/// Used for `expected[].additional_steps`.
+fn push_invalid_optional_steps(
+    errors: &mut Vec<ValidationError>,
+    path: &str,
+    values: &Option<Vec<String>>,
+) {
+    if let Some(values) = values
+        && (values.is_empty() || values.iter().any(|s| s.trim().is_empty()))
+    {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::MissingSteps,
+            path: path.to_string(),
+            value: None,
+            message: format!("{path}, when provided, must contain at least one non-empty step"),
+            suggestion: None,
+        });
+    }
+}
+
+/// Optional string field that must be non-blank whenever provided
+/// (`minLength: 1` in the JSON Schema) — omitting it is the only way to
+/// signal "none". Used for `expected[].implementation_note`.
+fn push_blank_optional_string(
+    errors: &mut Vec<ValidationError>,
+    path: &str,
+    value: &Option<String>,
+) {
+    if let Some(value) = value
+        && value.trim().is_empty()
+    {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::MissingDescription,
+            path: path.to_string(),
+            value: None,
+            message: format!("{path}, when provided, must not be empty"),
+            suggestion: None,
+        });
+    }
+}
+
 fn push_conflicting_value(
     errors: &mut Vec<ValidationError>,
     path: &str,
@@ -578,6 +647,13 @@ pub fn validate_draft(
         &draft.condition.steps,
         condition_exists,
     );
+    if !condition_exists {
+        push_blank_elements_in_optional_array(
+            &mut errors,
+            "condition.additional_preconditions",
+            &draft.condition.additional_preconditions,
+        );
+    }
     for (i, expected) in draft.expected.iter().enumerate() {
         if expected.description.trim().is_empty() {
             errors.push(ValidationError {
@@ -593,6 +669,16 @@ pub fn validate_draft(
             &format!("expected[{i}].results"),
             &expected.results,
             false,
+        );
+        push_invalid_optional_steps(
+            &mut errors,
+            &format!("expected[{i}].additional_steps"),
+            &expected.additional_steps,
+        );
+        push_blank_optional_string(
+            &mut errors,
+            &format!("expected[{i}].implementation_note"),
+            &expected.implementation_note,
         );
     }
 
@@ -1119,6 +1205,135 @@ expected:
         assert!(errors.iter().any(
             |e| e.code == ValidationErrorCode::MissingSteps && e.path == "expected[0].results"
         ));
+    }
+
+    #[test]
+    fn validate_draft_reports_blank_element_in_condition_additional_preconditions() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.condition.additional_preconditions = Some(vec!["   ".to_string()]);
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps
+                    && e.path == "condition.additional_preconditions"),
+            "expected a missing_steps error for a blank additional_preconditions element, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_draft_allows_an_empty_condition_additional_preconditions_array() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.condition.additional_preconditions = Some(Vec::new());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.path == "condition.additional_preconditions"),
+            "an empty additional_preconditions array is legitimate and must not error: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_an_explicitly_empty_additional_steps_array_for_an_expected_entry() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.expected[0].additional_steps = Some(Vec::new());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps
+                    && e.path == "expected[0].additional_steps"),
+            "an explicitly empty additional_steps array would serialize to invalid YAML \
+             (a scalar-looking `additional_steps:` with no items) and must be rejected: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_a_blank_element_in_expected_additional_steps() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.expected[0].additional_steps = Some(vec!["   ".to_string()]);
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps
+                    && e.path == "expected[0].additional_steps"),
+            "expected: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_draft_allows_omitting_expected_additional_steps_entirely() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.expected[0].additional_steps = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.path == "expected[0].additional_steps"),
+            "omitting additional_steps entirely is always legitimate: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_a_blank_implementation_note_for_an_expected_entry() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.expected[0].implementation_note = Some("   ".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingDescription
+                    && e.path == "expected[0].implementation_note"),
+            "expected: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_draft_skips_additional_preconditions_check_when_condition_already_exists() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        std::fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/jump/ground"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\n",
+        )
+        .unwrap();
+        let mut draft = full_new_draft();
+        draft.condition.steps = None;
+        draft.condition.additional_preconditions = Some(vec!["   ".to_string()]);
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.path == "condition.additional_preconditions"),
+            "additional_preconditions is ignored entirely when reusing an existing condition: {errors:?}"
+        );
     }
 
     #[test]
