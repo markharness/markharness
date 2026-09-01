@@ -391,7 +391,13 @@ fn push_missing_steps(
 /// Optional array field where an empty array is itself legitimate (the
 /// field may be omitted or empty), but any element present must be
 /// non-blank — matches `items.minLength: 1` in the JSON Schema. Used for
-/// `condition.additional_preconditions` and `expected[].additional_steps`.
+/// `behavior.steps`, `condition.additional_preconditions`, and
+/// `expected[].additional_steps`. `behavior.steps` maps to the persisted
+/// `preconditions` field, whose schema description says an empty array
+/// means "no shared precondition" (ADR 0016's comparison table: "空配列許容
+/// (minItemsなし)") — `knowledge_apply.rs` materializes an omitted `steps`
+/// to the same `[]`, so omission and an explicit empty array must be
+/// equally valid here.
 /// For `additional_steps` specifically, ADR 0016 §1 says the first
 /// ExpectedResult in a Condition "may omit it, or it may be empty" — an
 /// explicit `[]` carries the same meaning as omission, so only a blank
@@ -611,12 +617,9 @@ pub fn validate_draft(
         &draft.behavior.description,
         behavior_exists,
     );
-    push_missing_steps(
-        &mut errors,
-        "behavior.steps",
-        &draft.behavior.steps,
-        behavior_exists,
-    );
+    if !behavior_exists {
+        push_blank_elements_in_optional_array(&mut errors, "behavior.steps", &draft.behavior.steps);
+    }
     push_missing_description(
         &mut errors,
         "condition.description",
@@ -1121,7 +1124,9 @@ expected:
     }
 
     #[test]
-    fn validate_draft_reports_missing_steps_for_new_behavior_without_steps() {
+    fn validate_draft_allows_omitting_behavior_steps_entirely_for_a_new_behavior() {
+        // knowledge_apply.rs materializes `None` to the same `[]` as an
+        // explicit empty array, so the two must be equally valid.
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
         draft.behavior.steps = None;
@@ -1129,9 +1134,8 @@ expected:
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
         assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "behavior.steps")
+            !errors.iter().any(|e| e.path == "behavior.steps"),
+            "omitting behavior.steps entirely is as valid as an explicit empty array: {errors:?}"
         );
     }
 
@@ -1321,7 +1325,10 @@ expected:
     }
 
     #[test]
-    fn validate_draft_reports_missing_steps_for_new_behavior_with_empty_steps() {
+    fn validate_draft_allows_an_empty_behavior_steps_array_for_a_new_behavior() {
+        // ADR 0016: behavior.preconditions has no minItems — an empty array
+        // means "no shared precondition", a legitimate value for a
+        // brand-new Behavior, just like condition.additional_preconditions.
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
         draft.behavior.steps = Some(Vec::new());
@@ -1329,9 +1336,8 @@ expected:
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
         assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "behavior.steps")
+            !errors.iter().any(|e| e.path == "behavior.steps"),
+            "an empty behavior.steps array is legitimate (no shared precondition) and must not error: {errors:?}"
         );
     }
 
