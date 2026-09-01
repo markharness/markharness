@@ -125,7 +125,7 @@ pub fn apply_draft(
                 .unwrap_or_else(|| draft.behavior.id.clone()),
             axis: draft.behavior.axis.clone().unwrap_or_default(),
             description: draft.behavior.description.clone().unwrap_or_default(),
-            steps: draft.behavior.steps.clone().unwrap_or_default(),
+            preconditions: draft.behavior.steps.clone().unwrap_or_default(),
             uid: None,
         };
         pending.push((behavior_path, knowledge::serialize_behavior(&behavior)));
@@ -141,6 +141,12 @@ pub fn apply_draft(
                 .clone()
                 .unwrap_or_else(|| effective_condition_id.clone()),
             description: draft.condition.description.clone().unwrap_or_default(),
+            steps: draft.condition.steps.clone().unwrap_or_default(),
+            additional_preconditions: draft
+                .condition
+                .additional_preconditions
+                .clone()
+                .unwrap_or_default(),
             uid: None,
         };
         pending.push((condition_path, knowledge::serialize_condition(&condition)));
@@ -153,6 +159,9 @@ pub fn apply_draft(
             id: expected_id,
             condition: effective_condition_id.clone(),
             description: expected_draft.description.clone(),
+            results: expected_draft.results.clone().unwrap_or_default(),
+            additional_steps: expected_draft.additional_steps.clone(),
+            implementation_note: expected_draft.implementation_note.clone(),
             generated_by: None,
             verified_by: None,
             uid: None,
@@ -453,9 +462,13 @@ condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps:
+    - Do it.
 
 expected:
   - description: lands safely
+    results:
+      - Confirmed.
 ";
 
     fn setup_root_with_axes(axis_ids: &[&str]) -> tempfile::TempDir {
@@ -566,7 +579,7 @@ expected:
                     .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml")
             )
             .unwrap(),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n"
         );
         assert_eq!(
             fs::read_to_string(
@@ -574,7 +587,7 @@ expected:
                     .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
             )
             .unwrap(),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\n"
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
         );
         assert_eq!(
             fs::read_to_string(
@@ -583,7 +596,7 @@ expected:
                 )
             )
             .unwrap(),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
         );
     }
 
@@ -620,6 +633,8 @@ condition:
 
 expected:
   - description: falls over
+    results:
+      - Confirmed.
 ";
         let reuse_draft = parse_draft(reuse_yaml).unwrap();
         let result = apply_draft(dir.path(), &reuse_draft, &no_strip()).unwrap();
@@ -632,7 +647,7 @@ expected:
                 )
             )
             .unwrap(),
-            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
+            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\nresults:\n  - \"Confirmed.\"\n"
         );
     }
 
@@ -662,10 +677,16 @@ condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps:
+    - Do it.
 
 expected:
   - description: lands safely
+    results:
+      - Confirmed.
   - description: takes fall damage if height > 3m
+    results:
+      - Confirmed.
 ";
         let draft = parse_draft(yaml).unwrap();
 
@@ -684,7 +705,7 @@ expected:
                 )
             )
             .unwrap(),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
         );
         assert_eq!(
             fs::read_to_string(
@@ -693,7 +714,7 @@ expected:
                 )
             )
             .unwrap(),
-            "id: ground-002\ncondition: ground\ndescription: |\n  takes fall damage if height > 3m\n"
+            "id: ground-002\ncondition: ground\ndescription: |\n  takes fall damage if height > 3m\nresults:\n  - \"Confirmed.\"\n"
         );
     }
 
@@ -744,9 +765,13 @@ condition:
   id: air
   label: air
   description: Jump in the air.
+  steps:
+    - Do it.
 
 expected:
   - description: does not take fall damage
+    results:
+      - Confirmed.
 ";
 
     fn write_draft_file(dir: &std::path::Path, name: &str, yaml: &str) -> PathBuf {

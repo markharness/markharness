@@ -40,9 +40,13 @@ condition:
   id:
   label:
   description:
+  steps:
+    -
 
 expected:
   - description:
+    results:
+      -
 ";
 
 /// Writes `EDIT_TEMPLATE` — the same blank draft chain `knowledge add --edit`
@@ -222,6 +226,21 @@ mod tests {
         );
     }
 
+    /// ADR 0016: `condition.steps`(必須)と`expected[].results`(必須)の
+    /// プレースホルダーがテンプレートに含まれる。
+    #[test]
+    fn edit_template_includes_condition_steps_and_expected_results_placeholders() {
+        assert!(
+            EDIT_TEMPLATE
+                .contains("condition:\n  id:\n  label:\n  description:\n  steps:\n    -\n"),
+            "expected a condition.steps placeholder: {EDIT_TEMPLATE}"
+        );
+        assert!(
+            EDIT_TEMPLATE.contains("expected:\n  - description:\n    results:\n      -\n"),
+            "expected an expected[].results placeholder: {EDIT_TEMPLATE}"
+        );
+    }
+
     #[test]
     fn write_scaffold_refuses_to_overwrite_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -288,6 +307,8 @@ mod tests {
                 id: "ground".to_string(),
                 label: None,
                 description: None,
+                steps: None,
+                additional_preconditions: None,
             },
             expected: Vec::new(),
         }
@@ -373,9 +394,13 @@ condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps:
+    - Land on the ground.
 
 expected:
   - description: lands safely
+    results:
+      - Player is standing on the ground.
 ";
 
     /// Returns a closure that writes each entry of `contents` to the edited

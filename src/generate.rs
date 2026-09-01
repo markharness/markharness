@@ -53,12 +53,25 @@ pub struct TestCase {
     #[serde(skip)]
     pub case_files: CaseFilePaths,
     pub generated_from: GeneratedFrom,
-    pub title: String,
-    pub steps: Vec<String>,
-    pub expected: Vec<String>,
+    /// ADR 0016: `behavior.preconditions` + `condition.additional_preconditions`
+    /// を連結したもの。`phases`とは独立したフィールド(§4)。
+    pub preconditions: Vec<String>,
+    /// ADR 0016: `expected/*.yml`をファイル名順に走査して1ファイルにつき
+    /// 1つ生成する、人間が上から順に読んで実施する一続きの手順書(§5)。
+    pub phases: Vec<Phase>,
     /// Requirement/Feature/Behavior の axis を合成(union)したもの。決定性のため
     /// 重複除去のうえソートする(§3.4 axisの継承)。
     pub axis: Vec<String>,
+}
+
+/// ADR 0016 §2: 1つの`expected/*.yml`に対応する手順書の一区切り。先頭phaseの
+/// `steps`は`condition.steps`(+その`expected/*.yml`が`additional_steps`を
+/// 持つ場合は末尾に連結)、2番目以降のphaseの`steps`はその`expected/*.yml`の
+/// `additional_steps`のみからなる。
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct Phase {
+    pub steps: Vec<String>,
+    pub results: Vec<String>,
 }
 
 /// Repo-relative (forward-slash, `.markharness/knowledge/...`-prefixed)
@@ -77,7 +90,10 @@ pub struct CaseFilePaths {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpectedSnapshot {
     pub id: String,
-    pub description: String,
+    pub results: Vec<String>,
+    /// `None`はファイル自体に`additional_steps`が無いこと(先頭ファイルのみ
+    /// 許容、`validate.rs`のクロスリファレンスチェック対象)を表す。
+    pub additional_steps: Option<Vec<String>>,
     pub uid: Option<String>,
 }
 
@@ -91,14 +107,12 @@ pub struct KnowledgeCaseSnapshot {
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
     pub behavior_uid: Option<String>,
-    /// 人間向け要約。ADR 0015 Phase 1以降、テストケース生成には使わない
-    /// (`TestCase.steps`は`behavior_steps`から組み立てる)。
-    pub behavior_description: String,
-    pub behavior_steps: Vec<String>,
+    pub behavior_preconditions: Vec<String>,
     pub behavior_axis: Vec<String>,
     pub condition_id: String,
     pub condition_uid: Option<String>,
-    pub condition_description: String,
+    pub condition_steps: Vec<String>,
+    pub condition_additional_preconditions: Vec<String>,
     pub expected: Vec<ExpectedSnapshot>,
     /// See `TestCase::case_files`.
     pub case_files: CaseFilePaths,
@@ -353,7 +367,8 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                         expected.push(ExpectedSnapshot {
                             id: parsed.id,
-                            description: parsed.description,
+                            results: parsed.results,
+                            additional_steps: parsed.additional_steps,
                             uid: parsed.uid,
                         });
                     }
@@ -377,12 +392,12 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                         feature_axis: feature.axis.clone(),
                         behavior_id: behavior.id.clone(),
                         behavior_uid: behavior.uid.clone(),
-                        behavior_description: behavior.description.clone(),
-                        behavior_steps: behavior.steps.clone(),
+                        behavior_preconditions: behavior.preconditions.clone(),
                         behavior_axis: behavior.axis.clone(),
                         condition_id: condition.id,
                         condition_uid: condition.uid.clone(),
-                        condition_description: condition.description,
+                        condition_steps: condition.steps,
+                        condition_additional_preconditions: condition.additional_preconditions,
                         expected,
                         case_files,
                     });
@@ -392,6 +407,30 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
     }
 
     Ok(KnowledgeSnapshot { cases })
+}
+
+/// ADR 0016 §2: `expected/*.yml`をファイル名順(`case.expected`は
+/// `load_knowledge_snapshot`で既にその順に集約済み)に1つのPhaseへ変換する。
+/// 先頭phaseのみ`condition.steps`を前に置き、その`expected/*.yml`自身の
+/// `additional_steps`(先頭は無くてもよい)を末尾に連結する。2番目以降の
+/// phaseの`steps`は`additional_steps`のみからなる。
+fn build_phases(case: &KnowledgeCaseSnapshot) -> Vec<Phase> {
+    case.expected
+        .iter()
+        .enumerate()
+        .map(|(i, expected)| {
+            let additional_steps = expected.additional_steps.clone().unwrap_or_default();
+            let steps = if i == 0 {
+                [case.condition_steps.clone(), additional_steps].concat()
+            } else {
+                additional_steps
+            };
+            Phase {
+                steps,
+                results: expected.results.clone(),
+            }
+        })
+        .collect()
 }
 
 pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
@@ -413,13 +452,12 @@ pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
                 condition: case.condition_id.clone(),
                 expected_results: case.expected.iter().map(|item| item.id.clone()).collect(),
             },
-            title: case.condition_description.clone(),
-            steps: case.behavior_steps.clone(),
-            expected: case
-                .expected
-                .iter()
-                .map(|item| item.description.clone())
-                .collect(),
+            preconditions: [
+                case.behavior_preconditions.clone(),
+                case.condition_additional_preconditions.clone(),
+            ]
+            .concat(),
+            phases: build_phases(case),
             axis: union_axis(&[
                 &case.requirement_axis,
                 &case.feature_axis,
@@ -632,7 +670,7 @@ mod tests {
         feature: &str,
         behavior: &str,
         description: &str,
-        steps: &[&str],
+        preconditions: &[&str],
     ) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
@@ -641,14 +679,14 @@ mod tests {
             .join(feature)
             .join(behavior);
         fs::create_dir_all(&dir).unwrap();
-        let steps_block: String = steps
+        let preconditions_block: String = preconditions
             .iter()
             .map(|step| format!("  - {}\n", serde_json::to_string(step).unwrap()))
             .collect();
         fs::write(
             dir.join("behavior.yml"),
             format!(
-                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\nsteps:\n{steps_block}"
+                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\npreconditions:\n{preconditions_block}"
             ),
         )
         .unwrap();
@@ -673,7 +711,7 @@ mod tests {
         fs::write(
             dir.join("condition.yml"),
             format!(
-                "id: {condition}\nbehavior: {behavior}\nlabel: {condition}\ndescription: |\n  {description}\n"
+                "id: {condition}\nbehavior: {behavior}\nlabel: {condition}\ndescription: |\n  {description}\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
             ),
         )
         .unwrap();
@@ -688,7 +726,32 @@ mod tests {
         condition: &str,
         seq: &str,
         id: &str,
-        description: &str,
+        results: &[&str],
+    ) {
+        write_expected_with_additional_steps(
+            root,
+            requirement,
+            feature,
+            behavior,
+            condition,
+            seq,
+            id,
+            &[],
+            results,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_expected_with_additional_steps(
+        root: &std::path::Path,
+        requirement: &str,
+        feature: &str,
+        behavior: &str,
+        condition: &str,
+        seq: &str,
+        id: &str,
+        additional_steps: &[&str],
+        results: &[&str],
     ) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
@@ -699,9 +762,24 @@ mod tests {
             .join(condition)
             .join("expected");
         fs::create_dir_all(&dir).unwrap();
+        let results_block: String = results
+            .iter()
+            .map(|result| format!("  - {}\n", serde_json::to_string(result).unwrap()))
+            .collect();
+        let additional_steps_block = if additional_steps.is_empty() {
+            String::new()
+        } else {
+            let steps_block: String = additional_steps
+                .iter()
+                .map(|step| format!("  - {}\n", serde_json::to_string(step).unwrap()))
+                .collect();
+            format!("additional_steps:\n{steps_block}")
+        };
         fs::write(
             dir.join(format!("{seq}.yml")),
-            format!("id: {id}\ncondition: {condition}\ndescription: |\n  {description}\n"),
+            format!(
+                "id: {id}\ncondition: {condition}\ndescription: |\n  d.\n{additional_steps_block}results:\n{results_block}"
+            ),
         )
         .unwrap();
     }
@@ -734,7 +812,7 @@ mod tests {
         fs::create_dir_all(&condition_dir).unwrap();
         fs::write(
             condition_dir.join("condition.yml"),
-            "id: ../../../../evil\nbehavior: todo-add-task\nlabel: evil\ndescription: |\n  Evil.\n",
+            "id: ../../../../evil\nbehavior: todo-add-task\nlabel: evil\ndescription: |\n  Evil.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         write_expected(
@@ -745,7 +823,7 @@ mod tests {
             "todo-add-task-evil",
             "001",
             "todo-add-task-evil-001",
-            "Shows a validation error.",
+            &["Shows a validation error."],
         );
 
         let result = generate_testcases(
@@ -805,7 +883,7 @@ mod tests {
             "todo-add-task-empty-input",
             "001",
             "todo-add-task-empty-input-001",
-            "Shows a validation error.",
+            &["Shows a validation error."],
         );
 
         let testcases = generate_testcases(
@@ -829,15 +907,20 @@ mod tests {
             tc.generated_from.expected_results,
             vec!["todo-add-task-empty-input-001".to_string()]
         );
-        assert_eq!(tc.title, "Title is empty.\n");
         assert_eq!(
-            tc.steps,
+            tc.preconditions,
             vec![
                 "Click the title field.".to_string(),
                 "Press the add button.".to_string()
             ]
         );
-        assert_eq!(tc.expected, vec!["Shows a validation error.\n".to_string()]);
+        assert_eq!(
+            tc.phases,
+            vec![Phase {
+                steps: vec!["Do it.".to_string()],
+                results: vec!["Shows a validation error.".to_string()],
+            }]
+        );
     }
 
     #[test]
@@ -870,9 +953,9 @@ mod tests {
             "todo-complete-task-toggle-done",
             "001",
             "todo-complete-task-toggle-done-001",
-            "Task becomes done.",
+            &["Task becomes done."],
         );
-        write_expected(
+        write_expected_with_additional_steps(
             dir.path(),
             "req-todo",
             "todo",
@@ -880,7 +963,8 @@ mod tests {
             "todo-complete-task-toggle-done",
             "002",
             "todo-complete-task-toggle-done-002",
-            "completedAt is recorded.",
+            &["Reload the page."],
+            &["completedAt is recorded."],
         );
 
         let testcases = generate_testcases(
@@ -904,10 +988,16 @@ mod tests {
             ]
         );
         assert_eq!(
-            tc.expected,
+            tc.phases,
             vec![
-                "Task becomes done.\n".to_string(),
-                "completedAt is recorded.\n".to_string(),
+                Phase {
+                    steps: vec!["Do it.".to_string()],
+                    results: vec!["Task becomes done.".to_string()],
+                },
+                Phase {
+                    steps: vec!["Reload the page.".to_string()],
+                    results: vec!["completedAt is recorded.".to_string()],
+                },
             ]
         );
     }
@@ -942,7 +1032,7 @@ mod tests {
             "todo-add-task-empty-input",
             "001",
             "todo-add-task-empty-input-001",
-            "Shows a validation error.",
+            &["Shows a validation error."],
         );
 
         write_requirement(dir.path(), "req-enemy", &["combat"]);
@@ -971,7 +1061,7 @@ mod tests {
             "enemy-attack-melee-range",
             "001",
             "enemy-attack-melee-range-001",
-            "Deals damage.",
+            &["Deals damage."],
         );
 
         let testcases = generate_testcases(
@@ -1072,7 +1162,7 @@ mod tests {
             "todo-add-task-empty-input",
             "001",
             "todo-add-task-empty-input-001",
-            "Shows a validation error.",
+            &["Shows a validation error."],
         );
 
         let first: Vec<String> = generate_testcases(
@@ -1111,9 +1201,11 @@ mod tests {
                 condition: "todo-add-task-empty-input".to_string(),
                 expected_results: vec!["todo-add-task-empty-input-001".to_string()],
             },
-            title: "Title is empty.".to_string(),
-            steps: vec!["User adds a task.".to_string()],
-            expected: vec!["Shows a validation error.".to_string()],
+            preconditions: vec!["User adds a task.".to_string()],
+            phases: vec![Phase {
+                steps: vec!["Do it.".to_string()],
+                results: vec!["Shows a validation error.".to_string()],
+            }],
             axis: vec!["ui".to_string()],
         };
 
@@ -1172,7 +1264,7 @@ mod tests {
             "todo-add-task-empty-input",
             "001",
             "todo-add-task-empty-input-001",
-            "Shows a validation error.",
+            &["Shows a validation error."],
         );
 
         let testcases = generate_testcases(
@@ -1236,7 +1328,7 @@ mod tests {
             root.join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
             format!(
-                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n{}",
+                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n{}",
                 behavior_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
             ),
         )
@@ -1244,7 +1336,7 @@ mod tests {
         fs::write(
             knowledge.join("condition.yml"),
             format!(
-                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\n{}",
+                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n{}",
                 condition_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
             ),
         )
@@ -1252,7 +1344,7 @@ mod tests {
         fs::write(
             knowledge.join("expected/001.yml"),
             format!(
-                "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\n{}",
+                "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n{}",
                 expected_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
             ),
         )
@@ -1349,7 +1441,7 @@ mod tests {
             "todo-add-task-empty-input",
             "001",
             "todo-add-task-empty-input-001",
-            "Shows a validation error.",
+            &["Shows a validation error."],
         );
 
         let testcases = generate_testcases(
@@ -1381,9 +1473,11 @@ mod tests {
                 condition: "todo-add-task-empty-input".to_string(),
                 expected_results: vec!["todo-add-task-empty-input-001".to_string()],
             },
-            title: "Title is empty.".to_string(),
-            steps: vec!["User adds a task.".to_string()],
-            expected: vec!["Shows a validation error.".to_string()],
+            preconditions: vec!["User adds a task.".to_string()],
+            phases: vec![Phase {
+                steps: vec!["Do it.".to_string()],
+                results: vec!["Shows a validation error.".to_string()],
+            }],
             axis: vec!["ui".to_string()],
         };
 

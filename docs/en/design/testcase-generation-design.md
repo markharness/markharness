@@ -31,11 +31,11 @@ knowledge/<requirement>/
 └── <feature>/
     ├── feature.yml                   # id, requirement, label, axis, description?, forked_from?
     └── <behavior>/                   # directory name is free; determined by presence of behavior.yml
-        ├── behavior.yml              # id, feature, label, axis, description
+        ├── behavior.yml              # id, feature, label, axis, description, preconditions ([ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md); formerly steps)
         └── <condition>/              # directory name is free; determined by presence of condition.yml
-            ├── condition.yml         # id, behavior, label, description
+            ├── condition.yml         # id, behavior, label, description, steps, additional_preconditions (new in ADR 0016)
             └── expected/
-                ├── 001.yml           # id, condition, description
+                ├── 001.yml           # id, condition, description, results (new in ADR 0016), additional_steps?, implementation_note?
                 └── 002.yml
 ```
 
@@ -80,13 +80,18 @@ function generate_testcases(knowledge_root):
 
                     expected_results = [parse(p) for p in expected_paths]
 
+                    phases = []
+                    for i, e in enumerate(expected_results):
+                        additional_steps = e.additional_steps or []
+                        steps = (condition.steps + additional_steps) if i == 0 else additional_steps
+                        phases.append(Phase{steps: steps, results: e.results})
+
                     testcases.append(TestCase{
-                        case_id: f"tc-{condition.id}-001",
+                        case_id: f"tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}",
                         generated_from: {requirement.id, feature.id, behavior.id, condition.id,
                                           expected_results: [e.id for e in expected_results]},
-                        title: condition.description,
-                        steps: behavior.steps,
-                        expected: [e.description for e in expected_results],
+                        preconditions: behavior.preconditions + condition.additional_preconditions,
+                        phases: phases,
                         axis: union_sorted_dedup(requirement.axis, feature.axis, behavior.axis),  # §3.4
                     })
 
@@ -107,22 +112,23 @@ tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}
 
 (the earlier implementation named it `tc-{condition.id}-001`, with a reserved 3-digit sequence number at the end; it was changed to concatenate all four of `requirement`/`feature`/`behavior`/`condition` because a `case_id` collision occurred whenever a `condition.id` was reused under a different Behavior. Since `knowledge/`'s own directory hierarchy already never allows the same `condition.id` to be duplicated, mirroring that hierarchy directly into `case_id` makes the collision structurally impossible without needing a separate check layer to detect it). The output location under `generated/testcases/` was changed for the same reason, from the flat `condition.id`-only filename (`generated/testcases/ground.yml`) to a full mirror of `knowledge/`'s own hierarchy: `generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml` (`TestCase::relative_path()`).
 
-### 3.3 Text Assembly for title / steps / expected
+### 3.3 Text Assembly for preconditions / phases
 
-The natural-language generation via "fixed template + embedding of short noun phrases from the knowledge side" (e.g. `title = "{summary} (#{seq})"`) that the initial proposal envisioned was not adopted; the implementation instead **transcribes the knowledge-side field values as-is**.
+The natural-language generation via "fixed template + embedding of short noun phrases from the knowledge side" (e.g. `title = "{summary} (#{seq})"`) that the initial proposal envisioned was not adopted; the implementation instead **transcribes the knowledge-side field values as-is**. This policy itself is unchanged after [ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md).
 
 ```
-title    = condition.description                         # no processing, verbatim
-steps    = behavior.steps                                 # ordered array, transcribed as-is
-expected = [e.description for e in expected_results]      # one element per ExpectedResult
+preconditions = behavior.preconditions + condition.additional_preconditions   # concatenated, no processing
+phases        = [Phase{steps: (condition.steps + (e.additional_steps or [])) if i == 0 else (e.additional_steps or []),
+                        results: e.results}
+                  for i, e in enumerate(expected_results)]                     # expected_results is in file-name order
 ```
 
 Reasons:
 
 - Full natural-language generation (via LLM, etc.) remains out of scope for this research (Appendix A.1), but by also not doing string composition via a fixed template, the generation logic becomes the simplest pure function, depending only on the wording on the `knowledge/` side, which makes proving/implementing determinism (Chapter 4) easier.
-- Crafting of template wording (phrasings such as "after ~, becomes ~") was pushed onto the responsibility of the Test Designer at description time, as a matter of how `condition.description`/each element of `behavior.steps` is written.
+- Crafting of template wording (phrasings such as "after ~, becomes ~") was pushed onto the responsibility of the Test Designer at description time, as a matter of how `condition.steps`/each element of `expected_result.results` is written.
 
-Per [ADR 0015](../decisions/0015-behavior-step-model.md) (Phase 1), `behavior.yml` carries `description` (a human-facing one-sentence summary, not used for generation) and `steps: Vec<String>` (an ordered sequence of operations, one operation per element) as separate fields. `TestCase.steps` used to be, in the implementation, always a single-element array `[behavior.description]` (the behavior this section originally described); from Phase 1 onward it transcribes `behavior.steps` as-is and can therefore have multiple elements.
+**Evolution from [ADR 0015](../decisions/0015-behavior-step-model.md) to [ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md)**: ADR 0015 Phase 1 gave `behavior.yml` separate `description` (a human-facing one-sentence summary, not used for generation) and `steps: Vec<String>` (an ordered sequence of operations, one operation per element, transcribed as-is into `TestCase.steps`) fields, with every Condition under the same Behavior sharing that one `steps`. Using this model in practice surfaced a problem: it cannot express Conditions whose actual operations differ (e.g. "enter whitespace-only text" vs. "enter valid text"), which ADR 0016 replaced. ADR 0016 changed the meaning of `behavior.steps` (held internally as `Behavior.preconditions`) to "preconditions common to every Condition," with the actual operation steps now owned by the newly introduced `Condition.steps`. It also added `results: Vec<String>` (multiple observable results) and `additional_steps: Option<Vec<String>>` (extra operations needed before checking a result) to `ExpectedResult`, and replaced `TestCase`'s three flat fields `title`/`steps`/`expected` with `preconditions`/`phases: Vec<Phase>`. `phases` is an array of `Phase{steps, results}` built by walking `expected/*.yml` in file-name order, with only the first phase placing `condition.steps` at the front of `steps`.
 
 ### 3.4 Inheritance of axis
 
@@ -180,11 +186,11 @@ This diagram concretizes the "CI->>GEN: Deterministically regenerate TestCase fr
 | Case | Handling |
 |---|---|
 | One Feature (Behavior) has multiple Conditions | As many `TestCase`s are generated as there are Conditions (since the combination is not the cartesian product of `Feature × Condition` but an enumeration of only the Conditions that actually exist, combinatorial explosion in practice rarely occurs). |
-| One Condition has multiple ExpectedResults | **The `TestCase` remains a single one**; all ExpectedResults' `description`s are aggregated into `TestCase.expected` (an array). This is a change from the initial proposal in §3.2 (splitting into one `TestCase` per ExpectedResult). |
+| One Condition has multiple ExpectedResults | **The `TestCase` remains a single one**; walking `expected/*.yml` in file-name order produces one `Phase{steps, results}` per file, aggregated into `TestCase.phases` (an array) ([ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md)). This is a change from the initial proposal in §3.2 (splitting into one `TestCase` per ExpectedResult). |
 | A Condition exists but there is no ExpectedResult (`expected/` is empty or absent) | No `TestCase` is generated (`generate.rs` skips via an empty check). |
 | There is a Feature/Behavior with no Condition | No `TestCase` is generated (since, in the ER diagram of §3.1, the origin of `generates` is both `FEATURE` and `CONDITION`). |
 | A Feature that has `forked_from` | Does not affect the generation algorithm. `forked_from` is a manually written notation of conceptual derivation (§3.1) and is information independent of the structural generation graph (§3.2(A)), so the generation logic does not reference this field. |
-| Handling of the Behavior level | **Unlike the initial proposal, the implementation treats the presence of `behavior.yml` as a required level on par with Condition** (explicitly searched for via `find_dirs_with_marker`, using `behavior.steps` for `TestCase.steps` and `behavior.axis` as one of the sources composed into `TestCase.axis`; `behavior.description` is, from [ADR 0015](../decisions/0015-behavior-step-model.md) Phase 1 onward, a human-facing summary not used for generation). No `TestCase` is generated from a Condition that has no Behavior. |
+| Handling of the Behavior level | **Unlike the initial proposal, the implementation treats the presence of `behavior.yml` as a required level on par with Condition** (explicitly searched for via `find_dirs_with_marker`, using `behavior.preconditions` (formerly `behavior.steps`) as part of `TestCase.preconditions` and `behavior.axis` as one of the sources composed into `TestCase.axis`; `behavior.description` is, from [ADR 0015](../decisions/0015-behavior-step-model.md) Phase 1 onward, a human-facing summary not used for generation). No `TestCase` is generated from a Condition that has no Behavior. |
 
 ### Reconfirming the Relationship with CTM (Classification Tree Method)
 
@@ -208,9 +214,9 @@ Manually tracing the algorithm of §3.1 with the fixture used by `generate.rs`'s
 
 - `requirement.yml`: `id: req-todo`, `axis: [security]`
 - `feature.yml` (under `req-todo/todo/`): `id: todo`, `axis: [ui, data]`
-- `behavior.yml` (under `todo/todo-add-task/`): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`, `steps: ["Click the title field.", "Press the add button."]`
-- `condition.yml` (under `todo-add-task/todo-add-task-empty-input/`): `id: todo-add-task-empty-input`, `description: "Title is empty."`
-- `expected/001.yml` (only one): `id: todo-add-task-empty-input-001`, `description: "Shows a validation error."`
+- `behavior.yml` (under `todo/todo-add-task/`): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`, `preconditions: ["Click the title field.", "Press the add button."]`
+- `condition.yml` (under `todo-add-task/todo-add-task-empty-input/`): `id: todo-add-task-empty-input`, `description: "Title is empty."`, `steps: ["Do it."]`, `additional_preconditions: []`
+- `expected/001.yml` (only one): `id: todo-add-task-empty-input-001`, `description: "Shows a validation error."`, `results: ["Shows a validation error."]`
 
 → Generated `TestCase` (`generated/testcases/todo-add-task-empty-input.yml`):
 ```yaml
@@ -222,12 +228,14 @@ generated_from:
   condition: todo-add-task-empty-input
   expected_results:
     - todo-add-task-empty-input-001
-title: "Title is empty.\n"
-steps:
+preconditions:
   - "Click the title field."
   - "Press the add button."
-expected:
-  - "Shows a validation error.\n"
+phases:
+  - steps:
+      - "Do it."
+    results:
+      - "Shows a validation error."
 axis: [data, security, ui]   # composition of requirement[security] + feature[ui, data] + behavior[ui], deduplicated, sorted
 ```
 
@@ -237,11 +245,11 @@ The initial version of this document (the exploratory draft) examined, based on 
 
 | Item | Initial proposal | Implementation |
 |---|---|---|
-| TestCase generation unit | 1 TestCase per ExpectedResult | **1 TestCase per Condition** (ExpectedResults are aggregated into the `expected` array) |
+| TestCase generation unit | 1 TestCase per ExpectedResult | **1 TestCase per Condition** (ExpectedResults are aggregated into the `phases` array) |
 | Form of `case_id` | `{feature_id}-{condition_id}-{3-digit sequence number}` | `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` (see §10; the earlier implementation was `tc-{condition.id}-001`, changed because of a collision defect when `condition.id` was reused across Behaviors) |
 | Source of axis inheritance | Feature's `axis` only | Composition (union) of Requirement, Feature, and Behavior's `axis` |
-| title/expected text | Sentence composition via a fixed template | Knowledge-side field values transcribed as-is (no processing) |
-| Behavior level | Not used in generation (mentioned only as room for future extension) | A required level explicitly searched for via `find_dirs_with_marker` and reflected in `steps`/`axis` |
+| preconditions/phases text | Sentence composition via a fixed template | Knowledge-side field values transcribed as-is (no processing) |
+| Behavior level | Not used in generation (mentioned only as room for future extension) | A required level explicitly searched for via `find_dirs_with_marker` and reflected in `preconditions`/`axis` |
 | File extension | `.yaml` (notation matching the samples) | `.yml` (convention of `markharness init`) |
 
 This change was made because, as described in §3.2, the simple correspondence of "1 Condition = 1 TestCase" is easier to prove/implement determinism for, and because a Condition itself already represents a granularity of "one verification perspective," making the need for further subdivision by ExpectedResult thin.

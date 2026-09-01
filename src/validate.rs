@@ -224,13 +224,29 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
                         .filter(|p| p.is_file())
                         .collect();
                     expected_paths.sort();
-                    for expected_path in expected_paths {
-                        validate_file(
+                    for (i, expected_path) in expected_paths.iter().enumerate() {
+                        if let Some(content) = validate_file(
                             root,
                             "expected_result.schema.json",
-                            &expected_path,
+                            expected_path,
                             &mut issues,
-                        )?;
+                        )? && let Ok(expected) = knowledge::parse_expected_result(&content)
+                            && i > 0
+                            && expected
+                                .additional_steps
+                                .as_ref()
+                                .is_none_or(|steps| steps.is_empty())
+                        {
+                            issues.push(ValidationIssue {
+                                path: rel(root, expected_path),
+                                message: format!(
+                                    "additional_steps must contain at least one operation \
+                                     (this file is not the first, by filename order, under \
+                                     {}/expected/)",
+                                    rel(root, &condition_dir)
+                                ),
+                            });
+                        }
                     }
                 }
             }
@@ -300,18 +316,18 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
         )
         .unwrap();
         fs::write(
             base.join("condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\n",
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::create_dir_all(base.join("expected")).unwrap();
         fs::write(
             base.join("expected/001.yml"),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n",
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
     }
@@ -321,6 +337,67 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    /// ADR 0016 §1: Condition内でファイル名順が先頭の`expected_result`は
+    /// `additional_steps`を省略してよい。
+    #[test]
+    fn accepts_a_lone_expected_result_without_additional_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    /// ADR 0016 §1: 2番目以降の`expected_result`で`additional_steps`が
+    /// 省略(または空配列)の場合はクロスリファレンスエラーとなる。
+    #[test]
+    fn reports_a_second_expected_result_missing_additional_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        let base = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/jump/ground");
+        fs::write(
+            base.join("expected/002.yml"),
+            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\nresults:\n  - \"Confirmed.\"\n",
+        )
+        .unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("additional_steps")
+                    && issue.path.ends_with("expected/002.yml")),
+            "expected an additional_steps issue for expected/002.yml, got: {issues:?}"
+        );
+    }
+
+    /// ADR 0016 §1: 2番目以降の`expected_result`に`additional_steps`が
+    /// 1操作以上あれば成功する。
+    #[test]
+    fn accepts_a_second_expected_result_with_additional_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        let base = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/jump/ground");
+        fs::write(
+            base.join("expected/002.yml"),
+            "id: ground-002\ncondition: ground\ndescription: |\n  still on the ground after reload\nadditional_steps:\n  - \"Reload the page.\"\nresults:\n  - \"Confirmed.\"\n",
+        )
+        .unwrap();
 
         let issues = validate_all(dir.path()).unwrap();
 
@@ -394,7 +471,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
-            "id: ../../../../evil\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\n",
+            "id: ../../../../evil\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
 

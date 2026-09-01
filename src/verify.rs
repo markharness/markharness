@@ -499,18 +499,18 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(".markharness/knowledge/req-todo/todo/todo-add-task/behavior.yml"),
-            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n",
+            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n",
         )
         .unwrap();
         fs::write(
             dir.join("condition.yml"),
-            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\n",
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::create_dir_all(dir.join("expected")).unwrap();
         fs::write(
             dir.join("expected/001.yml"),
-            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\n",
+            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
     }

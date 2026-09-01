@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Proposed (2026-08-31)。[0015](./0015-behavior-step-model.md)を`Superseded`に変更する。
+Accepted (2026-09-01)。[0015](./0015-behavior-step-model.md)を`Superseded`に変更した。
 
 ## 背景
 

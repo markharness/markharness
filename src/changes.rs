@@ -968,18 +968,18 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
         )
         .unwrap();
         fs::write(
             base.join("condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\n",
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::create_dir_all(base.join("expected")).unwrap();
         fs::write(
             base.join("expected/001.yml"),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n",
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
     }
@@ -997,26 +997,26 @@ mod tests {
         fs::write(
             root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
             format!(
-                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  {jump_label}\nsteps:\n  - \"Press the jump button.\"\n"
+                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  {jump_label}\npreconditions:\n  - \"Press the jump button.\"\n"
             ),
         )
         .unwrap();
         fs::write(
             duck_dir.join("behavior.yml"),
             format!(
-                "id: duck\nfeature: player-jump\nlabel: duck\naxis: [gameplay]\ndescription: |\n  {duck_label}\nsteps:\n  - \"Press the duck button.\"\n"
+                "id: duck\nfeature: player-jump\nlabel: duck\naxis: [gameplay]\ndescription: |\n  {duck_label}\npreconditions:\n  - \"Press the duck button.\"\n"
             ),
         )
         .unwrap();
         fs::write(
             duck_base.join("condition.yml"),
-            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck low.\n",
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck low.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::create_dir_all(duck_base.join("expected")).unwrap();
         fs::write(
             duck_base.join("expected/001.yml"),
-            "id: low-001\ncondition: low\ndescription: |\n  ducks safely\n",
+            "id: low-001\ncondition: low\ndescription: |\n  ducks safely\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
     }
@@ -1274,13 +1274,13 @@ mod tests {
         fs::create_dir_all(&air).unwrap();
         fs::write(
             air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\n",
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::create_dir_all(air.join("expected")).unwrap();
         fs::write(
             air.join("expected/001.yml"),
-            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\n",
+            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
 
@@ -1323,13 +1323,13 @@ mod tests {
         fs::create_dir_all(&air).unwrap();
         fs::write(
             air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\n",
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::create_dir_all(air.join("expected")).unwrap();
         fs::write(
             air.join("expected/001.yml"),
-            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\n",
+            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
 
@@ -1375,7 +1375,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/controls/player-jump/duck/low/condition.yml"),
-            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\n",
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1421,7 +1421,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/controls/player-jump/duck/low/condition.yml"),
-            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\n",
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1463,13 +1463,13 @@ mod tests {
         fs::create_dir_all(&air).unwrap();
         fs::write(
             air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\n",
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::create_dir_all(air.join("expected")).unwrap();
         fs::write(
             air.join("expected/001.yml"),
-            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\n",
+            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v1", "m1");
@@ -1477,7 +1477,7 @@ mod tests {
         // Only the `air` Condition changes; `ground` is untouched.
         fs::write(
             air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air, higher.\n",
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air, higher.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1530,7 +1530,7 @@ mod tests {
         fs::create_dir_all(&stray).unwrap();
         fs::write(
             stray.join("condition.yml"),
-            "id: stray\nbehavior: nonexistent\nlabel: stray\ndescription: |\n  Not under a Behavior.\n",
+            "id: stray\nbehavior: nonexistent\nlabel: stray\ndescription: |\n  Not under a Behavior.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1605,7 +1605,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from a moving platform.\n",
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from a moving platform.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "condition change", "m2");

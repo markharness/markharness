@@ -343,18 +343,18 @@ mod tests {
         fs::write(
             base.parent().unwrap().join("behavior.yml"),
             format!(
-                "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  d\nsteps:\n  - \"d\"\n"
+                "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  d\npreconditions:\n  - \"d\"\n"
             ),
         )
         .unwrap();
         fs::write(
             base.join("condition.yml"),
-            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  d\n",
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  d\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::write(
             base.join("expected/001.yml"),
-            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  d\n",
+            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  d\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
     }

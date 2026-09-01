@@ -37,18 +37,18 @@ fn write_valid_tree(root: &Path) {
     .unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-        "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
+        "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
     )
     .unwrap();
     std::fs::write(
         base.join("condition.yml"),
-        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\n",
+        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
     )
     .unwrap();
     std::fs::create_dir_all(base.join("expected")).unwrap();
     std::fs::write(
         base.join("expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n",
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n",
     )
     .unwrap();
 }
@@ -119,7 +119,7 @@ fn validate_accepts_an_expected_result_with_generated_by_and_verified_by() {
     std::fs::write(
         dir.path()
             .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\ngenerated_by: llm\nverified_by:\n  human_review: true\n",
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\ngenerated_by: llm\nverified_by:\n  human_review: true\n",
     )
     .unwrap();
 
@@ -142,7 +142,7 @@ fn validate_rejects_an_expected_result_with_an_invalid_generated_by_value() {
     std::fs::write(
         dir.path()
             .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\ngenerated_by: made-up\n",
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\ngenerated_by: made-up\n",
     )
     .unwrap();
 
@@ -160,7 +160,7 @@ fn validate_rejects_a_verified_by_without_human_review() {
     std::fs::write(
         dir.path()
             .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nverified_by: {}\n",
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\nverified_by: {}\n",
     )
     .unwrap();
 

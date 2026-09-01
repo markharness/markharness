@@ -110,24 +110,24 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
     fs::write(
         repo.path()
             .join(".markharness/knowledge/checkout/pay/card/behavior.yml"),
-        "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\nsteps:\n  - \"Enter the card number.\"\n",
+        "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\npreconditions:\n  - \"Enter the card number.\"\n",
     )
     .unwrap();
     fs::write(
         base.join("condition.yml"),
-        "id: valid-card\nbehavior: card\nlabel: Valid card\ndescription: A valid card.\n",
+        "id: valid-card\nbehavior: card\nlabel: Valid card\ndescription: A valid card.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
     )
     .unwrap();
     fs::write(
         base.join("expected/001.yml"),
-        "id: accepted\ncondition: valid-card\ndescription: Payment is accepted.\n",
+        "id: accepted\ncondition: valid-card\ndescription: Payment is accepted.\nresults:\n  - \"Confirmed.\"\n",
     )
     .unwrap();
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-qm", "fixture"]);
     fs::write(
         base.join("condition.yml"),
-        "id: working-tree-only\nbehavior: card\nlabel: Working tree\ndescription: Not committed.\n",
+        "id: working-tree-only\nbehavior: card\nlabel: Working tree\ndescription: Not committed.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
     )
     .unwrap();
 

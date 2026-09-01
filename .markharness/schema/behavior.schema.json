@@ -9,13 +9,13 @@
     "label": { "type": "string", "minLength": 1 },
     "axis": { "type": "array", "items": { "type": "string" } },
     "description": { "type": "string", "minLength": 1 },
-    "steps": {
+    "preconditions": {
+      "description": "Operations common to every Condition under this Behavior, executed before the Condition's own steps. Empty array means no shared precondition.",
       "type": "array",
-      "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     },
     "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
-  "required": ["id", "feature", "label", "axis", "description", "steps"],
+  "required": ["id", "feature", "label", "axis", "description", "preconditions"],
   "additionalProperties": false
 }

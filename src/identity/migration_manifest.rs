@@ -650,7 +650,7 @@ mod tests {
             root.join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
             format!(
-                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n{}",
+                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FB0")
             ),
         )
@@ -658,7 +658,7 @@ mod tests {
         fs::write(
             knowledge.join("condition.yml"),
             format!(
-                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\n{}",
+                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FC0")
             ),
         )
@@ -666,7 +666,7 @@ mod tests {
         fs::write(
             knowledge.join("expected/001.yml"),
             format!(
-                "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\n{}",
+                "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FX0")
             ),
         )
@@ -764,17 +764,17 @@ mod tests {
             dir.path()
                 .join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
-            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n",
+            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n",
         )
         .unwrap();
         fs::write(
             knowledge.join("condition.yml"),
-            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\n",
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::write(
             knowledge.join("expected/001.yml"),
-            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\n",
+            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
 
@@ -963,7 +963,7 @@ mod tests {
         );
         fs::write(
             expected_dir.join("002.yml"),
-            "id: todo-add-task-empty-input-002\ncondition: todo-add-task-empty-input\ndescription: |\n  Also shows a hint.\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FX1\n",
+            "id: todo-add-task-empty-input-002\ncondition: todo-add-task-empty-input\ndescription: |\n  Also shows a hint.\nresults:\n  - \"Confirmed.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FX1\n",
         )
         .unwrap();
 
@@ -1045,7 +1045,7 @@ mod tests {
         );
         fs::write(
             &expected_path,
-            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  A completely different scenario now.\n",
+            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  A completely different scenario now.\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
         // `identity migrate` (`migrate_entities`) assigns the fresh uid
@@ -1302,7 +1302,7 @@ mod tests {
         // A second ExpectedResult, same case_id, different case_uid.
         fs::write(
             knowledge.join("expected/002.yml"),
-            "id: todo-add-task-empty-input-002\ncondition: todo-add-task-empty-input\ndescription: |\n  Also shows a hint.\n",
+            "id: todo-add-task-empty-input-002\ncondition: todo-add-task-empty-input\ndescription: |\n  Also shows a hint.\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
         crate::identity::migrate_entities(dir.path()).unwrap();

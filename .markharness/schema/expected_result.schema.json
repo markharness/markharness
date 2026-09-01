@@ -7,6 +7,23 @@
     "id": { "type": "string", "minLength": 1 },
     "condition": { "type": "string", "minLength": 1 },
     "description": { "type": "string", "minLength": 1 },
+    "results": {
+      "description": "Observable results this ExpectedResult checks for, one element per observable result. Used for test-case generation; description is a human-facing summary only.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "additional_steps": {
+      "description": "Extra operations to perform before checking these results, e.g. reloading the page to confirm persistence. Contract: within a Condition's expected/ directory, filename order (001, 002, ...) is the execution order of these phases, and only the first file (by filename) may omit additional_steps -- every later file must declare at least one (enforced by `markharness validate`'s cross-reference check, not expressible in this per-file schema alone).",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "implementation_note": {
+      "description": "Implementation rationale. Not used for generation.",
+      "type": "string",
+      "minLength": 1
+    },
     "generated_by": {
       "description": "How this ExpectedResult's content was produced. Omitted means unknown, not 'manual'.",
       "enum": ["manual", "llm", "auto_combination"]
@@ -22,6 +39,6 @@
     },
     "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
-  "required": ["id", "condition", "description"],
+  "required": ["id", "condition", "description", "results"],
   "additionalProperties": false
 }

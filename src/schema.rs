@@ -300,7 +300,7 @@ expected:
                     label: "jump".to_string(),
                     axis: vec!["gameplay".to_string()],
                     description: "Player presses jump.".to_string(),
-                    steps: vec!["Press the jump button.".to_string()],
+                    preconditions: vec!["Press the jump button.".to_string()],
                     uid: Some(UID.to_string()),
                 })
                 .unwrap(),
@@ -312,6 +312,8 @@ expected:
                     behavior: "player-jump-jump".to_string(),
                     label: "ground".to_string(),
                     description: "Jump from the ground and land.".to_string(),
+                    steps: vec!["Land on the ground.".to_string()],
+                    additional_preconditions: vec!["Already airborne.".to_string()],
                     uid: Some(UID.to_string()),
                 })
                 .unwrap(),
@@ -322,6 +324,9 @@ expected:
                     id: "player-jump-jump-ground-001".to_string(),
                     condition: "player-jump-jump-ground".to_string(),
                     description: "Lands safely.".to_string(),
+                    results: vec!["Player is standing on the ground.".to_string()],
+                    additional_steps: Some(vec!["Reload the page.".to_string()]),
+                    implementation_note: Some("saveState() persists position.".to_string()),
                     generated_by: Some(crate::knowledge::GeneratedBy::Manual),
                     verified_by: Some(crate::knowledge::VerifiedBy { human_review: true }),
                     uid: Some(UID.to_string()),

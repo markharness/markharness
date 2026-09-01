@@ -43,9 +43,9 @@ pub struct Behavior {
     pub label: String,
     pub axis: Vec<String>,
     pub description: String,
-    /// ADR 0015 Phase 1: 順序付きの操作手順。1要素=1操作。テストケース生成には
-    /// この`steps`のみが使われ、`description`は人間向け要約に留まる。
-    pub steps: Vec<String>,
+    /// ADR 0016: 全Conditionに共通する前提。1要素=1操作。実際の操作手順は
+    /// `Condition.steps`へ移った(`behavior.description`は人間向け要約に留まる)。
+    pub preconditions: Vec<String>,
     /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
     /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
     /// プロジェクトや`identity migrate`未実行のBehaviorでは`None`(§後方互換)。
@@ -59,6 +59,12 @@ pub struct Condition {
     pub behavior: String,
     pub label: String,
     pub description: String,
+    /// ADR 0016: この条件固有の操作手順。1要素=1操作。behavior.preconditionsの
+    /// 後に実行される。
+    pub steps: Vec<String>,
+    /// ADR 0016: 手順だけでは到達できない、この条件固有の追加前提。1要素=1操作。
+    #[serde(default)]
+    pub additional_preconditions: Vec<String>,
     /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
     /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
     /// プロジェクトや`identity migrate`未実行のConditionでは`None`(§後方互換)。
@@ -91,6 +97,18 @@ pub struct ExpectedResult {
     pub id: String,
     pub condition: String,
     pub description: String,
+    /// ADR 0016: 観測可能な複数の結果。1要素=1つの観測可能な結果。
+    /// テストケース生成にはこの`results`を使い、`description`は人間向け
+    /// 1文要約に留まる。
+    pub results: Vec<String>,
+    /// ADR 0016: この結果を確認する前に必要な追加操作。Condition内で
+    /// ファイル名順が先頭の`ExpectedResult`のみ省略可(`None`)。2番目以降は
+    /// `validate.rs`のクロスリファレンスチェックにより非空が必須。
+    #[serde(default)]
+    pub additional_steps: Option<Vec<String>>,
+    /// ADR 0016: 実装根拠メモ。生成には使わない。
+    #[serde(default)]
+    pub implementation_note: Option<String>,
     #[serde(default)]
     pub generated_by: Option<GeneratedBy>,
     #[serde(default)]
@@ -199,9 +217,16 @@ pub fn serialize_behavior(behavior: &Behavior) -> String {
         yaml_flow_array(&behavior.axis)
     );
     out.push_str(&indent_block_scalar(&behavior.description, "  "));
-    out.push_str("steps:\n");
-    for step in &behavior.steps {
-        out.push_str(&format!("  - {}\n", serde_json::to_string(step).unwrap()));
+    if behavior.preconditions.is_empty() {
+        out.push_str("preconditions: []\n");
+    } else {
+        out.push_str("preconditions:\n");
+        for precondition in &behavior.preconditions {
+            out.push_str(&format!(
+                "  - {}\n",
+                serde_json::to_string(precondition).unwrap()
+            ));
+        }
     }
     append_uid_line(&mut out, &behavior.uid);
     out
@@ -215,6 +240,21 @@ pub fn serialize_condition(condition: &Condition) -> String {
         condition.id, condition.behavior, condition.label
     );
     out.push_str(&indent_block_scalar(&condition.description, "  "));
+    out.push_str("steps:\n");
+    for step in &condition.steps {
+        out.push_str(&format!("  - {}\n", serde_json::to_string(step).unwrap()));
+    }
+    if condition.additional_preconditions.is_empty() {
+        out.push_str("additional_preconditions: []\n");
+    } else {
+        out.push_str("additional_preconditions:\n");
+        for precondition in &condition.additional_preconditions {
+            out.push_str(&format!(
+                "  - {}\n",
+                serde_json::to_string(precondition).unwrap()
+            ));
+        }
+    }
     append_uid_line(&mut out, &condition.uid);
     out
 }
@@ -225,6 +265,20 @@ pub fn serialize_expected_result(expected: &ExpectedResult) -> String {
         expected.id, expected.condition
     );
     out.push_str(&indent_block_scalar(&expected.description, "  "));
+    if let Some(additional_steps) = &expected.additional_steps {
+        out.push_str("additional_steps:\n");
+        for step in additional_steps {
+            out.push_str(&format!("  - {}\n", serde_json::to_string(step).unwrap()));
+        }
+    }
+    out.push_str("results:\n");
+    for result in &expected.results {
+        out.push_str(&format!("  - {}\n", serde_json::to_string(result).unwrap()));
+    }
+    if let Some(implementation_note) = &expected.implementation_note {
+        out.push_str("implementation_note: |\n");
+        out.push_str(&indent_block_scalar(implementation_note, "  "));
+    }
     append_uid_line(&mut out, &expected.uid);
     out
 }
@@ -425,7 +479,7 @@ mod tests {
 
     #[test]
     fn parses_behavior_yaml() {
-        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n";
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n";
 
         let behavior: Behavior = parse_behavior(yaml).unwrap();
 
@@ -434,17 +488,20 @@ mod tests {
         assert_eq!(behavior.label, "jump");
         assert_eq!(behavior.axis, vec!["gameplay"]);
         assert_eq!(behavior.description, "Player presses jump.\n");
-        assert_eq!(behavior.steps, vec!["Press the jump button.".to_string()]);
+        assert_eq!(
+            behavior.preconditions,
+            vec!["Press the jump button.".to_string()]
+        );
     }
 
     #[test]
-    fn parses_behavior_yaml_with_multiple_steps() {
-        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Focus the player character.\"\n  - \"Press the jump button.\"\n";
+    fn parses_behavior_yaml_with_multiple_preconditions() {
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Focus the player character.\"\n  - \"Press the jump button.\"\n";
 
         let behavior: Behavior = parse_behavior(yaml).unwrap();
 
         assert_eq!(
-            behavior.steps,
+            behavior.preconditions,
             vec![
                 "Focus the player character.".to_string(),
                 "Press the jump button.".to_string()
@@ -453,8 +510,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_behavior_yaml_with_no_preconditions() {
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions: []\n";
+
+        let behavior: Behavior = parse_behavior(yaml).unwrap();
+
+        assert_eq!(behavior.preconditions, Vec::<String>::new());
+    }
+
+    #[test]
     fn parses_condition_yaml() {
-        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\n";
+        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\n";
 
         let condition: Condition = parse_condition(yaml).unwrap();
 
@@ -462,17 +528,57 @@ mod tests {
         assert_eq!(condition.behavior, "player-jump-jump");
         assert_eq!(condition.label, "ground");
         assert_eq!(condition.description, "Jump from the ground and land.\n");
+        assert_eq!(condition.steps, vec!["Land on the ground.".to_string()]);
+        assert_eq!(condition.additional_preconditions, Vec::<String>::new());
+    }
+
+    #[test]
+    fn parses_condition_yaml_with_additional_preconditions() {
+        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions:\n  - \"The character has already been deleted.\"\n";
+
+        let condition: Condition = parse_condition(yaml).unwrap();
+
+        assert_eq!(
+            condition.additional_preconditions,
+            vec!["The character has already been deleted.".to_string()]
+        );
     }
 
     #[test]
     fn parses_expected_result_yaml() {
-        let yaml = "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\n";
+        let yaml = "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\nresults:\n  - \"Player is standing on the ground.\"\n";
 
         let expected: ExpectedResult = parse_expected_result(yaml).unwrap();
 
         assert_eq!(expected.id, "player-jump-jump-ground-001");
         assert_eq!(expected.condition, "player-jump-jump-ground");
         assert_eq!(expected.description, "Lands safely.\n");
+        assert_eq!(
+            expected.results,
+            vec!["Player is standing on the ground.".to_string()]
+        );
+        assert_eq!(expected.additional_steps, None);
+        assert_eq!(expected.implementation_note, None);
+    }
+
+    #[test]
+    fn parses_expected_result_yaml_with_additional_steps_and_implementation_note() {
+        let yaml = "id: player-jump-jump-ground-002\ncondition: player-jump-jump-ground\ndescription: |\n  Still on the ground after reload.\nadditional_steps:\n  - \"Reload the page.\"\nresults:\n  - \"Player is still on the ground.\"\nimplementation_note: |\n  saveState() persists position to localStorage.\n";
+
+        let expected: ExpectedResult = parse_expected_result(yaml).unwrap();
+
+        assert_eq!(
+            expected.additional_steps,
+            Some(vec!["Reload the page.".to_string()])
+        );
+        assert_eq!(
+            expected.results,
+            vec!["Player is still on the ground.".to_string()]
+        );
+        assert_eq!(
+            expected.implementation_note,
+            Some("saveState() persists position to localStorage.\n".to_string())
+        );
     }
 
     #[test]
@@ -627,7 +733,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "Player presses jump.".to_string(),
-            steps: vec!["Press the jump button.".to_string()],
+            preconditions: vec!["Press the jump button.".to_string()],
             uid: None,
         };
 
@@ -635,19 +741,19 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n"
         );
     }
 
     #[test]
-    fn serializes_behavior_with_multiple_steps_as_a_block_sequence() {
+    fn serializes_behavior_with_multiple_preconditions_as_a_block_sequence() {
         let behavior = Behavior {
             id: "player-jump-jump".to_string(),
             feature: "player-jump".to_string(),
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "Player presses jump.".to_string(),
-            steps: vec![
+            preconditions: vec![
                 "Focus the player character.".to_string(),
                 "Press the jump button.".to_string(),
             ],
@@ -658,10 +764,30 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Focus the player character.\"\n  - \"Press the jump button.\"\n"
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Focus the player character.\"\n  - \"Press the jump button.\"\n"
         );
         let reparsed: Behavior = parse_behavior(&yaml).unwrap();
-        assert_eq!(reparsed.steps, behavior.steps);
+        assert_eq!(reparsed.preconditions, behavior.preconditions);
+    }
+
+    #[test]
+    fn serializes_behavior_with_no_preconditions_as_empty_flow_sequence() {
+        let behavior = Behavior {
+            id: "player-jump-jump".to_string(),
+            feature: "player-jump".to_string(),
+            label: "jump".to_string(),
+            axis: vec!["gameplay".to_string()],
+            description: "Player presses jump.".to_string(),
+            preconditions: vec![],
+            uid: None,
+        };
+
+        let yaml = serialize_behavior(&behavior);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions: []\n"
+        );
     }
 
     #[test]
@@ -672,7 +798,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
-            steps: vec!["Press the jump button.".to_string()],
+            preconditions: vec!["Press the jump button.".to_string()],
             uid: None,
         };
 
@@ -690,7 +816,7 @@ mod tests {
             label: "jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: "Player presses jump.".to_string(),
-            steps: vec!["Press the jump button.".to_string()],
+            preconditions: vec!["Press the jump button.".to_string()],
             uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
         };
 
@@ -698,7 +824,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+            "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
         );
         let reparsed: Behavior = parse_behavior(&yaml).unwrap();
         assert_eq!(reparsed.uid, behavior.uid);
@@ -706,7 +832,7 @@ mod tests {
 
     #[test]
     fn parses_behavior_yaml_without_uid_as_none() {
-        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n";
+        let yaml = "id: player-jump-jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n";
 
         let behavior: Behavior = parse_behavior(yaml).unwrap();
 
@@ -720,6 +846,8 @@ mod tests {
             behavior: "player-jump-jump".to_string(),
             label: "ground".to_string(),
             description: "Jump from the ground and land.".to_string(),
+            steps: vec!["Land on the ground.".to_string()],
+            additional_preconditions: vec![],
             uid: None,
         };
 
@@ -727,7 +855,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\n"
+            "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\n"
         );
     }
 
@@ -738,6 +866,8 @@ mod tests {
             behavior: "player-jump-jump".to_string(),
             label: "ground".to_string(),
             description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            steps: vec!["Land on the ground.".to_string()],
+            additional_preconditions: vec![],
             uid: None,
         };
 
@@ -748,12 +878,39 @@ mod tests {
     }
 
     #[test]
+    fn serializes_condition_with_additional_preconditions_as_a_block_sequence() {
+        let condition = Condition {
+            id: "player-jump-jump-ground".to_string(),
+            behavior: "player-jump-jump".to_string(),
+            label: "ground".to_string(),
+            description: "Jump from the ground and land.".to_string(),
+            steps: vec!["Land on the ground.".to_string()],
+            additional_preconditions: vec!["The character has already been deleted.".to_string()],
+            uid: None,
+        };
+
+        let yaml = serialize_condition(&condition);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions:\n  - \"The character has already been deleted.\"\n"
+        );
+        let reparsed: Condition = parse_condition(&yaml).unwrap();
+        assert_eq!(
+            reparsed.additional_preconditions,
+            condition.additional_preconditions
+        );
+    }
+
+    #[test]
     fn serializes_condition_with_uid_when_present() {
         let condition = Condition {
             id: "player-jump-jump-ground".to_string(),
             behavior: "player-jump-jump".to_string(),
             label: "ground".to_string(),
             description: "Jump from the ground and land.".to_string(),
+            steps: vec!["Land on the ground.".to_string()],
+            additional_preconditions: vec![],
             uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
         };
 
@@ -761,7 +918,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+            "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
         );
         let reparsed: Condition = parse_condition(&yaml).unwrap();
         assert_eq!(reparsed.uid, condition.uid);
@@ -769,7 +926,7 @@ mod tests {
 
     #[test]
     fn parses_condition_yaml_without_uid_as_none() {
-        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\n";
+        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\n";
 
         let condition: Condition = parse_condition(yaml).unwrap();
 
@@ -782,6 +939,9 @@ mod tests {
             id: "player-jump-jump-ground-001".to_string(),
             condition: "player-jump-jump-ground".to_string(),
             description: "Lands safely.".to_string(),
+            results: vec!["Player is standing on the ground.".to_string()],
+            additional_steps: None,
+            implementation_note: None,
             generated_by: None,
             verified_by: None,
             uid: None,
@@ -791,7 +951,35 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\n"
+            "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\nresults:\n  - \"Player is standing on the ground.\"\n"
+        );
+    }
+
+    #[test]
+    fn serializes_expected_result_with_additional_steps_and_implementation_note() {
+        let expected = ExpectedResult {
+            id: "player-jump-jump-ground-002".to_string(),
+            condition: "player-jump-jump-ground".to_string(),
+            description: "Still on the ground after reload.".to_string(),
+            results: vec!["Player is still on the ground.".to_string()],
+            additional_steps: Some(vec!["Reload the page.".to_string()]),
+            implementation_note: Some("saveState() persists position to localStorage.".to_string()),
+            generated_by: None,
+            verified_by: None,
+            uid: None,
+        };
+
+        let yaml = serialize_expected_result(&expected);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump-ground-002\ncondition: player-jump-jump-ground\ndescription: |\n  Still on the ground after reload.\nadditional_steps:\n  - \"Reload the page.\"\nresults:\n  - \"Player is still on the ground.\"\nimplementation_note: |\n  saveState() persists position to localStorage.\n"
+        );
+        let reparsed: ExpectedResult = parse_expected_result(&yaml).unwrap();
+        assert_eq!(reparsed.additional_steps, expected.additional_steps);
+        assert_eq!(
+            reparsed.implementation_note,
+            expected.implementation_note.map(|note| format!("{note}\n"))
         );
     }
 
@@ -801,6 +989,9 @@ mod tests {
             id: "player-jump-jump-ground-001".to_string(),
             condition: "player-jump-jump-ground".to_string(),
             description: "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
+            results: vec!["Player is standing on the ground.".to_string()],
+            additional_steps: None,
+            implementation_note: None,
             generated_by: None,
             verified_by: None,
             uid: None,
@@ -818,6 +1009,9 @@ mod tests {
             id: "player-jump-jump-ground-001".to_string(),
             condition: "player-jump-jump-ground".to_string(),
             description: "Lands safely.".to_string(),
+            results: vec!["Player is standing on the ground.".to_string()],
+            additional_steps: None,
+            implementation_note: None,
             generated_by: None,
             verified_by: None,
             uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
@@ -827,7 +1021,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+            "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\nresults:\n  - \"Player is standing on the ground.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
         );
         let reparsed: ExpectedResult = parse_expected_result(&yaml).unwrap();
         assert_eq!(reparsed.uid, expected.uid);
@@ -835,7 +1029,7 @@ mod tests {
 
     #[test]
     fn parses_expected_result_yaml_without_uid_as_none() {
-        let yaml = "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\n";
+        let yaml = "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\nresults:\n  - \"Player is standing on the ground.\"\n";
 
         let expected: ExpectedResult = parse_expected_result(yaml).unwrap();
 

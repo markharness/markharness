@@ -2767,17 +2767,17 @@ mod tests {
         .unwrap();
         fs::write(
             base.parent().unwrap().join("behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\nsteps:\n  - \"d\"\n",
+            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\npreconditions:\n  - \"d\"\n",
         )
         .unwrap();
         fs::write(
             base.join("condition.yml"),
-            "id: condition\nbehavior: behavior\nlabel: condition\ndescription: |\n  d\n",
+            "id: condition\nbehavior: behavior\nlabel: condition\ndescription: |\n  d\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         fs::write(
             base.join("expected/001.yml"),
-            "id: condition-001\ncondition: condition\ndescription: |\n  d\n",
+            "id: condition-001\ncondition: condition\ndescription: |\n  d\nresults:\n  - \"Confirmed.\"\n",
         )
         .unwrap();
         dir
@@ -2895,7 +2895,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/req/feature/other-behavior/behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\nsteps:\n  - \"d\"\n",
+            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\npreconditions:\n  - \"d\"\n",
         )
         .unwrap();
 
@@ -2935,7 +2935,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/req/feature/other-behavior/behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\nsteps:\n  - \"d\"\n",
+            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\npreconditions:\n  - \"d\"\n",
         )
         .unwrap();
 

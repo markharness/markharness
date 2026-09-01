@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-08-31). [0015](./0015-behavior-step-model.md) is changed to `Superseded`.
+Accepted (2026-09-01). [0015](./0015-behavior-step-model.md) has been changed to `Superseded`.
 
 ## Context
 

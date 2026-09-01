@@ -57,7 +57,9 @@
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
         "label": { "type": "string" },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "steps": { "type": "array", "items": { "type": "string" } },
+        "additional_preconditions": { "type": "array", "items": { "type": "string" } }
       },
       "required": ["id"],
       "additionalProperties": false
@@ -65,7 +67,10 @@
     "expectedDraft": {
       "type": "object",
       "properties": {
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "results": { "type": "array", "items": { "type": "string" } },
+        "additional_steps": { "type": "array", "items": { "type": "string" } },
+        "implementation_note": { "type": "string" }
       },
       "additionalProperties": false
     }

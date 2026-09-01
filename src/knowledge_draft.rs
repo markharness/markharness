@@ -38,7 +38,7 @@ pub struct BehaviorDraft {
     pub axis: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
-    /// ADR 0015 Phase 1: 順序付きの操作手順。既存Behaviorの再利用時
+    /// ADR 0016: 全Conditionに共通する前提。既存Behaviorの再利用時
     /// (`exists`)は`description`同様省略可(`push_missing_steps`参照)。
     #[serde(default)]
     pub steps: Option<Vec<String>>,
@@ -51,12 +51,30 @@ pub struct ConditionDraft {
     pub label: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// ADR 0016: この条件固有の操作手順。既存Conditionの再利用時(`exists`)は
+    /// `description`同様省略可(`push_missing_steps`参照)。
+    #[serde(default)]
+    pub steps: Option<Vec<String>>,
+    /// ADR 0016: 手順だけでは到達できない、この条件固有の追加前提。
+    /// 空配列許容のため省略時は空扱い(`unwrap_or_default`)。
+    #[serde(default)]
+    pub additional_preconditions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ExpectedDraft {
     #[serde(default)]
     pub description: String,
+    /// ADR 0016: 観測可能な複数の結果。`push_missing_steps`と同じ
+    /// exists-skipパターンは持たない(ExpectedResultは常に新規追加のため)。
+    #[serde(default)]
+    pub results: Option<Vec<String>>,
+    /// ADR 0016: この結果を確認する前に必要な追加操作。省略可。
+    #[serde(default)]
+    pub additional_steps: Option<Vec<String>>,
+    /// ADR 0016: 実装根拠メモ。省略可。
+    #[serde(default)]
+    pub implementation_note: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -554,6 +572,12 @@ pub fn validate_draft(
         &draft.condition.description,
         condition_exists,
     );
+    push_missing_steps(
+        &mut errors,
+        "condition.steps",
+        &draft.condition.steps,
+        condition_exists,
+    );
     for (i, expected) in draft.expected.iter().enumerate() {
         if expected.description.trim().is_empty() {
             errors.push(ValidationError {
@@ -564,6 +588,12 @@ pub fn validate_draft(
                 suggestion: None,
             });
         }
+        push_missing_steps(
+            &mut errors,
+            &format!("expected[{i}].results"),
+            &expected.results,
+            false,
+        );
     }
 
     if requirement_exists
@@ -637,7 +667,7 @@ pub fn validate_draft(
             );
         }
         if let Some(steps) = &draft.behavior.steps
-            && steps != &existing.steps
+            && steps != &existing.preconditions
         {
             errors.push(ValidationError {
                 code: ValidationErrorCode::ConflictingExistingValue,
@@ -646,9 +676,9 @@ pub fn validate_draft(
                 message: format!(
                     "behavior.steps [{}] conflicts with existing value [{}]",
                     steps.join(" / "),
-                    existing.steps.join(" / ")
+                    existing.preconditions.join(" / ")
                 ),
-                suggestion: Some(existing.steps.join(" / ")),
+                suggestion: Some(existing.preconditions.join(" / ")),
             });
         }
     }
@@ -707,10 +737,16 @@ condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps:
+    - Land on the ground.
 
 expected:
   - description: lands safely
+    results:
+      - Player is standing on the ground.
   - description: takes fall damage if height > 3m
+    results:
+      - Player's health decreases.
 ";
 
     #[test]
@@ -1032,6 +1068,60 @@ expected:
     }
 
     #[test]
+    fn validate_draft_reports_missing_steps_for_new_condition_without_steps() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.condition.steps = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "condition.steps")
+        );
+    }
+
+    #[test]
+    fn validate_draft_skips_missing_steps_check_for_condition_when_it_already_exists() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        std::fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/jump/ground"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\n",
+        )
+        .unwrap();
+        let mut draft = full_new_draft();
+        draft.condition.steps = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "condition.steps")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_results_for_an_expected_entry_without_results() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.expected[0].results = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(errors.iter().any(
+            |e| e.code == ValidationErrorCode::MissingSteps && e.path == "expected[0].results"
+        ));
+    }
+
+    #[test]
     fn validate_draft_reports_missing_steps_for_new_behavior_with_empty_steps() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
@@ -1075,7 +1165,7 @@ expected:
         std::fs::write(
             dir.path()
                 .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
         )
         .unwrap();
         let mut draft = full_new_draft();
@@ -1112,6 +1202,9 @@ expected:
         let mut draft = full_new_draft();
         draft.expected.push(ExpectedDraft {
             description: "   ".to_string(),
+            results: Some(vec!["Player is standing on the ground.".to_string()]),
+            additional_steps: None,
+            implementation_note: None,
         });
         let last = draft.expected.len() - 1;
 
@@ -1208,7 +1301,7 @@ expected:
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/controls/player-jump/jump/jump-ground/condition.yml"),
-            "id: jump-ground\nbehavior: jump\nlabel: jump-ground\ndescription: |\n  legacy\n",
+            "id: jump-ground\nbehavior: jump\nlabel: jump-ground\ndescription: |\n  legacy\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
 

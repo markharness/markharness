@@ -107,17 +107,27 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.   # 必須(Behaviorのみdescriptionが必須項目、既存スキーマ通り)
-  steps:                               # 必須(Behaviorに新設、ADR 0015 Phase 1): 空でない要素を1つ以上、1要素=1操作
+  steps:                               # 必須(Behaviorに新設、ADR 0015 Phase 1。ADR 0016で「全Conditionに共通する前提」に意味変更): 空でない要素を1つ以上、1要素=1操作
     - Press the jump button.
 
 condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps:                               # 必須(Conditionに新設、ADR 0016): 空でない要素を1つ以上、1要素=1操作。この条件固有の操作手順
+    - Land on the ground.
+  additional_preconditions: []         # 省略可(Conditionに新設、ADR 0016)。手順だけでは到達できない、この条件固有の追加前提
 
 expected:
   - description: lands safely
+    results:                           # 必須(ExpectedResultに新設、ADR 0016): 空でない要素を1つ以上、1要素=1つの観測可能な結果
+      - Player is standing on the ground.
   - description: takes fall damage if height > 3m
+    results:
+      - Player's health decreases.
+    additional_steps:                  # 省略可(ExpectedResultに新設、ADR 0016)。この結果を確認する前に必要な追加操作。Condition内で2番目以降のファイルは非空が必須(§5ルール#3c)
+      - Measure the fall height first.
+    implementation_note: applyFallDamage() is called when landing velocity exceeds a threshold. # 省略可(ExpectedResultに新設、ADR 0016)。生成には使わない実装根拠メモ
 ```
 
 フィールド仕様は `src/knowledge.rs` の各構造体定義に準拠する(`id`/`label`/`axis`/`description`/`steps`の型・必須有無は現行struct通り)。`expected` のみ配列(1回のapplyで複数のExpectedResultを追加可能。既存の連番採番ロジック `{condition_id}-{seq:03}` を踏襲)。
@@ -132,16 +142,21 @@ expected:
 | 2 | requirement/feature/behavior | 新規作成時は `axis` が1件以上必要 | `missing_axis` |
 | 3 | behavior | `description` が空でないこと | `missing_description` |
 | 3b | behavior | `steps` が1件以上あり、かついずれの要素も空でないこと(実装時追加、ADR 0015 Phase 1) | `missing_steps` |
+| 3c | condition | `steps` が1件以上あり、かついずれの要素も空でないこと(実装時追加、ADR 0016) | `missing_steps` |
 | 4 | condition | `description` が空でないこと | `missing_description` |
 | 5 | expected[] | `description` が空でないこと(各要素) | `missing_description` |
+| 5b | expected[] | `results` が1件以上あり、かついずれの要素も空でないこと(各要素。実装時追加、ADR 0016) | `missing_steps` |
 | 6 | axis全般 | 値が `axes/*.yml` に登録済みのidと一致すること(§8) | `unknown_axis` |
 | 7 | condition.id | Behavior idとの重複接頭辞(`{behavior_id}-`)を持つ場合、`--strip-redundant-prefix` 未指定なら停止(§7) | `redundant_prefix` |
-| 8 | 既存id再利用時 | 提供された `axis`/`description`/`label`/`steps`(behaviorのみ) が既存ファイルの値と一致しない場合(§10.2) | `conflicting_existing_value` |
+| 8 | 既存id再利用時 | 提供された `axis`/`description`/`label`/`steps`(behavior/condition双方) が既存ファイルの値と一致しない場合(§10.2) | `conflicting_existing_value` |
 | 9 | requirement/feature/behavior/condition | 親参照(例: feature.requirement)が実在すること。ドラフト内で新規作成する場合はドラフト自身の値と整合していること | `parent_not_found` |
 | 10 | feature.forked_from | 値が指定されている場合、`knowledge/`配下のいずれかのFeatureの`id`と一致すること(実装時追加。論文§3.1の`forked_from`、本仕様の初版では未記載) | `unknown_forked_from` |
 | 11 | requirement/feature/behavior/condition の label | 改行を含まないこと。labelは単一行のプレーンスカラーとして出力するため、複数行が渡されると出力YAMLが壊れる(実装時追加) | `multiline_label` |
+| 12 | condition内のexpected/*.yml | ファイル名順で2番目以降のファイルは `additional_steps` が1件以上あること(実装時追加、ADR 0016。単一ファイル検証のJSON Schemaでは「同じディレクトリ内で何番目か」を判定できないため、本仕様がスコープとするドラフト検証ではなく`markharness validate`のクロスリファレンスチェックとして実装) | (該当なし。`markharness validate`が独自の`ValidationIssue`として報告) |
 
-**実装時の追記**：ルール#3b(`missing_steps`)は[ADR 0015](../decisions/0015-behavior-step-model.md)(Phase 1)で追加された`Behavior.steps: Vec<String>`(順序付きの操作手順、1要素=1操作)に対応するもので、`generate`は`TestCase.steps`にこの`steps`をそのまま転記する(`behavior.description`は生成に使わず、人間向け要約のみに用いる)。`knowledge_draft.rs::push_missing_steps`は`push_missing_description`と同じexists-skip挙動を踏襲し、既存Behaviorを再利用する場合のみ省略を許容する(§10.2)。
+**実装時の追記**：ルール#3b(`missing_steps`)は[ADR 0015](../decisions/0015-behavior-step-model.md)(Phase 1)で追加された`Behavior.steps: Vec<String>`(順序付きの操作手順、1要素=1操作)に対応するもので、当初`generate`は`TestCase.steps`にこの`steps`をそのまま転記していた(`behavior.description`は生成に使わず、人間向け要約のみに用いる)。`knowledge_draft.rs::push_missing_steps`は`push_missing_description`と同じexists-skip挙動を踏襲し、既存Behaviorを再利用する場合のみ省略を許容する(§10.2)。
+
+**実装時の追記**:[ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md)により、ルール#3b(`Behavior.steps`)の意味は「全Conditionに共通する前提」(`generate.rs`内部では`Behavior.preconditions`)に変わり、実際の操作手順はルール#3c(`Condition.steps`、新設)が担うようになった。あわせて`ExpectedResult.description`は人間向け1文要約に留まり、テストケース生成にはルール#5b(`ExpectedResult.results`、新設)を使う。`push_missing_steps`ヘルパーは`condition.steps`と`expected[].results`の両方に再利用されており、いずれも既存Conditionを再利用する場合のみ省略できる(`expected[]`は常に新規追加のため実質的に省略不可)。ルール#12は単一ファイル検証の`expected_result.schema.json`では表現できない制約のため、`knowledge_draft.rs`のドラフト検証ではなく`markharness validate`のクロスリファレンスチェックとして実装している(本仕様書§4-5がスコープとする`knowledge apply`/`validate`のドラフト検証とは別の検証パス)。
 
 **実装時の追記**：ルール#10(`unknown_forked_from`)は本仕様の初版になかったが、`feature.forked_from`フィールド(`knowledge.rs`)の実装にあわせて`knowledge_draft.rs::feature_id_exists`で追加された。Feature idは`requirement`配下にネストしていてもリポジトリ全体で一意である前提のため、`knowledge/`配下を`requirement`階層をまたいで全探索する。
 
