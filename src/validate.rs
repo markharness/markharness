@@ -356,6 +356,31 @@ mod tests {
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
     }
 
+    /// ADR 0016 §1: "先頭のexpected_resultのみ省略可、または空でよい" — an
+    /// explicit `additional_steps: []` on the first (by filename)
+    /// expected_result is exactly as valid as omitting the field, both at
+    /// the schema level (no `minItems` on `additional_steps`) and at
+    /// `validate.rs`'s cross-reference check (which only requires non-empty
+    /// content starting from the second file).
+    #[test]
+    fn accepts_a_lone_expected_result_with_an_explicitly_empty_additional_steps_array() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        let base = dir
+            .path()
+            .join(".markharness/knowledge/controls/player-jump/jump/ground");
+        fs::write(
+            base.join("expected/001.yml"),
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nadditional_steps: []\nresults:\n  - \"Confirmed.\"\n",
+        )
+        .unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
     /// ADR 0016 §1: 2番目以降の`expected_result`で`additional_steps`が
     /// 省略(または空配列)の場合はクロスリファレンスエラーとなる。
     #[test]

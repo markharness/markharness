@@ -102,8 +102,9 @@ pub struct ExpectedResult {
     /// 1文要約に留まる。
     pub results: Vec<String>,
     /// ADR 0016: この結果を確認する前に必要な追加操作。Condition内で
-    /// ファイル名順が先頭の`ExpectedResult`のみ省略可(`None`)。2番目以降は
-    /// `validate.rs`のクロスリファレンスチェックにより非空が必須。
+    /// ファイル名順が先頭の`ExpectedResult`のみ省略可、または空でよい
+    /// (`None`または`Some(vec![])`)。2番目以降は`validate.rs`の
+    /// クロスリファレンスチェックにより非空が必須。
     #[serde(default)]
     pub additional_steps: Option<Vec<String>>,
     /// ADR 0016: 実装根拠メモ。生成には使わない。
@@ -266,9 +267,13 @@ pub fn serialize_expected_result(expected: &ExpectedResult) -> String {
     );
     out.push_str(&indent_block_scalar(&expected.description, "  "));
     if let Some(additional_steps) = &expected.additional_steps {
-        out.push_str("additional_steps:\n");
-        for step in additional_steps {
-            out.push_str(&format!("  - {}\n", serde_json::to_string(step).unwrap()));
+        if additional_steps.is_empty() {
+            out.push_str("additional_steps: []\n");
+        } else {
+            out.push_str("additional_steps:\n");
+            for step in additional_steps {
+                out.push_str(&format!("  - {}\n", serde_json::to_string(step).unwrap()));
+            }
         }
     }
     out.push_str("results:\n");
@@ -981,6 +986,36 @@ mod tests {
             reparsed.implementation_note,
             expected.implementation_note.map(|note| format!("{note}\n"))
         );
+    }
+
+    #[test]
+    fn serializes_expected_result_with_an_explicitly_empty_additional_steps_as_a_flow_sequence() {
+        // ADR 0016 §1: an explicit empty additional_steps is as valid as
+        // omitting the field (first ExpectedResult in a Condition). Writing
+        // a bare "additional_steps:\n" with no items round-trips as YAML
+        // null, not an empty array, and fails the schema's array-type
+        // check — so an explicit `[]` must be serialized, same as
+        // `Condition.additional_preconditions`.
+        let expected = ExpectedResult {
+            id: "player-jump-jump-ground-001".to_string(),
+            condition: "player-jump-jump-ground".to_string(),
+            description: "Lands safely.".to_string(),
+            results: vec!["Player is standing on the ground.".to_string()],
+            additional_steps: Some(vec![]),
+            implementation_note: None,
+            generated_by: None,
+            verified_by: None,
+            uid: None,
+        };
+
+        let yaml = serialize_expected_result(&expected);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump-ground-001\ncondition: player-jump-jump-ground\ndescription: |\n  Lands safely.\nadditional_steps: []\nresults:\n  - \"Player is standing on the ground.\"\n"
+        );
+        let reparsed: ExpectedResult = parse_expected_result(&yaml).unwrap();
+        assert_eq!(reparsed.additional_steps, expected.additional_steps);
     }
 
     #[test]

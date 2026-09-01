@@ -391,7 +391,15 @@ fn push_missing_steps(
 /// Optional array field where an empty array is itself legitimate (the
 /// field may be omitted or empty), but any element present must be
 /// non-blank — matches `items.minLength: 1` in the JSON Schema. Used for
-/// `condition.additional_preconditions`.
+/// `condition.additional_preconditions` and `expected[].additional_steps`.
+/// For `additional_steps` specifically, ADR 0016 §1 says the first
+/// ExpectedResult in a Condition "may omit it, or it may be empty" — an
+/// explicit `[]` carries the same meaning as omission, so only a blank
+/// *element* (not bare emptiness) is rejected here. Whether a later
+/// ExpectedResult is required to have non-empty content is a position-
+/// dependent rule this single-draft check cannot see (it doesn't know
+/// about `expected/*.yml` files already on disk); that part is enforced
+/// separately by `validate.rs`'s cross-reference check.
 fn push_blank_elements_in_optional_array(
     errors: &mut Vec<ValidationError>,
     path: &str,
@@ -405,32 +413,6 @@ fn push_blank_elements_in_optional_array(
             path: path.to_string(),
             value: None,
             message: format!("{path} must not contain empty elements"),
-            suggestion: None,
-        });
-    }
-}
-
-/// Optional array field that, unlike
-/// `push_blank_elements_in_optional_array`, must itself be non-empty
-/// whenever it is present at all (`minItems: 1` in the JSON Schema) —
-/// omitting the field is the only way to signal "none". An explicit empty
-/// array here would otherwise serialize as a bare `additional_steps:` key
-/// with no items under it, which round-trips as YAML null and fails the
-/// schema's array-type check only later, at `markharness validate` time.
-/// Used for `expected[].additional_steps`.
-fn push_invalid_optional_steps(
-    errors: &mut Vec<ValidationError>,
-    path: &str,
-    values: &Option<Vec<String>>,
-) {
-    if let Some(values) = values
-        && (values.is_empty() || values.iter().any(|s| s.trim().is_empty()))
-    {
-        errors.push(ValidationError {
-            code: ValidationErrorCode::MissingSteps,
-            path: path.to_string(),
-            value: None,
-            message: format!("{path}, when provided, must contain at least one non-empty step"),
             suggestion: None,
         });
     }
@@ -670,7 +652,7 @@ pub fn validate_draft(
             &expected.results,
             false,
         );
-        push_invalid_optional_steps(
+        push_blank_elements_in_optional_array(
             &mut errors,
             &format!("expected[{i}].additional_steps"),
             &expected.additional_steps,
@@ -1241,7 +1223,11 @@ expected:
     }
 
     #[test]
-    fn validate_draft_reports_an_explicitly_empty_additional_steps_array_for_an_expected_entry() {
+    fn validate_draft_allows_an_explicitly_empty_additional_steps_array_for_an_expected_entry() {
+        // ADR 0016 §1: "先頭のexpected_resultのみ省略可、または空でよい" — an
+        // explicit empty array on the first ExpectedResult is just as valid
+        // as omitting the field entirely; only a *non-empty-but-blank*
+        // element (e.g. a single whitespace-only string) is invalid.
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
         draft.expected[0].additional_steps = Some(Vec::new());
@@ -1249,12 +1235,10 @@ expected:
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
         assert!(
-            errors
+            !errors
                 .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingSteps
-                    && e.path == "expected[0].additional_steps"),
-            "an explicitly empty additional_steps array would serialize to invalid YAML \
-             (a scalar-looking `additional_steps:` with no items) and must be rejected: {errors:?}"
+                .any(|e| e.path == "expected[0].additional_steps"),
+            "an explicitly empty additional_steps array is as valid as omitting it: {errors:?}"
         );
     }
 
