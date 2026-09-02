@@ -561,7 +561,7 @@ mod tests {
         fs::create_dir_all(&behavior_dir).unwrap();
         fs::write(
             behavior_dir.join("behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -582,7 +582,7 @@ mod tests {
         fs::write(
             behavior_dir.join("behavior.yml"),
             format!(
-                "id: {behavior_id}\nfeature: player-jump\nlabel: {behavior_id}\naxis: []\ndescription: |\n  desc.\nsteps:\n  - \"do it.\"\n"
+                "id: {behavior_id}\nfeature: player-jump\nlabel: {behavior_id}\naxis: []\ndescription: |\n  desc.\npreconditions:\n  - \"do it.\"\n"
             ),
         )
         .unwrap();
@@ -594,7 +594,7 @@ mod tests {
         fs::create_dir_all(&condition_dir).unwrap();
         fs::write(
             condition_dir.join("condition.yml"),
-            format!("id: {condition_id}\nbehavior: jump\nlabel: {condition_id}\ndescription: |\n  desc.\n"),
+            format!("id: {condition_id}\nbehavior: jump\nlabel: {condition_id}\ndescription: |\n  desc.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"),
         )
         .unwrap();
         condition_dir
@@ -634,7 +634,7 @@ mod tests {
 
         fs::write(
             jump2_dir.join("behavior.yml"),
-            "id: duck\nfeature: player-jump\nlabel: duck\naxis: []\ndescription: |\n  edited.\nsteps:\n  - \"do it.\"\n",
+            "id: duck\nfeature: player-jump\nlabel: duck\naxis: []\ndescription: |\n  edited.\npreconditions:\n  - \"do it.\"\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -660,7 +660,7 @@ mod tests {
         fs::create_dir_all(&dup_dir).unwrap();
         fs::write(
             dup_dir.join("behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  dup.\nsteps:\n  - \"do it.\"\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  dup.\npreconditions:\n  - \"do it.\"\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -752,7 +752,7 @@ mod tests {
         fs::create_dir_all(&dup_dir).unwrap();
         fs::write(
             dup_dir.join("condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  dup.\n",
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  dup.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);

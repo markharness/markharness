@@ -31,11 +31,11 @@ knowledge/<requirement>/
 └── <feature>/
     ├── feature.yml                   # id, requirement, label, axis, description?, forked_from?
     └── <behavior>/                   # ディレクトリ名は自由。behavior.ymlの有無で判定
-        ├── behavior.yml              # id, feature, label, axis, description
+        ├── behavior.yml              # id, feature, label, axis, description, preconditions([ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md)。旧steps)
         └── <condition>/              # ディレクトリ名は自由。condition.ymlの有無で判定
-            ├── condition.yml         # id, behavior, label, description
+            ├── condition.yml         # id, behavior, label, description, steps, additional_preconditions(ADR 0016で新設)
             └── expected/
-                ├── 001.yml           # id, condition, description
+                ├── 001.yml           # id, condition, description, results(ADR 0016で新設), additional_steps?, implementation_note?
                 └── 002.yml
 ```
 
@@ -80,13 +80,18 @@ function generate_testcases(knowledge_root):
 
                     expected_results = [parse(p) for p in expected_paths]
 
+                    phases = []
+                    for i, e in enumerate(expected_results):
+                        additional_steps = e.additional_steps or []
+                        steps = (condition.steps + additional_steps) if i == 0 else additional_steps
+                        phases.append(Phase{steps: steps, results: e.results})
+
                     testcases.append(TestCase{
                         case_id: f"tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}",
                         generated_from: {requirement.id, feature.id, behavior.id, condition.id,
                                           expected_results: [e.id for e in expected_results]},
-                        title: condition.description,
-                        steps: behavior.steps,
-                        expected: [e.description for e in expected_results],
+                        preconditions: behavior.preconditions + condition.additional_preconditions,
+                        phases: phases,
                         axis: union_sorted_dedup(requirement.axis, feature.axis, behavior.axis),  # 3.4節
                     })
 
@@ -107,22 +112,23 @@ tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}
 
 で命名する(旧版は`tc-{condition.id}-001`という、末尾に予約の連番3桁を付ける命名だったが、`condition.id`だけを別のBehavior配下で再利用すると`case_id`が衝突する欠陥があったため、`requirement`/`feature`/`behavior`/`condition`の4つのidをすべて連結する形に変更した。`knowledge/`のディレクトリ階層自体が同じ`condition.id`の重複を許さない構造になっているため、その階層をそのまま`case_id`に反映させれば、衝突を検出する別レイヤーの検査を持たなくても衝突が構造的に起こり得なくなる)。`generated/testcases/`配下の出力先も同様に、`case_id`と同じ理由で`condition.id`単体のフラットなファイル名(`generated/testcases/ground.yml`)から、`knowledge/`と同じ階層をそのままミラーした`generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml`(`TestCase::relative_path()`)に変更した。
 
-### 3.3 title / steps / expected のテキスト組み立て
+### 3.3 preconditions / phases のテキスト組み立て
 
-当初案が想定していた「固定テンプレート＋knowledge側の短い名詞句の埋め込み」による自然文生成(`title = "{要約} (#{seq})"`等)は採用せず、実装は**knowledge側のフィールド値をそのまま転記する**方式にした。
+当初案が想定していた「固定テンプレート＋knowledge側の短い名詞句の埋め込み」による自然文生成(`title = "{要約} (#{seq})"`等)は採用せず、実装は**knowledge側のフィールド値をそのまま転記する**方式にした。この方針自体は[ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md)後も変わっていない。
 
 ```
-title    = condition.description                         # 加工なし、そのまま
-steps    = behavior.steps                                 # 順序付き配列、そのまま転記
-expected = [e.description for e in expected_results]      # ExpectedResultごとに1要素
+preconditions = behavior.preconditions + condition.additional_preconditions   # 連結、加工なし
+phases        = [Phase{steps: (condition.steps + (e.additional_steps or [])) if i == 0 else (e.additional_steps or []),
+                        results: e.results}
+                  for i, e in enumerate(expected_results)]                     # expected_resultsはファイル名順
 ```
 
 理由：
 
 - 完全な自然文生成(LLM等)は本研究のスコープ外(付録A.1)であることに変わりはないが、固定テンプレートによる文字列合成すら行わないことで、生成ロジックが`knowledge/`側の文言だけに依存する最も単純な純粋関数になり、決定性(4章)の証明・実装が容易になる。
-- テンプレート文言の作り込み(「〜の後、〜となる」等の言い回し)は`condition.description`/`behavior.steps`の各要素側の書き方の問題として、Test Designerの記述時の責務に寄せた。
+- テンプレート文言の作り込み(「〜の後、〜となる」等の言い回し)は`condition.steps`/`expected_result.results`の各要素側の書き方の問題として、Test Designerの記述時の責務に寄せた。
 
-[ADR 0015](../decisions/0015-behavior-step-model.md)(Phase 1)により、`behavior.yml`は`description`(人間向けの1文要約、生成には使わない)と`steps: Vec<String>`(順序付きの操作手順、1要素=1操作)を別フィールドとして持つ。当初`TestCase.steps`は実装上`[behavior.description]`という単一要素の配列にしかならなかったが(本節が元々説明していた挙動)、Phase 1以降は`behavior.steps`をそのまま転記するため複数要素になり得る。
+**[ADR 0015](../decisions/0015-behavior-step-model.md)→[ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md)への変遷**: ADR 0015 Phase 1は、`behavior.yml`に`description`(人間向けの1文要約、生成には使わない)と`steps: Vec<String>`(順序付きの操作手順、1要素=1操作、`TestCase.steps`へそのまま転記)を別フィールドとして持たせ、同一Behavior配下の全Conditionがこの`steps`を共有するモデルを採った。実運用でこのモデルを使うと、条件ごとに操作内容が異なる(例:「空白のみのテキストを入力する」と「有効なテキストを入力する」)ケースを表現できない問題が判明し、ADR 0016でこれを置き換えた。ADR 0016では、`behavior.steps`(内部的には`Behavior.preconditions`)の意味を「全Conditionに共通する前提」に変更し、実際の操作手順は新設の`Condition.steps`が担う。あわせて`ExpectedResult`に`results: Vec<String>`(観測可能な複数の結果)と`additional_steps: Option<Vec<String>>`(その結果を確認する前に必要な追加操作)を新設し、`TestCase`の`title`/`steps`/`expected`という3つのフラットフィールドを`preconditions`/`phases: Vec<Phase>`に置き換えた。`phases`は`expected/*.yml`をファイル名順に走査した`Phase{steps, results}`の配列で、先頭のphaseだけ`condition.steps`を`steps`の先頭に置く。
 
 ### 3.4 axisの継承
 
@@ -180,11 +186,11 @@ sequenceDiagram
 | ケース | 扱い |
 |---|---|
 | 1つのFeature(Behavior)に複数のConditionがある | Condition数だけ`TestCase`が生成される(組み合わせは`Feature × Condition`の直積ではなく、実在するConditionのみを列挙するため、実務上の組み合わせ爆発は起きにくい)。 |
-| 1つのConditionに複数のExpectedResultがある | **`TestCase`は1件のまま**、`TestCase.expected`(配列)に全ExpectedResultの`description`が集約される。§3.2の当初案(ExpectedResultごとに`TestCase`を分割)からの変更点。 |
+| 1つのConditionに複数のExpectedResultがある | **`TestCase`は1件のまま**、`TestCase.phases`(配列)に、`expected/*.yml`をファイル名順に走査した`Phase{steps, results}`が集約される([ADR 0016](../decisions/0016-behavior-condition-precondition-step-result-model.md))。§3.2の当初案(ExpectedResultごとに`TestCase`を分割)からの変更点。 |
 | ConditionはあるがExpectedResultが無い(`expected/`が空、または存在しない) | `TestCase`は生成されない(`generate.rs`が空チェックでスキップする)。 |
 | Conditionを持たないFeature/Behaviorがある | `TestCase`は生成されない(§3.1のER図で`generates`の起点は`FEATURE`と`CONDITION`の両方であるため)。 |
 | `forked_from`を持つFeature | 生成アルゴリズムには影響しない。`forked_from`は概念的派生を示す手動記述(§3.1)であり、構造的生成グラフ(§3.2(A))とは独立した情報のため、生成ロジックはこのフィールドを参照しない。 |
-| Behavior階層の扱い | **当初案とは異なり、実装は`behavior.yml`の存在をConditionと同格の必須階層として扱う**(`find_dirs_with_marker`で明示的に探索し、`behavior.steps`を`TestCase.steps`に、`behavior.axis`を`TestCase.axis`の合成元に使う。`behavior.description`は[ADR 0015](../decisions/0015-behavior-step-model.md) Phase 1以降、生成には使わない人間向け要約)。Behaviorを持たないConditionから`TestCase`は生成されない。 |
+| Behavior階層の扱い | **当初案とは異なり、実装は`behavior.yml`の存在をConditionと同格の必須階層として扱う**(`find_dirs_with_marker`で明示的に探索し、`behavior.preconditions`(旧`behavior.steps`)を`TestCase.preconditions`の一部に、`behavior.axis`を`TestCase.axis`の合成元に使う。`behavior.description`は[ADR 0015](../decisions/0015-behavior-step-model.md) Phase 1以降、生成には使わない人間向け要約)。Behaviorを持たないConditionから`TestCase`は生成されない。 |
 
 ### CTM(Classification Tree Method)との関係の再確認
 
@@ -208,9 +214,9 @@ sequenceDiagram
 
 - `requirement.yml`: `id: req-todo`, `axis: [security]`
 - `feature.yml`(`req-todo/todo/`配下): `id: todo`, `axis: [ui, data]`
-- `behavior.yml`(`todo/todo-add-task/`配下): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`, `steps: ["Click the title field.", "Press the add button."]`
-- `condition.yml`(`todo-add-task/todo-add-task-empty-input/`配下): `id: todo-add-task-empty-input`, `description: "Title is empty."`
-- `expected/001.yml`(1件のみ): `id: todo-add-task-empty-input-001`, `description: "Shows a validation error."`
+- `behavior.yml`(`todo/todo-add-task/`配下): `id: todo-add-task`, `axis: [ui]`, `description: "User adds a task."`, `preconditions: ["Click the title field.", "Press the add button."]`
+- `condition.yml`(`todo-add-task/todo-add-task-empty-input/`配下): `id: todo-add-task-empty-input`, `description: "Title is empty."`, `steps: ["Do it."]`, `additional_preconditions: []`
+- `expected/001.yml`(1件のみ): `id: todo-add-task-empty-input-001`, `description: "Shows a validation error."`, `results: ["Shows a validation error."]`
 
 → 生成される`TestCase`(`generated/testcases/todo-add-task-empty-input.yml`):
 ```yaml
@@ -222,12 +228,14 @@ generated_from:
   condition: todo-add-task-empty-input
   expected_results:
     - todo-add-task-empty-input-001
-title: "Title is empty.\n"
-steps:
+preconditions:
   - "Click the title field."
   - "Press the add button."
-expected:
-  - "Shows a validation error.\n"
+phases:
+  - steps:
+      - "Do it."
+    results:
+      - "Shows a validation error."
 axis: [data, security, ui]   # requirement[security] + feature[ui, data] + behavior[ui] の合成・重複除去・ソート
 ```
 
@@ -240,7 +248,7 @@ axis: [data, security, ui]   # requirement[security] + feature[ui, data] + behav
 | TestCaseの生成単位 | ExpectedResult 1件につき1 TestCase | **Condition 1件につき1 TestCase**(ExpectedResultは`expected`配列に集約) |
 | `case_id`の形式 | `{feature_id}-{condition_id}-{連番3桁}` | `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}`(§10参照。旧実装は`tc-{condition.id}-001`だったが、`condition.id`がBehaviorをまたいで衝突する欠陥のため変更した) |
 | axisの継承元 | Featureの`axis`のみ | Requirement・Feature・Behaviorの`axis`を合成(union) |
-| title/expectedのテキスト | 固定テンプレートによる文合成 | knowledge側のフィールド値をそのまま転記(加工なし) |
+| preconditions/phasesのテキスト | 固定テンプレートによる文合成 | knowledge側のフィールド値をそのまま転記(加工なし) |
 | Behavior階層 | 生成に使わない(将来拡張の余地として言及のみ) | `find_dirs_with_marker`で明示的に探索し、`steps`/`axis`に反映する必須階層 |
 | ファイル拡張子 | `.yaml`(サンプルに合わせた表記) | `.yml`(`markharness init`の規約) |
 

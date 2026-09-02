@@ -66,7 +66,7 @@ initialized .markharness/{knowledge,axes,generated,executions,changes,schema}/ u
 markharness knowledge add [--dir <path>]
 ```
 
-**Purpose**: Lets a Test Designer describe the five tiers `Requirement` → `Feature` → `Behavior` → `Condition` → `ExpectedResult` interactively (sequential prompts on standard input), creating `.yml` files under `.markharness/knowledge/`. `Requirement` is the requirement unit that is the parent of a Feature, and `Feature` references its parent via its own `requirement:` field. `Behavior` is a required intermediate tier expressing "how the feature behaves," and becomes the source of the `steps` in the TestCase that `generate` assembles.
+**Purpose**: Lets a Test Designer describe the five tiers `Requirement` → `Feature` → `Behavior` → `Condition` → `ExpectedResult` interactively (sequential prompts on standard input), creating `.yml` files under `.markharness/knowledge/`. `Requirement` is the requirement unit that is the parent of a Feature, and `Feature` references its parent via its own `requirement:` field. `Behavior` is a required intermediate tier expressing "how the feature behaves," and becomes the source of the `preconditions` (common to every Condition) in the TestCase that `generate` assembles. The actual operation steps, which vary per Condition, are entered as the Condition's `steps`, and the results to check are entered as the ExpectedResult's `results` ([ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md)).
 
 **Options**
 
@@ -85,13 +85,21 @@ Axis (comma separated, e.g. ui, validation): ui, validation
 Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
-Behavior steps (one operation per line, blank line to finish):
+Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
+  step 1: Open the todo app.
+  step 2:
+Condition name (e.g. empty-title): empty-title
+Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
   step 1: Click the title field.
   step 2: Press the add button.
   step 3:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
+  step 1:
 Expected result (e.g. shows a validation error): shows a validation error
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: A validation error is shown under the title field.
+  step 2:
 ```
 
 → Files are created under `tmp/todo-sample/.markharness/knowledge/task-management/add-todo/...`.
@@ -111,13 +119,13 @@ Expected result (e.g. shows a validation error): shows a validation error
 3. `Behavior name (e.g. add-task):` — enter the Behavior's slug, or a Japanese-language label
    - If one or more existing Behaviors exist under the selected Feature, a numbered list is shown the same way, and either number selection or direct entry works.
    - If an existing `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/behavior.yml` exists, it is reused and the flow skips to the next prompt.
-   - Only for a new Behavior, `Behavior axis (...)` and `Behavior description (...)` are entered, and `behavior.yml` is newly created.
+   - Only for a new Behavior, `Behavior axis (...)`, `Behavior description (...)`, and `Behavior steps (...)` (one operation per line, blank line to finish; at least one required) are entered, and `behavior.yml` is newly created.
 4. `Condition name (e.g. empty-title):` — enter the Condition's slug, or a Japanese-language label
    - If one or more existing Conditions exist under the selected Behavior, a numbered list is shown the same way, and either number selection or direct entry works.
    - If the newly created Condition id begins with `{behavior_id}-` (i.e., the Behavior id was accidentally duplicated in it), that prefix is automatically stripped before creation, and the fact is reported (e.g., entering the Condition id `add-task-empty-title` under Behavior `add-task` creates it as `empty-title`). However, if a directory with the id exactly as entered already exists, it is not stripped and is reused as-is (to avoid breaking data that was previously created manually with a duplicated name).
    - If an existing `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/<condition_id>/condition.yml` exists (judged using the id after stripping), it is reused and the flow skips to the next prompt.
-   - Only for a new Condition, the condition's description is entered at `Scenario (e.g. Submit the todo form with an empty title):`, and `condition.yml` is newly created.
-5. `Expected result (e.g. shows a validation error):` — enter the expected-result text and create `expected/NNN.yml` (3-digit sequence number, existing file count + 1).
+   - Only for a new Condition, `Scenario (...)`, `Condition steps (...)` (one operation per line, blank line to finish; at least one required), and `Additional preconditions (...)` (one operation per line, blank line to finish; zero is allowed) are entered, and `condition.yml` is newly created.
+5. `Expected result (e.g. shows a validation error):` — enter a one-line summary of the expected result, then `Observable results (...)` (one observable result per line, blank line to finish; at least one required), and create `expected/NNN.yml` (3-digit sequence number, existing file count + 1). Unlike a reused Condition, an ExpectedResult is always newly created, so these two prompts are never skipped.
 
 **On the prompt wording**: Each prompt internally determines the `id` of a Feature/Behavior/Condition (the directory name and the `id` field in the YAML), but to avoid the human operator getting confused by the abstract notion of "id," it is presented with easy-to-understand English phrasing and examples such as `Feature name` / `Behavior name` / `Condition name`. The internal data model (the `id` field, notification messages, variable names in the code) is unchanged.
 
@@ -173,9 +181,8 @@ label: add-task
 axis: [ui]
 description: |
   User adds a new task to the list.
-steps:
-  - "Click the title field."
-  - "Press the add button."
+preconditions:
+  - "Open the todo app."
 ```
 
 `condition.yml`:
@@ -186,6 +193,10 @@ behavior: add-task
 label: empty-title
 description: |
   Submit the todo form with an empty title
+steps:
+  - "Click the title field."
+  - "Press the add button."
+additional_preconditions: []
 ```
 
 `expected/001.yml` (id is `{condition_id}-{3-digit sequence}`):
@@ -195,6 +206,8 @@ id: empty-title-001
 condition: empty-title
 description: |
   shows a validation error
+results:
+  - "A validation error is shown under the title field."
 ```
 
 **Example (first session)**
@@ -208,13 +221,21 @@ Axis (comma separated, e.g. ui, validation): ui, validation
 Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
-Behavior steps (one operation per line, blank line to finish):
+Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
+  step 1: Open the todo app.
+  step 2:
+Condition name (e.g. empty-title): empty-title
+Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
   step 1: Click the title field.
   step 2: Press the add button.
   step 3:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
+  step 1:
 Expected result (e.g. shows a validation error): shows a validation error
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: A validation error is shown under the title field.
+  step 2:
 ```
 
 **Example (adding a second ExpectedResult to an existing Requirement/Feature/Behavior/Condition, via number selection)**
@@ -238,9 +259,12 @@ Condition name (e.g. empty-title):
 1
 Reusing existing Condition 'empty-title'.
 Expected result (e.g. shows a validation error): highlights the title field in red
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: The title field is highlighted in red.
+  step 2:
 ```
 
-→ `.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/002.yml` is created. Typing `task-management` / `add-todo` / `add-task` / `empty-title` directly instead of the numbers produces the same result.
+→ `.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/002.yml` is created. Typing `task-management` / `add-todo` / `add-task` / `empty-title` directly instead of the numbers produces the same result. When reusing an existing Condition, the `Condition steps`/`Additional preconditions` prompts are skipped (the existing `condition.yml`'s values are used as-is).
 
 **Example (automatic stripping of a duplicated Condition id prefix)**
 
@@ -257,7 +281,16 @@ Condition name (e.g. empty-title):
 add-task-max-length
 Stripping the prefix 'add-task' (duplicating the Behavior id) from Condition id 'add-task-max-length'; creating as 'max-length'.
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with a title longer than 200 characters
+Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
+  step 1: Enter a title longer than 200 characters.
+  step 2: Press the add button.
+  step 3:
+Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
+  step 1:
 Expected result (e.g. shows a validation error): shows a length validation error
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: A length validation error is shown under the title field.
+  step 2:
 ```
 
 → `.markharness/knowledge/task-management/add-todo/add-task/max-length/condition.yml` and `.markharness/knowledge/task-management/add-todo/add-task/max-length/expected/001.yml` are created (the `add-task-max-length/` directory is not created).
@@ -305,20 +338,30 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump. # description is required only for Behavior (when newly created)
-  steps: # required only for Behavior (when newly created): at least one non-empty operation, one per element
+  steps: # required when newly created: at least one non-empty operation, one per element. Common to every Condition (stored internally as Behavior.preconditions)
     - Press the jump button.
 
 condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps: # required when newly created: at least one non-empty operation, one per element. This Condition's own operations
+    - Land on the ground.
+  additional_preconditions: [] # optional. Extra preconditions specific to this Condition that its steps alone cannot establish
 
 expected:
   - description: lands safely
+    results: # required: at least one non-empty result, one per element, one observable result per element
+      - Player is standing on the ground.
   - description: takes fall damage if height > 3m
+    results:
+      - Player's health decreases.
+    additional_steps: # optional. Extra operations to perform before checking these results
+      - Measure the fall height first.
+    implementation_note: applyFallDamage() is called when landing velocity exceeds a threshold. # optional. Implementation rationale, not used for generation
 ```
 
-`axis`/`label`/`description`/`steps` can be omitted when reusing an existing id (a Requirement/Feature/Behavior/Condition for which a file already exists under `.markharness/knowledge/`). Omitted fields are excluded from comparison against the existing value; only specified fields are checked against the existing file's values (`conflicting_existing_value` error).
+`axis`/`label`/`description`/`steps` (for both Behavior and Condition) can be omitted when reusing an existing id (a Requirement/Feature/Behavior/Condition for which a file already exists under `.markharness/knowledge/`). Omitted fields are excluded from comparison against the existing value; only specified fields are checked against the existing file's values (`conflicting_existing_value` error). `expected[].results` has no such omit-on-reuse concept, since an ExpectedResult is always newly created — it is always required. See [ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md) for the full model, including the filename-order-is-execution-order contract for `additional_steps`.
 
 **Validation rules (summary; see spec §5 for details)**
 
@@ -327,6 +370,7 @@ expected:
 | `invalid_slug`               | The id contains characters other than lowercase alphanumerics and hyphens                                                 |
 | `missing_axis`               | `axis` is empty/unspecified for a newly created Requirement/Feature/Behavior. When `.markharness/axes/*.yml` has at least one axis registered, `suggestion` lists the registered axes (comma-separated); when none are registered, `suggestion` stays `null` and `message` points the caller at `axes add` instead |
 | `missing_description`        | `description` is empty for a newly created Behavior/Condition, or for any ExpectedResult                                  |
+| `missing_steps`               | `steps` is empty/unspecified for a newly created Behavior/Condition, or `results` is empty/unspecified for any ExpectedResult |
 | `unknown_axis`               | An axis value not registered in the `.markharness/axes/*.yml` registry (a close match, if any, is offered in `suggestion`)             |
 | `redundant_prefix`           | `condition.id` starts with `{behavior.id}-` (when `--strip-redundant-prefix` is not given to `knowledge apply`; see 1.4)  |
 | `conflicting_existing_value` | When reusing an existing id, the specified `label`/`axis`/`description` does not match the existing file's value          |
@@ -511,10 +555,10 @@ markharness generate [--json] [-d, --dir <path>]
 **Algorithm overview**
 
 - Traverses `.markharness/knowledge/` in the order `requirement.yml` → `feature.yml` → `behavior.yml` → `condition.yml` → `expected/*.yml`, in path sort order (independent of the execution environment or timestamps). No `TestCase` is generated from a `Feature` that has no `Behavior`, or from a `Condition` whose `expected/` is empty (or absent).
-- **Aggregation model**: All files under a single `Condition`'s `expected/` are aggregated into the `expected` array of a single `TestCase` (1 Condition = 1 TestCase; a change from the earlier model that made a separate TestCase per expected file).
+- **Aggregation model**: All files under a single `Condition`'s `expected/` are aggregated into the `phases` array of a single `TestCase` (1 Condition = 1 TestCase).
 - `case_id = "tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}"`. Concatenating all four ids (`requirement`/`feature`/`behavior`/`condition`) makes a `case_id` collision structurally impossible even if a `condition.id` is reused under a different Behavior.
 - The output file is written to `.markharness/generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml`, fully mirroring `.markharness/knowledge/`'s own hierarchy (the earlier flat `.markharness/generated/testcases/{condition.id}.yml` naming had a defect where reusing the same `condition.id` under a different Behavior silently overwrote the earlier file).
-- `title` = `condition.description`, `steps` = `behavior.steps` (transcribed as-is; `behavior.description` is a human-facing summary not used for generation, per [ADR 0015](decisions/0015-behavior-step-model.md) Phase 1), `expected` = the `description` of each `expected/*.yml`, listed in file-name sort order.
+- [ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md) replaced the earlier `title`/`steps`/`expected` fields with `preconditions`/`phases`. `preconditions` = `behavior.preconditions` concatenated with `condition.additional_preconditions` (`behavior.description`/`condition.description` remain human-facing summaries not used for generation). `phases` is built by walking `expected/*.yml` in file-name order and producing one `Phase { steps, results }` per file: the first phase's `steps` is `condition.steps` followed by that `expected/*.yml`'s own `additional_steps` (if any); every later phase's `steps` is that file's `additional_steps` alone (non-empty is enforced by `markharness validate` for every phase after the first). Each phase's `results` is that `expected/*.yml`'s `results`.
 - `generated_from` records each of the `requirement` / `feature` / `behavior` / `condition` ids, and the source `expected_results` (the list of `id`s of `expected/*.yml`) that were aggregated.
 - `axis`: a list of viewpoints formed by combining (union, deduplicated and sorted) the `axis` of the `Requirement` / `Feature` / `Behavior` (§3.4 "axis inheritance").
 - The output is serialized with `serde_yaml_ng`, and always produces the same output for the same input (determinism, a prerequisite for diff verification in CI).
@@ -542,14 +586,14 @@ generated_from:
   condition: empty-title
   expected_results:
     - empty-title-001
-title: |
-  Submit the todo form with an empty title
-steps:
-  - "Click the title field."
-  - "Press the add button."
-expected:
-  - |
-    shows a validation error
+preconditions:
+  - "Open the todo app."
+phases:
+  - steps:
+      - "Click the title field."
+      - "Press the add button."
+    results:
+      - "A validation error is shown under the title field."
 ```
 
 If `.markharness/knowledge/` has nothing in it, `.markharness/generated/testcases/` becomes empty (0 files).

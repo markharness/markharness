@@ -28,18 +28,18 @@ pub fn write_full_tree(root: &Path, feature_id: &str) {
     std::fs::write(
         base.parent().unwrap().join("behavior.yml"),
         format!(
-            "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nsteps:\n  - \"Press the add button.\"\n"
+            "id: todo-add-task\nfeature: {feature_id}\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n"
         ),
     )
     .unwrap();
     std::fs::write(
         base.join("condition.yml"),
-        "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\n",
+        "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
     )
     .unwrap();
     std::fs::write(
         base.join("expected/001.yml"),
-        "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\n",
+        "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n",
     )
     .unwrap();
 }

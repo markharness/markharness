@@ -157,6 +157,28 @@ fn prompt_steps<R: BufRead, W: Write>(
     }
 }
 
+/// `prompt_steps`と同じ入力形式だが、1つも入力せず最初の行を空にして終える
+/// ことを許す(`additional_preconditions`のような0要素許容フィールド向け)。
+fn prompt_optional_steps<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    label: &str,
+) -> io::Result<Vec<String>> {
+    writeln!(writer, "{label}")?;
+    let mut steps = Vec::new();
+    loop {
+        write!(writer, "  step {}: ", steps.len() + 1)?;
+        writer.flush()?;
+        let mut line = String::new();
+        let bytes_read = reader.read_line(&mut line)?;
+        let trimmed = line.trim().to_string();
+        if bytes_read == 0 || trimmed.is_empty() {
+            return Ok(steps);
+        }
+        steps.push(trimmed);
+    }
+}
+
 pub fn run_add<R: BufRead, W: Write>(
     root: &Path,
     reader: &mut R,
@@ -264,7 +286,7 @@ pub fn run_add<R: BufRead, W: Write>(
             label: behavior_label,
             axis,
             description,
-            steps,
+            preconditions: steps,
             uid: None,
         };
         replace_file(
@@ -307,11 +329,23 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Scenario (e.g. Submit the todo form with an empty title): ",
         )?;
+        let steps = prompt_steps(
+            reader,
+            writer,
+            "Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):",
+        )?;
+        let additional_preconditions = prompt_optional_steps(
+            reader,
+            writer,
+            "Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):",
+        )?;
         let condition = Condition {
             id: condition_id.clone(),
             behavior: behavior_id.clone(),
             label: condition_label,
             description,
+            steps,
+            additional_preconditions,
             uid: None,
         };
         replace_file(
@@ -334,10 +368,18 @@ pub fn run_add<R: BufRead, W: Write>(
         writer,
         "Expected result (e.g. shows a validation error): ",
     )?;
+    let results = prompt_steps(
+        reader,
+        writer,
+        "Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):",
+    )?;
     let expected = ExpectedResult {
         id: expected_id,
         condition: condition_id.clone(),
         description,
+        results,
+        additional_steps: None,
+        implementation_note: None,
         generated_by: None,
         verified_by: None,
         uid: None,
@@ -371,7 +413,7 @@ mod tests {
         String::from_utf8(writer).unwrap()
     }
 
-    const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n";
+    const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n";
 
     #[test]
     fn prompt_steps_errors_instead_of_looping_forever_when_stdin_hits_eof_before_any_step() {
@@ -392,6 +434,31 @@ mod tests {
         let steps = prompt_steps(&mut reader, &mut writer, "Behavior steps:").unwrap();
 
         assert_eq!(steps, vec!["Press the jump button.".to_string()]);
+    }
+
+    #[test]
+    fn prompt_optional_steps_returns_empty_when_the_first_line_is_blank() {
+        let mut reader = Cursor::new(b"\n".to_vec());
+        let mut writer = Vec::new();
+
+        let steps =
+            prompt_optional_steps(&mut reader, &mut writer, "Additional preconditions:").unwrap();
+
+        assert_eq!(steps, Vec::<String>::new());
+    }
+
+    #[test]
+    fn prompt_optional_steps_collects_lines_until_a_blank_line() {
+        let mut reader = Cursor::new(b"The character has already been deleted.\n\n".to_vec());
+        let mut writer = Vec::new();
+
+        let steps =
+            prompt_optional_steps(&mut reader, &mut writer, "Additional preconditions:").unwrap();
+
+        assert_eq!(
+            steps,
+            vec!["The character has already been deleted.".to_string()]
+        );
     }
 
     #[test]
@@ -427,15 +494,15 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n"
         );
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\n"
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
         );
         assert_eq!(
             fs::read_to_string(expected_path).unwrap(),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
         );
     }
 
@@ -449,7 +516,7 @@ mod tests {
         // second input line is the behavior id, not an axis list.
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nlands on platform\n",
+            "controls\nplayer-jump\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         let feature_path = dir
@@ -464,7 +531,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/air/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: air\nfeature: player-jump\nlabel: air\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\nsteps:\n  - \"Press the jump button while airborne.\"\n"
+            "id: air\nfeature: player-jump\nlabel: air\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\npreconditions:\n  - \"Press the jump button while airborne.\"\n"
         );
     }
 
@@ -477,7 +544,7 @@ mod tests {
         // Second run reuses feature and behavior: no axis/description prompts.
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\njump\nair\nJump while airborne\nlands on platform\n",
+            "controls\nplayer-jump\njump\nair\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         let condition_path = dir
@@ -485,7 +552,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/jump/air/condition.yml");
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump while airborne\n"
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump while airborne\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
         );
     }
 
@@ -498,7 +565,7 @@ mod tests {
         // Second run reuses feature, behavior and condition: no scenario prompt.
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\njump\nground\nfalls over\n",
+            "controls\nplayer-jump\njump\nground\nfalls over\nConfirmed.\n\n",
         );
 
         let expected_002 = dir
@@ -506,7 +573,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
         assert_eq!(
             fs::read_to_string(expected_002).unwrap(),
-            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
+            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\nresults:\n  - \"Confirmed.\"\n"
         );
     }
 
@@ -517,7 +584,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\n\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\n\nlands safely\nConfirmed.\n\n",
         );
 
         let expected_path = dir
@@ -525,7 +592,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
         assert_eq!(
             fs::read_to_string(expected_path).unwrap(),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
+            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
         );
     }
 
@@ -548,7 +615,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nlands on platform\n",
+            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         assert!(output.contains("  1) player-jump\n"));
@@ -568,7 +635,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\nplayer-jump\n1\nspace\nJump while airborne\nlands on platform\n",
+            "controls\nplayer-jump\n1\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         assert!(output.contains("  1) jump\n"));
@@ -588,7 +655,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\nplayer-jump\njump\n1\nfalls over\n",
+            "controls\nplayer-jump\njump\n1\nfalls over\nConfirmed.\n\n",
         );
 
         assert!(output.contains("  1) ground\n"));
@@ -608,7 +675,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\njump\nground\nfalls over\n",
+            "controls\nplayer-jump\njump\nground\nfalls over\nConfirmed.\n\n",
         );
 
         let expected_002 = dir
@@ -616,7 +683,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
         assert_eq!(
             fs::read_to_string(expected_002).unwrap(),
-            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\n"
+            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\nresults:\n  - \"Confirmed.\"\n"
         );
     }
 
@@ -627,7 +694,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
         );
 
         assert!(output.contains(
@@ -657,7 +724,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
         );
         // Above run already dedupes to `ground/`; create a legacy dir with the
         // literal redundant name directly on disk to simulate pre-existing data.
@@ -667,13 +734,13 @@ mod tests {
         fs::create_dir_all(&legacy_dir).unwrap();
         fs::write(
             legacy_dir.join("condition.yml"),
-            "id: jump-ground\nbehavior: jump\ndescription: |\n  legacy\n",
+            "id: jump-ground\nbehavior: jump\ndescription: |\n  legacy\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
         )
         .unwrap();
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\nplayer-jump\njump\njump-ground\nfell over\n",
+            "controls\nplayer-jump\njump\njump-ground\nfell over\nConfirmed.\n\n",
         );
 
         assert!(!output.contains("重複する接頭辞を除去"));
@@ -745,7 +812,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
         );
 
         let feature_path = dir
@@ -765,7 +832,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\nプレイヤーがジャンプする\n\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nlanding\nJump while airborne\nlands on platform\n",
+            "controls\nplayer-jump\nプレイヤーがジャンプする\n\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nlanding\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         let behavior_path = dir
@@ -773,7 +840,7 @@ mod tests {
             .join(".markharness/knowledge/controls/player-jump/pureiyaagajanpusuru/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nsteps:\n  - \"Press the jump button.\"\n"
+            "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n"
         );
     }
 
@@ -785,7 +852,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\njump\nプレイヤーがジャンプする\n\nJump animation scenario\nlands on platform\n",
+            "controls\nplayer-jump\njump\nプレイヤーがジャンプする\n\nJump animation scenario\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         let condition_path = dir.path().join(
@@ -793,7 +860,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(condition_path).unwrap(),
-            "id: pureiyaagajanpusuru\nbehavior: jump\nlabel: プレイヤーがジャンプする\ndescription: |\n  Jump animation scenario\n"
+            "id: pureiyaagajanpusuru\nbehavior: jump\nlabel: プレイヤーがジャンプする\ndescription: |\n  Jump animation scenario\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
         );
     }
 
@@ -804,7 +871,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "プレイヤーがジャンプする\n\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n",
+            "プレイヤーがジャンプする\n\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
         );
 
         let requirement_path = dir
@@ -830,7 +897,7 @@ mod tests {
         // the second input line is the feature id, not an axis list.
         run_with_input(
             dir.path(),
-            "controls\nother-feature\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nlands on platform\n",
+            "controls\nother-feature\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         let requirement_path = dir
@@ -854,7 +921,7 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "1\nair-support\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nlands on platform\n",
+            "1\nair-support\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         assert!(output.contains("  1) controls\n"));
@@ -891,7 +958,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n",
+            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
         );
 
         let feature_path = dir
@@ -901,7 +968,7 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nlands on platform\n",
+            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
         );
 
         let after = fs::read_to_string(&feature_path).unwrap();
@@ -916,12 +983,12 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nlanded on the ground\nlands safely\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nlanded on the ground\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
         );
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\nplayer-jump\njump\njump-ground\nfalls over\n",
+            "controls\nplayer-jump\njump\njump-ground\nfalls over\nConfirmed.\n\n",
         );
 
         assert!(output.contains(

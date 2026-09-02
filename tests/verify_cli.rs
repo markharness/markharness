@@ -66,18 +66,18 @@ fn write_full_chain(root: &Path, label: &str) {
     .unwrap();
     std::fs::write(
         dir.parent().unwrap().join("behavior.yml"),
-        "id: edit-existing-todo\nfeature: todo-edit\nlabel: edit-existing-todo\naxis: [ui]\ndescription: |\n  User edits an existing todo.\nsteps:\n  - \"Press the edit button.\"\n",
+        "id: edit-existing-todo\nfeature: todo-edit\nlabel: edit-existing-todo\naxis: [ui]\ndescription: |\n  User edits an existing todo.\npreconditions:\n  - \"Press the edit button.\"\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("condition.yml"),
-        "id: edit-existing-todo\nbehavior: edit-existing-todo\nlabel: edit-existing-todo\ndescription: |\n  Title is changed.\n",
+        "id: edit-existing-todo\nbehavior: edit-existing-todo\nlabel: edit-existing-todo\ndescription: |\n  Title is changed.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("expected")).unwrap();
     std::fs::write(
         dir.join("expected/001.yml"),
-        "id: edit-existing-todo-001\ncondition: edit-existing-todo\ndescription: |\n  The todo is updated.\n",
+        "id: edit-existing-todo-001\ncondition: edit-existing-todo\ndescription: |\n  The todo is updated.\nresults:\n  - \"Confirmed.\"\n",
     )
     .unwrap();
 }

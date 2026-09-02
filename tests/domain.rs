@@ -1,6 +1,7 @@
 use markharness::changes::CommitRef;
 use markharness::generate::{
-    CaseFilePaths, ExpectedSnapshot, KnowledgeCaseSnapshot, KnowledgeSnapshot, compile_testcases,
+    CaseFilePaths, ExpectedSnapshot, KnowledgeCaseSnapshot, KnowledgeSnapshot, Phase,
+    compile_testcases,
 };
 use markharness::verify::{
     PendingCandidate, ReflectedChange, VerificationStatus, evaluate_pending_candidate,
@@ -18,15 +19,16 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             feature_axis: vec!["workflow".to_string()],
             behavior_id: "behavior".to_string(),
             behavior_uid: None,
-            behavior_description: "perform action".to_string(),
-            behavior_steps: vec!["click the button".to_string()],
+            behavior_preconditions: vec!["click the button".to_string()],
             behavior_axis: vec!["ui".to_string()],
             condition_id: "condition".to_string(),
             condition_uid: None,
-            condition_description: "given state".to_string(),
+            condition_steps: vec!["confirm the state".to_string()],
+            condition_additional_preconditions: vec![],
             expected: vec![ExpectedSnapshot {
                 id: "expected-1".to_string(),
-                description: "result".to_string(),
+                results: vec!["result".to_string()],
+                additional_steps: None,
                 uid: None,
             }],
             case_files: CaseFilePaths::default(),
@@ -38,8 +40,14 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
     assert_eq!(testcases.len(), 1);
     assert_eq!(testcases[0].case_id, "tc-req-feature-behavior-condition");
     assert_eq!(testcases[0].axis, vec!["ui", "workflow"]);
-    assert_eq!(testcases[0].expected, vec!["result"]);
-    assert_eq!(testcases[0].steps, vec!["click the button"]);
+    assert_eq!(testcases[0].preconditions, vec!["click the button"]);
+    assert_eq!(
+        testcases[0].phases,
+        vec![Phase {
+            steps: vec!["confirm the state".to_string()],
+            results: vec!["result".to_string()],
+        }]
+    );
 }
 
 #[test]

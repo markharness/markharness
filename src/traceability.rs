@@ -48,7 +48,7 @@ pub fn serialize_index(index: &TraceabilityIndex) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generate::{CaseFilePaths, GeneratedFrom};
+    use crate::generate::{CaseFilePaths, GeneratedFrom, Phase};
 
     fn sample_testcase() -> TestCase {
         TestCase {
@@ -63,9 +63,11 @@ mod tests {
                 condition: "todo-add-task-empty-input".to_string(),
                 expected_results: vec!["todo-add-task-empty-input-001".to_string()],
             },
-            title: "Title is empty.".to_string(),
-            steps: vec!["User adds a task.".to_string()],
-            expected: vec!["Shows a validation error.".to_string()],
+            preconditions: vec!["User adds a task.".to_string()],
+            phases: vec![Phase {
+                steps: vec!["Do it.".to_string()],
+                results: vec!["Shows a validation error.".to_string()],
+            }],
             axis: vec!["ui".to_string()],
         }
     }

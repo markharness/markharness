@@ -93,15 +93,39 @@ path:
 
 - **Feature**: the user-facing capability the code implements.
 - **Behavior**: one distinct thing the Feature does (e.g. one function, or
-  one responsibility within it).
+  one responsibility within it). Preconditions shared by every Condition
+  (`preconditions`) also belong here.
 - **Condition**: one input/state combination that changes the outcome
-  (branches, edge cases, error paths all count).
-- **ExpectedResult**: the observable outcome for that Condition — read off
-  the actual code (return value, error, side effect), never guessed.
+  (branches, edge cases, error paths all count). Carries this Condition's own
+  operation sequence (`steps`) and any additional preconditions the steps
+  alone can't establish (`additional_preconditions`).
+- **ExpectedResult**: the observable outcome(s) for that Condition
+  (`results`) — read off the actual code (return value, error, side effect),
+  never guessed. Multiple independent observations after the same operation
+  go into one ExpectedResult's `results` as multiple lines; create a separate
+  ExpectedResult (e.g. `expected/002.yml`) only for a new phase introduced by
+  an extra operation (`additional_steps`).
 
 Do not invent behavior the code doesn't show. If intent is ambiguous (e.g. a
 `TODO`, or two plausible readings of a branch), stop and ask the user rather
 than guessing.
+
+Always keep in mind that `preconditions`/`steps`/`additional_preconditions`/
+`additional_steps` are a script a human Test Executor reads and carries out
+by hand — markharness has no auto-execution engine. It's fine to read the
+code to back up each operation, but write the operation itself as something
+a human (or an equivalent manual operator) can actually perform — a screen
+click, a form input, sending an API request — never a function call or
+internal processing step. Write "type 'Buy milk' into the input field, then
+click the Add button", not "call `addTodo()`".
+
+When citing provenance in a `description` as "file path + function/method
+name", watch out for a YAML trap: **a colon immediately followed by a space
+inside a plain scalar is parsed as a mapping separator**, so
+`description: added (app.js: addTodo)` fails to parse. Separate the file
+path and function name with something other than a colon+space — e.g.
+`app.js#addTodo` or `app.js > addTodo` — or wrap the whole value in double
+quotes (`description: "added (app.js: addTodo)"`).
 
 ### Phase 3 — Check axes
 
@@ -147,6 +171,8 @@ For each Condition identified in Phase 2:
      label: <label>
      axis: [<axis-id>, ...]
      description: <what this Behavior does, in the code's own terms>
+     steps: # draft-layer field name; persisted as behavior.preconditions on apply. At least 1 required for a new Behavior (an empty [] is rejected) — omit this key entirely only when reusing an existing Behavior unchanged
+       - <operation shared as a precondition by every Condition, written as something a human can do by hand (not a function call or other code-level term)>
 
    condition:
      id:
@@ -154,15 +180,32 @@ For each Condition identified in Phase 2:
        # only needs to be unique within this Behavior —
        # see "Condition id uniqueness" below
      label: <label>
-     description: <the specific input/state that triggers this path — cite file:line>
+     description: <the specific input/state that triggers this path — cite the file path and function/method name (never a line number, see "Principles")>
+     steps:
+       - <this Condition's own operation sequence; one element = one operation, written as something a human can do by hand; at least 1 required>
+     additional_preconditions: # optional (omitted = empty)
+       - <preconditions specific to this Condition that `steps` alone can't establish; also written as something a human can do by hand>
 
    expected:
-     - description: <observable outcome, read from the code — cite file:line>
+     - description: <one-line human summary; not used for generation — cite the file path and function/method name (never a line number)>
+       results:
+         - <observable outcome, read from the code; one element = one observation; at least 1 required>
+       # additional_steps: # optional, but required non-empty on any file other than the first, by filename order, in this Condition
+       #   - <operation needed before this outcome can be observed, also written as something a human can do by hand>
+       # implementation_note: <implementation rationale note; optional; not used for generation>
    ```
 
-   Omit `label`/`axis`/`description` on any level that already exists and is
-   unchanged — supplying a conflicting value fails validation with
+   Omit `label`/`axis`/`description`/`steps` on any level that already exists
+   and is unchanged — supplying a conflicting value fails validation with
    `conflicting_existing_value`.
+
+   To verify multiple phases under the same Condition (e.g. "check right
+   after adding" then "check persistence after a reload"), write multiple
+   entries in the `expected` array. Any entry other than the first (by
+   filename order) cannot omit or empty out `additional_steps` (`markharness
+   validate`'s cross-reference check rejects it) — if you just want to split
+   one operation's outcome across multiple lines, add lines to the existing
+   `results` instead of creating a new `expected` entry.
 
    **Condition id uniqueness:** `markharness generate` writes each Condition
    to `generated/testcases/<requirement>/<feature>/<behavior>/<condition-id>.yml`
@@ -175,8 +218,17 @@ For each Condition identified in Phase 2:
 
 2. Validate: `markharness knowledge validate <draft-file> --json`. Fix every
    reported error (`invalid_slug`, `missing_axis`, `missing_description`,
-   `unknown_axis`, `redundant_prefix`, `conflicting_existing_value`,
-   `parent_not_found`, `unknown_forked_from`) before proceeding.
+   `missing_steps`, `unknown_axis`, `redundant_prefix`,
+   `conflicting_existing_value`, `parent_not_found`, `unknown_forked_from`,
+   `multiline_label`) before proceeding. `missing_steps` fires when any of
+   `behavior.steps`/`condition.steps`/`condition.additional_preconditions`/
+   `expected[].results`/`expected[].additional_steps` is empty, or contains a
+   blank/whitespace-only element. The empty-array case differs by field,
+   though: `behavior.steps`/`condition.steps`/`expected[].results` are
+   rejected outright when empty on a new entry, while
+   `condition.additional_preconditions` and `expected[].additional_steps` may
+   themselves be an empty array `[]` (only a blank/whitespace element in them
+   is rejected).
 3. Apply: `markharness knowledge apply <draft-file> --json` (add
    `--strip-redundant-prefix` only if you intentionally want a
    `behavior-`-prefixed `condition.id` stripped).
@@ -198,7 +250,11 @@ same invocation — a batch apply is all-or-nothing.
 Once every planned Condition has been applied:
 
 1. Run `markharness generate` to deterministically (re)write
-   `generated/testcases/*.yml` from `knowledge/`.
+   `generated/testcases/*.yml` from `knowledge/`. The granularity is still
+   1 Condition = 1 generated file, but each file is now composed of
+   `preconditions` (behavior.preconditions + condition.additional_preconditions)
+   and `phases` (one per `expected/*.yml`, filename-ordered, each phase
+   carrying its own `steps`+`results`).
 2. Confirm the count of generated files matches the count of Conditions
    applied (e.g. `find knowledge -name condition.yml | wc -l` vs. `find
 generated/testcases -type f -name "*.yml" | wc -l` — note no `-maxdepth 1`:
@@ -224,6 +280,12 @@ generated/testcases -type f -name "*.yml" | wc -l` — note no `-maxdepth 1`:
 
 - Every Condition/ExpectedResult must cite the code it came from — no
   speculative test knowledge.
+- Write `preconditions`/`steps`/`additional_preconditions`/`additional_steps`
+  as operations a human Test Executor can carry out by hand (screen
+  interactions, input, sending an API request), backed by reading the code
+  but never expressed as function names or internal processing. markharness
+  has no auto-execution engine — these are a script a human reads top to
+  bottom and performs.
 - Never hand-edit `generated/testcases/*.yml`; it is derived output. Only
   write under `knowledge/` (via `apply`) and let `markharness generate`
   produce the rest.
@@ -232,6 +294,12 @@ generated/testcases -type f -name "*.yml" | wc -l` — note no `-maxdepth 1`:
 - If a Condition's outcome depends on external state the code doesn't fully
   determine (I/O, concurrency, config), say so in the description rather
   than asserting a single deterministic outcome.
+- The filename order of `expected/*.yml` (`001.yml`, `002.yml`, …) is not
+  cosmetic — it is the contract that determines the execution order of the
+  generated `phases`; reordering the files changes the test's meaning.
+  Multiple observations after the same operation belong in one file's
+  `results`; create a new file only for a phase that introduces new
+  `additional_steps` (an extra operation).
 - `condition.id` only needs to be unique within its Behavior (`knowledge
   apply`/`knowledge validate` enforce this). `generate`'s output fully
   mirrors `knowledge/`'s own hierarchy

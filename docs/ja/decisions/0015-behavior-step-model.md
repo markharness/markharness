@@ -2,11 +2,11 @@
 
 ## ステータス
 
-Accepted (2026-08-30). Phase 1(inline `Behavior.steps`の導入)の実装が完了し、「Acceptedへ変更する条件」を満たした。
+Superseded by [0016](./0016-behavior-condition-precondition-step-result-model.md) (2026-08-31)。Phase 1(inline `Behavior.steps`の導入)は実装され「Acceptedへ変更する条件」を一度満たしたが、実データでの利用により`behavior.steps`をConditionの共通粒度とする前提そのものが崩れたため、[0016](./0016-behavior-condition-precondition-step-result-model.md)がこのADRを置き換える。
 
 ## 背景
 
-`generate.rs::generate_testcases`が生成する`TestCase.steps`は、実装上は配列型だが実際には常に`[behavior.description]`という単一要素にしかならない([testcase-generation-design.md §3.3](../design/testcase-generation-design.md#33-title--steps--expected-のテキスト組み立て))。`behavior.yml`(`behavior.schema.json`)自体には`description`という1つの自由文フィールドしかなく、Test Designerは本来順序立てて書きたい複数の操作手順を1つの文字列に無理に詰め込んでいる。[testcase-generation-design.md §7](../design/testcase-generation-design.md#7-将来課題との切り分け)は「Behavior階層を使ったより高度なグルーピング・Axisの多段管理などのモデル拡張」を将来課題として明示していたが、steps自体の複数要素化には言及していなかった。
+`generate.rs::generate_testcases`が生成する`TestCase.steps`は、実装上は配列型だが実際には常に`[behavior.description]`という単一要素にしかならない([testcase-generation-design.md §3.3](../design/testcase-generation-design.md#33-preconditions--phases-のテキスト組み立て)(現行の見出しは[0016](./0016-behavior-condition-precondition-step-result-model.md)後の内容に更新済みだが、当時の`title = condition.description`/`steps = behavior.steps`という単純転記方式の記述はそのまま残っている))。`behavior.yml`(`behavior.schema.json`)自体には`description`という1つの自由文フィールドしかなく、Test Designerは本来順序立てて書きたい複数の操作手順を1つの文字列に無理に詰め込んでいる。[testcase-generation-design.md §7](../design/testcase-generation-design.md#7-将来課題との切り分け)は「Behavior階層を使ったより高度なグルーピング・Axisの多段管理などのモデル拡張」を将来課題として明示していたが、steps自体の複数要素化には言及していなかった。
 
 同時に、複数のBehaviorが同じ操作手順(例: ログイン手順)を繰り返し記述する再利用ニーズが将来生じうる。`description`を都度コピーすると内容の乖離(あるBehaviorだけ手順が更新され、他が古いまま)を検出できない、という懸念がある。
 

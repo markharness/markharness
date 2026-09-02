@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted (2026-08-30). Phase 1 (introducing inline `Behavior.steps`) is implemented and satisfies the "Conditions for changing to Accepted" below.
+Superseded by [0016](./0016-behavior-condition-precondition-step-result-model.md) (2026-08-31). Phase 1 (introducing inline `Behavior.steps`) was implemented and once satisfied the "Conditions for changing to Accepted" below, but real-world use exposed that the underlying premise — sharing `Behavior.steps` as the common granularity across every Condition — did not hold, so [0016](./0016-behavior-condition-precondition-step-result-model.md) supersedes this ADR.
 
 ## Context
 
-The `TestCase.steps` produced by `generate.rs::generate_testcases` is array-typed, but in practice it is always a single-element array, `[behavior.description]` ([testcase-generation-design.md §3.3](../design/testcase-generation-design.md#33-title--steps--expected-のテキスト組み立て), Japanese-only design doc). `behavior.yml` (`behavior.schema.json`) itself has only one free-text `description` field, so Test Designers are forced to cram what should be an ordered sequence of operations into a single string. [testcase-generation-design.md §7](../design/testcase-generation-design.md#7-将来課題との切り分け) explicitly called out "more advanced grouping via the Behavior layer and multi-tier axis management" as future work, but did not mention splitting steps into multiple elements.
+The `TestCase.steps` produced by `generate.rs::generate_testcases` is array-typed, but in practice it is always a single-element array, `[behavior.description]` ([testcase-generation-design.md §3.3](../design/testcase-generation-design.md#33-text-assembly-for-preconditions--phases); the section heading now reflects the model introduced by [ADR 0016](./0016-behavior-condition-precondition-step-result-model.md), but it still documents the plain-transcription approach — `title = condition.description` / `steps = behavior.steps` — that was in effect at the time this ADR was written). `behavior.yml` (`behavior.schema.json`) itself has only one free-text `description` field, so Test Designers are forced to cram what should be an ordered sequence of operations into a single string. [testcase-generation-design.md §7](../design/testcase-generation-design.md#7-将来課題との切り分け) explicitly called out "more advanced grouping via the Behavior layer and multi-tier axis management" as future work, but did not mention splitting steps into multiple elements.
 
 At the same time, a future reuse need may arise where multiple Behaviors repeat the same procedure (e.g., a login sequence) verbatim. If `description` is copy-pasted each time, drift becomes undetectable — if one Behavior's copy is updated and another's is not, nothing surfaces the discrepancy.
 

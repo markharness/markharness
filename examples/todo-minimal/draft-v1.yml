@@ -13,11 +13,18 @@ behavior:
   label: add-task
   axis: [ui]
   description: User adds a new task to the list.
+  steps:
+    - Open the todo app.
 
 condition:
   id: empty-title
   label: empty-title
   description: Submit the todo form with an empty title
+  steps:
+    - Leave the title field empty.
+    - Click the "Add" button.
 
 expected:
   - description: shows a validation error
+    results:
+      - A validation error is shown under the title field.

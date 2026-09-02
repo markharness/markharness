@@ -71,21 +71,21 @@ fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, co
     std::fs::write(
         dir.parent().unwrap().join("behavior.yml"),
         format!(
-            "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  Behavior.\nsteps:\n  - \"Do it.\"\n"
+            "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  Behavior.\npreconditions:\n  - \"Do it.\"\n"
         ),
     )
     .unwrap();
     std::fs::write(
         dir.join("condition.yml"),
         format!(
-            "id: {condition}\nbehavior: {behavior}\nlabel: {condition}\ndescription: |\n  Condition.\n"
+            "id: {condition}\nbehavior: {behavior}\nlabel: {condition}\ndescription: |\n  Condition.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
         ),
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("expected")).unwrap();
     std::fs::write(
         dir.join("expected/001.yml"),
-        format!("id: {condition}-001\ncondition: {condition}\ndescription: |\n  Expected.\n"),
+        format!("id: {condition}-001\ncondition: {condition}\ndescription: |\n  Expected.\nresults:\n  - \"Confirmed.\"\n"),
     )
     .unwrap();
 }

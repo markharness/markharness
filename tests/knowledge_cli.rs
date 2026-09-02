@@ -73,9 +73,13 @@ condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps:
+    - Do it.
 
 expected:
   - description: lands safely
+    results:
+      - Confirmed.
 ";
 
 fn write_draft(dir: &Path, content: &str) -> std::path::PathBuf {
@@ -305,9 +309,13 @@ condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps:
+    - Do it.
 
 expected:
   - description: lands safely
+    results:
+      - Confirmed.
 ";
     let draft_path = write_draft(dir.path(), draft);
 
@@ -394,9 +402,13 @@ condition:
   id: air
   label: air
   description: Jump in the air.
+  steps:
+    - Do it.
 
 expected:
   - description: does not take fall damage
+    results:
+      - Confirmed.
 ";
 
 fn write_batch_draft(dir: &Path, name: &str, content: &str) {

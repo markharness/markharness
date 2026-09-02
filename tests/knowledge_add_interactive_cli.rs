@@ -34,7 +34,7 @@ fn run_with_stdin(args: &[&str], input: &str) -> Output {
     child.wait_with_output().expect("failed to wait on child")
 }
 
-const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nlands safely\n";
+const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n";
 
 #[test]
 fn knowledge_add_writes_full_chain_from_stdin_prompts() {
@@ -58,6 +58,6 @@ fn knowledge_add_writes_full_chain_from_stdin_prompts() {
         .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
     assert_eq!(
         std::fs::read_to_string(expected_path).unwrap(),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\n"
+        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
     );
 }

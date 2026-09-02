@@ -66,7 +66,7 @@ initialized .markharness/{knowledge,axes,generated,executions,changes,schema}/ u
 markharness knowledge add [--dir <path>]
 ```
 
-**用途**: Test Designer が `Requirement` → `Feature` → `Behavior` → `Condition` → `ExpectedResult` の5階層を対話形式(標準入力への逐次プロンプト)で記述し、`.markharness/knowledge/` 配下に `.yml` ファイルを作成する。`Requirement` は Feature の親となる要求単位で、`Feature` は自身の `requirement:` フィールドで親を参照する。`Behavior` は「機能がどう振る舞うか」を表す必須の中間階層で、`generate` が組み立てる TestCase の `steps`(手順)の元になる。
+**用途**: Test Designer が `Requirement` → `Feature` → `Behavior` → `Condition` → `ExpectedResult` の5階層を対話形式(標準入力への逐次プロンプト)で記述し、`.markharness/knowledge/` 配下に `.yml` ファイルを作成する。`Requirement` は Feature の親となる要求単位で、`Feature` は自身の `requirement:` フィールドで親を参照する。`Behavior` は「機能がどう振る舞うか」を表す必須の中間階層で、`generate` が組み立てる TestCase の `preconditions`(全Conditionに共通する前提)の元になる。条件ごとに異なる実際の操作手順は `Condition` の `steps` として、確認する結果は `ExpectedResult` の `results` として入力する([ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md))。
 
 **オプション**
 
@@ -86,12 +86,20 @@ Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
 Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
+  step 1: Open the todo app.
+  step 2:
+Condition name (e.g. empty-title): empty-title
+Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
   step 1: Click the title field.
   step 2: Press the add button.
   step 3:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
+  step 1:
 Expected result (e.g. shows a validation error): shows a validation error
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: A validation error is shown under the title field.
+  step 2:
 ```
 
 → `tmp/todo-sample/.markharness/knowledge/task-management/add-todo/...` にファイルが作成される。
@@ -116,8 +124,8 @@ Expected result (e.g. shows a validation error): shows a validation error
    - 選択した Behavior 配下に既存の Condition が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
    - 新規に作成する Condition id が `{behavior_id}-` で始まる場合(Behavior id を重複して含めてしまった場合)、その接頭辞を自動的に除去してから作成し、その旨を通知する(例: Behavior `add-task` に Condition id `add-task-empty-title` と入力すると `empty-title` として作成される)。ただし、入力された id そのままのディレクトリが既に存在する場合は除去せずそのまま再利用する(過去に手動で重複した名前のまま作成されたデータを壊さないため)。
    - 既存の `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/<condition_id>/condition.yml` があれば(除去後の id で判定し)再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Scenario (e.g. Submit the todo form with an empty title):` で条件の説明を入力し、`condition.yml` を新規作成する
-5. `Expected result (e.g. shows a validation error):` — 期待結果のテキストを入力し、`expected/NNN.yml`(3桁連番、既存ファイル数+1)を作成する
+   - 新規の場合のみ `Scenario (...)`・`Condition steps (...)`(1行1操作、空行で入力終了。少なくとも1つ必須)・`Additional preconditions (...)`(1行1操作、空行で入力終了。0件も可)を入力し、`condition.yml` を新規作成する
+5. `Expected result (e.g. shows a validation error):` — 期待結果の要約テキストを入力し、続けて `Observable results (...)`(1行1つの観測可能な結果、空行で入力終了。少なくとも1つ必須)を入力して `expected/NNN.yml`(3桁連番、既存ファイル数+1)を作成する。Conditionを再利用する場合と異なり、ExpectedResultは常に新規追加のため、この2つのプロンプトは省略されない。
 
 **プロンプト文言について**: 各プロンプトは内部的には Feature/Behavior/Condition の `id`(ディレクトリ名・YAMLの `id` フィールド)を決めるものだが、人間が入力する際に「id」という抽象的な概念に迷わないよう、`Feature name` / `Behavior name` / `Condition name` のように分かりやすい英語表現と入力例を添えている。内部データモデル(`id`フィールド、通知メッセージ、コード上の変数名)は変更していない。
 
@@ -173,9 +181,8 @@ label: add-task
 axis: [ui]
 description: |
   User adds a new task to the list.
-steps:
-  - "Click the title field."
-  - "Press the add button."
+preconditions:
+  - "Open the todo app."
 ```
 
 `condition.yml`:
@@ -186,6 +193,10 @@ behavior: add-task
 label: empty-title
 description: |
   Submit the todo form with an empty title
+steps:
+  - "Click the title field."
+  - "Press the add button."
+additional_preconditions: []
 ```
 
 `expected/001.yml`(id は `{condition_id}-{連番3桁}`):
@@ -195,6 +206,8 @@ id: empty-title-001
 condition: empty-title
 description: |
   shows a validation error
+results:
+  - "A validation error is shown under the title field."
 ```
 
 **使用例(初回セッション)**
@@ -209,12 +222,20 @@ Behavior name (e.g. add-task): add-task
 Behavior axis (comma separated, e.g. ui, validation): ui
 Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
 Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
+  step 1: Open the todo app.
+  step 2:
+Condition name (e.g. empty-title): empty-title
+Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
   step 1: Click the title field.
   step 2: Press the add button.
   step 3:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
+Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
+  step 1:
 Expected result (e.g. shows a validation error): shows a validation error
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: A validation error is shown under the title field.
+  step 2:
 ```
 
 **使用例(既存Requirement/Feature/Behavior/Conditionへの2件目のExpectedResult追加、番号選択)**
@@ -238,9 +259,12 @@ Condition name (e.g. empty-title):
 1
 既存のCondition 'empty-title' を再利用します。
 Expected result (e.g. shows a validation error): highlights the title field in red
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: The title field is highlighted in red.
+  step 2:
 ```
 
-→ `.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/002.yml` が作成される。番号の代わりに `task-management` / `add-todo` / `add-task` / `empty-title` を直接入力しても同じ結果になる。
+→ `.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/002.yml` が作成される。番号の代わりに `task-management` / `add-todo` / `add-task` / `empty-title` を直接入力しても同じ結果になる。既存Conditionを再利用する場合、`Condition steps`/`Additional preconditions` のプロンプトはスキップされる(既存の `condition.yml` の値がそのまま使われる)。
 
 **使用例(Condition id の重複接頭辞を自動除去)**
 
@@ -257,7 +281,16 @@ Condition name (e.g. empty-title):
 add-task-max-length
 Condition id 'add-task-max-length' から Behavior id 'add-task' と重複する接頭辞を除去し、'max-length' として作成します。
 Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with a title longer than 200 characters
+Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
+  step 1: Enter a title longer than 200 characters.
+  step 2: Press the add button.
+  step 3:
+Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
+  step 1:
 Expected result (e.g. shows a validation error): shows a length validation error
+Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
+  step 1: A length validation error is shown under the title field.
+  step 2:
 ```
 
 → `.markharness/knowledge/task-management/add-todo/add-task/max-length/condition.yml` と `.markharness/knowledge/task-management/add-todo/add-task/max-length/expected/001.yml` が作成される(`add-task-max-length/` ディレクトリは作成されない)。
@@ -305,20 +338,30 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump. # Behaviorのみdescriptionが必須(新規作成時)
-  steps: # 新規作成時は必須。空でない要素を1つ以上、1要素=1操作
+  steps: # 新規作成時は必須。空でない要素を1つ以上、1要素=1操作。全Conditionに共通する前提(内部的にはBehavior.preconditionsへ格納される)
     - Press the jump button.
 
 condition:
   id: ground
   label: ground
   description: Jump from the ground and land
+  steps: # 新規作成時は必須。空でない要素を1つ以上、1要素=1操作。この条件固有の操作手順
+    - Land on the ground.
+  additional_preconditions: [] # 省略可。手順だけでは到達できない、この条件固有の追加前提
 
 expected:
   - description: lands safely
+    results: # 必須。空でない要素を1つ以上、1要素=1つの観測可能な結果
+      - Player is standing on the ground.
   - description: takes fall damage if height > 3m
+    results:
+      - Player's health decreases.
+    additional_steps: # 省略可。この結果を確認する前に必要な追加操作
+      - Measure the fall height first.
+    implementation_note: applyFallDamage() is called when landing velocity exceeds a threshold. # 省略可。生成には使わない実装根拠メモ
 ```
 
-`axis`/`label`/`description`/`steps` は、既存id(すでに `.markharness/knowledge/` 配下にファイルが存在するRequirement/Feature/Behavior/Condition)を再利用する場合は省略できる。省略されたフィールドは既存値との比較対象から除外され、指定されたフィールドのみ既存ファイルの値と突合される(`conflicting_existing_value` エラー)。
+`axis`/`label`/`description`/`steps`(Behavior/Condition双方)は、既存id(すでに `.markharness/knowledge/` 配下にファイルが存在するRequirement/Feature/Behavior/Condition)を再利用する場合は省略できる。省略されたフィールドは既存値との比較対象から除外され、指定されたフィールドのみ既存ファイルの値と突合される(`conflicting_existing_value` エラー)。`expected[].results` はExpectedResultが常に新規追加である性質上、既存id再利用による省略という概念自体がなく、常に必須。[ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md)が定義するモデルの詳細(`additional_steps`のファイル名順=実行順序契約を含む)は同ADR本文を参照。
 
 **バリデーションルール(概要。詳細は spec §5)**
 
@@ -327,6 +370,7 @@ expected:
 | `invalid_slug`               | idが小文字英数字とハイフン以外を含む                                                                             |
 | `missing_axis`               | 新規作成のRequirement/Feature/Behaviorで `axis` が空・未指定。`.markharness/axes/*.yml` に1件以上登録がある場合は `suggestion` に登録済みaxis一覧(カンマ区切り)を提示、1件も登録が無い場合は `suggestion` は `null` のままで `message` に `axes add` での登録を促す文言が入る |
 | `missing_description`        | 新規作成のBehavior/Condition、または各ExpectedResultで `description` が空                                        |
+| `missing_steps`               | 新規作成のBehavior/Conditionで `steps` が空・未指定、または各ExpectedResultで `results` が空・未指定              |
 | `unknown_axis`               | `.markharness/axes/*.yml` レジストリに登録されていない観点値(近似候補があれば `suggestion` に提示)                            |
 | `redundant_prefix`           | `condition.id` が `{behavior.id}-` で始まる(`knowledge apply` の `--strip-redundant-prefix` 未指定時。1.4節参照) |
 | `conflicting_existing_value` | 既存id再利用時、指定した `label`/`axis`/`description` が既存ファイルの値と不一致                                 |
@@ -511,10 +555,10 @@ markharness generate [--json] [-d, --dir <path>]
 **アルゴリズム概要**
 
 - `.markharness/knowledge/` 配下を `requirement.yml` → `feature.yml` → `behavior.yml` → `condition.yml` → `expected/*.yml` の順に、パスのソート順で走査する(実行環境・タイムスタンプに依存しない)。`Behavior` を持たない `Feature` や `expected/` が空(または存在しない)の `Condition` からは `TestCase` は生成されない。
-- **集約モデル**: 1つの `Condition` の `expected/` 配下にある全ファイルを、1つの `TestCase` の `expected` 配列に集約する(1 Condition = 1 TestCase。1 expected ファイルごとに別 TestCase を作る旧モデルからの変更)。
+- **集約モデル**: 1つの `Condition` の `expected/` 配下にある全ファイルを、1つの `TestCase` の `phases` 配列に集約する(1 Condition = 1 TestCase)。
 - `case_id = "tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}"`。`requirement`/`feature`/`behavior`/`condition` の4つのidをすべて連結することで、`condition.id` が別の Behavior で再利用されても `case_id` の衝突が構造的に起こり得ないようにしている。
 - 出力ファイルは `.markharness/generated/testcases/{requirement.id}/{feature.id}/{behavior.id}/{condition.id}.yml` に、`.markharness/knowledge/` と同じ階層でフルミラーして書き込まれる(旧版は `.markharness/generated/testcases/{condition.id}.yml` というフラットな命名で、異なる Behavior 配下で同じ `condition.id` が再利用されると無言で上書きされる欠陥があった)。
-- `title` = `condition.description`、`steps` = `behavior.steps`(そのまま転記。`behavior.description` は[ADR 0015](decisions/0015-behavior-step-model.md) Phase 1以降、生成には使わない人間向け要約)、`expected` = 各 `expected/*.yml` の `description` をファイル名のソート順で列挙。
+- [ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md)により、`title`/`steps`/`expected` という旧フィールドは廃止され `preconditions`/`phases` に置き換わっている。`preconditions` = `behavior.preconditions` + `condition.additional_preconditions` を連結したもの(`behavior.description`/`condition.description` は生成には使わない人間向け要約のまま)。`phases` は `expected/*.yml` をファイル名順に走査して1ファイルにつき1つの `Phase { steps, results }` を生成した配列で、先頭のphaseの `steps` は `condition.steps` の後ろにその `expected/*.yml` 自身の `additional_steps`(あれば)を連結したもの、2番目以降のphaseの `steps` はその `expected/*.yml` の `additional_steps` のみ(Condition内で2番目以降は`markharness validate`により非空が必須)。各phaseの `results` はその `expected/*.yml` の `results`。
 - `generated_from` に `requirement` / `feature` / `behavior` / `condition` の各 id と、集約元の `expected_results`(`expected/*.yml` の `id` の一覧)を記録する。
 - `axis`: `Requirement` / `Feature` / `Behavior` の `axis` を合成(union、重複除去のうえソート)した観点一覧(§3.4「axisの継承」)。
 - 出力は `serde_yaml_ng` によるシリアライズで、同一入力に対して常に同一の出力になる(決定性、CIでの差分検証の前提)。
@@ -542,14 +586,14 @@ generated_from:
   condition: empty-title
   expected_results:
     - empty-title-001
-title: |
-  Submit the todo form with an empty title
-steps:
-  - "Click the title field."
-  - "Press the add button."
-expected:
-  - |
-    shows a validation error
+preconditions:
+  - "Open the todo app."
+phases:
+  - steps:
+      - "Click the title field."
+      - "Press the add button."
+    results:
+      - "A validation error is shown under the title field."
 ```
 
 `.markharness/knowledge/` に何も無い場合は `.markharness/generated/testcases/` が空(0ファイル)になる。
