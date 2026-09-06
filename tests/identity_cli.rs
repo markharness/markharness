@@ -163,7 +163,7 @@ fn identity_migrate_exits_nonzero_and_reports_conflicts_for_a_duplicate_id_withi
     std::fs::write(
         dir.path()
             .join(".markharness/knowledge/features/todo-again/feature.yml"),
-        "id: todo\nrequirement_ids: [req-todo]\nlabel: todo again\naxis: []\n",
+        "id: todo\nrequirement_uids: []\nlabel: todo again\naxis: []\n",
     )
     .unwrap();
 

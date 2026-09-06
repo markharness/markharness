@@ -1081,7 +1081,7 @@ mod tests {
         fs::write(
             root.join(".markharness/knowledge/features/player-jump/feature.yml"),
             format!(
-                "id: player-jump\nrequirement_ids: [controls]\nlabel: {label}\naxis: [gameplay]\n"
+                "id: player-jump\nrequirement_uids: [controls]\nlabel: {label}\naxis: [gameplay]\n"
             ),
         )
         .unwrap();
@@ -1221,7 +1221,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v1", "m1");
@@ -1229,7 +1229,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-double-jump\nrequirement_ids: [controls]\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+            "id: player-double-jump\nrequirement_uids: [controls]\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "rename", "m2");
@@ -1279,7 +1279,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-double-jump\nrequirement_ids: [controls]\nlabel: v1\naxis: [gameplay]\n",
+            "id: player-double-jump\nrequirement_uids: [controls]\nlabel: v1\naxis: [gameplay]\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "rename", "m2");
@@ -1661,7 +1661,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/checkout/feature.yml"),
-            "id: checkout\nrequirement_ids: [shop]\nlabel: checkout\naxis: [commerce]\n",
+            "id: checkout\nrequirement_uids: [shop]\nlabel: checkout\naxis: [commerce]\n",
         )
         .unwrap();
         fs::write(

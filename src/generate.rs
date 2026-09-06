@@ -7,15 +7,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::knowledge::{
     Behavior, Procedure, Scenario, StepItem, is_valid_slug, parse_behavior, parse_feature,
-    parse_scenario,
+    parse_requirement, parse_scenario,
 };
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct GeneratedFrom {
     /// ADR 0017 §1: informational provenance only (a Feature associates
-    /// with zero or more Requirements via `requirement_ids`, not one owning
-    /// parent) — never part of case identity or axis.
+    /// with one or more Requirements via `requirement_uids`, not one owning
+    /// parent) — never part of case identity or axis. Human-readable
+    /// display IDs, resolved fresh from each Requirement's current `id` at
+    /// generation time (never copied stale from `requirement_uids`).
     pub requirement_ids: Vec<String>,
+    /// The same relationship as `requirement_ids`, by immutable
+    /// `Requirement.uid` (ADR 0013). Informational only, mirroring
+    /// `feature_uid` below: never part of case identity or axis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement_uids: Option<Vec<String>>,
     pub feature: String,
     /// The Feature's immutable identity (ADR 0013), when it has one.
     /// `None` for a Feature that has not been migrated. Informational only:
@@ -84,6 +91,9 @@ pub struct KnowledgeCaseSnapshot {
     /// `GeneratedFrom::requirement_ids`. Never part of case identity or
     /// `axis` (no automatic Requirement-axis inheritance).
     pub requirement_ids: Vec<String>,
+    /// ADR 0017 §1・§3: the Feature's `requirement_uids` as-is, carried
+    /// through to `GeneratedFrom::requirement_uids`. Informational only.
+    pub requirement_uids: Vec<String>,
     pub feature_id: String,
     pub feature_uid: Option<String>,
     pub feature_axis: Vec<String>,
@@ -355,8 +365,29 @@ fn expand_phases(
         .collect()
 }
 
+/// Maps every migrated Requirement's `uid` to its current display `id`
+/// (ADR 0017 §1・§3: a Feature's `GeneratedFrom.requirement_ids` must show
+/// the Requirement's *current* display id, never a stale copy).
+fn load_requirement_uid_index(knowledge_root: &Path) -> io::Result<BTreeMap<String, String>> {
+    let mut index = BTreeMap::new();
+    for requirement_dir in sorted_subdirs(&knowledge_root.join("requirements"))? {
+        let requirement_path = requirement_dir.join("requirement.yml");
+        if !requirement_path.is_file() {
+            continue;
+        }
+        let yaml = fs::read_to_string(&requirement_path)?;
+        let requirement =
+            parse_requirement(&yaml).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        if let Some(uid) = requirement.uid {
+            index.insert(uid, requirement.id);
+        }
+    }
+    Ok(index)
+}
+
 pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSnapshot> {
     let mut cases = Vec::new();
+    let requirement_uid_index = load_requirement_uid_index(knowledge_root)?;
 
     for feature_dir in sorted_subdirs(&knowledge_root.join("features"))? {
         let feature_path = feature_dir.join("feature.yml");
@@ -389,8 +420,26 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                     scenario: repo_relative_path(knowledge_root, &scenario_path),
                 };
 
+                // Informational only (ADR 0017 §1・§3): never part of case
+                // identity or axis, so an entry that doesn't resolve to a
+                // known Requirement — pre-migration, `requirement_uids` may
+                // still hold a Requirement *display id* rather than its
+                // uid (Issue #44) — falls back to the raw stored value
+                // rather than failing generation entirely.
+                let requirement_ids = feature
+                    .requirement_uids
+                    .iter()
+                    .map(|uid| {
+                        requirement_uid_index
+                            .get(uid)
+                            .cloned()
+                            .unwrap_or_else(|| uid.clone())
+                    })
+                    .collect::<Vec<String>>();
+
                 cases.push(KnowledgeCaseSnapshot {
-                    requirement_ids: feature.requirement_ids.clone(),
+                    requirement_ids,
+                    requirement_uids: feature.requirement_uids.clone(),
                     feature_id: feature.id.clone(),
                     feature_uid: feature.uid.clone(),
                     feature_axis: feature.axis.clone(),
@@ -422,6 +471,7 @@ pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
             case_files: case.case_files.clone(),
             generated_from: GeneratedFrom {
                 requirement_ids: case.requirement_ids.clone(),
+                requirement_uids: Some(case.requirement_uids.clone()),
                 feature: case.feature_id.clone(),
                 feature_uid: case.feature_uid.clone(),
                 behavior: case.behavior_id.clone(),
@@ -626,7 +676,7 @@ mod tests {
         fs::write(
             dir.join("feature.yml"),
             format!(
-                "id: {feature}\nrequirement_ids: [{requirement}]\nlabel: {feature}\naxis: [{axis_line}]\n"
+                "id: {feature}\nrequirement_uids: [{requirement}]\nlabel: {feature}\naxis: [{axis_line}]\n"
             ),
         )
         .unwrap();
@@ -1137,6 +1187,7 @@ mod tests {
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-todo".to_string()],
+                requirement_uids: None,
                 feature: "todo".to_string(),
                 feature_uid: None,
                 behavior: "todo-add-task".to_string(),
@@ -1177,7 +1228,7 @@ mod tests {
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
-            format!("id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\nuid: {UID}\n"),
+            format!("id: todo\nrequirement_uids: [req-todo]\nlabel: todo\naxis: []\nuid: {UID}\n"),
         )
         .unwrap();
         write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
@@ -1544,6 +1595,7 @@ mod tests {
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-todo".to_string()],
+                requirement_uids: None,
                 feature: "todo".to_string(),
                 feature_uid: None,
                 behavior: "todo-add-task".to_string(),
@@ -1580,7 +1632,7 @@ mod tests {
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
-            "id: ../../../../evil\nrequirement_ids: [req-todo]\nlabel: evil\naxis: []\n",
+            "id: ../../../../evil\nrequirement_uids: [req-todo]\nlabel: evil\naxis: []\n",
         )
         .unwrap();
 

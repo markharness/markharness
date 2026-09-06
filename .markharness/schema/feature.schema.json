@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
-    "requirement_ids": {
+    "requirement_uids": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "minItems": 1
@@ -16,6 +16,6 @@
     "forked_from": { "type": ["string", "null"] },
     "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
-  "required": ["id", "requirement_ids", "label", "axis"],
+  "required": ["id", "requirement_uids", "label", "axis"],
   "additionalProperties": false
 }

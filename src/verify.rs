@@ -128,7 +128,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(".markharness/knowledge/features/todo/feature.yml"),
-            "id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: [ui]\n",
+            "id: todo\nrequirement_uids: [req-todo]\nlabel: todo\naxis: [ui]\n",
         )
         .unwrap();
         fs::write(

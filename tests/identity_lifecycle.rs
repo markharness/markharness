@@ -17,7 +17,7 @@ fn write_feature(root: &Path, requirement: &str, feature: &str, id: &str, uid: O
     fs::create_dir_all(&dir).unwrap();
     let value = Feature {
         id: id.to_string(),
-        requirement_ids: vec![requirement.to_string()],
+        requirement_uids: vec![requirement.to_string()],
         label: id.to_string(),
         axis: Vec::new(),
         description: None,

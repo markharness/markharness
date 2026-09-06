@@ -7,6 +7,7 @@ use crate::identity::{
     EntityKind, IdentityEvent, IdentityMutation, engine, knowledge_walk, marker,
     migration_manifest, recovery, registry,
 };
+use crate::knowledge;
 
 /// Why `rename_id` refused to run, or failed partway (design doc §3, §9).
 #[derive(Debug)]
@@ -926,6 +927,15 @@ pub struct MigrateReport {
 struct MigrationPlan {
     report: MigrateReport,
     events: Vec<recovery::BatchEvent>,
+    /// ADR 0017 §1・§3: Feature files whose `requirement_uids` held a
+    /// Requirement *display id* (the Issue #44 bug), paired with the
+    /// resolved `requirement_uids` they should have instead. `migrate_all`
+    /// re-reads each file fresh (rather than writing a snapshot serialized
+    /// here, at plan time) once the identity-event batch above has fully
+    /// committed — the Feature's *own* `uid` may only exist on disk after
+    /// that point, and a stale in-memory snapshot from before would clobber
+    /// it.
+    feature_fixups: Vec<(std::path::PathBuf, Vec<String>)>,
 }
 
 /// Why `migrate_entities` refused to run, or failed partway.
@@ -983,6 +993,11 @@ fn migrate_all(root: &Path) -> Result<MigrateReport, MigrateError> {
         // recorded directly, since there is no risky write in progress
         // this round for `legacy_signatures` to protect against.
         migration_manifest::record_new_case_uids(root, &legacy_signatures)?;
+        // A project that finished entity-uid issuance in an earlier run can
+        // still have Features whose `requirement_uids` was never resolved
+        // (Issue #44) — write those fixups even though there are no
+        // identity events this round.
+        write_feature_fixups(root, &plan.feature_fixups)?;
         mark_uid_mode_if_fully_migrated(root)?;
         return Ok(plan.report);
     }
@@ -1002,8 +1017,35 @@ fn migrate_all(root: &Path) -> Result<MigrateReport, MigrateError> {
     recovery::commit_batch(root, &intent)?;
     roll_forward(root, &intent)?;
     recovery::finish(root, &intent)?;
+    // Written only after every Requirement this plan resolved against has
+    // actually had its `uid:` rolled forward onto disk above, so a Feature
+    // is never rewritten to reference a uid that isn't there yet.
+    write_feature_fixups(root, &plan.feature_fixups)?;
     mark_uid_mode_if_fully_migrated(root)?;
     Ok(plan.report)
+}
+
+/// Writes each Feature file's resolved `requirement_uids` (ADR 0017 §1・§3,
+/// Issue #44). Re-reads the file fresh and only overwrites this one field
+/// (matching `knowledge_walk::write_id_and_uid`'s own parse/mutate/
+/// serialize round trip for the same file), so a Feature's own `uid` —
+/// possibly just rolled forward onto this exact file by `roll_forward`
+/// above — is never clobbered by a stale plan-time snapshot.
+fn write_feature_fixups(
+    root: &Path,
+    feature_fixups: &[(std::path::PathBuf, Vec<String>)],
+) -> io::Result<()> {
+    for (path, requirement_uids) in feature_fixups {
+        let content = fs::read_to_string(path)?;
+        let mut feature = knowledge::parse_feature(&content).map_err(io::Error::other)?;
+        feature.requirement_uids = requirement_uids.clone();
+        crate::fs_safety::replace_file(
+            root,
+            path,
+            knowledge::serialize_feature(&feature).as_bytes(),
+        )?;
+    }
+    Ok(())
 }
 
 /// The schema version 2 public cutover (design doc §13 Phase 5, ADR 0013
@@ -1085,8 +1127,20 @@ fn build_migration_plan(root: &Path) -> Result<MigrationPlan, MigrateError> {
         per_kind_entities.push((kind, entities));
     }
     if !report.conflicts.is_empty() {
-        return Ok(MigrationPlan { report, events });
+        return Ok(MigrationPlan {
+            report,
+            events,
+            feature_fixups: Vec::new(),
+        });
     }
+
+    // Every Requirement's `uid`, by its current display `id` — either
+    // already assigned, or the fresh one Pass 2 below issues in this same
+    // run. Resolves Feature.requirement_uids entries (Pass 3) regardless of
+    // whether the referenced Requirement was migrated in an earlier run or
+    // this one.
+    let mut requirement_uid_by_id: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
 
     // Pass 2: generate one root `Issued` event per uid-less element, all
     // sharing `recorded_at` (design doc §12: one operation, one honest
@@ -1094,6 +1148,10 @@ fn build_migration_plan(root: &Path) -> Result<MigrationPlan, MigrateError> {
     for (kind, entities) in per_kind_entities {
         for entity in entities {
             if entity.uid.is_some() {
+                if kind == EntityKind::Requirement {
+                    requirement_uid_by_id
+                        .insert(entity.id.clone(), entity.uid.clone().expect("checked Some"));
+                }
                 continue;
             }
             let entity_uid = ulid::Ulid::new().to_string();
@@ -1122,6 +1180,9 @@ fn build_migration_plan(root: &Path) -> Result<MigrationPlan, MigrateError> {
                 root,
                 &recovery::event_file_path(root, kind, &entity_uid, &event_uid),
             ));
+            if kind == EntityKind::Requirement {
+                requirement_uid_by_id.insert(entity.id.clone(), entity_uid.clone());
+            }
             report.migrated.push(MigratedEntity {
                 kind,
                 id: entity.id,
@@ -1129,7 +1190,51 @@ fn build_migration_plan(root: &Path) -> Result<MigrationPlan, MigrateError> {
             });
         }
     }
-    Ok(MigrationPlan { report, events })
+
+    // Pass 3 (ADR 0017 §1・§3, Issue #44): resolve every Feature's
+    // `requirement_uids` — an entry may still hold a Requirement *display
+    // id* (the bug) rather than its `uid`. An entry that matches neither a
+    // known Requirement uid nor a known Requirement id is a dangling
+    // reference: reject the whole migrate rather than silently rewrite it
+    // to something wrong or drop it.
+    let known_requirement_uids: std::collections::BTreeSet<&String> =
+        requirement_uid_by_id.values().collect();
+    let mut feature_fixups = Vec::new();
+    for found in knowledge_walk::list_entities(root, EntityKind::Feature)? {
+        let content = fs::read_to_string(&found.path)?;
+        let feature = knowledge::parse_feature(&content).map_err(io::Error::other)?;
+        let mut changed = false;
+        let mut resolved = Vec::with_capacity(feature.requirement_uids.len());
+        for entry in &feature.requirement_uids {
+            if known_requirement_uids.contains(entry) {
+                resolved.push(entry.clone());
+            } else if let Some(uid) = requirement_uid_by_id.get(entry) {
+                resolved.push(uid.clone());
+                changed = true;
+            } else {
+                report.conflicts.push(format!(
+                    "{}: requirement_uids references unknown requirement '{entry}'",
+                    relative_path_string(root, &found.path)
+                ));
+            }
+        }
+        if changed && report.conflicts.is_empty() {
+            feature_fixups.push((found.path, resolved));
+        }
+    }
+    if !report.conflicts.is_empty() {
+        return Ok(MigrationPlan {
+            report,
+            events: Vec::new(),
+            feature_fixups: Vec::new(),
+        });
+    }
+
+    Ok(MigrationPlan {
+        report,
+        events,
+        feature_fixups,
+    })
 }
 
 #[cfg(test)]
@@ -1186,7 +1291,7 @@ mod tests {
     fn write_feature(dir: &Path, id: &str, uid: Option<&str>) {
         let feature = Feature {
             id: id.to_string(),
-            requirement_ids: vec!["controls".to_string()],
+            requirement_uids: vec!["controls".to_string()],
             label: id.to_string(),
             axis: Vec::new(),
             description: None,
@@ -1289,7 +1394,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/other-feature/feature.yml"),
-            "id: task-management\nrequirement_ids: [controls]\nlabel: task-management\naxis: []\n",
+            "id: task-management\nrequirement_uids: [controls]\nlabel: task-management\naxis: []\n",
         )
         .unwrap();
 
@@ -1615,7 +1720,7 @@ mod tests {
         // (no reservation on its id to bump into).
         let other_feature = Feature {
             id: "unrelated-feature".to_string(),
-            requirement_ids: vec!["controls".to_string()],
+            requirement_uids: vec!["controls".to_string()],
             label: "unrelated-feature".to_string(),
             axis: Vec::new(),
             description: None,
@@ -2624,6 +2729,89 @@ mod tests {
         ));
     }
 
+    /// Issue #44: `write_feature`'s Feature always carries the pre-fix bug
+    /// (`requirement_uids: ["controls"]`, a Requirement *display id*, not
+    /// its uid). `init_project`'s "controls" Requirement already has a uid
+    /// (`01ARZ3NDEKTSV4RRFFQ69G5FR0`) — migrating the Feature must resolve
+    /// its `requirement_uids` to that real uid, not leave the display id in
+    /// place.
+    #[test]
+    fn migrate_entities_resolves_a_features_display_id_requirement_reference_to_its_real_uid() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", None);
+
+        migrate_entities(dir.path()).unwrap();
+
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+        )
+        .unwrap();
+        let feature: Feature = knowledge::parse_feature(&content).unwrap();
+        assert_eq!(
+            feature.requirement_uids,
+            vec!["01ARZ3NDEKTSV4RRFFQ69G5FR0".to_string()]
+        );
+    }
+
+    /// Same fixup, but for a Feature that was already fully migrated
+    /// (already has its own `uid`) *before* this fix existed — the
+    /// real-world Issue #44 scenario. `migrate_entities` must still repair
+    /// its `requirement_uids` even though there is no uid-less entity left
+    /// to issue an event for.
+    #[test]
+    fn migrate_entities_resolves_requirement_references_on_an_already_migrated_feature() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", Some(UID));
+        issue_uid(dir.path(), UID, "todo-management");
+
+        let report = migrate_entities(dir.path()).unwrap();
+
+        assert!(
+            report.migrated.is_empty(),
+            "no entity-level uid issuance expected, got {report:?}"
+        );
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+        )
+        .unwrap();
+        let feature: Feature = knowledge::parse_feature(&content).unwrap();
+        assert_eq!(
+            feature.requirement_uids,
+            vec!["01ARZ3NDEKTSV4RRFFQ69G5FR0".to_string()]
+        );
+    }
+
+    /// A `requirement_uids` entry matching neither a known Requirement uid
+    /// nor a known Requirement display id is a dangling reference —
+    /// `migrate_entities` must reject the whole run rather than silently
+    /// drop or misresolve it, and must not write anything.
+    #[test]
+    fn migrate_entities_rejects_a_feature_referencing_an_unknown_requirement() {
+        let dir = init_project();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/features/orphan")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/orphan/feature.yml"),
+            "id: orphan\nrequirement_uids: [no-such-requirement]\nlabel: orphan\naxis: []\n",
+        )
+        .unwrap();
+
+        let result = migrate_entities(dir.path());
+
+        assert!(matches!(result, Err(MigrateError::Conflicts(_))));
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/features/orphan/feature.yml"),
+        )
+        .unwrap();
+        assert!(
+            content.contains("requirement_uids: [no-such-requirement]"),
+            "the unresolved file must be left untouched, got: {content}"
+        );
+    }
+
     #[test]
     fn migrate_features_is_idempotent_and_skips_an_already_migrated_feature() {
         let dir = init_project();
@@ -2651,7 +2839,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/second/feature.yml"),
-            "id: second-feature\nrequirement_ids: [controls]\nlabel: second-feature\naxis: []\n",
+            "id: second-feature\nrequirement_uids: [controls]\nlabel: second-feature\naxis: []\n",
         )
         .unwrap();
 
@@ -2687,7 +2875,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/second/feature.yml"),
-            "id: todo-management\nrequirement_ids: [controls]\nlabel: duplicate\naxis: []\n",
+            "id: todo-management\nrequirement_uids: [controls]\nlabel: duplicate\naxis: []\n",
         )
         .unwrap();
 
@@ -2707,7 +2895,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/second/feature.yml"),
-            "id: todo-management\nrequirement_ids: [controls]\nlabel: duplicate\naxis: []\n",
+            "id: todo-management\nrequirement_uids: [controls]\nlabel: duplicate\naxis: []\n",
         )
         .unwrap();
 
@@ -2726,7 +2914,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/second/feature.yml"),
-            "id: second-feature\nrequirement_ids: [controls]\nlabel: second-feature\naxis: []\n",
+            "id: second-feature\nrequirement_uids: [controls]\nlabel: second-feature\naxis: []\n",
         )
         .unwrap();
 
@@ -2768,7 +2956,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/feature/feature.yml"),
-            "id: feature\nrequirement_ids: [req]\nlabel: feature\naxis: []\n",
+            "id: feature\nrequirement_uids: [req]\nlabel: feature\naxis: []\n",
         )
         .unwrap();
         fs::write(
@@ -2858,7 +3046,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/feature/feature.yml"),
-            "id: req\nrequirement_ids: [req]\nlabel: feature\naxis: []\n",
+            "id: req\nrequirement_uids: [req]\nlabel: feature\naxis: []\n",
         )
         .unwrap();
 

@@ -2865,7 +2865,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: []\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: []\n",
         )
         .unwrap();
         run_git_for_test(dir.path(), &["add", "-A"]);

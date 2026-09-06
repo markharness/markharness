@@ -72,7 +72,7 @@ fn a_uid_less_element_added_after_cutover_is_rejected_by_validate_until_repaired
     std::fs::write(
         dir.path()
             .join(".markharness/knowledge/features/todo-again/feature.yml"),
-        "id: todo-again\nrequirement_ids: [req-todo]\nlabel: todo again\naxis: []\n",
+        "id: todo-again\nrequirement_uids: [req-todo]\nlabel: todo again\naxis: []\n",
     )
     .unwrap();
 

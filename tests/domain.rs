@@ -8,6 +8,7 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
     let snapshot = KnowledgeSnapshot {
         cases: vec![KnowledgeCaseSnapshot {
             requirement_ids: vec!["req".to_string()],
+            requirement_uids: vec!["req-uid".to_string()],
             feature_id: "feature".to_string(),
             feature_uid: None,
             feature_axis: vec!["workflow".to_string()],

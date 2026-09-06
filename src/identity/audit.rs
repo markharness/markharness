@@ -338,7 +338,7 @@ mod tests {
         .unwrap();
         fs::write(
             knowledge.join("feature.yml"),
-            format!("id: {feature_id}\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\n"),
+            format!("id: {feature_id}\nrequirement_uids: [req-todo]\nlabel: todo\naxis: []\n"),
         )
         .unwrap();
         fs::write(

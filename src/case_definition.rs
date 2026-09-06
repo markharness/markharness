@@ -167,6 +167,7 @@ mod tests {
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-shop".to_string()],
+                requirement_uids: None,
                 feature: "checkout".to_string(),
                 feature_uid: None,
                 behavior: "pay".to_string(),

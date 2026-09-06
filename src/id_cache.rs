@@ -404,7 +404,7 @@ mod tests {
         fs::write(
             feature_dir.join("feature.yml"),
             format!(
-                "id: {feature_id}\nrequirement_ids: [{requirement_id}]\nlabel: {feature_id}\naxis: []\n"
+                "id: {feature_id}\nrequirement_uids: [{requirement_id}]\nlabel: {feature_id}\naxis: []\n"
             ),
         )
         .unwrap();
@@ -456,7 +456,7 @@ mod tests {
         fs::create_dir_all(&dup_dir).unwrap();
         fs::write(
             dup_dir.join("feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: dup\naxis: []\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: dup\naxis: []\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -510,7 +510,7 @@ mod tests {
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -533,7 +533,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -684,7 +684,7 @@ mod tests {
         fs::create_dir_all(&other_feature_dir).unwrap();
         fs::write(
             other_feature_dir.join("feature.yml"),
-            "id: other-feature\nrequirement_ids: [controls]\nlabel: other-feature\naxis: []\n",
+            "id: other-feature\nrequirement_uids: [controls]\nlabel: other-feature\naxis: []\n",
         )
         .unwrap();
         write_behavior(dir.path(), "features/other-feature", "validate");
@@ -813,7 +813,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
 

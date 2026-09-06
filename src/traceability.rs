@@ -6,6 +6,8 @@ use crate::generate::TestCase;
 pub struct TraceabilityEntry {
     pub case_id: String,
     pub requirement_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement_uids: Option<Vec<String>>,
     pub feature: String,
     pub behavior: String,
     pub scenario: String,
@@ -27,6 +29,7 @@ pub fn build_index(testcases: &[TestCase]) -> TraceabilityIndex {
             .map(|tc| TraceabilityEntry {
                 case_id: tc.case_id.clone(),
                 requirement_ids: tc.generated_from.requirement_ids.clone(),
+                requirement_uids: tc.generated_from.requirement_uids.clone(),
                 feature: tc.generated_from.feature.clone(),
                 behavior: tc.generated_from.behavior.clone(),
                 scenario: tc.generated_from.scenario.clone(),
@@ -56,6 +59,7 @@ mod tests {
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-todo".to_string()],
+                requirement_uids: Some(vec!["01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()]),
                 feature: "todo".to_string(),
                 feature_uid: None,
                 behavior: "todo-add-task".to_string(),

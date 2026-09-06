@@ -266,6 +266,23 @@ mod tests {
             )
             .unwrap();
         }
+        // ADR 0017 §1・§3: `VALID_DRAFT` (below) references Requirement
+        // "controls" from a brand-new Feature — that's only accepted once
+        // the Requirement already has a uid (`identity migrate` run),
+        // otherwise every edit-loop test below would hit
+        // `RequirementNotMigrated` regardless of what it's actually
+        // exercising. Pre-seed it already migrated.
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
+            "id: controls\nlabel: controls\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        )
+        .unwrap();
         dir
     }
 
@@ -371,7 +388,7 @@ mod tests {
 requirement:
   id: controls
   label: controls
-  axis: [gameplay]
+  axis: []
 
 feature:
   id: player-jump
@@ -511,12 +528,12 @@ scenario:
         let dir = setup_root_with_axes(&["gameplay", "animation", "validation"]);
         let tmp_path: PathBuf = dir.path().join("edit.yml");
         let typo_draft = VALID_DRAFT.replace(
-            "axis: [gameplay]\n\nfeature",
-            "axis: [validaton]\n\nfeature",
+            "axis: [gameplay, animation]\n\nbehavior",
+            "axis: [validaton]\n\nbehavior",
         );
         let fixed_draft = VALID_DRAFT.replace(
-            "axis: [gameplay]\n\nfeature",
-            "axis: [validation]\n\nfeature",
+            "axis: [gameplay, animation]\n\nbehavior",
+            "axis: [validation]\n\nbehavior",
         );
         let (editor, call_count) = scripted_editor(vec![
             Box::leak(typo_draft.into_boxed_str()),
@@ -541,12 +558,12 @@ scenario:
         let dir = setup_root_with_axes(&["gameplay", "animation", "validation"]);
         let tmp_path: PathBuf = dir.path().join("edit.yml");
         let mixed_draft = VALID_DRAFT.replace(
-            "axis: [gameplay]\n\nfeature",
-            "axis: [state, validaton]\n\nfeature",
+            "axis: [gameplay, animation]\n\nbehavior",
+            "axis: [state, validaton]\n\nbehavior",
         );
         let fixed_draft = VALID_DRAFT.replace(
-            "axis: [gameplay]\n\nfeature",
-            "axis: [state, validation]\n\nfeature",
+            "axis: [gameplay, animation]\n\nbehavior",
+            "axis: [state, validation]\n\nbehavior",
         );
         let (editor, call_count) = scripted_editor(vec![
             Box::leak(mixed_draft.into_boxed_str()),
@@ -565,10 +582,14 @@ scenario:
     fn run_edit_loop_does_not_auto_create_invalid_slug_axis() {
         let dir = setup_root_with_axes(&[]);
         let tmp_path: PathBuf = dir.path().join("edit.yml");
-        let invalid_draft =
-            VALID_DRAFT.replace("axis: [gameplay]\n\nfeature", "axis: [UI]\n\nfeature");
-        let fixed_draft =
-            VALID_DRAFT.replace("axis: [gameplay]\n\nfeature", "axis: [ui]\n\nfeature");
+        let invalid_draft = VALID_DRAFT.replace(
+            "axis: [gameplay, animation]\n\nbehavior",
+            "axis: [UI]\n\nbehavior",
+        );
+        let fixed_draft = VALID_DRAFT.replace(
+            "axis: [gameplay, animation]\n\nbehavior",
+            "axis: [ui]\n\nbehavior",
+        );
         let (editor, call_count) = scripted_editor(vec![
             Box::leak(invalid_draft.into_boxed_str()),
             Box::leak(fixed_draft.into_boxed_str()),

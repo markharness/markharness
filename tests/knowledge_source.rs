@@ -25,12 +25,12 @@ fn write_chain(root: &Path, step: &str) {
     std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/shop")).unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/requirements/shop/requirement.yml"),
-        "id: shop\nlabel: Shop\naxis: []\n",
+        "id: shop\nlabel: Shop\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
     )
     .unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/features/checkout/feature.yml"),
-        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
+        "id: checkout\nrequirement_uids: [01ARZ3NDEKTSV4RRFFQ69G5FAV]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     std::fs::write(

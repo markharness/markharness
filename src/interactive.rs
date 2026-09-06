@@ -6,8 +6,8 @@ use std::path::Path;
 use crate::fs_safety::replace_file;
 use crate::knowledge::{
     Behavior, Feature, Phase, Procedure, Requirement, Scenario, StepItem, contains_non_ascii,
-    is_valid_slug, normalize_slug_candidate, romanize_label, serialize_behavior, serialize_feature,
-    serialize_requirement, serialize_scenario, strip_redundant_scenario_prefix,
+    is_valid_slug, normalize_slug_candidate, parse_requirement, romanize_label, serialize_behavior,
+    serialize_feature, serialize_requirement, serialize_scenario, strip_redundant_scenario_prefix,
 };
 
 fn list_candidate_ids(dir: &Path, marker_file: &str) -> Vec<String> {
@@ -277,11 +277,18 @@ pub fn run_add<R: BufRead, W: Write>(
     )?;
     let requirement_dir = requirements_root.join(&requirement_id);
     let requirement_path = requirement_dir.join("requirement.yml");
-    if requirement_path.exists() {
+    // ADR 0017 §1・§3: Featureは表示IDではなくRequirement.uidで関連付ける。
+    // 新規作成したRequirementは`identity migrate`実行前で常にuid: Noneで
+    // あり、既存Requirementも未migrateならuidを持たない。
+    let requirement_uid: Option<String> = if requirement_path.exists() {
         writeln!(
             writer,
             "既存のRequirement '{requirement_id}' を再利用します。"
         )?;
+        fs::read_to_string(&requirement_path)
+            .ok()
+            .and_then(|yaml| parse_requirement(&yaml).ok())
+            .and_then(|requirement| requirement.uid)
     } else {
         let axis = prompt_axis(
             reader,
@@ -302,7 +309,19 @@ pub fn run_add<R: BufRead, W: Write>(
             &requirement_path,
             serialize_requirement(&requirement).as_bytes(),
         )?;
-    }
+        // ADR 0017 §1・§3: a brand-new Requirement is always `uid: None`
+        // until `identity migrate` runs (uids are issued only there, never
+        // by `knowledge add`). A Feature can never be created referencing
+        // it in this same run, so stop here — successfully, with the
+        // Requirement written — rather than continuing on to prompt for a
+        // Feature only to reject it afterward and leave that prompting
+        // effort (and a confusing error) as the session's outcome.
+        writeln!(
+            writer,
+            "Requirement '{requirement_id}' を作成しました。Featureから参照できるようにするには、先に `markharness identity migrate` を実行してから再度 `markharness knowledge add` を実行してください。"
+        )?;
+        return Ok(());
+    };
 
     let feature_candidates = list_candidate_ids(&features_root, "feature.yml");
     let (feature_id, feature_label) = prompt_id_or_label(
@@ -316,6 +335,14 @@ pub fn run_add<R: BufRead, W: Write>(
     if feature_path.exists() {
         writeln!(writer, "既存のFeature '{feature_id}' を再利用します。")?;
     } else {
+        let Some(requirement_uid) = requirement_uid else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "requirement \"{requirement_id}\" has no uid yet; run `markharness identity migrate` before creating a Feature that references it"
+                ),
+            ));
+        };
         let axis = prompt_axis(
             reader,
             writer,
@@ -323,7 +350,7 @@ pub fn run_add<R: BufRead, W: Write>(
         )?;
         let feature = Feature {
             id: feature_id.clone(),
-            requirement_ids: vec![requirement_id.clone()],
+            requirement_uids: vec![requirement_uid],
             label: feature_label,
             axis,
             description: None,
@@ -449,6 +476,49 @@ mod tests {
 
     const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n";
 
+    /// Same chain as `FULL_INPUT`, but assuming `controls` already exists as
+    /// an already-migrated Requirement (real uid) on disk, so no axis prompt
+    /// is consumed for it (`prompt_id_or_label` matches the literal existing
+    /// id and `run_add` reuses it, skipping straight to the Feature name
+    /// prompt — see `reuses_existing_requirement_and_skips_axis_prompt`).
+    const SEEDED_FULL_INPUT: &str = "controls\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n";
+
+    /// `identity migrate`実行後を模したRequirement.uid値(ULID形式)。
+    const CONTROLS_REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    fn write_migrated_controls_requirement(dir: &Path) {
+        fs::create_dir_all(dir.join(".markharness/knowledge/requirements/controls")).unwrap();
+        fs::write(
+            dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// A fresh root with `controls` already migrated (real uid), the
+    /// starting point for every test whose scenario is not itself about
+    /// Requirement-creation behavior: since ADR 0017 §1・§3 means `run_add`
+    /// can no longer create a brand-new Requirement and a Feature
+    /// referencing it in the same call, these tests need a pre-migrated
+    /// Requirement to build the rest of the chain (Feature/Behavior/
+    /// Scenario) on top of, via `SEEDED_FULL_INPUT`.
+    fn setup_migrated_requirement_root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_migrated_controls_requirement(dir.path());
+        dir
+    }
+
+    /// Appends a `uid:` line to an existing `requirement.yml`, simulating
+    /// what `identity migrate` does to a brand-new (uid: None) Requirement.
+    fn simulate_migrate(requirement_path: &Path, uid: &str) {
+        let mut content = fs::read_to_string(requirement_path).unwrap();
+        content.push_str(&format!("uid: {uid}\n"));
+        fs::write(requirement_path, content).unwrap();
+    }
+
     #[test]
     fn prompt_steps_errors_instead_of_looping_forever_when_stdin_hits_eof_before_any_step() {
         let mut reader = Cursor::new(Vec::<u8>::new());
@@ -518,16 +588,37 @@ mod tests {
         );
     }
 
+    /// ADR 0017 §1・§3: a brand-new Requirement is always `uid: None` until
+    /// `identity migrate` runs, so `run_add` can no longer continue on in
+    /// the same call to create a Feature that references it — it writes
+    /// the Requirement and stops there, successfully.
     #[test]
-    fn creates_new_requirement_feature_behavior_and_scenario_from_scratch() {
+    fn creates_new_requirement_only_and_stops_before_feature_prompt() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        run_with_input(dir.path(), FULL_INPUT);
+        let output = run_with_input_capturing_output(dir.path(), "controls\ngameplay\n");
 
         let requirement_path = dir
             .path()
             .join(".markharness/knowledge/requirements/controls/requirement.yml");
+        assert_eq!(
+            fs::read_to_string(requirement_path).unwrap(),
+            "id: controls\nlabel: controls\naxis: [gameplay]\n"
+        );
+        assert!(
+            !dir.path().join(".markharness/knowledge/features").exists(),
+            "run_add must not proceed to Feature creation for an unmigrated Requirement"
+        );
+        assert!(output.contains("identity migrate"));
+    }
+
+    #[test]
+    fn creates_feature_behavior_and_scenario_from_a_migrated_requirement() {
+        let dir = setup_migrated_requirement_root();
+
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
+
         let feature_path = dir
             .path()
             .join(".markharness/knowledge/features/player-jump/feature.yml");
@@ -539,12 +630,10 @@ mod tests {
             .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml");
 
         assert_eq!(
-            fs::read_to_string(requirement_path).unwrap(),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n"
-        );
-        assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            format!(
+                "id: player-jump\nrequirement_uids: [{CONTROLS_REQUIREMENT_UID}]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            )
         );
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
@@ -558,9 +647,8 @@ mod tests {
 
     #[test]
     fn reuses_existing_feature_and_skips_axis_prompt() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        run_with_input(dir.path(), FULL_INPUT);
+        let dir = setup_migrated_requirement_root();
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         // Second run reuses the feature: no axis prompt is consumed, so the
         // second input line is the behavior id, not an axis list.
@@ -574,7 +662,9 @@ mod tests {
             .join(".markharness/knowledge/features/player-jump/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            format!(
+                "id: player-jump\nrequirement_uids: [{CONTROLS_REQUIREMENT_UID}]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            )
         );
         let behavior_path = dir
             .path()
@@ -587,9 +677,8 @@ mod tests {
 
     #[test]
     fn reuses_existing_behavior_and_skips_axis_and_description_prompt() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        run_with_input(dir.path(), FULL_INPUT);
+        let dir = setup_migrated_requirement_root();
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         // Second run reuses feature and behavior: no axis/description/procedure prompts.
         run_with_input(
@@ -608,9 +697,8 @@ mod tests {
 
     #[test]
     fn reuses_existing_scenario_and_writes_nothing_new() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        run_with_input(dir.path(), FULL_INPUT);
+        let dir = setup_migrated_requirement_root();
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
         let scenario_path = dir
             .path()
             .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml");
@@ -639,10 +727,9 @@ mod tests {
 
     #[test]
     fn lists_feature_candidates_by_number_and_selects_by_index() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
-        run_with_input(dir.path(), FULL_INPUT);
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         let output = run_with_input_capturing_output(
             dir.path(),
@@ -659,10 +746,9 @@ mod tests {
 
     #[test]
     fn lists_behavior_candidates_by_number_and_selects_by_index() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
-        run_with_input(dir.path(), FULL_INPUT);
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         let output = run_with_input_capturing_output(
             dir.path(),
@@ -679,10 +765,9 @@ mod tests {
 
     #[test]
     fn lists_scenario_candidates_by_number_and_selects_by_index() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
-        run_with_input(dir.path(), FULL_INPUT);
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         let output =
             run_with_input_capturing_output(dir.path(), "controls\nplayer-jump\njump\n1\n");
@@ -693,10 +778,9 @@ mod tests {
 
     #[test]
     fn typing_literal_existing_id_with_candidates_present_still_works() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
-        run_with_input(dir.path(), FULL_INPUT);
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         let output =
             run_with_input_capturing_output(dir.path(), "controls\nplayer-jump\njump\nground\n");
@@ -706,12 +790,11 @@ mod tests {
 
     #[test]
     fn auto_dedup_strips_redundant_scenario_prefix_and_notifies() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\njump-ground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
+            "controls\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\njump-ground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
 
         assert!(output.contains(
@@ -731,12 +814,11 @@ mod tests {
 
     #[test]
     fn legacy_scenario_dir_with_redundant_prefix_is_reused_without_stripping() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\njump-ground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
+            "controls\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\njump-ground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
         // Above run already dedupes to `ground/`; create a legacy dir with the
         // literal redundant name directly on disk to simulate pre-existing data.
@@ -818,12 +900,11 @@ mod tests {
 
     #[test]
     fn creates_new_feature_with_japanese_label_and_saves_it_to_yaml() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
+            "controls\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
 
         let feature_path = dir
@@ -831,15 +912,16 @@ mod tests {
             .join(".markharness/knowledge/features/pureiyaagajanpusuru/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: pureiyaagajanpusuru\nrequirement_ids: [controls]\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
+            format!(
+                "id: pureiyaagajanpusuru\nrequirement_uids: [{CONTROLS_REQUIREMENT_UID}]\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
+            )
         );
     }
 
     #[test]
     fn creates_new_behavior_with_japanese_label_and_saves_it_to_yaml() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        run_with_input(dir.path(), FULL_INPUT);
+        let dir = setup_migrated_requirement_root();
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         run_with_input(
             dir.path(),
@@ -857,9 +939,8 @@ mod tests {
 
     #[test]
     fn creates_new_scenario_with_japanese_label_and_saves_it_to_yaml() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        run_with_input(dir.path(), FULL_INPUT);
+        let dir = setup_migrated_requirement_root();
+        run_with_input(dir.path(), SEEDED_FULL_INPUT);
 
         run_with_input(
             dir.path(),
@@ -880,31 +961,50 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        run_with_input(
-            dir.path(),
-            "プレイヤーがジャンプする\n\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
-        );
+        // The Requirement is brand-new (uid: None until `identity migrate`
+        // runs), so this first call only creates it and stops — it cannot
+        // continue on to create a Feature referencing it in the same call
+        // (ADR 0017 §1・§3).
+        run_with_input(dir.path(), "プレイヤーがジャンプする\n\ngameplay\n");
 
         let requirement_path = dir
             .path()
             .join(".markharness/knowledge/requirements/pureiyaagajanpusuru/requirement.yml");
         assert_eq!(
-            fs::read_to_string(requirement_path).unwrap(),
+            fs::read_to_string(&requirement_path).unwrap(),
             "id: pureiyaagajanpusuru\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\n"
         );
+        assert!(!dir.path().join(".markharness/knowledge/features").exists());
+
+        // Simulate `identity migrate` assigning a uid, then a second call
+        // reuses the now-migrated Requirement (typed literally) to create a
+        // Feature referencing it.
+        simulate_migrate(&requirement_path, CONTROLS_REQUIREMENT_UID);
+        run_with_input(
+            dir.path(),
+            "pureiyaagajanpusuru\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
+        );
+
         let feature_path = dir
             .path()
             .join(".markharness/knowledge/features/player-jump/feature.yml");
-        assert!(feature_path.exists());
+        assert_eq!(
+            fs::read_to_string(feature_path).unwrap(),
+            format!(
+                "id: player-jump\nrequirement_uids: [{CONTROLS_REQUIREMENT_UID}]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            )
+        );
     }
 
     #[test]
     fn reuses_existing_requirement_and_skips_axis_prompt() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        run_with_input(dir.path(), FULL_INPUT);
+        // `controls` must already be migrated (real uid) for a Feature to
+        // be created referencing it (ADR 0017 §1・§3), so it's seeded
+        // directly rather than via a `run_add` call (which can no longer
+        // produce a migrated Requirement on its own).
+        let dir = setup_migrated_requirement_root();
 
-        // Second run reuses the requirement: no axis prompt is consumed, so
+        // This run reuses the requirement: no axis prompt is consumed, so
         // the second input line is the feature id, not an axis list.
         run_with_input(
             dir.path(),
@@ -916,7 +1016,9 @@ mod tests {
             .join(".markharness/knowledge/requirements/controls/requirement.yml");
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n"
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            )
         );
         let feature_path = dir
             .path()
@@ -926,9 +1028,7 @@ mod tests {
 
     #[test]
     fn lists_requirement_candidates_by_number_and_selects_by_index() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        run_with_input(dir.path(), FULL_INPUT);
+        let dir = setup_migrated_requirement_root();
 
         let output = run_with_input_capturing_output(
             dir.path(),
@@ -948,7 +1048,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
-        let output = run_with_input_capturing_output(dir.path(), FULL_INPUT);
+        // The first call only reaches the Requirement name/axis prompts
+        // (creating a brand-new Requirement stops there by design); a
+        // second call, after simulating `identity migrate`, reaches the
+        // rest of the chain's prompts. Concatenate both calls' output so
+        // every prompt label below is covered by one test.
+        let mut output = run_with_input_capturing_output(dir.path(), "controls\ngameplay\n");
+        let requirement_path = dir
+            .path()
+            .join(".markharness/knowledge/requirements/controls/requirement.yml");
+        simulate_migrate(&requirement_path, CONTROLS_REQUIREMENT_UID);
+        output.push_str(&run_with_input_capturing_output(
+            dir.path(),
+            SEEDED_FULL_INPUT,
+        ));
 
         assert!(output.contains("Requirement name (e.g. task-management): "));
         assert!(output.contains("Requirement axis (comma separated, e.g. ui, validation): "));
@@ -967,12 +1080,11 @@ mod tests {
 
     #[test]
     fn selecting_existing_feature_by_number_does_not_overwrite_its_label() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
+            "controls\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
 
         let feature_path = dir
@@ -992,12 +1104,11 @@ mod tests {
 
     #[test]
     fn stripped_id_matches_a_different_preexisting_scenario_reuses_it() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
+        let dir = setup_migrated_requirement_root();
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nlanded on the ground\nDo it.\n\nlands safely\n\n\n",
+            "controls\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nlanded on the ground\nDo it.\n\nlands safely\n\n\n",
         );
 
         let output = run_with_input_capturing_output(

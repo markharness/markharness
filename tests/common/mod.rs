@@ -8,7 +8,14 @@ use std::path::Path;
 
 /// Writes a full req-todo -> `feature_id` -> todo-add-task ->
 /// todo-add-task-empty-input scenario tree, none of it migrated yet (no
-/// `uid:` anywhere).
+/// `uid:` anywhere). The Feature's `requirement_uids` still holds
+/// `req-todo`'s *display id* (schema requires `minItems: 1`, so it can't be
+/// left empty) — exactly the pre-migration placeholder Issue #44 is about.
+/// `generate::load_knowledge_snapshot`'s requirement-uid resolution falls
+/// back to the raw value when it doesn't match a real Requirement `uid`
+/// (informational field only, ADR 0017 §1・§3), and `identity migrate`
+/// resolves it to `req-todo`'s real `uid` once that Requirement is migrated
+/// too (see `feature_ops::build_migration_plan`'s Pass 3).
 pub fn write_full_tree(root: &Path, feature_id: &str) {
     let knowledge = root
         .join(".markharness/knowledge/features")
@@ -23,7 +30,7 @@ pub fn write_full_tree(root: &Path, feature_id: &str) {
     .unwrap();
     std::fs::write(
         knowledge.join("feature.yml"),
-        format!("id: {feature_id}\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\n"),
+        format!("id: {feature_id}\nrequirement_uids: [req-todo]\nlabel: todo\naxis: []\n"),
     )
     .unwrap();
     std::fs::write(
