@@ -46,13 +46,14 @@
     "affected_test": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "feature_id", "reason", "origin", "status"],
+      "required": ["id", "feature_id", "reason", "origin", "status", "execution_uids"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "feature_id": { "type": "string", "minLength": 1 },
         "reason": { "type": "string", "minLength": 1 },
         "origin": { "enum": ["stored", "derived"] },
-        "status": { "enum": ["passed", "failed", "pending", "stale", "unresolved"] }
+        "status": { "enum": ["passed", "failed", "pending", "stale", "unresolved"] },
+        "execution_uids": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
     "proposal": {

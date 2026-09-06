@@ -125,7 +125,7 @@ fn compute_case_uid(case: &KnowledgeCaseSnapshot) -> Option<String> {
 /// by the time this function runs. See `identity::derived_uid::case_revision`'s
 /// doc comment for the full accounting, and this module's `case_revision_*`
 /// tests for concrete coverage.
-fn compute_case_revision(phases: &[Phase]) -> String {
+pub(crate) fn compute_case_revision(phases: &[Phase]) -> String {
     let canonical =
         serde_json::to_string(phases).expect("Phase is plain data; serialization is infallible");
     crate::identity::derived_uid::case_revision(&canonical)

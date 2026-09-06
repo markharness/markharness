@@ -116,6 +116,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
             "pass",
             "--executor",
             "ci",
+            "--json",
             "--dir",
             ".",
         ])
@@ -127,6 +128,8 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         String::from_utf8_lossy(&record_output.stdout),
         String::from_utf8_lossy(&record_output.stderr)
     );
+    let recorded: serde_json::Value = serde_json::from_slice(&record_output.stdout).unwrap();
+    let recorded_execution_uid = recorded["execution_uid"].as_str().unwrap().to_string();
     let verified = Command::new(env!("CARGO_BIN_EXE_markharness"))
         .current_dir(repo.path())
         .args([
@@ -150,6 +153,11 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         "passed"
     );
     assert_eq!(verified_plan["summary"]["passed"], 1);
+    assert_eq!(
+        verified_plan["affected_existing_tests"][0]["execution_uids"],
+        serde_json::json!([recorded_execution_uid]),
+        "the plan must name the execution_uid of the record that backs the passed status"
+    );
 
     let imported = repo.path().join("junit-canonical.json");
     std::fs::write(
@@ -201,11 +209,24 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         .unwrap();
     let stored_plan: serde_json::Value = serde_json::from_slice(&with_stored_trace.stdout).unwrap();
     assert_eq!(stored_plan["summary"]["affected_tests"], 2);
-    assert!(
-        stored_plan["affected_existing_tests"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|test| test["id"] == "junit:checkout:external_pay" && test["origin"] == "stored")
+    let junit_test = stored_plan["affected_existing_tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["id"] == "junit:checkout:external_pay" && test["origin"] == "stored")
+        .expect("stored trace from the canonical snapshot must still be discovered as a test");
+    // ADR 0017 §5: canonical/JUnit evidence is never merged into the
+    // evidence a plan judges pass/fail against — only native
+    // `execution::record_execution` records are. The imported snapshot's
+    // evidence claims "pass", but that must not surface as a Passed status
+    // or an adopted `execution_uid` here.
+    assert_eq!(
+        junit_test["status"], "pending",
+        "canonical/JUnit evidence must never decide a test's status"
+    );
+    assert_eq!(
+        junit_test["execution_uids"],
+        serde_json::json!([]),
+        "canonical/JUnit evidence has no execution_uid to adopt"
     );
 }

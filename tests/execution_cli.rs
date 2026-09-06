@@ -30,6 +30,13 @@ fn write_generated_testcase(
     case_id: &str,
     case_uid: Option<&str>,
 ) {
+    // `case_revision` is defined as a hash of the canonical JSON encoding of
+    // `phases` (`generate::compute_case_revision`); `execution record` now
+    // verifies the stored case definition's `phases` actually hash to it, so
+    // this must be the real hash of the (absent, i.e. empty) `phases` below
+    // rather than an arbitrary placeholder string. `"[]"` is
+    // `serde_json::to_string(&Vec::<Phase>::new())`.
+    let case_revision = markharness::identity::derived_uid::case_revision("[]");
     let dir = root.join(".markharness/generated/testcases");
     std::fs::create_dir_all(&dir).unwrap();
     let uid_line = case_uid
@@ -37,7 +44,7 @@ fn write_generated_testcase(
         .unwrap_or_default();
     std::fs::write(
         dir.join(format!("{condition_id}.yml")),
-        format!("case_id: {case_id}\n{uid_line}case_revision: rev-1\n"),
+        format!("case_id: {case_id}\n{uid_line}case_revision: {case_revision}\nphases: []\n"),
     )
     .unwrap();
     // `execution record` requires the immutable case definition (ADR 0017
@@ -47,8 +54,8 @@ fn write_generated_testcase(
         let definitions_dir = root.join(".markharness/case-definitions").join(case_uid);
         std::fs::create_dir_all(&definitions_dir).unwrap();
         std::fs::write(
-            definitions_dir.join("rev-1.yml"),
-            format!("case_uid: {case_uid}\ncase_revision: rev-1\nphases: []\n"),
+            definitions_dir.join(format!("{case_revision}.yml")),
+            format!("case_uid: {case_uid}\ncase_revision: {case_revision}\nphases: []\n"),
         )
         .unwrap();
     }
@@ -147,7 +154,7 @@ fn execution_record_exits_two_when_the_case_definition_is_missing() {
     std::fs::create_dir_all(&generated_dir).unwrap();
     std::fs::write(
         generated_dir.join("ground.yml"),
-        "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\n",
+        "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\nphases: []\n",
     )
     .unwrap();
 

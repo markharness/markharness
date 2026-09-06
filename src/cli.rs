@@ -1158,6 +1158,12 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     );
                     std::process::exit(2);
                 }
+                Err(RecordError::CaseDefinitionMismatch) => {
+                    eprintln!(
+                        "error: the generated test case for '{case_id}' no longer matches the immutable case definition stored under its case_uid/case_revision. Run `markharness generate` again to refresh it."
+                    );
+                    std::process::exit(2);
+                }
                 Err(RecordError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
@@ -2821,12 +2827,18 @@ mod tests {
         case_id: &str,
         feature_id: &str,
     ) {
+        // `case_revision` is defined as a hash of `phases`
+        // (`generate::compute_case_revision`); `execution record` now
+        // verifies the stored case definition's `phases` actually hash to
+        // it, so this must be the real hash of the `phases: []` written
+        // below rather than an arbitrary placeholder string.
+        let case_revision = crate::generate::compute_case_revision(&[]);
         let dir = root.join(".markharness/generated/testcases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{condition_id}.yml")),
             format!(
-                "case_id: {case_id}\ncase_uid: case-uid-1\ncase_revision: rev-1\ngenerated_from:\n  requirement_ids: []\n  feature: {feature_id}\nphases: []\n"
+                "case_id: {case_id}\ncase_uid: case-uid-1\ncase_revision: {case_revision}\ngenerated_from:\n  requirement_ids: []\n  feature: {feature_id}\nphases: []\n"
             ),
         )
         .unwrap();
@@ -2836,8 +2848,8 @@ mod tests {
         let definitions_dir = root.join(".markharness/case-definitions/case-uid-1");
         fs::create_dir_all(&definitions_dir).unwrap();
         fs::write(
-            definitions_dir.join("rev-1.yml"),
-            "case_uid: case-uid-1\ncase_revision: rev-1\nphases: []\n",
+            definitions_dir.join(format!("{case_revision}.yml")),
+            format!("case_uid: case-uid-1\ncase_revision: {case_revision}\nphases: []\n"),
         )
         .unwrap();
     }

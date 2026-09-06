@@ -63,7 +63,18 @@ pub fn build_verification_plan_value(
     // exact commit that was actually tested.
     let target_revision = crate::git::resolve_commit_oid(root, head)?;
 
-    let mut evidence: Vec<PlanEvidence> = crate::execution::read_all_results(root)?
+    // ADR 0017 §5: the evidence candidates a plan judges are limited to
+    // native execution records (`execution::ExecutionEntry`). Canonical
+    // evidence (`CanonicalSnapshot::evidence`, e.g. from `import_junit`) is
+    // deliberately never merged in here — it has no `execution_uid` to
+    // explicitly associate with the plan's judgement (ADR 0017 §5's "計画
+    // には採用する実行結果を明示的に関連付ける"), and mixing it in would let
+    // a hand-crafted `bound_versions` blob satisfy the Case UID/revision
+    // model without ever having gone through `record_execution`'s
+    // guarantees. `canonical_inputs` is still used below for test discovery
+    // (`stored_traces`), which is a separate concern from pass/fail
+    // evidence.
+    let evidence: Vec<PlanEvidence> = crate::execution::read_all_results(root)?
         .into_iter()
         // ADR 0017 §5: a record whose immutable case definition
         // (`case_definition::load_case_definition`) is missing — the
@@ -102,18 +113,11 @@ pub fn build_verification_plan_value(
                     _ => canonical::EvidenceResult::Skip,
                 },
                 executed_at: Some(entry.executed_at),
+                execution_uid: Some(entry.execution_uid),
                 bound_versions,
             }
         })
         .collect();
-    evidence.extend(canonical_inputs.iter().flat_map(|snapshot| {
-        snapshot.evidence.iter().map(|item| PlanEvidence {
-            test_id: item.test_id.clone(),
-            result: item.result,
-            executed_at: item.executed_at.clone(),
-            bound_versions: item.bound_versions.clone(),
-        })
-    }));
 
     let native = canonical::import_native(root, head)?;
     let case_versions: std::collections::BTreeMap<String, CaseVersion> = native

@@ -94,6 +94,16 @@ pub fn store_case_definition(root: &Path, testcase: &TestCase) -> io::Result<Opt
 
 /// Reads back the frozen definition stored at `(case_uid, case_revision)`,
 /// or `None` if nothing has been stored under that key.
+///
+/// ADR 0017 §5: verifies the stored file is self-consistent before handing
+/// it back — its internal `case_uid`/`case_revision` fields must match the
+/// path key it was read from, and its `phases` must actually hash to that
+/// `case_revision` (`case_revision` is defined as
+/// `generate::compute_case_revision(&phases)`). A mismatch means the file at
+/// this path was never produced by `store_case_definition` (hand-edited,
+/// swapped in by a mis-resolved merge conflict, or on-disk corruption) and
+/// is a hard error — never silently treated as "nothing stored" (`None`)
+/// or handed back as if it were trustworthy.
 pub fn load_case_definition(
     root: &Path,
     case_uid: &str,
@@ -103,13 +113,51 @@ pub fn load_case_definition(
     if !path.is_file() {
         return Ok(None);
     }
-    Ok(Some(load_case_definition_at(&path)?))
+    let definition = load_case_definition_at(&path)?;
+    if definition.case_uid != case_uid || definition.case_revision != case_revision {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "case definition at {} is stored under case_uid {case_uid} case_revision \
+                 {case_revision} but its own fields say case_uid {} case_revision {} \
+                 (mismatched file, or on-disk corruption)",
+                path.display(),
+                definition.case_uid,
+                definition.case_revision
+            ),
+        ));
+    }
+    let actual_revision = crate::generate::compute_case_revision(&definition.phases);
+    if actual_revision != case_revision {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "case definition at {} is stored under case_revision {case_revision} but its \
+                 phases hash to {actual_revision} (its content was altered after being frozen, \
+                 or a case_revision hash collision)",
+                path.display()
+            ),
+        ));
+    }
+    Ok(Some(definition))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::generate::{CaseFilePaths, GeneratedFrom};
+
+    /// The real `case_revision` for a single-phase, single-step TestCase
+    /// with this `step` — matches what `generate::compile_testcases` would
+    /// actually compute, so tests that go through `load_case_definition`'s
+    /// self-consistency check use a `case_revision` that's genuinely the
+    /// hash of the phases they store.
+    fn real_case_revision(step: &str) -> String {
+        crate::generate::compute_case_revision(&[Phase {
+            steps: vec![step.to_string()],
+            results: vec!["Confirmed.".to_string()],
+        }])
+    }
 
     fn sample_testcase(case_uid: Option<&str>, case_revision: &str, step: &str) -> TestCase {
         TestCase {
@@ -135,18 +183,19 @@ mod tests {
     #[test]
     fn stores_and_loads_back_the_same_definition() {
         let dir = tempfile::tempdir().unwrap();
-        let testcase = sample_testcase(Some("case-uid-1"), "rev-1", "Do it.");
+        let revision = real_case_revision("Do it.");
+        let testcase = sample_testcase(Some("case-uid-1"), &revision, "Do it.");
 
         let path = store_case_definition(dir.path(), &testcase)
             .unwrap()
             .expect("case_uid is present, so a path must be returned");
         assert!(path.is_file());
 
-        let loaded = load_case_definition(dir.path(), "case-uid-1", "rev-1")
+        let loaded = load_case_definition(dir.path(), "case-uid-1", &revision)
             .unwrap()
             .expect("just-stored definition must load back");
         assert_eq!(loaded.case_uid, "case-uid-1");
-        assert_eq!(loaded.case_revision, "rev-1");
+        assert_eq!(loaded.case_revision, revision);
         assert_eq!(loaded.phases, testcase.phases);
     }
 
@@ -175,6 +224,66 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    /// ADR 0017 §5: a stored definition whose own `case_uid` field disagrees
+    /// with the path it's stored under (e.g. a merge-conflict resolution
+    /// that copied the wrong file into place) must never be trusted as the
+    /// definition for that key.
+    #[test]
+    fn load_case_definition_rejects_a_stored_file_whose_internal_case_uid_disagrees_with_the_path()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("case-definitions")
+            .join("case-uid-1")
+            .join("rev-1.yml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "case_uid: case-uid-WRONG\ncase_revision: rev-1\nphases: []\n",
+        )
+        .unwrap();
+
+        let result = load_case_definition(dir.path(), "case-uid-1", "rev-1");
+
+        assert!(
+            result.is_err(),
+            "expected an error for a case_uid mismatch, got: {result:?}"
+        );
+    }
+
+    /// ADR 0017 §5: `case_revision` is defined as a hash of `phases`
+    /// (`generate::compute_case_revision`) — a stored file whose `phases`
+    /// don't actually hash to the `case_revision` it's keyed and labeled
+    /// under is corrupt (hand-edited, or a hash collision) and must never be
+    /// treated as a valid frozen definition.
+    #[test]
+    fn load_case_definition_rejects_a_stored_file_whose_phases_do_not_hash_to_its_case_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("case-definitions")
+            .join("case-uid-1")
+            .join("rev-1.yml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // `rev-1` is not the real hash of these phases, so this file cannot
+        // have come from `store_case_definition`.
+        fs::write(
+            &path,
+            "case_uid: case-uid-1\ncase_revision: rev-1\nphases:\n  - steps: [\"Do it.\"]\n    results: [\"Confirmed.\"]\n",
+        )
+        .unwrap();
+
+        let result = load_case_definition(dir.path(), "case-uid-1", "rev-1");
+
+        assert!(
+            result.is_err(),
+            "expected an error for a case_revision/phases mismatch, got: {result:?}"
+        );
+    }
+
     /// ADR 0017 §5: storing the same `(case_uid, case_revision)` key twice
     /// with matching content is a no-op, not an error — this is how
     /// "同一定義は共有する" plays out when the same Scenario is generated
@@ -182,7 +291,7 @@ mod tests {
     #[test]
     fn storing_the_same_key_twice_with_matching_content_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
-        let testcase = sample_testcase(Some("case-uid-1"), "rev-1", "Do it.");
+        let testcase = sample_testcase(Some("case-uid-1"), &real_case_revision("Do it."), "Do it.");
 
         store_case_definition(dir.path(), &testcase).unwrap();
         let second = store_case_definition(dir.path(), &testcase);
@@ -209,9 +318,13 @@ mod tests {
             result.is_err(),
             "expected an error for mismatched content at an existing key, got: {result:?}"
         );
-        let reloaded = load_case_definition(dir.path(), "case-uid-1", "rev-1")
-            .unwrap()
-            .unwrap();
+        // Reads the file directly rather than through `load_case_definition`:
+        // this test's "rev-1" is a deliberately fabricated, non-hash key (to
+        // simulate a collision against `store_case_definition`'s own guard),
+        // so it would fail `load_case_definition`'s separate self-consistency
+        // check for an unrelated reason.
+        let reloaded =
+            load_case_definition_at(&definition_path(dir.path(), "case-uid-1", "rev-1")).unwrap();
         assert_eq!(
             reloaded.phases, first.phases,
             "the original definition must be left untouched"
@@ -221,16 +334,18 @@ mod tests {
     #[test]
     fn different_case_revisions_under_the_same_case_uid_are_stored_separately() {
         let dir = tempfile::tempdir().unwrap();
-        let v1 = sample_testcase(Some("case-uid-1"), "rev-1", "Do it.");
-        let v2 = sample_testcase(Some("case-uid-1"), "rev-2", "Do it differently.");
+        let revision1 = real_case_revision("Do it.");
+        let revision2 = real_case_revision("Do it differently.");
+        let v1 = sample_testcase(Some("case-uid-1"), &revision1, "Do it.");
+        let v2 = sample_testcase(Some("case-uid-1"), &revision2, "Do it differently.");
 
         store_case_definition(dir.path(), &v1).unwrap();
         store_case_definition(dir.path(), &v2).unwrap();
 
-        let loaded_v1 = load_case_definition(dir.path(), "case-uid-1", "rev-1")
+        let loaded_v1 = load_case_definition(dir.path(), "case-uid-1", &revision1)
             .unwrap()
             .unwrap();
-        let loaded_v2 = load_case_definition(dir.path(), "case-uid-1", "rev-2")
+        let loaded_v2 = load_case_definition(dir.path(), "case-uid-1", &revision2)
             .unwrap()
             .unwrap();
         assert_ne!(loaded_v1.phases, loaded_v2.phases);

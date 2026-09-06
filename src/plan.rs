@@ -11,6 +11,15 @@ pub struct PlanEvidence {
     pub result: EvidenceResult,
     #[serde(default)]
     pub executed_at: Option<String>,
+    /// ADR 0017 §5: the native execution record (`execution::ExecutionEntry`)
+    /// this evidence was built from, so the plan can name exactly which
+    /// record it adopted. `None` for evidence with no such record — e.g.
+    /// canonical/imported evidence never sets this, since `application.rs`
+    /// deliberately excludes that provenance from the evidence candidates a
+    /// plan judges (out of scope for ADR 0017 §5; see the Case UID/revision
+    /// model this evidence still requires via `bound_versions`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_uid: Option<String>,
     pub bound_versions: BTreeMap<String, String>,
 }
 
@@ -94,6 +103,15 @@ pub struct AffectedExistingTest {
     pub reason: String,
     pub origin: RelationOriginKind,
     pub status: TestStatus,
+    /// ADR 0017 §5: the `execution_uid`(s) of the native execution record(s)
+    /// this `status` is based on. Exactly one entry for `Passed`/`Failed`
+    /// (the adopted record); every conflicting record's `execution_uid` for
+    /// `Unresolved`, so a human can audit the disagreement; empty for
+    /// `Pending`/`Stale`. Evidence with no `execution_uid` of its own
+    /// (canonical/imported evidence) contributes nothing to this list even
+    /// when it was the evidence that decided `status`.
+    #[serde(default)]
+    pub execution_uids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -188,13 +206,13 @@ fn evidence_status(
     target_revision: &str,
     environment: Option<&str>,
     evidence: &[PlanEvidence],
-) -> TestStatus {
+) -> (TestStatus, Vec<String>) {
     let matching_test: Vec<&PlanEvidence> = evidence
         .iter()
         .filter(|item| item.test_id == test_id)
         .collect();
     let Some(case_version) = case_versions.get(test_id) else {
-        return TestStatus::Pending;
+        return (TestStatus::Pending, Vec::new());
     };
     let applicable: Vec<&PlanEvidence> = matching_test
         .iter()
@@ -238,6 +256,25 @@ fn evidence_status(
                 && environment_matches
         })
         .collect();
+    // ADR 0017 §5: "計画には採用する実行結果を明示的に関連付ける" — when
+    // several applicable records exist (agreeing or not), which one backs
+    // the judgement must never be left implicit. Sort deterministically by
+    // `executed_at` (earliest first), tie-broken by `execution_uid`, so the
+    // choice depends only on the records themselves, never on the order
+    // they happened to be collected in.
+    let mut applicable = applicable;
+    applicable.sort_by(|a, b| {
+        a.executed_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(b.executed_at.as_deref().unwrap_or(""))
+            .then(
+                a.execution_uid
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.execution_uid.as_deref().unwrap_or("")),
+            )
+    });
     let conflicting = applicable
         .split_first()
         .is_some_and(|(first, rest)| rest.iter().any(|item| item.result != first.result));
@@ -246,18 +283,24 @@ fn evidence_status(
         // fail both bound to the same case_uid/case_revision/target_revision/
         // environment). Picking whichever has the later `executed_at` would
         // let a timestamp alone settle a contradiction the ADR says must
-        // never be resolved that way.
-        TestStatus::Unresolved
+        // never be resolved that way — instead every conflicting record's
+        // `execution_uid` is surfaced so a human can audit and resolve it.
+        let execution_uids = applicable
+            .iter()
+            .filter_map(|item| item.execution_uid.clone())
+            .collect();
+        (TestStatus::Unresolved, execution_uids)
     } else if let Some(first) = applicable.first() {
-        match first.result {
+        let status = match first.result {
             EvidenceResult::Pass => TestStatus::Passed,
             EvidenceResult::Fail => TestStatus::Failed,
             EvidenceResult::Skip => TestStatus::Pending,
-        }
+        };
+        (status, first.execution_uid.clone().into_iter().collect())
     } else if matching_test.is_empty() {
-        TestStatus::Pending
+        (TestStatus::Pending, Vec::new())
     } else {
-        TestStatus::Stale
+        (TestStatus::Stale, Vec::new())
     }
 }
 
@@ -307,7 +350,7 @@ pub fn build_plan_with_adapter(
             proposals.extend(adapter.propose(change));
         }
         for (test_id, origin) in test_ids {
-            let status = evidence_status(
+            let (status, execution_uids) = evidence_status(
                 &test_id,
                 &input.case_versions,
                 &input.target_revision,
@@ -320,6 +363,7 @@ pub fn build_plan_with_adapter(
                 reason: format!("affected by feature change {}", change.event_id),
                 origin,
                 status,
+                execution_uids,
             };
             let key = (item.id.clone(), item.feature_id.clone());
             match affected.entry(key) {

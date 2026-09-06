@@ -8,12 +8,21 @@ use serde::{Deserialize, Serialize};
 use crate::fs_safety::replace_file;
 
 /// Only the fields `record_execution` needs from a generated TestCase.
+/// Includes `phases` (unlike a purely-identity view) because ADR 0017 §5
+/// requires comparing them against the frozen `CaseDefinition` in full, not
+/// just trusting that a matching `(case_uid, case_revision)` key means the
+/// content still agrees. Deliberately has no `#[serde(default)]`: a
+/// generated file missing `phases` (truncated, hand-edited) must fail to
+/// parse as a `MinimalTestCase` rather than silently being treated as an
+/// empty-phases TestCase, which could spuriously "match" a genuinely
+/// empty-phases stored `CaseDefinition` and record false evidence.
 #[derive(Deserialize)]
 struct MinimalTestCase {
     case_id: String,
     #[serde(default)]
     case_uid: Option<String>,
     case_revision: String,
+    phases: Vec<crate::generate::Phase>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +85,17 @@ pub enum RecordError {
     /// under (the case-definitions store was never populated, or was
     /// deleted) would produce an audit trail with nothing to audit.
     CaseDefinitionMissing,
+    /// The frozen definition stored at this TestCase's `(case_uid,
+    /// case_revision)` exists and is internally self-consistent, but its
+    /// `phases` don't match the `phases` the generated TestCase has *right
+    /// now* — e.g. `generated/testcases/*.yml` was hand-edited after
+    /// generation without its `case_revision` label being recomputed, or a
+    /// merge conflict was resolved by taking the wrong side. ADR 0017 §5
+    /// requires evidence to reference a frozen definition of what was
+    /// actually executed; recording against a definition that no longer
+    /// matches what's about to run would produce evidence that audits the
+    /// wrong thing.
+    CaseDefinitionMismatch,
     Io(io::Error),
 }
 
@@ -238,10 +258,18 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<ExecutionEntry
     let Some(case_uid) = testcase.case_uid else {
         return Err(RecordError::CaseNotMigrated);
     };
-    if crate::case_definition::load_case_definition(root, &case_uid, &testcase.case_revision)?
-        .is_none()
-    {
+    let Some(stored_definition) =
+        crate::case_definition::load_case_definition(root, &case_uid, &testcase.case_revision)?
+    else {
         return Err(RecordError::CaseDefinitionMissing);
+    };
+    let current_definition = crate::case_definition::CaseDefinition {
+        case_uid: case_uid.clone(),
+        case_revision: testcase.case_revision.clone(),
+        phases: testcase.phases.clone(),
+    };
+    if stored_definition != current_definition {
+        return Err(RecordError::CaseDefinitionMismatch);
     }
 
     let execution_uid = ulid::Ulid::new().to_string();
@@ -270,7 +298,16 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<ExecutionEntry
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generate::Phase;
     use std::fs;
+
+    /// `write_testcase`'s callers always write `phases: []`, so this is the
+    /// only `case_revision` value that will pass `load_case_definition`'s
+    /// self-consistency check (`case_revision` is defined as a hash of
+    /// `phases`) once a definition is stored under it.
+    fn real_case_revision_for_empty_phases() -> String {
+        crate::generate::compute_case_revision(&[])
+    }
 
     fn write_testcase(root: &Path, case_id: &str, case_uid: Option<&str>, case_revision: &str) {
         let path = root
@@ -426,11 +463,139 @@ mod tests {
         assert!(matches!(result, Err(RecordError::CaseDefinitionMissing)));
     }
 
+    /// A generated `testcases/*.yml` file missing its `phases` key entirely
+    /// (truncated, hand-edited, or otherwise malformed) must never be
+    /// silently treated as an empty-phases TestCase — doing so could let it
+    /// spuriously "match" a genuinely empty-phases stored `CaseDefinition`
+    /// and record evidence for content that was never actually verified.
+    #[test]
+    fn record_execution_does_not_treat_a_testcase_file_missing_phases_as_empty_phases() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        // A real, empty-phases definition is stored under this key — if a
+        // missing `phases` key defaulted to `vec![]`, it would incorrectly
+        // match this and let `record_execution` succeed.
+        let case_revision = real_case_revision_for_empty_phases();
+        let definition_path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("case-definitions")
+            .join("case-uid-1")
+            .join(format!("{case_revision}.yml"));
+        fs::create_dir_all(definition_path.parent().unwrap()).unwrap();
+        fs::write(
+            &definition_path,
+            format!("case_uid: case-uid-1\ncase_revision: {case_revision}\nphases: []\n"),
+        )
+        .unwrap();
+        let testcase_path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated/testcases/feature/behavior/scenario.yml");
+        fs::create_dir_all(testcase_path.parent().unwrap()).unwrap();
+        fs::write(
+            &testcase_path,
+            format!(
+                "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: {case_revision}\n"
+            ),
+        )
+        .unwrap();
+
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: None,
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: None,
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "a testcase file with no phases key must never be recorded as evidence, got: {result:?}"
+        );
+    }
+
+    /// ADR 0017 §5: the generated TestCase must be checked in full against
+    /// the frozen definition, not just by `(case_uid, case_revision)` key
+    /// presence. Here the generated `testcases/*.yml` file's `phases` no
+    /// longer match what's frozen at its own `case_revision` key (as if it
+    /// were hand-edited after generation without the revision being
+    /// recomputed) — recording evidence against it must be rejected, since
+    /// the stored definition it would be audited against isn't actually
+    /// what's about to run.
+    #[test]
+    fn record_execution_errors_when_the_generated_testcase_disagrees_with_the_stored_definition() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let original_phases = vec![Phase {
+            steps: vec!["Do it.".to_string()],
+            results: vec!["Confirmed.".to_string()],
+        }];
+        let case_revision = crate::generate::compute_case_revision(&original_phases);
+        let definition = crate::case_definition::CaseDefinition {
+            case_uid: "case-uid-1".to_string(),
+            case_revision: case_revision.clone(),
+            phases: original_phases,
+        };
+        let definition_path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("case-definitions")
+            .join("case-uid-1")
+            .join(format!("{case_revision}.yml"));
+        fs::create_dir_all(definition_path.parent().unwrap()).unwrap();
+        fs::write(
+            &definition_path,
+            crate::case_definition::serialize_case_definition(&definition),
+        )
+        .unwrap();
+
+        // The generated file still claims the original `case_revision`, but
+        // its `phases` were edited afterward without recomputing it.
+        let testcase_path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated/testcases/feature/behavior/scenario.yml");
+        fs::create_dir_all(testcase_path.parent().unwrap()).unwrap();
+        fs::write(
+            &testcase_path,
+            format!(
+                "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: {case_revision}\n\
+                 phases:\n  - steps: [\"Do it differently.\"]\n    results: [\"Confirmed.\"]\n"
+            ),
+        )
+        .unwrap();
+
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: None,
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: None,
+            },
+        );
+
+        assert!(matches!(result, Err(RecordError::CaseDefinitionMismatch)));
+    }
+
     #[test]
     fn record_execution_writes_one_file_per_execution_and_reads_it_back() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_testcase(dir.path(), "tc-ground-001", Some("case-uid-1"), "rev-1");
+        let case_revision = real_case_revision_for_empty_phases();
+        write_testcase(
+            dir.path(),
+            "tc-ground-001",
+            Some("case-uid-1"),
+            &case_revision,
+        );
 
         let entry = record_execution(
             dir.path(),
@@ -454,7 +619,7 @@ mod tests {
         let all = read_all_results(dir.path()).unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].case_uid, "case-uid-1");
-        assert_eq!(all[0].case_revision, "rev-1");
+        assert_eq!(all[0].case_revision, case_revision);
         assert_eq!(all[0].target_revision, "abc123");
         assert_eq!(all[0].environment.as_deref(), Some("staging"));
         assert_eq!(all[0].result, "pass");
@@ -465,7 +630,12 @@ mod tests {
     fn record_execution_twice_produces_two_distinct_files() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_testcase(dir.path(), "tc-ground-001", Some("case-uid-1"), "rev-1");
+        write_testcase(
+            dir.path(),
+            "tc-ground-001",
+            Some("case-uid-1"),
+            &real_case_revision_for_empty_phases(),
+        );
 
         let args = RecordArgs {
             case_id: "tc-ground-001",

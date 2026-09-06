@@ -47,6 +47,7 @@ fn plan_engine_never_treats_unknown_environment_evidence_as_applicable_even_with
         test_id: "tc-checkout".to_string(),
         result: EvidenceResult::Pass,
         executed_at: Some("2026-08-18T10:00:00Z".to_string()),
+        execution_uid: None,
         bound_versions,
     }];
 
@@ -112,6 +113,7 @@ fn plan_engine_treats_a_blank_environment_value_the_same_as_no_environment_key()
         test_id: "tc-checkout".to_string(),
         result: EvidenceResult::Pass,
         executed_at: Some("2026-08-18T10:00:00Z".to_string()),
+        execution_uid: None,
         bound_versions,
     }];
 
@@ -173,6 +175,7 @@ fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_pi
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Fail,
             executed_at: Some("2026-08-18T10:00:00Z".to_string()),
+            execution_uid: Some("exec-fail".to_string()),
             bound_versions: bound_versions.clone(),
         },
         // Recorded later, but disagrees with the fail above — the plan must
@@ -181,6 +184,7 @@ fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_pi
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Pass,
             executed_at: Some("2026-08-18T11:00:00Z".to_string()),
+            execution_uid: Some("exec-pass".to_string()),
             bound_versions,
         },
     ];
@@ -208,6 +212,11 @@ fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_pi
         "conflicting applicable evidence must be unresolved, not silently picked by timestamp"
     );
     assert_eq!(plan.summary.unresolved, 1);
+    assert_eq!(
+        plan.affected_existing_tests[0].execution_uids,
+        vec!["exec-fail".to_string(), "exec-pass".to_string()],
+        "an Unresolved status must name every conflicting execution so a human can audit them"
+    );
 }
 
 #[test]
@@ -256,16 +265,20 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
     // ADR 0017 §5 only forbids resolving *conflicting* results by timestamp
     // alone — agreeing records may coexist without ambiguity.
     let evidence = vec![
+        // Recorded later, but agrees — deliberately listed first so a
+        // naive "first in the input" pick would get this wrong.
         PlanEvidence {
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Pass,
-            executed_at: Some("2026-08-18T09:00:00Z".to_string()),
+            executed_at: Some("2026-08-18T10:00:00Z".to_string()),
+            execution_uid: Some("exec-later".to_string()),
             bound_versions: bound_versions.clone(),
         },
         PlanEvidence {
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Pass,
-            executed_at: Some("2026-08-18T10:00:00Z".to_string()),
+            executed_at: Some("2026-08-18T09:00:00Z".to_string()),
+            execution_uid: Some("exec-earlier".to_string()),
             bound_versions,
         },
     ];
@@ -289,11 +302,77 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
 
     assert_eq!(plan.affected_existing_tests.len(), 1);
     assert_eq!(plan.affected_existing_tests[0].status, TestStatus::Passed);
+    assert_eq!(
+        plan.affected_existing_tests[0].execution_uids,
+        vec!["exec-earlier".to_string()],
+        "agreeing evidence must deterministically adopt the earliest-executed record, \
+         regardless of input order"
+    );
     assert_eq!(plan.new_required_tests.len(), 1);
     assert_eq!(plan.new_required_tests[0].feature_id, "search");
     assert_eq!(plan.summary.changed_features, 2);
     assert_eq!(plan.summary.passed, 1);
     assert_eq!(plan.summary.new_tests, 1);
+}
+
+/// ADR 0017 §5: "計画には採用する実行結果を明示的に関連付ける" — a passed
+/// test's `AffectedExistingTest` must name the `execution_uid` of the record
+/// that backs the judgement, not leave the reader to guess which of
+/// potentially many recorded executions was used.
+#[test]
+fn plan_engine_exposes_the_execution_uid_that_backs_a_passed_status() {
+    let change = ChangeEvent {
+        event_id: "checkout--base--head".to_string(),
+        feature_id: "checkout".to_string(),
+        feature_uid: None,
+        feature_id_at_from: None,
+        feature_id_at_to: None,
+        from_milestone: "base".to_string(),
+        to_milestone: "head".to_string(),
+        from_tree_sha: Some("old".to_string()),
+        to_tree_sha: Some("new".to_string()),
+        impacted_testcases: vec!["tc-checkout".to_string()],
+        impact_reason: markharness::changes::ImpactReason::default(),
+        change_type: None,
+        true_divergences: vec![],
+        related_events: vec![],
+    };
+    let bound_versions = BTreeMap::from([
+        ("case_uid".to_string(), "case-checkout-1".to_string()),
+        ("case_revision".to_string(), "rev-new".to_string()),
+        ("target_revision".to_string(), "head".to_string()),
+        ("environment".to_string(), "ci".to_string()),
+    ]);
+    let evidence = vec![PlanEvidence {
+        test_id: "tc-checkout".to_string(),
+        result: EvidenceResult::Pass,
+        executed_at: Some("2026-08-18T10:00:00Z".to_string()),
+        execution_uid: Some("exec-1".to_string()),
+        bound_versions,
+    }];
+
+    let plan = build_plan(PlanInput {
+        base: "base".to_string(),
+        head: "head".to_string(),
+        changes: vec![change],
+        evidence,
+        stored_traces: vec![],
+        target_revision: "head".to_string(),
+        environment: Some("ci".to_string()),
+        case_versions: BTreeMap::from([(
+            "tc-checkout".to_string(),
+            markharness::plan::CaseVersion {
+                case_uid: "case-checkout-1".to_string(),
+                case_revision: "rev-new".to_string(),
+            },
+        )]),
+    });
+
+    assert_eq!(plan.affected_existing_tests[0].status, TestStatus::Passed);
+    assert_eq!(
+        plan.affected_existing_tests[0].execution_uids,
+        vec!["exec-1".to_string()]
+    );
 }
 
 #[test]
