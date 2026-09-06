@@ -66,13 +66,13 @@ fn a_uid_less_element_added_after_cutover_is_rejected_by_validate_until_repaired
     // into an already cut-over project (ADR 0013 検証規則).
     std::fs::create_dir_all(
         dir.path()
-            .join(".markharness/knowledge/req-todo/todo-again"),
+            .join(".markharness/knowledge/features/todo-again"),
     )
     .unwrap();
     std::fs::write(
         dir.path()
-            .join(".markharness/knowledge/req-todo/todo-again/feature.yml"),
-        "id: todo-again\nrequirement: req-todo\nlabel: todo again\naxis: []\n",
+            .join(".markharness/knowledge/features/todo-again/feature.yml"),
+        "id: todo-again\nrequirement_ids: [req-todo]\nlabel: todo again\naxis: []\n",
     )
     .unwrap();
 

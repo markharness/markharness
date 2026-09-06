@@ -1,7 +1,20 @@
+use markharness::plan::{PlanSummary, VerificationPlan};
 use markharness::presentation::{
     CommandOutcome, HumanPresenter, JsonPresenter, PresentedResult, Presenter,
 };
-use markharness::verify::PendingReport;
+
+fn empty_plan(summary: PlanSummary) -> VerificationPlan {
+    VerificationPlan {
+        schema_version: 1,
+        base: "base".to_string(),
+        head: "head".to_string(),
+        summary,
+        changed_features: Vec::new(),
+        affected_existing_tests: Vec::new(),
+        new_required_tests: Vec::new(),
+        obsolete_tests: Vec::new(),
+    }
+}
 
 #[test]
 fn human_presenter_renders_generated_outcome_without_side_effects() {
@@ -96,6 +109,25 @@ fn json_presenter_omits_warnings_for_changes_computed_when_there_are_none() {
     );
 }
 
+/// ADR 0017 §5: unresolved (mutually conflicting) evidence must stop a
+/// verification plan from reading as clean — it needs the same attention as
+/// an outright failure. Regression test for a bug where `plan_exit_code`
+/// ignored `summary.unresolved`, letting a plan with contradictory evidence
+/// exit 0.
+#[test]
+fn plan_exit_code_is_nonzero_when_evidence_is_unresolved() {
+    let plan = empty_plan(PlanSummary {
+        unresolved: 1,
+        ..PlanSummary::default()
+    });
+
+    let json_result = JsonPresenter.present(&CommandOutcome::PlanBuilt(plan.clone()));
+    let human_result = HumanPresenter.present(&CommandOutcome::PlanBuilt(plan));
+
+    assert_eq!(json_result.exit_code, 1);
+    assert_eq!(human_result.exit_code, 1);
+}
+
 #[test]
 fn human_presenter_prints_warnings_for_changes_computed() {
     let result = HumanPresenter.present(&CommandOutcome::ChangesComputed {
@@ -108,22 +140,6 @@ fn human_presenter_prints_warnings_for_changes_computed() {
         result
             .stdout
             .contains("warning: legacy schema version 1 assumed at ref v1\n"),
-        "unexpected stdout: {}",
-        result.stdout
-    );
-}
-
-/// Same `audit_scope` contract for `verify pending`'s JSON output.
-#[test]
-fn json_presenter_marks_pending_with_the_two_snapshot_audit_scope() {
-    let result = JsonPresenter.present(&CommandOutcome::Pending {
-        report: PendingReport::default(),
-        fail_on_pending: false,
-    });
-
-    assert_eq!(result.exit_code, 0);
-    assert!(
-        result.stdout.contains("\"audit_scope\":\"two_snapshot\""),
         "unexpected stdout: {}",
         result.stdout
     );

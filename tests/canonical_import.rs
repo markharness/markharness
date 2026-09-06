@@ -51,7 +51,7 @@ fn junit_import_marks_declared_condition_trace_as_stored() {
     let xml = r#"<testsuite name="checkout">
   <testcase classname="checkout" name="accepts_card">
     <properties>
-      <property name="markharness.condition" value="valid-card"/>
+      <property name="markharness.scenario" value="valid-card"/>
     </properties>
   </testcase>
 </testsuite>"#;
@@ -66,7 +66,7 @@ fn junit_import_marks_declared_condition_trace_as_stored() {
     assert_eq!(snapshot.relations[0].relation_type, "verifies");
     assert_eq!(
         snapshot.relations[0].to,
-        "markharness-native:condition:valid-card"
+        "markharness-native:scenario:valid-card"
     );
 }
 
@@ -93,41 +93,41 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
     git(repo.path(), &["config", "core.autocrlf", "false"]);
     let base = repo
         .path()
-        .join(".markharness/knowledge/checkout/pay/card/valid-card");
-    fs::create_dir_all(base.join("expected")).unwrap();
+        .join(".markharness/knowledge/features/pay/card/valid-card");
+    fs::create_dir_all(&base).unwrap();
+    fs::create_dir_all(
+        repo.path()
+            .join(".markharness/knowledge/requirements/checkout"),
+    )
+    .unwrap();
     fs::write(
         repo.path()
-            .join(".markharness/knowledge/checkout/requirement.yml"),
+            .join(".markharness/knowledge/requirements/checkout/requirement.yml"),
         "id: checkout\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     fs::write(
         repo.path()
-            .join(".markharness/knowledge/checkout/pay/feature.yml"),
-        "id: pay\nrequirement: checkout\nlabel: Pay\naxis: []\n",
+            .join(".markharness/knowledge/features/pay/feature.yml"),
+        "id: pay\nrequirement_ids: [checkout]\nlabel: Pay\naxis: []\n",
     )
     .unwrap();
     fs::write(
         repo.path()
-            .join(".markharness/knowledge/checkout/pay/card/behavior.yml"),
-        "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\npreconditions:\n  - \"Enter the card number.\"\n",
+            .join(".markharness/knowledge/features/pay/card/behavior.yml"),
+        "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\nprocedures: {}\n",
     )
     .unwrap();
     fs::write(
-        base.join("condition.yml"),
-        "id: valid-card\nbehavior: card\nlabel: Valid card\ndescription: A valid card.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-    )
-    .unwrap();
-    fs::write(
-        base.join("expected/001.yml"),
-        "id: accepted\ncondition: valid-card\ndescription: Payment is accepted.\nresults:\n  - \"Confirmed.\"\n",
+        base.join("scenario.yml"),
+        "id: valid-card\nbehavior: card\nlabel: Valid card\ndescription: A valid card.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
     )
     .unwrap();
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-qm", "fixture"]);
     fs::write(
-        base.join("condition.yml"),
-        "id: working-tree-only\nbehavior: card\nlabel: Working tree\ndescription: Not committed.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+        base.join("scenario.yml"),
+        "id: working-tree-only\nbehavior: card\nlabel: Working tree\ndescription: Not committed.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
     )
     .unwrap();
 
@@ -142,8 +142,8 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
     assert_eq!(feature.external_id, "pay");
     assert!(feature.version.git_oid.is_some());
     assert!(snapshot.relations.iter().any(|relation| {
-        relation.from == "markharness-native:test_case:tc-checkout-pay-card-valid-card"
-            && relation.to == "markharness-native:condition:valid-card"
+        relation.from == "markharness-native:test_case:tc-pay-card-valid-card"
+            && relation.to == "markharness-native:scenario:valid-card"
             && relation.origin.kind == RelationOriginKind::Derived
             && relation.origin.rule.as_deref() == Some("markharness-generate")
     }));
@@ -152,6 +152,97 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
             .artifacts
             .iter()
             .any(|artifact| artifact.external_id == "working-tree-only")
+    );
+}
+
+/// ADR 0017 §3: `canonical_hash` on a Scenario/TestCase artifact must be
+/// `case_revision` — a function of effective content alone, stable across a
+/// description-only edit but different when the step content differs.
+#[test]
+fn native_import_canonical_hash_reflects_case_revision_not_raw_git_oid() {
+    fn commit_scenario(root: &std::path::Path, description: &str, step: &str) {
+        let base = root.join(".markharness/knowledge/features/pay/card/valid-card");
+        fs::create_dir_all(&base).unwrap();
+        fs::write(
+            base.join("scenario.yml"),
+            format!(
+                "id: valid-card\nbehavior: card\nlabel: Valid card\ndescription: |\n  {description}\nphases:\n  - steps:\n      - action: \"{step}\"\n    results:\n      - \"Confirmed.\"\n"
+            ),
+        )
+        .unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-qm", "scenario update"]);
+    }
+
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q", "-b", "main"]);
+    git(repo.path(), &["config", "user.email", "test@example.com"]);
+    git(repo.path(), &["config", "user.name", "Test"]);
+    git(repo.path(), &["config", "core.autocrlf", "false"]);
+    fs::create_dir_all(
+        repo.path()
+            .join(".markharness/knowledge/requirements/checkout"),
+    )
+    .unwrap();
+    fs::write(
+        repo.path()
+            .join(".markharness/knowledge/requirements/checkout/requirement.yml"),
+        "id: checkout\nlabel: Checkout\naxis: []\n",
+    )
+    .unwrap();
+    fs::create_dir_all(repo.path().join(".markharness/knowledge/features/pay/card")).unwrap();
+    fs::write(
+        repo.path()
+            .join(".markharness/knowledge/features/pay/feature.yml"),
+        "id: pay\nrequirement_ids: [checkout]\nlabel: Pay\naxis: []\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.path()
+            .join(".markharness/knowledge/features/pay/card/behavior.yml"),
+        "id: card\nfeature: pay\nlabel: Card\naxis: []\ndescription: Pay by card.\nprocedures: {}\n",
+    )
+    .unwrap();
+    commit_scenario(repo.path(), "A valid card.", "Do it.");
+    let before = import_native(repo.path(), "HEAD").unwrap();
+    let hash_before = before
+        .artifacts
+        .iter()
+        .find(|a| a.kind == ArtifactKind::TestCase)
+        .unwrap()
+        .version
+        .canonical_hash
+        .clone();
+    assert!(hash_before.is_some());
+
+    commit_scenario(repo.path(), "A valid card, reworded.", "Do it.");
+    let after_description_only = import_native(repo.path(), "HEAD").unwrap();
+    let hash_after_description_only = after_description_only
+        .artifacts
+        .iter()
+        .find(|a| a.kind == ArtifactKind::TestCase)
+        .unwrap()
+        .version
+        .canonical_hash
+        .clone();
+    assert_eq!(
+        hash_before, hash_after_description_only,
+        "a description-only edit must not change canonical_hash"
+    );
+
+    commit_scenario(repo.path(), "A valid card, reworded.", "Do it differently.");
+    let after_step_change = import_native(repo.path(), "HEAD").unwrap();
+    let hash_after_step_change = after_step_change
+        .artifacts
+        .iter()
+        .find(|a| a.kind == ArtifactKind::TestCase)
+        .unwrap()
+        .version
+        .canonical_hash
+        .clone();
+    assert_ne!(
+        hash_before, hash_after_step_change,
+        "a step content edit must change canonical_hash"
     );
 }
 
@@ -167,17 +258,22 @@ fn native_import_carries_the_feature_uid_when_the_feature_has_one() {
     git(repo.path(), &["config", "user.email", "test@example.com"]);
     git(repo.path(), &["config", "user.name", "Test"]);
     git(repo.path(), &["config", "core.autocrlf", "false"]);
-    fs::create_dir_all(repo.path().join(".markharness/knowledge/checkout/pay")).unwrap();
+    fs::create_dir_all(repo.path().join(".markharness/knowledge/features/pay")).unwrap();
+    fs::create_dir_all(
+        repo.path()
+            .join(".markharness/knowledge/requirements/checkout"),
+    )
+    .unwrap();
     fs::write(
         repo.path()
-            .join(".markharness/knowledge/checkout/requirement.yml"),
+            .join(".markharness/knowledge/requirements/checkout/requirement.yml"),
         "id: checkout\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     fs::write(
         repo.path()
-            .join(".markharness/knowledge/checkout/pay/feature.yml"),
-        format!("id: pay\nrequirement: checkout\nlabel: Pay\naxis: []\nuid: {UID}\n"),
+            .join(".markharness/knowledge/features/pay/feature.yml"),
+        format!("id: pay\nrequirement_ids: [checkout]\nlabel: Pay\naxis: []\nuid: {UID}\n"),
     )
     .unwrap();
     git(repo.path(), &["add", "."]);

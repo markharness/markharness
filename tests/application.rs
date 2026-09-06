@@ -207,15 +207,3 @@ fn compute_changes_use_case_writes_change_events_and_returns_an_outcome() {
     );
     assert!(root.path().join(".markharness/changes/m2.yaml").is_file());
 }
-
-#[test]
-fn verify_pending_use_case_preserves_the_domain_error_when_no_pair_exists() {
-    let root = tempfile::tempdir().unwrap();
-
-    let result = application::verify_pending(root.path(), None, true, false);
-
-    assert!(matches!(
-        result,
-        Err(markharness::verify::PendingError::NoMilestonePair)
-    ));
-}

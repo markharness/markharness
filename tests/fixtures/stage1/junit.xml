@@ -2,7 +2,7 @@
 <testsuite name="checkout" timestamp="2026-08-18T10:00:00Z">
   <testcase classname="checkout" name="accepts_card">
     <properties>
-      <property name="markharness.condition" value="valid-card"/>
+      <property name="markharness.scenario" value="valid-card"/>
     </properties>
   </testcase>
 </testsuite>

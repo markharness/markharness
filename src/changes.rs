@@ -112,10 +112,10 @@ pub enum ImpactSource {
 /// `Feature` (the default, and the only behavior before this option
 /// existed) keeps every TestCase generated from a changed Feature as a
 /// candidate — safe-side, but over-inclusive when only some of a Feature's
-/// Behaviors/Conditions actually changed. `Behavior`/`Condition` narrow the
-/// candidate set to only the Behaviors/Conditions whose own subtree
+/// Behaviors/Scenarios actually changed. `Behavior`/`Scenario` narrow the
+/// candidate set to only the Behaviors/Scenarios whose own subtree
 /// actually changed, trading recall for precision: this tool has no way to
-/// detect coupling between sibling Behaviors/Conditions that isn't
+/// detect coupling between sibling Behaviors/Scenarios that isn't
 /// expressed in the schema, so choosing a finer granularity is an
 /// explicit, opt-in risk the user takes on (see the design discussion on
 /// issue #15).
@@ -125,12 +125,12 @@ pub enum Granularity {
     #[default]
     Feature,
     Behavior,
-    Condition,
+    Scenario,
 }
 
 /// Why each of a `ChangeEvent`'s `impacted_testcases` was selected (issue
 /// #15): the `Granularity` `changes compute` was run with, plus the
-/// repo-relative marker-file paths (`behavior.yml`/`condition.yml`) whose
+/// repo-relative marker-file paths (`behavior.yml`/`scenario.yml`) whose
 /// content actually differed between `from_milestone` and `to_milestone`
 /// and drove the narrowing decision. `changed_paths` is empty for
 /// `Granularity::Feature` — narrowing isn't attempted at that granularity
@@ -277,19 +277,19 @@ const SUBUNIT_KEY_SEP: char = '\u{1}';
 
 /// The key `impacted` (the per-`Granularity` testcase grouping below) and
 /// the "which subunits changed" computation in `diff_events` both use to
-/// refer to the same Behavior/Condition, so the two sides always agree.
+/// refer to the same Behavior/Scenario, so the two sides always agree.
 /// `Granularity::Feature` never calls this — `impacted` stays keyed by
 /// plain `feature_id`, as it always has been.
-fn subunit_key(feature_id: &str, behavior_id: &str, condition_id: Option<&str>) -> String {
-    match condition_id {
-        Some(condition_id) => {
-            format!("{feature_id}{SUBUNIT_KEY_SEP}{behavior_id}{SUBUNIT_KEY_SEP}{condition_id}")
+fn subunit_key(feature_id: &str, behavior_id: &str, scenario_id: Option<&str>) -> String {
+    match scenario_id {
+        Some(scenario_id) => {
+            format!("{feature_id}{SUBUNIT_KEY_SEP}{behavior_id}{SUBUNIT_KEY_SEP}{scenario_id}")
         }
         None => format!("{feature_id}{SUBUNIT_KEY_SEP}{behavior_id}"),
     }
 }
 
-/// `id_cache::resolve_behavior_versions`/`resolve_condition_versions`
+/// `id_cache::resolve_behavior_versions`/`resolve_scenario_versions`
 /// results (issue #15), grouped by the Feature directory each subunit
 /// belongs to — `diff_events` resolves this once per side of the interval,
 /// then looks up only the slice relevant to the Feature it's currently
@@ -316,56 +316,66 @@ impl SubunitsByFeatureDir {
     }
 }
 
+/// The Behavior/Scenario-narrowing data `diff_events` resolves once per run
+/// (issue #15) and looks up per-Feature inside its main loop. `Behavior`
+/// narrows by tree-SHA equality (`changed_subunit_impacted_testcases`);
+/// `Scenario` narrows by `case_revision` equality
+/// (`changed_scenario_impacted_testcases_by_revision`, ADR 0017 §3) — the
+/// two need different comparison data, hence the enum rather than a single
+/// tuple shape.
+enum SubunitContext {
+    Behavior(SubunitsByFeatureDir, SubunitsByFeatureDir),
+    Scenario {
+        /// Structural-validation data only (`validate_scenario_subunits_have_parent_behavior`):
+        /// every Scenario directory found at each ref, so a Scenario whose
+        /// `behavior:` doesn't resolve to a real Behavior is caught rather
+        /// than silently ignored.
+        from_versions: SubunitsByFeatureDir,
+        to_versions: SubunitsByFeatureDir,
+        /// `subunit_key` → `(case_id, case_revision, scenario.yml path)`,
+        /// used for the actual impact decision.
+        from_case_map: BTreeMap<String, (String, String, String)>,
+        to_case_map: BTreeMap<String, (String, String, String)>,
+    },
+}
+
 /// The result of narrowing a Feature's `impacted_testcases` at Behavior/
-/// Condition granularity: the narrowed candidate set, plus the evidence for
+/// Scenario granularity: the narrowed candidate set, plus the evidence for
 /// it (`ImpactReason::changed_paths`, issue #15).
 struct SubunitNarrowing {
     testcases: Vec<String>,
     changed_paths: Vec<String>,
 }
 
-/// Narrows a Feature's `impacted_testcases` down to only the Behaviors/
-/// Conditions that actually changed within it (issue #15), instead of
-/// every TestCase generated from the Feature. `from_here`/`to_here` are
-/// already scoped to this one Feature (`SubunitsByFeatureDir::under`).
-/// Keyed by `(parent_behavior_id, id)` rather than bare `id` because a
-/// Condition's `id` is only unique among its own Behavior's siblings (see
-/// `id_cache::resolve_marker_versions`'s doc comment) — without the
-/// Behavior discriminant, two Conditions with the same id under different
-/// Behaviors of the same Feature would collide.
+/// Narrows a Feature's `impacted_testcases` down to only the Behaviors that
+/// actually changed within it (issue #15), instead of every TestCase
+/// generated from the Feature. `from_here`/`to_here` are already scoped to
+/// this one Feature (`SubunitsByFeatureDir::under`). Behavior-only: Scenario
+/// granularity uses `changed_scenario_impacted_testcases_by_revision`
+/// instead, since a Scenario's impact must be decided by `case_revision`
+/// (ADR 0017 §3), not raw tree-SHA equality — a description-only edit
+/// changes a Scenario's tree SHA without changing its effective content.
 fn changed_subunit_impacted_testcases(
     feature_id: &str,
-    granularity: Granularity,
     from_here: &[id_cache::SubunitVersion],
     to_here: &[id_cache::SubunitVersion],
     impacted: &BTreeMap<String, Vec<String>>,
-) -> io::Result<SubunitNarrowing> {
-    let marker_file = match granularity {
-        Granularity::Behavior => "behavior.yml",
-        Granularity::Condition => "condition.yml",
-        Granularity::Feature => {
-            unreachable!("diff_events only calls this for Behavior/Condition granularity")
-        }
-    };
-    let from_by_key: BTreeMap<(Option<&str>, &str), &id_cache::SubunitVersion> = from_here
-        .iter()
-        .map(|v| ((v.parent_behavior_id.as_deref(), v.id.as_str()), v))
-        .collect();
-    let to_by_key: BTreeMap<(Option<&str>, &str), &id_cache::SubunitVersion> = to_here
-        .iter()
-        .map(|v| ((v.parent_behavior_id.as_deref(), v.id.as_str()), v))
-        .collect();
-    let all_keys: BTreeSet<(Option<&str>, &str)> = from_by_key
+) -> SubunitNarrowing {
+    let from_by_key: BTreeMap<&str, &id_cache::SubunitVersion> =
+        from_here.iter().map(|v| (v.id.as_str(), v)).collect();
+    let to_by_key: BTreeMap<&str, &id_cache::SubunitVersion> =
+        to_here.iter().map(|v| (v.id.as_str(), v)).collect();
+    let all_keys: BTreeSet<&str> = from_by_key
         .keys()
         .chain(to_by_key.keys())
-        .cloned()
+        .copied()
         .collect();
 
     let mut testcases = Vec::new();
     let mut changed_paths = Vec::new();
-    for key @ (parent_behavior_id, id) in all_keys {
-        let from_version = from_by_key.get(&key).copied();
-        let to_version = to_by_key.get(&key).copied();
+    for id in all_keys {
+        let from_version = from_by_key.get(id).copied();
+        let to_version = to_by_key.get(id).copied();
         let from_sha = from_version.map(|v| &v.tree_sha);
         let to_sha = to_version.map(|v| &v.tree_sha);
         if from_sha == to_sha {
@@ -376,40 +386,107 @@ fn changed_subunit_impacted_testcases(
         // `from` for a deletion) — evidence for `ImpactReason::changed_paths`.
         let subunit_dir = to_version.or(from_version).map(|v| v.path.as_str());
         if let Some(subunit_dir) = subunit_dir {
-            changed_paths.push(format!("{subunit_dir}/{marker_file}"));
+            changed_paths.push(format!("{subunit_dir}/behavior.yml"));
         }
-        let subunit_key_value = match granularity {
-            Granularity::Behavior => subunit_key(feature_id, id, None),
-            Granularity::Condition => {
-                // A `condition.yml` whose directory isn't beneath a
-                // resolvable `behavior.yml` (malformed `knowledge/`) — not
-                // this project's structural invariant to enforce silently,
-                // so fail with a clear error rather than panic on
-                // untrusted/external Knowledge content.
-                let Some(behavior_id) = parent_behavior_id else {
-                    let offending_path = to_version
-                        .or(from_version)
-                        .map(|v| v.path.as_str())
-                        .unwrap_or(id);
-                    return Err(io::Error::other(format!(
-                        "condition '{id}' at '{offending_path}' has no resolvable parent Behavior id; \
-                         --granularity condition requires every Condition directory to sit under a valid behavior.yml"
-                    )));
-                };
-                subunit_key(feature_id, behavior_id, Some(id))
-            }
-            Granularity::Feature => {
-                unreachable!("diff_events only calls this for Behavior/Condition granularity")
-            }
-        };
+        let subunit_key_value = subunit_key(feature_id, id, None);
         if let Some(case_ids) = impacted.get(&subunit_key_value) {
             testcases.extend(case_ids.iter().cloned());
         }
     }
-    Ok(SubunitNarrowing {
+    SubunitNarrowing {
         testcases,
         changed_paths,
-    })
+    }
+}
+
+/// Fails with a clear error, rather than silently ignoring the Scenario, when
+/// a `scenario.yml` directory isn't beneath a resolvable `behavior.yml`
+/// (malformed `knowledge/`) — not this project's structural invariant to
+/// enforce silently on untrusted/external Knowledge content.
+fn validate_scenario_subunits_have_parent_behavior(
+    from_here: &[id_cache::SubunitVersion],
+    to_here: &[id_cache::SubunitVersion],
+) -> io::Result<()> {
+    for version in from_here.iter().chain(to_here.iter()) {
+        if version.parent_behavior_id.is_none() {
+            return Err(io::Error::other(format!(
+                "scenario '{}' at '{}' has no resolvable parent Behavior id; \
+                 --granularity scenario requires every Scenario directory to sit under a valid behavior.yml",
+                version.id, version.path
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Narrows a Feature's `impacted_testcases` down to only the Scenarios whose
+/// `case_revision` actually differs between `from_map`/`to_map` (ADR 0017
+/// §3), keyed by `subunit_key` (`feature_id`+`behavior_id`+`scenario_id`,
+/// filtered here to just `feature_id`'s own entries). Unlike the Behavior/
+/// tree-SHA-based narrowing, this compares effective content directly rather
+/// than short-circuiting on an unchanged Scenario directory tree SHA — a
+/// Scenario's `case_revision` can change purely because a common procedure
+/// it `use:`s was edited, with `scenario.yml` itself byte-for-byte
+/// unchanged (ADR 0017 §3's "共通手順の変更" row).
+fn changed_scenario_impacted_testcases_by_revision(
+    feature_id: &str,
+    from_map: &BTreeMap<String, (String, String, String)>,
+    to_map: &BTreeMap<String, (String, String, String)>,
+) -> SubunitNarrowing {
+    let prefix = format!("{feature_id}{SUBUNIT_KEY_SEP}");
+    let keys: BTreeSet<&String> = from_map
+        .keys()
+        .chain(to_map.keys())
+        .filter(|key| key.starts_with(&prefix))
+        .collect();
+
+    let mut testcases = Vec::new();
+    let mut changed_paths = Vec::new();
+    for key in keys {
+        let from_entry = from_map.get(key);
+        let to_entry = to_map.get(key);
+        let from_revision = from_entry.map(|(_, revision, _)| revision.as_str());
+        let to_revision = to_entry.map(|(_, revision, _)| revision.as_str());
+        if from_revision == to_revision {
+            continue;
+        }
+        let Some((case_id, _, scenario_path)) = to_entry.or(from_entry) else {
+            continue;
+        };
+        testcases.push(case_id.clone());
+        changed_paths.push(scenario_path.clone());
+    }
+    SubunitNarrowing {
+        testcases,
+        changed_paths,
+    }
+}
+
+/// Maps each Scenario (keyed by `subunit_key(feature, behavior, Some(scenario))`)
+/// to its `(case_id, case_revision, scenario.yml repo-relative path)`, for
+/// `changed_scenario_impacted_testcases_by_revision`.
+fn scenario_testcases_by_key(
+    source: &dyn KnowledgeSource,
+) -> io::Result<BTreeMap<String, (String, String, String)>> {
+    let testcases = generate::compile_testcases(&source.load_snapshot()?);
+    Ok(testcases
+        .into_iter()
+        .map(|testcase| {
+            let key = subunit_key(
+                &testcase.generated_from.feature,
+                &testcase.generated_from.behavior,
+                Some(&testcase.generated_from.scenario),
+            );
+            (
+                key,
+                (
+                    testcase.case_id,
+                    testcase.case_revision,
+                    testcase.case_files.scenario,
+                ),
+            )
+        })
+        .collect())
 }
 
 /// Maps each Feature id to the `case_id`s of testcases generated from it,
@@ -457,8 +534,8 @@ fn historical_testcases_by_feature(
 /// Groups `case_id`s by the id text at `granularity` (issue #15): plain
 /// `feature_id` for `Granularity::Feature` (unchanged from before this
 /// option existed), or a `subunit_key` composite for `Behavior`/
-/// `Condition` so `diff_events` can narrow the candidate set to only the
-/// Behaviors/Conditions it independently determined actually changed.
+/// `Scenario` so `diff_events` can narrow the candidate set to only the
+/// Behaviors/Scenarios it independently determined actually changed.
 fn testcases_by_key(
     testcases: Vec<generate::TestCase>,
     granularity: Granularity,
@@ -471,10 +548,10 @@ fn testcases_by_key(
             Granularity::Behavior => {
                 subunit_key(&generated_from.feature, &generated_from.behavior, None)
             }
-            Granularity::Condition => subunit_key(
+            Granularity::Scenario => subunit_key(
                 &generated_from.feature,
                 &generated_from.behavior,
-                Some(&generated_from.condition),
+                Some(&generated_from.scenario),
             ),
         };
         by_key.entry(key).or_default().push(testcase.case_id);
@@ -486,7 +563,7 @@ fn testcases_by_key(
 /// `to_milestone` (two git tags) by comparing each Feature's directory tree
 /// SHA at each tag (§3.2〜3.4 の簡易版; マイルストーン=引数のtag名をそのまま
 /// 使用)。Using the whole directory's tree SHA rather than just
-/// `feature.yml`'s blob SHA means Condition/Behavior/ExpectedResult changes
+/// `feature.yml`'s blob SHA means Behavior/Scenario changes
 /// are detected even when `feature.yml` itself is untouched.
 ///
 /// `impacted_testcases` is derived from `to_milestone`'s tree by default
@@ -609,14 +686,37 @@ fn diff_events(
     // pay for.
     let subunits = match options.granularity {
         Granularity::Feature => None,
-        Granularity::Behavior => Some((
+        Granularity::Behavior => Some(SubunitContext::Behavior(
             SubunitsByFeatureDir::new(id_cache::resolve_behavior_versions(root, from_milestone)?),
             SubunitsByFeatureDir::new(id_cache::resolve_behavior_versions(root, to_milestone)?),
         )),
-        Granularity::Condition => Some((
-            SubunitsByFeatureDir::new(id_cache::resolve_condition_versions(root, from_milestone)?),
-            SubunitsByFeatureDir::new(id_cache::resolve_condition_versions(root, to_milestone)?),
-        )),
+        Granularity::Scenario => {
+            let from_versions = SubunitsByFeatureDir::new(id_cache::resolve_scenario_versions(
+                root,
+                from_milestone,
+            )?);
+            let to_versions =
+                SubunitsByFeatureDir::new(id_cache::resolve_scenario_versions(root, to_milestone)?);
+            let from_case_map =
+                scenario_testcases_by_key(&GitTreeKnowledgeSource::new(root, from_milestone))?;
+            let to_case_map = match options.impact_source {
+                ImpactSource::HistoricalTree => {
+                    scenario_testcases_by_key(&GitTreeKnowledgeSource::new(root, to_milestone))?
+                }
+                ImpactSource::CurrentWorkingTree => {
+                    scenario_testcases_by_key(&WorkingTreeKnowledgeSource::new(
+                        root.join(crate::project_root::MARKHARNESS_DIR)
+                            .join("knowledge"),
+                    ))?
+                }
+            };
+            Some(SubunitContext::Scenario {
+                from_versions,
+                to_versions,
+                from_case_map,
+                to_case_map,
+            })
+        }
     };
     let merge_commits = find_merge_commits_in_interval(root, from_milestone, to_milestone)?;
     let mut true_divergences_by_key: BTreeMap<String, Vec<TrueDivergence>> = BTreeMap::new();
@@ -685,14 +785,30 @@ fn diff_events(
                     .unwrap_or_default(),
                 Vec::new(),
             ),
-            Some((from_subunits, to_subunits)) => {
+            Some(SubunitContext::Behavior(from_subunits, to_subunits)) => {
                 let narrowing = changed_subunit_impacted_testcases(
                     &feature_id,
-                    options.granularity,
                     from_subunits.under(from.map(|v| v.path.as_str())),
                     to_subunits.under(to.map(|v| v.path.as_str())),
                     &impacted,
+                );
+                (narrowing.testcases, narrowing.changed_paths)
+            }
+            Some(SubunitContext::Scenario {
+                from_versions,
+                to_versions,
+                from_case_map,
+                to_case_map,
+            }) => {
+                validate_scenario_subunits_have_parent_behavior(
+                    from_versions.under(from.map(|v| v.path.as_str())),
+                    to_versions.under(to.map(|v| v.path.as_str())),
                 )?;
+                let narrowing = changed_scenario_impacted_testcases_by_revision(
+                    &feature_id,
+                    from_case_map,
+                    to_case_map,
+                );
                 (narrowing.testcases, narrowing.changed_paths)
             }
         };
@@ -954,69 +1070,59 @@ mod tests {
     }
 
     fn write_full_chain(root: &Path, label: &str) {
-        let base = root.join(".markharness/knowledge/controls/player-jump/jump/ground");
+        let base = root.join(".markharness/knowledge/features/player-jump/jump/ground");
         fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            format!("id: player-jump\nrequirement: controls\nlabel: {label}\naxis: [gameplay]\n"),
+            root.join(".markharness/knowledge/features/player-jump/feature.yml"),
+            format!(
+                "id: player-jump\nrequirement_ids: [controls]\nlabel: {label}\naxis: [gameplay]\n"
+            ),
         )
         .unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
+            root.join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nprocedures: {}\n",
         )
         .unwrap();
         fs::write(
-            base.join("condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(base.join("expected")).unwrap();
-        fs::write(
-            base.join("expected/001.yml"),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n",
+            base.join("scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Press the jump button.\"\n    results:\n      - \"lands safely\"\n",
         )
         .unwrap();
     }
 
     /// Like `write_full_chain`, but the Feature has two Behaviors (`jump`,
-    /// `duck`), each with one Condition/ExpectedResult — for issue #15's
-    /// `--granularity` narrowing tests, where a single-Behavior Feature
-    /// can't distinguish "narrowed to the changed Behavior" from "not
-    /// narrowed at all".
+    /// `duck`), each with one Scenario — for issue #15's `--granularity`
+    /// narrowing tests, where a single-Behavior Feature can't distinguish
+    /// "narrowed to the changed Behavior" from "not narrowed at all".
     fn write_two_behavior_chain(root: &Path, jump_label: &str, duck_label: &str) {
         write_full_chain(root, "player-jump");
-        let duck_dir = root.join(".markharness/knowledge/controls/player-jump/duck");
+        let duck_dir = root.join(".markharness/knowledge/features/player-jump/duck");
         let duck_base = duck_dir.join("low");
         fs::create_dir_all(&duck_base).unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
+            root.join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
             format!(
-                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  {jump_label}\npreconditions:\n  - \"Press the jump button.\"\n"
+                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  {jump_label}\nprocedures: {{}}\n"
             ),
         )
         .unwrap();
         fs::write(
             duck_dir.join("behavior.yml"),
             format!(
-                "id: duck\nfeature: player-jump\nlabel: duck\naxis: [gameplay]\ndescription: |\n  {duck_label}\npreconditions:\n  - \"Press the duck button.\"\n"
+                "id: duck\nfeature: player-jump\nlabel: duck\naxis: [gameplay]\ndescription: |\n  {duck_label}\nprocedures: {{}}\n"
             ),
         )
         .unwrap();
         fs::write(
-            duck_base.join("condition.yml"),
-            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck low.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(duck_base.join("expected")).unwrap();
-        fs::write(
-            duck_base.join("expected/001.yml"),
-            "id: low-001\ncondition: low\ndescription: |\n  ducks safely\nresults:\n  - \"Confirmed.\"\n",
+            duck_base.join("scenario.yml"),
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck low.\nphases:\n  - steps:\n      - action: \"Press the duck button.\"\n    results:\n      - \"ducks safely\"\n",
         )
         .unwrap();
     }
@@ -1114,16 +1220,16 @@ mod tests {
         write_full_chain(dir.path(), "v1");
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v1", "m1");
 
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-double-jump\nrequirement: controls\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-double-jump\nrequirement_ids: [controls]\nlabel: v1\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "rename", "m2");
@@ -1172,8 +1278,8 @@ mod tests {
 
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-double-jump\nrequirement: controls\nlabel: v1\naxis: [gameplay]\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-double-jump\nrequirement_ids: [controls]\nlabel: v1\naxis: [gameplay]\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "rename", "m2");
@@ -1252,7 +1358,7 @@ mod tests {
         assert_ne!(event.from_tree_sha, event.to_tree_sha);
         assert_eq!(
             event.impacted_testcases,
-            vec!["tc-controls-player-jump-jump-ground".to_string()]
+            vec!["tc-player-jump-jump-ground".to_string()]
         );
     }
 
@@ -1265,22 +1371,16 @@ mod tests {
         commit_and_tag(dir.path(), "v2", "m2");
 
         // Simulate a later, uncommitted addition to the working tree made
-        // after m2 was tagged: a second Condition/ExpectedResult under the
+        // after m2 was tagged: a second Scenario under the
         // same Feature. Recomputing the m1..m2 interval later must not pick
         // this up under the default (historical) mode.
         let air = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/air");
+            .join(".markharness/knowledge/features/player-jump/jump/air");
         fs::create_dir_all(&air).unwrap();
         fs::write(
-            air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(air.join("expected")).unwrap();
-        fs::write(
-            air.join("expected/001.yml"),
-            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\nresults:\n  - \"Confirmed.\"\n",
+            air.join("scenario.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"jumps safely\"\n",
         )
         .unwrap();
 
@@ -1302,7 +1402,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             event.impacted_testcases,
-            vec!["tc-controls-player-jump-jump-ground".to_string()]
+            vec!["tc-player-jump-jump-ground".to_string()]
         );
     }
 
@@ -1319,17 +1419,11 @@ mod tests {
         // (legacy behavior, preserved for backward compatibility).
         let air = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/air");
+            .join(".markharness/knowledge/features/player-jump/jump/air");
         fs::create_dir_all(&air).unwrap();
         fs::write(
-            air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(air.join("expected")).unwrap();
-        fs::write(
-            air.join("expected/001.yml"),
-            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\nresults:\n  - \"Confirmed.\"\n",
+            air.join("scenario.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"jumps safely\"\n",
         )
         .unwrap();
 
@@ -1354,14 +1448,14 @@ mod tests {
         assert_eq!(
             impacted,
             vec![
-                "tc-controls-player-jump-jump-air".to_string(),
-                "tc-controls-player-jump-jump-ground".to_string(),
+                "tc-player-jump-jump-air".to_string(),
+                "tc-player-jump-jump-ground".to_string(),
             ]
         );
     }
 
     /// The core value of issue #15: with `--granularity behavior`, editing
-    /// only one Behavior's Condition must not pull in TestCases generated
+    /// only one Behavior's Scenario must not pull in TestCases generated
     /// from an untouched sibling Behavior under the same Feature — the
     /// default `Granularity::Feature` behavior this test's twin below
     /// contrasts against.
@@ -1371,11 +1465,11 @@ mod tests {
         write_two_behavior_chain(dir.path(), "jump v1", "duck v1");
         commit_and_tag(dir.path(), "v1", "m1");
 
-        // Only the `duck` Behavior's Condition changes; `jump` is untouched.
+        // Only the `duck` Behavior's Scenario changes; `jump` is untouched.
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/duck/low/condition.yml"),
-            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+                .join(".markharness/knowledge/features/player-jump/duck/low/scenario.yml"),
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"ducks safely\"\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1398,12 +1492,12 @@ mod tests {
         assert_eq!(event.impact_reason.granularity, Granularity::Behavior);
         assert_eq!(
             event.impacted_testcases,
-            vec!["tc-controls-player-jump-duck-low".to_string()],
+            vec!["tc-player-jump-duck-low".to_string()],
             "the untouched jump Behavior's TestCase must not be included"
         );
         assert_eq!(
             event.impact_reason.changed_paths,
-            vec![".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string()],
+            vec![".markharness/knowledge/features/player-jump/duck/behavior.yml".to_string()],
             "changed_paths must name the duck Behavior as the evidence, not jump"
         );
     }
@@ -1420,8 +1514,8 @@ mod tests {
 
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/duck/low/condition.yml"),
-            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+                .join(".markharness/knowledge/features/player-jump/duck/low/scenario.yml"),
+            "id: low\nbehavior: duck\nlabel: low\ndescription: |\n  Duck lower.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"ducks safely\"\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1444,40 +1538,37 @@ mod tests {
         assert_eq!(
             impacted,
             vec![
-                "tc-controls-player-jump-duck-low".to_string(),
-                "tc-controls-player-jump-jump-ground".to_string(),
+                "tc-player-jump-duck-low".to_string(),
+                "tc-player-jump-jump-ground".to_string(),
             ]
         );
     }
 
-    /// `--granularity condition` narrows even further than `behavior`: a
-    /// second Condition added under the *same* Behavior as an untouched
-    /// one must not pull the untouched Condition's TestCase in.
+    /// `--granularity scenario` narrows even further than `behavior`: a
+    /// second Scenario added under the *same* Behavior as an untouched
+    /// one must not pull the untouched Scenario's TestCase in. The edit
+    /// changes `air`'s effective step content (not just its description),
+    /// so its `case_revision` genuinely differs (ADR 0017 §3).
     #[test]
-    fn granularity_condition_narrows_impacted_testcases_to_the_changed_condition_only() {
+    fn granularity_scenario_narrows_impacted_testcases_to_the_changed_scenario_only() {
         let dir = init_repo();
         write_full_chain(dir.path(), "v1");
         let air = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/air");
+            .join(".markharness/knowledge/features/player-jump/jump/air");
         fs::create_dir_all(&air).unwrap();
         fs::write(
-            air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(air.join("expected")).unwrap();
-        fs::write(
-            air.join("expected/001.yml"),
-            "id: air-001\ncondition: air\ndescription: |\n  jumps safely\nresults:\n  - \"Confirmed.\"\n",
+            air.join("scenario.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"jumps safely\"\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v1", "m1");
 
-        // Only the `air` Condition changes; `ground` is untouched.
+        // Only the `air` Scenario's effective step changes; `ground` is
+        // untouched.
         fs::write(
-            air.join("condition.yml"),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air, higher.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+            air.join("scenario.yml"),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump in the air.\nphases:\n  - steps:\n      - action: \"Do it higher.\"\n    results:\n      - \"jumps safely\"\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1489,48 +1580,165 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
-                granularity: Granularity::Condition,
+                granularity: Granularity::Scenario,
             },
         )
         .unwrap();
 
         let event = &events[0];
-        assert_eq!(event.impact_reason.granularity, Granularity::Condition);
+        assert_eq!(event.impact_reason.granularity, Granularity::Scenario);
         assert_eq!(
             event.impacted_testcases,
-            vec!["tc-controls-player-jump-jump-air".to_string()],
-            "the untouched ground Condition's TestCase must not be included"
+            vec!["tc-player-jump-jump-air".to_string()],
+            "the untouched ground Scenario's TestCase must not be included"
         );
         assert_eq!(
             event.impact_reason.changed_paths,
-            vec![".markharness/knowledge/controls/player-jump/jump/air/condition.yml".to_string()],
-            "changed_paths must name the air Condition as the evidence, not ground"
+            vec![".markharness/knowledge/features/player-jump/jump/air/scenario.yml".to_string()],
+            "changed_paths must name the air Scenario as the evidence, not ground"
         );
     }
 
-    /// Malformed `knowledge/`: a `condition.yml` directory that doesn't sit
+    /// ADR 0017 §3's decision table: a description-only edit leaves
+    /// `case_revision` unchanged, so `--granularity scenario` must exclude
+    /// it from `impacted_testcases` even though the Scenario's own
+    /// `scenario.yml` bytes (and therefore its directory tree SHA) did
+    /// change. The `ChangeEvent` itself still exists (the Feature's overall
+    /// tree SHA differs), but with an empty `impacted_testcases`.
+    #[test]
+    fn granularity_scenario_excludes_a_scenario_whose_only_edit_is_the_description() {
+        let dir = init_repo();
+        write_full_chain(dir.path(), "v1");
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from a moving platform.\nphases:\n  - steps:\n      - action: \"Press the jump button.\"\n    results:\n      - \"lands safely\"\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "description only", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Scenario,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(events.len(), 1, "the Feature-level ChangeEvent still fires");
+        assert!(
+            events[0].impacted_testcases.is_empty(),
+            "a description-only edit must not appear as an impacted testcase, got {:?}",
+            events[0].impacted_testcases
+        );
+        assert!(events[0].impact_reason.changed_paths.is_empty());
+    }
+
+    /// ADR 0017 §3's "共通手順の変更" row: editing a common procedure a
+    /// Scenario `use:`s must change that Scenario's `case_revision` and be
+    /// detected at `--granularity scenario`, even though `scenario.yml`
+    /// itself is byte-for-byte unchanged — only `behavior.yml` changed.
+    #[test]
+    fn granularity_scenario_detects_an_impact_from_an_edited_common_procedure() {
+        let dir = init_repo();
+        let base = dir
+            .path()
+            .join(".markharness/knowledge/features/checkout/pay/valid-card");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/requirements/shop")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/requirements/shop/requirement.yml"),
+            "id: shop\nlabel: shop\naxis: [commerce]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/checkout/feature.yml"),
+            "id: checkout\nrequirement_ids: [shop]\nlabel: checkout\naxis: [commerce]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/checkout/pay/behavior.yml"),
+            "id: pay\nfeature: checkout\nlabel: pay\naxis: [commerce]\ndescription: |\n  Pay for the cart.\nprocedures:\n  login:\n    steps:\n      - \"Enter credentials.\"\n      - \"Press the login button.\"\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("scenario.yml"),
+            "id: valid-card\nbehavior: pay\nlabel: valid-card\ndescription: |\n  Pay with a valid card.\nphases:\n  - steps:\n      - use: login\n    results:\n      - \"Payment succeeds.\"\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v1", "m1");
+
+        // Only the `login` procedure's steps change; `scenario.yml` is
+        // untouched.
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/checkout/pay/behavior.yml"),
+            "id: pay\nfeature: checkout\nlabel: pay\naxis: [commerce]\ndescription: |\n  Pay for the cart.\nprocedures:\n  login:\n    steps:\n      - \"Enter credentials.\"\n      - \"Press the login button.\"\n      - \"Press remember me.\"\n",
+        )
+        .unwrap();
+        commit_and_tag(dir.path(), "v2", "m2");
+
+        let events = compute_changes(
+            dir.path(),
+            "m1",
+            "m2",
+            ChangeOptions {
+                cache: CachePolicy::Bypass,
+                impact_source: ImpactSource::HistoricalTree,
+                granularity: Granularity::Scenario,
+            },
+        )
+        .unwrap();
+
+        let event = events
+            .iter()
+            .find(|e| e.feature_id == "checkout")
+            .expect("checkout Feature changed (behavior.yml differs)");
+        assert_eq!(
+            event.impacted_testcases,
+            vec!["tc-checkout-pay-valid-card".to_string()],
+            "the Scenario referencing the edited procedure must be detected as impacted"
+        );
+        assert_eq!(
+            event.impact_reason.changed_paths,
+            vec![
+                ".markharness/knowledge/features/checkout/pay/valid-card/scenario.yml".to_string()
+            ]
+        );
+    }
+
+    /// Malformed `knowledge/`: a `scenario.yml` directory that doesn't sit
     /// beneath a `behavior.yml` (here, directly under the Feature). Codex
     /// review flagged an earlier version of this code for panicking
     /// (`.expect`) on this input instead of failing gracefully —
     /// `CONTRIBUTING.md` requires malformed external content to error, not
     /// crash the process.
     #[test]
-    fn granularity_condition_errors_instead_of_panicking_on_a_condition_with_no_parent_behavior() {
+    fn granularity_scenario_errors_instead_of_panicking_on_a_scenario_with_no_parent_behavior() {
         let dir = init_repo();
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "v1", "m1");
 
-        // Same depth as a well-formed `<feature>/<behavior>/<condition>/`
+        // Same depth as a well-formed `<feature>/<behavior>/<scenario>/`
         // (so it resolves to the real `player-jump` Feature, and isn't
         // silently dropped as belonging to no Feature), but `not-a-behavior`
         // has no `behavior.yml` of its own.
         let stray = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/not-a-behavior/stray");
+            .join(".markharness/knowledge/features/player-jump/not-a-behavior/stray");
         fs::create_dir_all(&stray).unwrap();
         fs::write(
-            stray.join("condition.yml"),
-            "id: stray\nbehavior: nonexistent\nlabel: stray\ndescription: |\n  Not under a Behavior.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+            stray.join("scenario.yml"),
+            "id: stray\nbehavior: nonexistent\nlabel: stray\ndescription: |\n  Not under a Behavior.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
         commit_and_tag(dir.path(), "v2", "m2");
@@ -1542,14 +1750,14 @@ mod tests {
             ChangeOptions {
                 cache: CachePolicy::Bypass,
                 impact_source: ImpactSource::HistoricalTree,
-                granularity: Granularity::Condition,
+                granularity: Granularity::Scenario,
             },
         )
         .unwrap_err();
 
         assert!(
             err.to_string().contains("stray"),
-            "expected the error to name the offending Condition, got: {err}"
+            "expected the error to name the offending Scenario, got: {err}"
         );
     }
 
@@ -1583,32 +1791,32 @@ mod tests {
         let event = &events[0];
         assert_eq!(
             event.impacted_testcases,
-            vec!["tc-controls-player-jump-duck-low".to_string()],
+            vec!["tc-player-jump-duck-low".to_string()],
             "the newly added duck Behavior's TestCase must be included, \
              and the untouched jump Behavior's must not"
         );
         assert_eq!(
             event.impact_reason.changed_paths,
-            vec![".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string()],
+            vec![".markharness/knowledge/features/player-jump/duck/behavior.yml".to_string()],
             "changed_paths must name the newly added duck Behavior"
         );
     }
 
     #[test]
-    fn reports_changed_event_when_only_a_condition_file_changes_and_feature_yml_is_untouched() {
+    fn reports_changed_event_when_only_a_scenario_file_changes_and_feature_yml_is_untouched() {
         let dir = init_repo();
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "v1", "m1");
 
-        // Only the Condition's description changes; feature.yml is
+        // Only the Scenario's description changes; feature.yml is
         // byte-for-byte identical between m1 and m2.
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from a moving platform.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+                .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from a moving platform.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\n",
         )
         .unwrap();
-        commit_and_tag(dir.path(), "condition change", "m2");
+        commit_and_tag(dir.path(), "scenario change", "m2");
 
         let events = compute_changes(
             dir.path(),
@@ -1664,7 +1872,11 @@ mod tests {
         write_full_chain(dir.path(), "v1");
         commit_and_tag(dir.path(), "v1", "m1");
 
-        fs::remove_dir_all(dir.path().join(".markharness/knowledge/controls")).unwrap();
+        fs::remove_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump"),
+        )
+        .unwrap();
         commit_and_tag(dir.path(), "remove feature", "m2");
 
         let events = compute_changes(
@@ -1821,16 +2033,16 @@ mod tests {
         .unwrap();
         fs::write(
             dir.path().join(".markharness/changes/m2.yaml"),
-            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  impact_reason:\n    granularity: condition\n    changed_paths: [foo/condition.yml]\n",
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  impact_reason:\n    granularity: scenario\n    changed_paths: [foo/scenario.yml]\n",
         )
         .unwrap();
 
         let read = read_changes(dir.path(), "m2").unwrap();
 
-        assert_eq!(read[0].impact_reason.granularity, Granularity::Condition);
+        assert_eq!(read[0].impact_reason.granularity, Granularity::Scenario);
         assert_eq!(
             read[0].impact_reason.changed_paths,
-            vec!["foo/condition.yml".to_string()]
+            vec!["foo/scenario.yml".to_string()]
         );
     }
 
@@ -1844,7 +2056,7 @@ mod tests {
             impact_reason: ImpactReason {
                 granularity: Granularity::Behavior,
                 changed_paths: vec![
-                    ".markharness/knowledge/controls/player-jump/duck/behavior.yml".to_string(),
+                    ".markharness/knowledge/features/player-jump/duck/behavior.yml".to_string(),
                 ],
             },
             ..sample_event("player-jump--m1--m2")
@@ -1859,7 +2071,7 @@ mod tests {
         );
         assert_eq!(
             parsed[0]["impact_reason"]["changed_paths"][0].as_str(),
-            Some(".markharness/knowledge/controls/player-jump/duck/behavior.yml")
+            Some(".markharness/knowledge/features/player-jump/duck/behavior.yml")
         );
     }
 
@@ -2120,7 +2332,7 @@ mod tests {
 
         run_git(
             dir.path(),
-            &["rm", "-rq", ".markharness/knowledge/controls/player-jump"],
+            &["rm", "-rq", ".markharness/knowledge/features/player-jump"],
         );
         commit_and_tag(dir.path(), "delete on main", "main-tip");
 
@@ -2146,7 +2358,7 @@ mod tests {
                 "checkout",
                 "feature",
                 "--",
-                ".markharness/knowledge/controls/player-jump",
+                ".markharness/knowledge/features/player-jump",
             ],
         );
         run_git(dir.path(), &["add", "-A"]);
@@ -2265,7 +2477,7 @@ mod tests {
         .unwrap();
         fs::write(
             dir.path().join(".markharness/changes/m2.yaml"),
-            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: condition\n- event_id: other-feature--m1--m2\n  feature_id: other-feature\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: ccc\n  to_tree_sha: ddd\n  impacted_testcases: []\n",
+            "- event_id: player-jump--m1--m2\n  feature_id: player-jump\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: aaa\n  to_tree_sha: bbb\n  impacted_testcases: [tc-ground-001]\n  granularity: scenario\n- event_id: other-feature--m1--m2\n  feature_id: other-feature\n  from_milestone: m1\n  to_milestone: m2\n  from_tree_sha: ccc\n  to_tree_sha: ddd\n  impacted_testcases: []\n",
         )
         .unwrap();
 
@@ -2284,7 +2496,7 @@ mod tests {
         assert_eq!(annotated.related_events, vec!["other-feature--m1--m2"]);
         assert_eq!(
             annotated.impact_reason.granularity,
-            Granularity::Condition,
+            Granularity::Scenario,
             "the rewrite by annotate_related_events must not have discarded the legacy granularity"
         );
     }

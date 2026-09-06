@@ -1,27 +1,28 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::fs_safety::replace_file;
-use crate::id_cache;
 
-/// Only the fields record_execution needs from a generated TestCase. The
-/// filename under `generated/testcases/` is the condition id, not the
-/// case_id (see `generate::TestCase::file_stem`), so matching case_id
-/// requires reading each file's content rather than a filename lookup.
+/// Only the fields `record_execution` needs from a generated TestCase.
+/// Includes `phases` (unlike a purely-identity view) because ADR 0017 §5
+/// requires comparing them against the frozen `CaseDefinition` in full, not
+/// just trusting that a matching `(case_uid, case_revision)` key means the
+/// content still agrees. Deliberately has no `#[serde(default)]`: a
+/// generated file missing `phases` (truncated, hand-edited) must fail to
+/// parse as a `MinimalTestCase` rather than silently being treated as an
+/// empty-phases TestCase, which could spuriously "match" a genuinely
+/// empty-phases stored `CaseDefinition` and record false evidence.
 #[derive(Deserialize)]
 struct MinimalTestCase {
     case_id: String,
-    generated_from: MinimalGeneratedFrom,
-}
-
-#[derive(Deserialize)]
-struct MinimalGeneratedFrom {
-    feature: String,
+    #[serde(default)]
+    case_uid: Option<String>,
+    case_revision: String,
+    phases: Vec<crate::generate::Phase>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,8 +43,17 @@ impl ExecutionResult {
 }
 
 pub struct RecordArgs<'a> {
-    pub milestone: &'a str,
     pub case_id: &'a str,
+    /// ADR 0017 §3/§5: an opaque, non-empty identifier of the build/commit
+    /// under test — never inferred from a Feature's Git tree SHA. Kind-
+    /// agnostic (a commit OID, a CI build number, a release tag — whatever
+    /// the caller's pipeline uses), per the grilling notes decided ahead of
+    /// this Step.
+    pub target_revision: &'a str,
+    /// ADR 0017 §5: a free-text environment identifier. `None` means
+    /// explicitly unknown — never inferred or defaulted to "matches
+    /// anything".
+    pub environment: Option<&'a str>,
     pub result: ExecutionResult,
     pub executor: &'a str,
     pub note: Option<&'a str>,
@@ -51,8 +61,41 @@ pub struct RecordArgs<'a> {
 
 #[derive(Debug)]
 pub enum RecordError {
-    MilestoneNotFound,
+    /// No generated TestCase with this `case_id` exists under
+    /// `generated/testcases/`.
     CaseNotFound,
+    /// The TestCase's Scenario has no `case_uid` yet (ADR 0017 §3: derived
+    /// from `ScenarioUid`, which requires `identity migrate` to have run).
+    /// Execution evidence is keyed by `(case_uid, case_revision)`, so an
+    /// unmigrated case has nothing to record evidence against.
+    CaseNotMigrated,
+    /// `target_revision` was empty or whitespace-only.
+    EmptyTargetRevision,
+    /// `environment` was given (`Some`) but empty or whitespace-only. A
+    /// blank string is not a real environment identifier and must never be
+    /// stored as one — `plan::evidence_status` treats *any* recorded
+    /// `environment` value as "known", so a stored blank would wrongly
+    /// satisfy a plan with no specific environment requirement (ADR 0017
+    /// §5: unknown environments must never satisfy passing).
+    EmptyEnvironment,
+    /// No immutable case definition (`case_definition::load_case_definition`)
+    /// is stored for this TestCase's `(case_uid, case_revision)`. ADR 0017
+    /// §5 requires evidence to reference a frozen definition of what was
+    /// actually executed; recording against a key nothing was ever stored
+    /// under (the case-definitions store was never populated, or was
+    /// deleted) would produce an audit trail with nothing to audit.
+    CaseDefinitionMissing,
+    /// The frozen definition stored at this TestCase's `(case_uid,
+    /// case_revision)` exists and is internally self-consistent, but its
+    /// `phases` don't match the `phases` the generated TestCase has *right
+    /// now* — e.g. `generated/testcases/*.yml` was hand-edited after
+    /// generation without its `case_revision` label being recomputed, or a
+    /// merge conflict was resolved by taking the wrong side. ADR 0017 §5
+    /// requires evidence to reference a frozen definition of what was
+    /// actually executed; recording against a definition that no longer
+    /// matches what's about to run would produce evidence that audits the
+    /// wrong thing.
+    CaseDefinitionMismatch,
     Io(io::Error),
 }
 
@@ -62,50 +105,68 @@ impl From<io::Error> for RecordError {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// ADR 0017 §5: one recorded execution result, keyed by its own immutable
+/// `execution_uid` and carrying the Case UID/Case revision/target/
+/// environment `record_execution` resolved at record time — never a
+/// Feature-tree-SHA proxy. Applicability against a `VerificationPlan`'s
+/// requirements (`plan::evidence_status`) is a separate concern from this
+/// type: this is only the durable record.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExecutionEntry {
+    pub execution_uid: String,
+    /// Informational: the display `case_id` at record time. Never used as a
+    /// matching key by itself — `case_uid`/`case_revision` are.
     pub case_id: String,
+    pub case_uid: String,
+    pub case_revision: String,
+    pub target_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     pub result: String,
     pub executor: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub executed_at: String,
-    /// Feature identity -> directory tree SHA at `milestone`, for each
-    /// Feature the TestCase's `generated_from.feature` names (§2.1 of the
-    /// ChangeEvent連動仕様). The key is the Feature's `uid` (ADR 0013) when
-    /// it has one at `milestone`, else its `feature_id` — matching
-    /// `id_cache::identity_key`'s convention, so a later rename doesn't
-    /// strand entries recorded before it. Filled in automatically by
-    /// `record_execution`; absent on records made before this field
-    /// existed (no retroactive backfill, per §6).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub verified_feature_tree_shas: BTreeMap<String, String>,
+    /// Room for a record decomposed from an external report to point back
+    /// at its source (ADR 0017 §5 grilling notes). Key generation and
+    /// duplicate-import detection are deferred to Step 5, once real
+    /// external-tool data is available to design against — this field only
+    /// exists so that decision doesn't require a schema change later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_report: Option<String>,
+}
+
+/// The directory execution records live under: one file per execution (ADR
+/// 0017 §5 grilling notes — "1実行=1ファイル"), named by its own
+/// `execution_uid` so concurrent recorders never contend on the same path.
+fn records_dir(root: &Path) -> PathBuf {
+    root.join(crate::project_root::MARKHARNESS_DIR)
+        .join("executions")
+        .join("records")
 }
 
 pub fn read_all_results(root: &Path) -> io::Result<Vec<ExecutionEntry>> {
-    let executions = root
-        .join(crate::project_root::MARKHARNESS_DIR)
-        .join("executions");
-    let Ok(entries) = fs::read_dir(executions) else {
+    let dir = records_dir(root);
+    let Ok(entries) = fs::read_dir(&dir) else {
         return Ok(Vec::new());
     };
-    let mut paths: Vec<_> = entries
+    let mut paths: Vec<PathBuf> = entries
         .filter_map(Result::ok)
-        .map(|entry| entry.path().join("results.yml"))
-        .filter(|path| path.is_file())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("yml"))
         .collect();
     paths.sort();
     let mut results = Vec::new();
     for path in paths {
-        let content = fs::read_to_string(path)?;
-        let mut entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content)
+        let content = fs::read_to_string(&path)?;
+        let entry: ExecutionEntry = serde_yaml_ng::from_str(&content)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        results.append(&mut entries);
+        results.push(entry);
     }
     results.sort_by(|a, b| {
         a.executed_at
             .cmp(&b.executed_at)
-            .then(a.case_id.cmp(&b.case_id))
+            .then(a.execution_uid.cmp(&b.execution_uid))
     });
     Ok(results)
 }
@@ -148,9 +209,9 @@ pub(crate) fn iso8601_utc_now() -> String {
 }
 
 /// Finds the `generated/testcases/**/*.yml` file with this `case_id` (files
-/// are nested `{requirement}/{feature}/{behavior}/{condition}.yml`, so the
-/// filename alone can't be used — and even the full relative path is only a
-/// mirror of `knowledge/`, not itself the identity being searched for).
+/// are nested `{feature}/{behavior}/{scenario}.yml`, so the filename alone
+/// can't be used — and even the full relative path is only a mirror of
+/// `knowledge/`, not itself the identity being searched for).
 fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<MinimalTestCase>> {
     let testcases_dir = root
         .join(crate::project_root::MARKHARNESS_DIR)
@@ -170,407 +231,435 @@ fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<Min
     Ok(None)
 }
 
-/// Resolves `feature_id`'s identity key (ADR 0013: `uid` when present, else
-/// `feature_id` itself — `id_cache::identity_key`) and directory tree SHA at
-/// `milestone`, or `None` if the Feature isn't found at that milestone tag
-/// (kept out of the recorded map rather than failing the whole
-/// `execution record`).
-fn verified_feature_tree_sha(
-    root: &Path,
-    milestone: &str,
-    feature_id: &str,
-) -> io::Result<Option<(String, String)>> {
-    let versions = id_cache::resolve_feature_versions(root, milestone, true)?;
-    Ok(versions.into_iter().find(|v| v.id == feature_id).map(|v| {
-        let key = id_cache::identity_key(&v);
-        (key, v.tree_sha)
-    }))
-}
-
-fn read_existing_entries(results_path: &Path) -> io::Result<Vec<ExecutionEntry>> {
-    if !results_path.is_file() {
-        return Ok(Vec::new());
+/// Records one execution result (ADR 0017 §5). Resolves `case_uid`/
+/// `case_revision` from the generated TestCase at record time — never
+/// supplied by the caller, so a caller can't record evidence against a
+/// mismatched or stale identity. `target_revision`/`environment` are always
+/// exactly what the caller passed, never inferred.
+pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<ExecutionEntry, RecordError> {
+    let target_revision = args.target_revision.trim();
+    if target_revision.is_empty() {
+        return Err(RecordError::EmptyTargetRevision);
     }
-    let content = fs::read_to_string(results_path)?;
-    Ok(serde_yaml_ng::from_str(&content).unwrap_or_default())
-}
-
-pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<(), RecordError> {
-    let milestone_path = root
-        .join(crate::project_root::MARKHARNESS_DIR)
-        .join("executions")
-        .join(args.milestone)
-        .join("milestone.yml");
-    if !milestone_path.is_file() {
-        return Err(RecordError::MilestoneNotFound);
-    }
+    let environment = match args.environment {
+        Some(environment) => {
+            let trimmed = environment.trim();
+            if trimmed.is_empty() {
+                return Err(RecordError::EmptyEnvironment);
+            }
+            Some(trimmed)
+        }
+        None => None,
+    };
 
     let Some(testcase) = find_testcase_by_case_id(root, args.case_id)? else {
         return Err(RecordError::CaseNotFound);
     };
-
-    let mut verified_feature_tree_shas = BTreeMap::new();
-    if let Some((key, sha)) =
-        verified_feature_tree_sha(root, args.milestone, &testcase.generated_from.feature)?
-    {
-        verified_feature_tree_shas.insert(key, sha);
+    let Some(case_uid) = testcase.case_uid else {
+        return Err(RecordError::CaseNotMigrated);
+    };
+    let Some(stored_definition) =
+        crate::case_definition::load_case_definition(root, &case_uid, &testcase.case_revision)?
+    else {
+        return Err(RecordError::CaseDefinitionMissing);
+    };
+    let current_definition = crate::case_definition::CaseDefinition {
+        case_uid: case_uid.clone(),
+        case_revision: testcase.case_revision.clone(),
+        phases: testcase.phases.clone(),
+    };
+    if stored_definition != current_definition {
+        return Err(RecordError::CaseDefinitionMismatch);
     }
 
-    let results_path = root
-        .join(crate::project_root::MARKHARNESS_DIR)
-        .join("executions")
-        .join(args.milestone)
-        .join("results.yml");
-    let mut entries = read_existing_entries(&results_path)?;
-    entries.push(ExecutionEntry {
-        case_id: args.case_id.to_string(),
+    let execution_uid = ulid::Ulid::new().to_string();
+    let entry = ExecutionEntry {
+        execution_uid: execution_uid.clone(),
+        case_id: testcase.case_id,
+        case_uid,
+        case_revision: testcase.case_revision,
+        target_revision: target_revision.to_string(),
+        environment: environment.map(str::to_string),
         result: args.result.as_str().to_string(),
         executor: args.executor.to_string(),
-        note: args.note.map(|n| n.to_string()),
+        note: args.note.map(str::to_string),
         executed_at: iso8601_utc_now(),
-        verified_feature_tree_shas,
-    });
+        source_report: None,
+    };
 
-    let content = serde_yaml_ng::to_string(&entries)
-        .expect("Vec<ExecutionEntry> serialization is infallible");
-    replace_file(root, &results_path, content.as_bytes())?;
+    let path = records_dir(root).join(format!("{execution_uid}.yml"));
+    let content =
+        serde_yaml_ng::to_string(&entry).expect("ExecutionEntry serialization is infallible");
+    replace_file(root, &path, content.as_bytes())?;
 
-    Ok(())
+    Ok(entry)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generate::Phase;
     use std::fs;
 
-    #[test]
-    fn record_execution_errors_when_milestone_does_not_exist() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join(".markharness/generated/testcases")).unwrap();
+    /// `write_testcase`'s callers always write `phases: []`, so this is the
+    /// only `case_revision` value that will pass `load_case_definition`'s
+    /// self-consistency check (`case_revision` is defined as a hash of
+    /// `phases`) once a definition is stored under it.
+    fn real_case_revision_for_empty_phases() -> String {
+        crate::generate::compute_case_revision(&[])
+    }
 
-        let args = RecordArgs {
-            milestone: "m1",
-            case_id: "tc-ground-001",
-            result: ExecutionResult::Pass,
-            executor: "yamada",
-            note: None,
-        };
-        let result = record_execution(dir.path(), &args);
-
-        assert!(matches!(result, Err(RecordError::MilestoneNotFound)));
+    fn write_testcase(root: &Path, case_id: &str, case_uid: Option<&str>, case_revision: &str) {
+        let path = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated/testcases/feature/behavior/scenario.yml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let uid_line = case_uid
+            .map(|uid| format!("case_uid: {uid}\n"))
+            .unwrap_or_default();
+        fs::write(
+            &path,
+            format!("case_id: {case_id}\n{uid_line}case_revision: {case_revision}\nphases: []\n"),
+        )
+        .unwrap();
+        // `record_execution` requires the immutable case definition
+        // (ADR 0017 §5) to already be stored under the same key that
+        // `generate` would have populated it at.
+        if let Some(case_uid) = case_uid {
+            let definition_path = root
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("case-definitions")
+                .join(case_uid)
+                .join(format!("{case_revision}.yml"));
+            fs::create_dir_all(definition_path.parent().unwrap()).unwrap();
+            fs::write(
+                &definition_path,
+                format!("case_uid: {case_uid}\ncase_revision: {case_revision}\nphases: []\n"),
+            )
+            .unwrap();
+        }
     }
 
     #[test]
     fn record_execution_errors_when_case_id_does_not_exist() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
-        fs::write(
-            dir.path().join(".markharness/executions/m1/milestone.yml"),
-            "id: m1\n",
-        )
-        .unwrap();
-        fs::create_dir_all(dir.path().join(".markharness/generated/testcases")).unwrap();
-
-        let args = RecordArgs {
-            milestone: "m1",
-            case_id: "tc-ground-001",
-            result: ExecutionResult::Pass,
-            executor: "yamada",
-            note: None,
-        };
-        let result = record_execution(dir.path(), &args);
-
-        assert!(matches!(result, Err(RecordError::CaseNotFound)));
-    }
-
-    #[cfg(unix)]
-    fn link_dir(link: &Path, target: &Path) {
-        if let Some(parent) = link.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::os::unix::fs::symlink(target, link).unwrap();
-    }
-
-    #[cfg(windows)]
-    fn link_dir(link: &Path, target: &Path) {
-        if let Some(parent) = link.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        let status = std::process::Command::new("cmd")
-            .args(["/c", "mklink", "/j"])
-            .arg(link)
-            .arg(target)
-            .stdout(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success(), "mklink /j failed");
-    }
-
-    #[test]
-    fn record_execution_refuses_to_follow_a_symlinked_milestone_dir() {
-        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
-        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
-        let outside = tempfile::tempdir().unwrap();
-        fs::write(outside.path().join("milestone.yml"), "id: m1\n").unwrap();
-        let milestone_dir = dir
-            .path()
-            .join(crate::project_root::MARKHARNESS_DIR)
-            .join("executions")
-            .join("m1");
-        fs::remove_dir_all(&milestone_dir).unwrap();
-        link_dir(&milestone_dir, outside.path());
+        crate::init::run_init(dir.path()).unwrap();
 
         let result = record_execution(
             dir.path(),
             &RecordArgs {
-                milestone: "m1",
-                case_id: "tc-ground-001",
+                case_id: "tc-unknown",
+                target_revision: "abc123",
+                environment: None,
                 result: ExecutionResult::Pass,
-                executor: "yamada",
+                executor: "tester",
                 note: None,
             },
         );
 
-        assert!(
-            matches!(result, Err(RecordError::Io(_))),
-            "expected an Io error, got: {result:?}"
-        );
-        assert!(!outside.path().join("results.yml").exists());
-    }
-
-    fn run_git(root: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(args)
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?} failed");
-    }
-
-    /// A milestone tag with a `player-jump` Feature committed and tagged,
-    /// matching the `id: m1` written to `executions/m1/milestone.yml` by
-    /// callers (record_execution's blob resolution needs a real git ref).
-    fn init_repo_with_milestone_and_feature(
-        feature_id: &str,
-        milestone: &str,
-    ) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        run_git(dir.path(), &["init", "-q"]);
-        run_git(dir.path(), &["config", "user.email", "test@example.com"]);
-        run_git(dir.path(), &["config", "user.name", "Test"]);
-        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
-        let feature_dir = dir
-            .path()
-            .join(".markharness/knowledge/controls")
-            .join(feature_id);
-        fs::create_dir_all(&feature_dir).unwrap();
-        fs::write(
-            feature_dir.join("feature.yml"),
-            format!("id: {feature_id}\nrequirement: controls\nlabel: {feature_id}\naxis: []\n"),
-        )
-        .unwrap();
-        fs::create_dir_all(
-            dir.path()
-                .join(format!(".markharness/executions/{milestone}")),
-        )
-        .unwrap();
-        fs::write(
-            dir.path()
-                .join(format!(".markharness/executions/{milestone}/milestone.yml")),
-            format!("id: {milestone}\n"),
-        )
-        .unwrap();
-        run_git(dir.path(), &["add", "-A"]);
-        run_git(dir.path(), &["commit", "-q", "-m", "init"]);
-        run_git(dir.path(), &["tag", milestone]);
-        dir
-    }
-
-    fn write_generated_testcase_with_feature(
-        root: &Path,
-        condition_id: &str,
-        case_id: &str,
-        feature_id: &str,
-    ) {
-        let dir = root.join(".markharness/generated/testcases");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(format!("{condition_id}.yml")),
-            format!("case_id: {case_id}\ngenerated_from:\n  feature: {feature_id}\n"),
-        )
-        .unwrap();
+        assert!(matches!(result, Err(RecordError::CaseNotFound)));
     }
 
     #[test]
-    fn record_execution_populates_verified_feature_tree_shas_for_the_testcases_feature() {
-        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
-        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
-        let expected_versions =
-            crate::id_cache::resolve_feature_versions(dir.path(), "m1", false).unwrap();
-        let expected_sha = expected_versions
-            .iter()
-            .find(|v| v.id == "player-jump")
-            .unwrap()
-            .tree_sha
-            .clone();
+    fn record_execution_errors_when_target_revision_is_blank() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_testcase(dir.path(), "tc-ground-001", Some("case-uid-1"), "rev-1");
 
-        record_execution(
+        let result = record_execution(
             dir.path(),
             &RecordArgs {
-                milestone: "m1",
                 case_id: "tc-ground-001",
+                target_revision: "   ",
+                environment: None,
                 result: ExecutionResult::Pass,
-                executor: "yamada",
+                executor: "tester",
                 note: None,
             },
+        );
+
+        assert!(matches!(result, Err(RecordError::EmptyTargetRevision)));
+    }
+
+    /// A blank `environment` must never be stored: `plan::evidence_status`
+    /// treats any recorded `environment` value as "known", so a stored
+    /// blank would wrongly satisfy a plan with no specific environment
+    /// requirement (ADR 0017 §5).
+    #[test]
+    fn record_execution_errors_when_environment_is_blank() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_testcase(dir.path(), "tc-ground-001", Some("case-uid-1"), "rev-1");
+
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: Some("   "),
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: None,
+            },
+        );
+
+        assert!(matches!(result, Err(RecordError::EmptyEnvironment)));
+    }
+
+    /// ADR 0017 §3: a Scenario with no `case_uid` (not yet migrated) has no
+    /// stable key to record evidence against.
+    #[test]
+    fn record_execution_errors_when_the_case_has_no_case_uid() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_testcase(dir.path(), "tc-ground-001", None, "rev-1");
+
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: None,
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: None,
+            },
+        );
+
+        assert!(matches!(result, Err(RecordError::CaseNotMigrated)));
+    }
+
+    /// ADR 0017 §5: recording evidence for a `(case_uid, case_revision)` with
+    /// no stored immutable case definition (the case-definitions store was
+    /// never populated, or the file was deleted) must be rejected rather
+    /// than producing evidence nothing can audit.
+    #[test]
+    fn record_execution_errors_when_the_case_definition_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated/testcases/feature/behavior/scenario.yml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\nphases: []\n",
         )
         .unwrap();
 
-        let content =
-            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
-        let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
-        assert_eq!(
-            entries[0].verified_feature_tree_shas.get("player-jump"),
-            Some(&expected_sha)
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: None,
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: None,
+            },
         );
+
+        assert!(matches!(result, Err(RecordError::CaseDefinitionMissing)));
     }
 
-    /// Like `init_repo_with_milestone_and_feature`, but the Feature carries
-    /// a `uid` (ADR 0013).
-    fn init_repo_with_milestone_and_uid_feature(
-        feature_id: &str,
-        uid: &str,
-        milestone: &str,
-    ) -> tempfile::TempDir {
+    /// A generated `testcases/*.yml` file missing its `phases` key entirely
+    /// (truncated, hand-edited, or otherwise malformed) must never be
+    /// silently treated as an empty-phases TestCase — doing so could let it
+    /// spuriously "match" a genuinely empty-phases stored `CaseDefinition`
+    /// and record evidence for content that was never actually verified.
+    #[test]
+    fn record_execution_does_not_treat_a_testcase_file_missing_phases_as_empty_phases() {
         let dir = tempfile::tempdir().unwrap();
-        run_git(dir.path(), &["init", "-q"]);
-        run_git(dir.path(), &["config", "user.email", "test@example.com"]);
-        run_git(dir.path(), &["config", "user.name", "Test"]);
-        run_git(dir.path(), &["config", "core.autocrlf", "false"]);
-        let feature_dir = dir
+        crate::init::run_init(dir.path()).unwrap();
+        // A real, empty-phases definition is stored under this key — if a
+        // missing `phases` key defaulted to `vec![]`, it would incorrectly
+        // match this and let `record_execution` succeed.
+        let case_revision = real_case_revision_for_empty_phases();
+        let definition_path = dir
             .path()
-            .join(".markharness/knowledge/controls")
-            .join(feature_id);
-        fs::create_dir_all(&feature_dir).unwrap();
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("case-definitions")
+            .join("case-uid-1")
+            .join(format!("{case_revision}.yml"));
+        fs::create_dir_all(definition_path.parent().unwrap()).unwrap();
         fs::write(
-            feature_dir.join("feature.yml"),
+            &definition_path,
+            format!("case_uid: case-uid-1\ncase_revision: {case_revision}\nphases: []\n"),
+        )
+        .unwrap();
+        let testcase_path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated/testcases/feature/behavior/scenario.yml");
+        fs::create_dir_all(testcase_path.parent().unwrap()).unwrap();
+        fs::write(
+            &testcase_path,
             format!(
-                "id: {feature_id}\nrequirement: controls\nlabel: {feature_id}\naxis: []\nuid: {uid}\n"
+                "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: {case_revision}\n"
             ),
         )
         .unwrap();
-        fs::create_dir_all(
-            dir.path()
-                .join(format!(".markharness/executions/{milestone}")),
-        )
-        .unwrap();
-        fs::write(
-            dir.path()
-                .join(format!(".markharness/executions/{milestone}/milestone.yml")),
-            format!("id: {milestone}\n"),
-        )
-        .unwrap();
-        run_git(dir.path(), &["add", "-A"]);
-        run_git(dir.path(), &["commit", "-q", "-m", "init"]);
-        run_git(dir.path(), &["tag", milestone]);
-        dir
-    }
 
-    /// ADR 0013: `verified_feature_tree_shas` must key its entries by the
-    /// Feature's `uid` (not `feature_id`), so an entry recorded now survives
-    /// a later rename that preserves the `uid`.
-    #[test]
-    fn record_execution_keys_verified_feature_tree_shas_by_uid_when_the_feature_has_one() {
-        const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-        let dir = init_repo_with_milestone_and_uid_feature("player-jump", UID, "m1");
-        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
-
-        record_execution(
+        let result = record_execution(
             dir.path(),
             &RecordArgs {
-                milestone: "m1",
                 case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: None,
                 result: ExecutionResult::Pass,
-                executor: "yamada",
+                executor: "tester",
                 note: None,
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "a testcase file with no phases key must never be recorded as evidence, got: {result:?}"
+        );
+    }
+
+    /// ADR 0017 §5: the generated TestCase must be checked in full against
+    /// the frozen definition, not just by `(case_uid, case_revision)` key
+    /// presence. Here the generated `testcases/*.yml` file's `phases` no
+    /// longer match what's frozen at its own `case_revision` key (as if it
+    /// were hand-edited after generation without the revision being
+    /// recomputed) — recording evidence against it must be rejected, since
+    /// the stored definition it would be audited against isn't actually
+    /// what's about to run.
+    #[test]
+    fn record_execution_errors_when_the_generated_testcase_disagrees_with_the_stored_definition() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let original_phases = vec![Phase {
+            steps: vec!["Do it.".to_string()],
+            results: vec!["Confirmed.".to_string()],
+        }];
+        let case_revision = crate::generate::compute_case_revision(&original_phases);
+        let definition = crate::case_definition::CaseDefinition {
+            case_uid: "case-uid-1".to_string(),
+            case_revision: case_revision.clone(),
+            phases: original_phases,
+        };
+        let definition_path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("case-definitions")
+            .join("case-uid-1")
+            .join(format!("{case_revision}.yml"));
+        fs::create_dir_all(definition_path.parent().unwrap()).unwrap();
+        fs::write(
+            &definition_path,
+            crate::case_definition::serialize_case_definition(&definition),
+        )
+        .unwrap();
+
+        // The generated file still claims the original `case_revision`, but
+        // its `phases` were edited afterward without recomputing it.
+        let testcase_path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated/testcases/feature/behavior/scenario.yml");
+        fs::create_dir_all(testcase_path.parent().unwrap()).unwrap();
+        fs::write(
+            &testcase_path,
+            format!(
+                "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: {case_revision}\n\
+                 phases:\n  - steps: [\"Do it differently.\"]\n    results: [\"Confirmed.\"]\n"
+            ),
+        )
+        .unwrap();
+
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: None,
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: None,
+            },
+        );
+
+        assert!(matches!(result, Err(RecordError::CaseDefinitionMismatch)));
+    }
+
+    #[test]
+    fn record_execution_writes_one_file_per_execution_and_reads_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let case_revision = real_case_revision_for_empty_phases();
+        write_testcase(
+            dir.path(),
+            "tc-ground-001",
+            Some("case-uid-1"),
+            &case_revision,
+        );
+
+        let entry = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: Some("staging"),
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: Some("looks good"),
             },
         )
         .unwrap();
 
-        let content =
-            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
-        let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
-        assert!(
-            entries[0].verified_feature_tree_shas.contains_key(UID),
-            "expected verified_feature_tree_shas to be keyed by uid, got {:?}",
-            entries[0].verified_feature_tree_shas
-        );
-        assert!(
-            !entries[0]
-                .verified_feature_tree_shas
-                .contains_key("player-jump")
-        );
+        let path = dir
+            .path()
+            .join(".markharness/executions/records")
+            .join(format!("{}.yml", entry.execution_uid));
+        assert!(path.is_file());
+
+        let all = read_all_results(dir.path()).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].case_uid, "case-uid-1");
+        assert_eq!(all[0].case_revision, case_revision);
+        assert_eq!(all[0].target_revision, "abc123");
+        assert_eq!(all[0].environment.as_deref(), Some("staging"));
+        assert_eq!(all[0].result, "pass");
+        assert_eq!(all[0].note.as_deref(), Some("looks good"));
     }
 
     #[test]
-    fn record_execution_creates_results_yml_with_one_entry() {
-        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
-        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
+    fn record_execution_twice_produces_two_distinct_files() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_testcase(
+            dir.path(),
+            "tc-ground-001",
+            Some("case-uid-1"),
+            &real_case_revision_for_empty_phases(),
+        );
 
         let args = RecordArgs {
-            milestone: "m1",
             case_id: "tc-ground-001",
+            target_revision: "abc123",
+            environment: None,
             result: ExecutionResult::Pass,
-            executor: "yamada",
+            executor: "tester",
             note: None,
         };
-        record_execution(dir.path(), &args).unwrap();
+        let first = record_execution(dir.path(), &args).unwrap();
+        let second = record_execution(dir.path(), &args).unwrap();
 
-        let content =
-            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
-        assert!(content.contains("case_id: tc-ground-001"));
-        assert!(content.contains("result: pass"));
-        assert!(content.contains("executor: yamada"));
+        assert_ne!(first.execution_uid, second.execution_uid);
+        let all = read_all_results(dir.path()).unwrap();
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
-    fn record_execution_appends_to_existing_results_yml_keeping_prior_entries() {
-        let dir = init_repo_with_milestone_and_feature("player-jump", "m1");
-        write_generated_testcase_with_feature(dir.path(), "ground", "tc-ground-001", "player-jump");
-        write_generated_testcase_with_feature(dir.path(), "air", "tc-air-001", "player-jump");
+    fn read_all_results_returns_empty_when_no_records_dir_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
 
-        record_execution(
-            dir.path(),
-            &RecordArgs {
-                milestone: "m1",
-                case_id: "tc-ground-001",
-                result: ExecutionResult::Pass,
-                executor: "yamada",
-                note: None,
-            },
-        )
-        .unwrap();
-        record_execution(
-            dir.path(),
-            &RecordArgs {
-                milestone: "m1",
-                case_id: "tc-air-001",
-                result: ExecutionResult::Fail,
-                executor: "ci-github-actions",
-                note: Some("timed out"),
-            },
-        )
-        .unwrap();
+        let all = read_all_results(dir.path()).unwrap();
 
-        let content =
-            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
-        let entries: Vec<ExecutionEntry> = serde_yaml_ng::from_str(&content).unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].case_id, "tc-ground-001");
-        assert_eq!(entries[0].result, "pass");
-        assert_eq!(entries[1].case_id, "tc-air-001");
-        assert_eq!(entries[1].result, "fail");
-        assert_eq!(entries[1].note.as_deref(), Some("timed out"));
+        assert!(all.is_empty());
     }
 }

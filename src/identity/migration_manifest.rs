@@ -2,17 +2,26 @@
 //! scoped per grilling session to the concrete gap identified while
 //! implementing Phase 4): a `legacy_case_id` -> `case_uid` Rosetta stone.
 //!
-//! Every one of the five Knowledge element kinds carries its own identity
+//! Every one of the four Knowledge element kinds carries its own identity
 //! event log, so its pre-migration id is already recoverable from its root
 //! `Issued` event — no separate manifest is needed at that level. A
-//! TestCase is different: it is a derived artifact, not one of the five
-//! `EntityKind`s, so it has no identity event log of its own. Once all five
-//! of its contributing elements are migrated, `generate::compute_case_uid`
-//! can finally compute its `case_uid` (design doc §8) — but the
+//! TestCase is different: it is a derived artifact, not one of the four
+//! `EntityKind`s, so it has no identity event log of its own. Once its
+//! Scenario is migrated, `generate::compute_case_uid` can finally compute
+//! its `case_uid` (ADR 0017 §3: derived from `ScenarioUid` alone) — but the
 //! `case_id` string a project's existing `changes/*.yaml`,
 //! `executions/*/results.yml`, and external tooling already reference
 //! predates that and needs a durable place to resolve into it. This module
 //! is that place.
+//!
+//! ADR 0017 §3 also changes what can make the *same* `case_id` resolve to
+//! two different `case_uid`s over a project's history: since `case_uid`
+//! depends on `ScenarioUid` alone, only the Scenario itself being retired
+//! and reissued under the same `id` (a fresh `uid`) produces that — not a
+//! Feature/Behavior reissue, and not an ordinary content edit to the
+//! Scenario's phases (Case *revision*, a separate, not-yet-implemented
+//! concept per `checklist-adr-0017-implementation.md` Step 3, is what would
+//! track that).
 
 use std::fs;
 use std::io;
@@ -35,14 +44,15 @@ fn manifest_path(root: &Path) -> PathBuf {
 /// own doc comment on why a raw string is required for those).
 const MANIFEST_PATH_IN_REPO: &str = ".markharness/identity-migration-manifest.yml";
 
-/// Where one of a case's five contributing elements lived within a
-/// `LegacySnapshot`'s shared `tree_sha` (ADR 0013 design doc §12: "entity
-/// kind、旧ID、旧path/content locator") — its `EntityKind`, the id it
-/// carried at capture time, and its repo-relative path. This is the
-/// qualifier that turns the shared, project-wide `tree_sha` into a locator
-/// for this specific element: `tree_sha` alone says "the whole knowledge/
-/// tree looked like this," and a locator says "and this element, of this
-/// kind, under this id, lived at this path within it."
+/// Where one of a case's three contributing elements (Feature, Behavior,
+/// Scenario — ADR 0017 §1/§3) lived within a `LegacySnapshot`'s shared
+/// `tree_sha` (ADR 0013 design doc §12: "entity kind、旧ID、旧path/content
+/// locator") — its `EntityKind`, the id it carried at capture time, and its
+/// repo-relative path. This is the qualifier that turns the shared,
+/// project-wide `tree_sha` into a locator for this specific element:
+/// `tree_sha` alone says "the whole knowledge/ tree looked like this," and
+/// a locator says "and this element, of this kind, under this id, lived at
+/// this path within it."
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LegacyElementLocator {
     pub entity_kind: EntityKind,
@@ -60,40 +70,37 @@ pub struct LegacyElementLocator {
 /// moment this case's legacy identity was captured. It is *not* a per-case
 /// value: every case captured in the same operation shares the exact same
 /// `tree_sha`, because it names one point in the project's history, not a
-/// fingerprint scoped to one case. (A TestCase itself spans four *nested*
-/// Knowledge levels — requirement -> feature -> behavior -> condition —
-/// plus every ExpectedResult under its Condition, so no single subtree of
-/// `knowledge/` names exactly "this one case's five files and nothing
-/// else": the tree SHA of, say, the Requirement's own directory would
-/// necessarily also cover every sibling Feature under it. Using the whole
-/// `knowledge/` tree's SHA sidesteps that entirely — it needs no case-
-/// shaped subtree to exist.)
+/// fingerprint scoped to one case. (A TestCase itself spans three nested
+/// Knowledge levels — feature -> behavior -> scenario — so no single
+/// subtree of `knowledge/` names exactly "this one case's three files and
+/// nothing else": the tree SHA of, say, the Feature's own directory would
+/// necessarily also cover every sibling Behavior/Scenario under it. Using
+/// the whole `knowledge/` tree's SHA sidesteps that entirely — it needs no
+/// case-shaped subtree to exist.)
 ///
-/// The five `LegacyElementLocator`s are the qualifier ADR 0013 also names
+/// The three `LegacyElementLocator`s are the qualifier ADR 0013 also names
 /// ("entity kind、旧ID、旧path/content locator"): they say which entity_kind,
-/// which id, and which path each of this case's five contributing elements
+/// which id, and which path each of this case's three contributing elements
 /// had within that shared `tree_sha`, so the same tree_sha can be reused
 /// (and correctly compared) across every case captured alongside this one.
 ///
 /// `case_id` alone cannot serve as a lookup key here — it is built only
-/// from the four ancestor ids (requirement/feature/behavior/condition), so
-/// it stays identical across an ExpectedResult being added, removed, or
-/// edited even though `case_uid` (which *does* depend on the ExpectedResult
-/// set) changes. Content-hash-only designs (an ExpectedResult id set, then
-/// raw file bytes, then git blob SHAs per file) were each tried and
-/// rejected in earlier review rounds: either they missed a reissue
-/// scenario, or — for the raw-bytes and per-file-blob-SHA schemes — they
-/// were real, git-native identity but not literally the ADR's named "tree
-/// SHA". A whole-`knowledge/`-tree SHA is.
+/// from the three ancestor ids (feature/behavior/scenario), so it stays
+/// identical across an ordinary content edit to the Scenario even though a
+/// *reissue* of the Scenario under the same `id` (a fresh `uid`, hence a
+/// fresh `case_uid` — ADR 0017 §3) would not be reflected by `case_id`
+/// alone. Content-hash-only designs (a per-file content hash, then raw file
+/// bytes, then git blob SHAs per file) were each tried and rejected in
+/// earlier review rounds: either they missed a reissue scenario, or — for
+/// the raw-bytes and per-file-blob-SHA schemes — they were real, git-native
+/// identity but not literally the ADR's named "tree SHA". A whole-
+/// `knowledge/`-tree SHA is.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LegacySnapshot {
     pub tree_sha: String,
-    pub requirement: LegacyElementLocator,
     pub feature: LegacyElementLocator,
     pub behavior: LegacyElementLocator,
-    pub condition: LegacyElementLocator,
-    /// Sorted by path, so file read order never matters.
-    pub expected: Vec<LegacyElementLocator>,
+    pub scenario: LegacyElementLocator,
 }
 
 /// One `case_id` -> `case_uid` resolution, and when it was recorded.
@@ -141,11 +148,6 @@ fn build_legacy_snapshot(tree_sha: String, testcase: &TestCase) -> LegacySnapsho
     };
     LegacySnapshot {
         tree_sha,
-        requirement: locator(
-            EntityKind::Requirement,
-            &testcase.generated_from.requirement,
-            &testcase.case_files.requirement,
-        ),
         feature: locator(
             EntityKind::Feature,
             &testcase.generated_from.feature,
@@ -156,18 +158,11 @@ fn build_legacy_snapshot(tree_sha: String, testcase: &TestCase) -> LegacySnapsho
             &testcase.generated_from.behavior,
             &testcase.case_files.behavior,
         ),
-        condition: locator(
-            EntityKind::Condition,
-            &testcase.generated_from.condition,
-            &testcase.case_files.condition,
+        scenario: locator(
+            EntityKind::Scenario,
+            &testcase.generated_from.scenario,
+            &testcase.case_files.scenario,
         ),
-        expected: testcase
-            .generated_from
-            .expected_results
-            .iter()
-            .zip(&testcase.case_files.expected)
-            .map(|(legacy_id, path)| locator(EntityKind::ExpectedResult, legacy_id, path))
-            .collect(),
     }
 }
 
@@ -228,7 +223,7 @@ impl LegacyCaseSignatures {
 
 /// Snapshots every currently-generatable case's `case_id` -> `LegacySnapshot`
 /// from the working tree as it stands *right now* — the ground truth for
-/// "what did this case's five contributing files actually look like" at
+/// "what did this case's three contributing files actually look like" at
 /// this instant, whether or not `case_uid` is computable yet.
 /// `feature_ops::migrate_all` calls this *before* writing any migration
 /// changes (and durably persists the result via
@@ -270,17 +265,17 @@ pub fn capture_case_signatures(root: &Path) -> io::Result<LegacyCaseSignatures> 
 /// recomputing from the post-migration tree instead would be wrong.
 /// Idempotent — safe to call after every `identity migrate`, and safe to
 /// call again with the same or a freshly-recaptured `legacy_signatures`
-/// snapshot: a `case_uid` is a pure function of five `uid`s that never
-/// change once issued, so once a `(case_id, case_uid)` pair has its legacy
-/// identity recorded once, that recording is permanent — a later call
-/// recomputing `legacy_signatures` against the (by then already-migrated)
-/// working tree must never overwrite or duplicate it with a "legacy"
-/// snapshot that isn't actually legacy. Keyed on `(case_id, case_uid)`, not
-/// on `case_id` alone, precisely so an ExpectedResult being added, removed,
-/// or otherwise changed under an unchanged `case_id` — which changes
-/// `case_uid` — records a *new* entry instead of being silently skipped
-/// because `case_id` was already "recorded". Returns the newly recorded
-/// entries, if any.
+/// snapshot: a `case_uid` is a pure function of `ScenarioUid` alone (ADR
+/// 0017 §3) that never changes once issued, so once a `(case_id, case_uid)`
+/// pair has its legacy identity recorded once, that recording is permanent
+/// — a later call recomputing `legacy_signatures` against the (by then
+/// already-migrated) working tree must never overwrite or duplicate it with
+/// a "legacy" snapshot that isn't actually legacy. Keyed on `(case_id,
+/// case_uid)`, not on `case_id` alone, precisely so a Scenario being
+/// retired and reissued under an unchanged `id` — which changes `case_uid`
+/// (a fresh `ScenarioUid`) — records a *new* entry instead of being
+/// silently skipped because `case_id` was already "recorded". Returns the
+/// newly recorded entries, if any.
 pub fn record_new_case_uids(
     root: &Path,
     legacy_signatures: &LegacyCaseSignatures,
@@ -344,11 +339,11 @@ pub struct AmbiguousCaseId {
 /// Looks up `legacy_case_id`'s `case_uid`, if the manifest has recorded
 /// exactly one. `Err` when it has recorded more than one distinct
 /// `case_uid` for the same `case_id` (design doc §12) — this is expected,
-/// not corruption, whenever ExpectedResults were added or removed without
-/// the case's ancestor ids changing; resolving it requires more context
-/// than a bare `case_id` carries (e.g. which milestone/ref the caller's
-/// own record was made against), which is exactly why this function
-/// refuses to guess.
+/// not corruption, whenever the Scenario was retired and reissued under an
+/// unchanged `case_id` (ADR 0017 §3: a fresh `ScenarioUid` changes
+/// `case_uid`); resolving it requires more context than a bare `case_id`
+/// carries (e.g. which milestone/ref the caller's own record was made
+/// against), which is exactly why this function refuses to guess.
 pub fn resolve_case_uid<'a>(
     manifest: &'a Manifest,
     legacy_case_id: &str,
@@ -426,7 +421,7 @@ pub fn read_from_ref(root: &Path, git_ref: &str) -> io::Result<Manifest> {
 /// Checks `git_ref` out into a detached temporary worktree and looks for a
 /// generated TestCase with this exact `case_id` there (mirroring
 /// `canonical::import_native`'s worktree pattern), together with its real
-/// `LegacySnapshot` — the ground truth for "what did this case's five
+/// `LegacySnapshot` — the ground truth for "what did this case's three
 /// contributing elements actually look like at this ref," independent of
 /// whether `case_uid` was computable there yet. `None` if `case_id`
 /// doesn't exist verbatim at that ref (it may have been renamed away, or
@@ -486,16 +481,16 @@ pub enum CrossBoundaryError {
     /// The two refs' manifests disagree: `case_id` resolves to a
     /// different `case_uid` depending on which side is consulted. This
     /// should never happen from ordinary use (a `case_uid` is a pure
-    /// function of five `uid`s that never change once issued — see
-    /// `record_new_case_uids`), so treat it as corruption rather than
+    /// function of `ScenarioUid` alone that never changes once issued —
+    /// see `record_new_case_uids`), so treat it as corruption rather than
     /// picking a side.
     Ambiguous {
         from_case_uid: String,
         to_case_uid: String,
     },
     /// One ref's own manifest already has more than one candidate
-    /// `case_uid` for `case_id` (e.g. an ExpectedResult was added or
-    /// removed under an unchanged `case_id` sometime in that ref's
+    /// `case_uid` for `case_id` (e.g. the Scenario was retired and
+    /// reissued under an unchanged `case_id` sometime in that ref's
     /// history) — `resolve_case_uid_across_refs` cannot disambiguate on
     /// `case_id` alone, so it refuses rather than guessing.
     AmbiguousWithinRef {
@@ -610,17 +605,22 @@ pub fn resolve_case_uid_across_refs(
 mod tests {
     use super::*;
 
-    /// Writes a full req -> feature -> behavior -> condition ->
-    /// expected/001.yml tree under `root`, with every element already
-    /// carrying a `uid` when `with_uids` is true, or none at all (a
-    /// genuinely pre-migration snapshot) when false. The single fixture
-    /// builder every test in this module that needs a real Knowledge tree
-    /// shares, so a schema change only needs updating here.
+    /// Writes a full req -> feature -> behavior -> scenario tree under
+    /// `root`, with every element already carrying a `uid` when
+    /// `with_uids` is true, or none at all (a genuinely pre-migration
+    /// snapshot) when false. The single fixture builder every test in this
+    /// module that needs a real Knowledge tree shares, so a schema change
+    /// only needs updating here.
     fn write_full_tree(root: &Path, with_uids: bool) {
         let knowledge = root
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
-        fs::create_dir_all(knowledge.join("expected")).unwrap();
+            .join("knowledge/features/todo/todo-add-task");
+        fs::create_dir_all(&knowledge).unwrap();
+        fs::create_dir_all(
+            root.join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge/requirements/req-todo"),
+        )
+        .unwrap();
         let uid_line = |uid: &str| {
             if with_uids {
                 format!("uid: {uid}\n")
@@ -630,7 +630,7 @@ mod tests {
         };
         fs::write(
             root.join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/requirement.yml"),
+                .join("knowledge/requirements/req-todo/requirement.yml"),
             format!(
                 "id: req-todo\nlabel: req-todo\naxis: []\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FR0")
@@ -639,35 +639,29 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/todo/feature.yml"),
+                .join("knowledge/features/todo/feature.yml"),
             format!(
-                "id: todo\nrequirement: req-todo\nlabel: todo\naxis: []\n{}",
+                "id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FE0")
             ),
         )
         .unwrap();
         fs::write(
-            root.join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
+            knowledge.join("behavior.yml"),
             format!(
-                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n{}",
+                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\nprocedures: {{}}\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FB0")
             ),
         )
         .unwrap();
+        fs::create_dir_all(knowledge.join("todo-add-task-empty-input")).unwrap();
         fs::write(
-            knowledge.join("condition.yml"),
+            knowledge
+                .join("todo-add-task-empty-input")
+                .join("scenario.yml"),
             format!(
-                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n{}",
-                uid_line("01ARZ3NDEKTSV4RRFFQ69G5FC0")
-            ),
-        )
-        .unwrap();
-        fs::write(
-            knowledge.join("expected/001.yml"),
-            format!(
-                "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n{}",
-                uid_line("01ARZ3NDEKTSV4RRFFQ69G5FX0")
+                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nphases:\n  - steps:\n      - action: \"Press the add button.\"\n    results:\n      - \"Shows a validation error.\"\n{}",
+                uid_line("01ARZ3NDEKTSV4RRFFQ69G5FS0")
             ),
         )
         .unwrap();
@@ -686,11 +680,9 @@ mod tests {
         };
         LegacySnapshot {
             tree_sha: format!("tree-sha-{tag}"),
-            requirement: locator(EntityKind::Requirement, "requirement"),
             feature: locator(EntityKind::Feature, "feature"),
             behavior: locator(EntityKind::Behavior, "behavior"),
-            condition: locator(EntityKind::Condition, "condition"),
-            expected: vec![locator(EntityKind::ExpectedResult, "expected-1")],
+            scenario: locator(EntityKind::Scenario, "scenario"),
         }
     }
 
@@ -716,7 +708,7 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert_eq!(
             recorded[0].legacy_case_id,
-            "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input"
+            "tc-todo-todo-add-task-todo-add-task-empty-input"
         );
         let manifest = read(dir.path()).unwrap();
         assert_eq!(manifest.entries, recorded);
@@ -741,42 +733,7 @@ mod tests {
     fn record_new_case_uids_skips_a_case_still_missing_a_uid() {
         let dir = init_repo();
         crate::init::run_init(dir.path()).unwrap();
-        let knowledge = dir
-            .path()
-            .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
-        fs::create_dir_all(knowledge.join("expected")).unwrap();
-        fs::write(
-            dir.path()
-                .join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/requirement.yml"),
-            "id: req-todo\nlabel: req-todo\naxis: []\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.path()
-                .join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/todo/feature.yml"),
-            "id: todo\nrequirement: req-todo\nlabel: todo\naxis: []\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.path()
-                .join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
-            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n",
-        )
-        .unwrap();
-        fs::write(
-            knowledge.join("condition.yml"),
-            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::write(
-            knowledge.join("expected/001.yml"),
-            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n",
-        )
-        .unwrap();
+        write_full_tree(dir.path(), false);
 
         let recorded =
             record_new_case_uids(dir.path(), &capture_case_signatures(dir.path()).unwrap())
@@ -844,8 +801,8 @@ mod tests {
     }
 
     /// The reviewer-requested guarantee: two entries recorded for the same
-    /// `case_id` at two different points in its history (an ExpectedResult
-    /// added between them, so each has its own `legacy_snapshot`)
+    /// `case_id` at two different points in its history (the Scenario
+    /// reissued between them, so each has its own `legacy_snapshot`)
     /// must each resolve to their own correct `case_uid` when the caller
     /// supplies the matching signature — not just report ambiguity.
     #[test]
@@ -900,12 +857,12 @@ mod tests {
     }
 
     /// The bug this test guards against: before the fix, dedup and
-    /// resolution were keyed on `legacy_case_id` alone. An ExpectedResult
-    /// added under an unchanged `case_id` changes `case_uid` (it depends
-    /// on the *set* of ExpectedResult uids) without changing `case_id` —
-    /// so a naive "already recorded" check would silently freeze the
-    /// manifest on the stale pairing forever, and a naive lookup would
-    /// silently return whichever entry happened to be recorded first.
+    /// resolution were keyed on `legacy_case_id` alone. A Scenario reissued
+    /// under an unchanged `case_id` changes `case_uid` (ADR 0017 §3: a
+    /// fresh `ScenarioUid`) without changing `case_id` — so a naive
+    /// "already recorded" check would silently freeze the manifest on the
+    /// stale pairing forever, and a naive lookup would silently return
+    /// whichever entry happened to be recorded first.
     #[test]
     fn resolve_case_uid_reports_ambiguity_when_the_same_case_id_has_two_case_uids() {
         let manifest = Manifest {
@@ -940,12 +897,14 @@ mod tests {
     }
 
     /// The actual scenario that produces the ambiguity above: a second
-    /// `identity migrate` run after an ExpectedResult was added under an
-    /// unchanged `case_id` must add a *second* manifest entry for that
-    /// `case_id`, not silently skip it because the `case_id` alone was
-    /// already "recorded".
+    /// `identity migrate` run after the Scenario was retired and reissued
+    /// under an unchanged `case_id` must add a *second* manifest entry for
+    /// that `case_id`, not silently skip it because the `case_id` alone was
+    /// already "recorded" (ADR 0017 §3: a fresh `ScenarioUid` changes
+    /// `case_uid`).
     #[test]
-    fn record_new_case_uids_records_a_new_pairing_when_case_uid_changes_under_the_same_case_id() {
+    fn record_new_case_uids_records_a_new_pairing_when_the_scenario_is_reissued_under_the_same_case_id()
+     {
         let dir = init_repo();
         crate::init::run_init(dir.path()).unwrap();
         write_full_tree(dir.path(), true);
@@ -955,42 +914,48 @@ mod tests {
         assert_eq!(first_run.len(), 1);
         let first_case_uid = first_run[0].case_uid.clone();
 
-        // Add a second ExpectedResult under the same Condition: case_id
-        // stays the same, but case_uid must change (it depends on the set
-        // of ExpectedResult uids).
-        let expected_dir = dir.path().join(
-            ".markharness/knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input/expected",
-        );
+        // "Delete" the original Scenario and "recreate" one reusing the
+        // exact same id, but with different content and no uid — as if it
+        // were retired and recreated as a distinct real-world entity, which
+        // gets its own fresh uid on the next migrate.
+        let scenario_path = dir
+            .path()
+            .join(".markharness/knowledge/features/todo/todo-add-task/todo-add-task-empty-input/scenario.yml");
         fs::write(
-            expected_dir.join("002.yml"),
-            "id: todo-add-task-empty-input-002\ncondition: todo-add-task-empty-input\ndescription: |\n  Also shows a hint.\nresults:\n  - \"Confirmed.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FX1\n",
+            &scenario_path,
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  A completely different scenario now.\nphases:\n  - steps:\n      - action: \"Press the add button.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
-
-        let second_run =
-            record_new_case_uids(dir.path(), &capture_case_signatures(dir.path()).unwrap())
-                .unwrap();
-
-        assert_eq!(
-            second_run.len(),
-            1,
-            "expected a new pairing to be recorded, not skipped"
-        );
-        assert_ne!(second_run[0].case_uid, first_case_uid);
-        assert_eq!(second_run[0].legacy_case_id, first_run[0].legacy_case_id);
+        // `identity migrate` (`migrate_entities`) assigns the fresh uid
+        // *and* calls `record_new_case_uids` itself as its last step (see
+        // `feature_ops::migrate_all`) — so the new pairing is recorded
+        // here, not by a separate explicit call.
+        crate::identity::migrate_entities(dir.path()).unwrap();
 
         let manifest = read(dir.path()).unwrap();
-        assert_eq!(manifest.entries.len(), 2);
-        assert_ne!(
-            first_run[0].legacy_snapshot, second_run[0].legacy_snapshot,
-            "the two pairings must carry distinct snapshot-qualifying signatures"
+
+        assert_eq!(
+            manifest.entries.len(),
+            2,
+            "a reissued Scenario must be recorded as a new pairing, not skipped because \
+             case_id was already \"recorded\": {manifest:?}"
         );
+        let second_entry = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.legacy_snapshot != first_run[0].legacy_snapshot)
+            .expect("a second, distinct signature must have been recorded");
+        assert_ne!(
+            first_run[0].legacy_snapshot, second_entry.legacy_snapshot,
+            "a reissued Scenario's fresh uid must change the signature"
+        );
+        assert_ne!(first_case_uid, second_entry.case_uid);
         assert_eq!(
             resolve_case_uid(&manifest, &first_run[0].legacy_case_id),
             Err(AmbiguousCaseId {
                 legacy_case_id: first_run[0].legacy_case_id.clone(),
                 case_uids: {
-                    let mut uids = vec![first_case_uid.clone(), second_run[0].case_uid.clone()];
+                    let mut uids = vec![first_case_uid.clone(), second_entry.case_uid.clone()];
                     uids.sort();
                     uids
                 },
@@ -1009,26 +974,23 @@ mod tests {
         assert_eq!(
             resolve_case_uid_with_signature(
                 &manifest,
-                &second_run[0].legacy_case_id,
-                Some(&second_run[0].legacy_snapshot)
+                &first_run[0].legacy_case_id,
+                Some(&second_entry.legacy_snapshot)
             ),
-            Ok(Some(second_run[0].case_uid.as_str()))
+            Ok(Some(second_entry.case_uid.as_str()))
         );
     }
 
-    /// The scenario the ID-only signature (rejected during review) got
-    /// wrong: an ExpectedResult is deleted and a *different* one is
-    /// created reusing the same `id`. `case_id` is unaffected (it doesn't
-    /// depend on ExpectedResult ids at all) and the ExpectedResult *id
-    /// set* is unchanged too (still just `{"...-001"}`) — an id-only
-    /// signature would have judged these two states identical and
-    /// resolved them to whichever `case_uid` happened to be recorded
-    /// first, even though the real ExpectedResult (different description,
-    /// different `uid`, since it went through its own separate `identity
-    /// migrate`) is not the same. The content signature must tell them
-    /// apart.
+    /// ADR 0017 §3's table ("別Feature/Behaviorへの移動: Case UID維持"):
+    /// since `case_uid` is a pure function of `ScenarioUid` alone, reissuing
+    /// an *ancestor* element (Feature or Behavior) under the same `id` and
+    /// content, but a fresh `uid`, does **not** change `case_uid` — unlike
+    /// the pre-ADR-0017 model, where every one of a case's contributing
+    /// `uid`s fed the hash. `record_new_case_uids` must therefore record
+    /// nothing new for this case: the `(case_id, case_uid)` pair is
+    /// unchanged, so it is already "recorded".
     #[test]
-    fn legacy_snapshot_detects_an_expected_result_reusing_the_same_id_with_different_content() {
+    fn reissuing_an_ancestor_feature_does_not_change_case_uid() {
         let dir = init_repo();
         crate::init::run_init(dir.path()).unwrap();
         write_full_tree(dir.path(), true);
@@ -1037,71 +999,16 @@ mod tests {
                 .unwrap();
         assert_eq!(first_run.len(), 1);
 
-        // "Delete" the original ExpectedResult and "recreate" one reusing
-        // the exact same id, but with different content (and, since it is
-        // a distinct real-world entity, its own fresh uid once migrated).
-        let expected_path = dir.path().join(
-            ".markharness/knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input/expected/001.yml",
-        );
-        fs::write(
-            &expected_path,
-            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  A completely different scenario now.\nresults:\n  - \"Confirmed.\"\n",
-        )
-        .unwrap();
-        // `identity migrate` (`migrate_entities`) assigns the fresh uid
-        // *and* calls `record_new_case_uids` itself as its last step (see
-        // `feature_ops::migrate_all`) — so the new pairing is recorded
-        // here, not by a separate explicit call.
-        crate::identity::migrate_entities(dir.path()).unwrap();
-
-        let manifest = read(dir.path()).unwrap();
-
-        assert_eq!(
-            manifest.entries.len(),
-            2,
-            "the id-reusing replacement must be recorded as a new pairing, not treated as \
-             identical to the original just because the id set is unchanged: {manifest:?}"
-        );
-        let second_entry = manifest
-            .entries
-            .iter()
-            .find(|entry| entry.legacy_snapshot != first_run[0].legacy_snapshot)
-            .expect("a second, distinct signature must have been recorded");
-        assert_ne!(
-            first_run[0].legacy_snapshot, second_entry.legacy_snapshot,
-            "different content behind the same ExpectedResult id must produce a different signature"
-        );
-        assert_ne!(first_run[0].case_uid, second_entry.case_uid);
-    }
-
-    /// The reviewer's Round 3 finding: reissuing an *ancestor* element
-    /// (Requirement, Feature, or Behavior) — not Condition or
-    /// ExpectedResult — under the same `id` and the same content, but a
-    /// fresh `uid`, must also be recorded as a new pairing. Before this
-    /// fix, the signature only covered `condition.yml` and
-    /// `expected/*.yml`, so this exact scenario left the signature
-    /// unchanged while `case_uid` changed, and `record_new_case_uids`
-    /// silently skipped the new mapping as "already recorded."
-    #[test]
-    fn legacy_snapshot_detects_a_requirement_reissued_with_the_same_id_and_content() {
-        let dir = init_repo();
-        crate::init::run_init(dir.path()).unwrap();
-        write_full_tree(dir.path(), true);
-        let first_run =
-            record_new_case_uids(dir.path(), &capture_case_signatures(dir.path()).unwrap())
-                .unwrap();
-        assert_eq!(first_run.len(), 1);
-
-        // "Retire" the original Requirement and "reissue" one reusing the
+        // "Retire" the original Feature and "reissue" one reusing the
         // exact same id and content, but without a uid — as if it were
         // released and recreated as a distinct real-world entity, which
         // will get its own fresh uid on the next migrate.
-        let requirement_path = dir
+        let feature_path = dir
             .path()
-            .join(".markharness/knowledge/req-todo/requirement.yml");
+            .join(".markharness/knowledge/features/todo/feature.yml");
         fs::write(
-            &requirement_path,
-            "id: req-todo\nlabel: req-todo\naxis: []\n",
+            &feature_path,
+            "id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\n",
         )
         .unwrap();
         crate::identity::migrate_entities(dir.path()).unwrap();
@@ -1110,22 +1017,11 @@ mod tests {
 
         assert_eq!(
             manifest.entries.len(),
-            2,
-            "reissuing an ancestor element (same id, same content, fresh uid) must be recorded \
-             as a new pairing, not treated as identical to the original just because Condition \
-             and ExpectedResult content didn't change: {manifest:?}"
+            1,
+            "reissuing an ancestor Feature must not change case_uid (it depends only on \
+             ScenarioUid), so nothing new should be recorded: {manifest:?}"
         );
-        let second_entry = manifest
-            .entries
-            .iter()
-            .find(|entry| entry.legacy_snapshot != first_run[0].legacy_snapshot)
-            .expect("a second, distinct signature must have been recorded");
-        assert_ne!(
-            first_run[0].legacy_snapshot, second_entry.legacy_snapshot,
-            "a reissued Requirement's fresh uid must change the signature even though Condition \
-             and ExpectedResult content is untouched"
-        );
-        assert_ne!(first_run[0].case_uid, second_entry.case_uid);
+        assert_eq!(manifest.entries[0].case_uid, first_run[0].case_uid);
     }
 
     fn run_git(root: &Path, args: &[&str]) {
@@ -1279,17 +1175,18 @@ mod tests {
     /// history rather than a hand-built manifest: the same `case_id`,
     /// queried from the same pre-migration ancestor, resolves to a
     /// *different* — and in each case correct — `case_uid` depending on
-    /// which of two later points (before vs. after a second ExpectedResult
-    /// was added) it is compared against.
+    /// which of two later points (before vs. after the Scenario was
+    /// retired and reissued under the same id — ADR 0017 §3: a fresh
+    /// `ScenarioUid` changes `case_uid`) it is compared against.
     #[test]
     fn resolve_case_uid_across_refs_resolves_each_of_two_case_uids_for_the_same_case_id_correctly()
     {
         let dir = init_repo();
-        let knowledge = dir
+        let scenario_path = dir
             .path()
-            .join(".markharness/knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
+            .join(".markharness/knowledge/features/todo/todo-add-task/todo-add-task-empty-input/scenario.yml");
         write_full_tree(dir.path(), false);
-        let case_id = "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input";
+        let case_id = "tc-todo-todo-add-task-todo-add-task-empty-input";
         commit_all(dir.path(), "pre-migration");
         run_git(dir.path(), &["tag", "v0"]);
 
@@ -1299,20 +1196,21 @@ mod tests {
         run_git(dir.path(), &["tag", "v1"]);
         let case_uid_v1 = resolve_case_uid_across_refs(dir.path(), "v0", "v1", case_id).unwrap();
 
-        // A second ExpectedResult, same case_id, different case_uid.
+        // Retire and reissue the Scenario under the same id: same case_id,
+        // different case_uid (a fresh ScenarioUid).
         fs::write(
-            knowledge.join("expected/002.yml"),
-            "id: todo-add-task-empty-input-002\ncondition: todo-add-task-empty-input\ndescription: |\n  Also shows a hint.\nresults:\n  - \"Confirmed.\"\n",
+            &scenario_path,
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Also shows a hint.\nphases:\n  - steps:\n      - action: \"Press the add button.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
         crate::identity::migrate_entities(dir.path()).unwrap();
-        commit_all(dir.path(), "added a second ExpectedResult");
+        commit_all(dir.path(), "reissued the scenario");
         run_git(dir.path(), &["tag", "v2"]);
         let case_uid_v2 = resolve_case_uid_across_refs(dir.path(), "v0", "v2", case_id).unwrap();
 
         assert_ne!(
             case_uid_v1, case_uid_v2,
-            "adding an ExpectedResult must change case_uid"
+            "reissuing the Scenario must change case_uid"
         );
         // Each resolution from the same v0 ancestor must independently
         // match what direct computation at v1/v2 says is correct.
@@ -1335,8 +1233,8 @@ mod tests {
     /// The reviewer's Round 4 finding, end-to-end against real git history:
     /// a pre-migration ref whose manifest already carries a single entry
     /// for this exact `case_id` — but from an unrelated snapshot, so its
-    /// `legacy_snapshot` does not match this ref's actual
-    /// Condition/ExpectedResult content — must not resolve to that stale
+    /// `legacy_snapshot` does not match this ref's actual Scenario content
+    /// — must not resolve to that stale
     /// entry's `case_uid` just because it is the only candidate. It must
     /// resolve `None` on its own, leaving `to_ref`'s own directly-computed
     /// `case_uid` (once genuinely migrated) as the only trustworthy answer.
@@ -1344,7 +1242,7 @@ mod tests {
     fn resolve_case_uid_across_refs_refuses_a_stale_manifest_entry_whose_content_disagrees() {
         let dir = init_repo();
         write_full_tree(dir.path(), false);
-        let case_id = "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input";
+        let case_id = "tc-todo-todo-add-task-todo-add-task-empty-input";
         fs::create_dir_all(dir.path().join(".markharness")).unwrap();
         write(
             dir.path(),
@@ -1407,7 +1305,7 @@ mod tests {
         // `identity migrate` ever ran, so no manifest entry was ever
         // written to corroborate it.
         write_full_tree(dir.path(), true);
-        let case_id = "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input";
+        let case_id = "tc-todo-todo-add-task-todo-add-task-empty-input";
         commit_all(
             dir.path(),
             "after: fully migrated content, but no manifest at all",

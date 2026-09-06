@@ -1162,12 +1162,17 @@ mod tests {
         init_git_repo(dir.path());
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump"),
+                .join(".markharness/knowledge/features/player-jump"),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/requirement.yml"),
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             // Already migrated, so Feature-focused tests calling
             // `migrate_entities`/`plan_migration` see only the Feature(s)
             // they set up themselves — multi-kind migration itself is
@@ -1181,7 +1186,7 @@ mod tests {
     fn write_feature(dir: &Path, id: &str, uid: Option<&str>) {
         let feature = Feature {
             id: id.to_string(),
-            requirement: "controls".to_string(),
+            requirement_ids: vec!["controls".to_string()],
             label: id.to_string(),
             axis: Vec::new(),
             description: None,
@@ -1189,7 +1194,7 @@ mod tests {
             uid: uid.map(str::to_string),
         };
         fs::write(
-            dir.join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            dir.join(".markharness/knowledge/features/player-jump/feature.yml"),
             knowledge::serialize_feature(&feature),
         )
         .unwrap();
@@ -1226,7 +1231,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -1278,13 +1283,13 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/other-feature"),
+                .join(".markharness/knowledge/features/other-feature"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/other-feature/feature.yml"),
-            "id: task-management\nrequirement: controls\nlabel: task-management\naxis: []\n",
+                .join(".markharness/knowledge/features/other-feature/feature.yml"),
+            "id: task-management\nrequirement_ids: [controls]\nlabel: task-management\naxis: []\n",
         )
         .unwrap();
 
@@ -1332,7 +1337,7 @@ mod tests {
         // feature.yml still says the old id until recovery runs.
         let stale = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         assert!(stale.contains("id: todo-management"));
@@ -1344,7 +1349,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         assert!(content.contains("id: todo-management-v2"));
@@ -1409,7 +1414,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         assert!(content.contains("id: task-management"));
@@ -1602,7 +1607,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
 
@@ -1610,17 +1615,17 @@ mod tests {
         // (no reservation on its id to bump into).
         let other_feature = Feature {
             id: "unrelated-feature".to_string(),
-            requirement: "controls".to_string(),
+            requirement_ids: vec!["controls".to_string()],
             label: "unrelated-feature".to_string(),
             axis: Vec::new(),
             description: None,
             forked_from: None,
             uid: None,
         };
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/unrelated")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/features/unrelated")).unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/unrelated/feature.yml"),
+                .join(".markharness/knowledge/features/unrelated/feature.yml"),
             knowledge::serialize_feature(&other_feature),
         )
         .unwrap();
@@ -1700,7 +1705,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
 
@@ -1765,7 +1770,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let root = dir.path();
@@ -1814,7 +1819,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
 
@@ -1861,7 +1866,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let events_before =
@@ -2031,7 +2036,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2041,7 +2046,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2057,10 +2062,10 @@ mod tests {
     fn sync_entity_resyncs_a_non_feature_kind_file_recreated_after_restore() {
         let dir = init_project();
         const REQ_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FQ1";
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/req-x")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/requirements/req-x")).unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/req-x/requirement.yml"),
+                .join(".markharness/knowledge/requirements/req-x/requirement.yml"),
             format!("id: req-x\nlabel: req-x\naxis: []\nuid: {REQ_UID}\n"),
         )
         .unwrap();
@@ -2088,7 +2093,7 @@ mod tests {
 
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/req-x/requirement.yml"),
+                .join(".markharness/knowledge/requirements/req-x/requirement.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Requirement, REQ_UID).unwrap();
@@ -2097,7 +2102,7 @@ mod tests {
         // and (for this kind) no other command could ever fill it in.
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/req-x/requirement.yml"),
+                .join(".markharness/knowledge/requirements/req-x/requirement.yml"),
             "id: req-x\nlabel: req-x\naxis: []\n",
         )
         .unwrap();
@@ -2106,7 +2111,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/req-x/requirement.yml"),
+                .join(".markharness/knowledge/requirements/req-x/requirement.yml"),
         )
         .unwrap();
         let requirement: knowledge::Requirement = knowledge::parse_requirement(&content).unwrap();
@@ -2135,7 +2140,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2147,7 +2152,7 @@ mod tests {
         // The refused sync must not have written the uid back in.
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2173,7 +2178,7 @@ mod tests {
         assert_eq!(reissued.source_uid.as_deref(), Some(foreign_uid));
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2211,7 +2216,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2240,7 +2245,7 @@ mod tests {
         assert_eq!(reissued.source_uid, None);
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2294,7 +2299,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2335,7 +2340,7 @@ mod tests {
         );
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2367,7 +2372,7 @@ mod tests {
         ));
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2389,7 +2394,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2415,7 +2420,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2447,7 +2452,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2471,7 +2476,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2499,7 +2504,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2531,7 +2536,7 @@ mod tests {
         issue_uid(dir.path(), UID, "todo-management");
         fs::remove_file(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         retire_entity(dir.path(), EntityKind::Feature, UID).unwrap();
@@ -2603,7 +2608,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2630,7 +2635,7 @@ mod tests {
         assert!(report.migrated.is_empty());
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -2642,11 +2647,11 @@ mod tests {
         let dir = init_project();
         write_feature(dir.path(), "todo-management", Some(UID));
         issue_uid(dir.path(), UID, "todo-management");
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/features/second")).unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/second/feature.yml"),
-            "id: second-feature\nrequirement: controls\nlabel: second-feature\naxis: []\n",
+                .join(".markharness/knowledge/features/second/feature.yml"),
+            "id: second-feature\nrequirement_ids: [controls]\nlabel: second-feature\naxis: []\n",
         )
         .unwrap();
 
@@ -2667,7 +2672,7 @@ mod tests {
         assert_eq!(report.migrated[0].id, "todo-management");
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
         )
         .unwrap();
         assert!(!content.contains("uid:"));
@@ -2678,11 +2683,11 @@ mod tests {
     fn plan_feature_migration_reports_duplicate_ids_without_writing() {
         let dir = init_project();
         write_feature(dir.path(), "todo-management", None);
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/features/second")).unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/second/feature.yml"),
-            "id: todo-management\nrequirement: controls\nlabel: duplicate\naxis: []\n",
+                .join(".markharness/knowledge/features/second/feature.yml"),
+            "id: todo-management\nrequirement_ids: [controls]\nlabel: duplicate\naxis: []\n",
         )
         .unwrap();
 
@@ -2698,11 +2703,11 @@ mod tests {
     fn migrate_features_rejects_conflicts_before_the_batch_commit_point() {
         let dir = init_project();
         write_feature(dir.path(), "todo-management", None);
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/features/second")).unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/second/feature.yml"),
-            "id: todo-management\nrequirement: controls\nlabel: duplicate\naxis: []\n",
+                .join(".markharness/knowledge/features/second/feature.yml"),
+            "id: todo-management\nrequirement_ids: [controls]\nlabel: duplicate\naxis: []\n",
         )
         .unwrap();
 
@@ -2717,11 +2722,11 @@ mod tests {
     fn one_migration_records_one_operation_timestamp_for_every_feature() {
         let dir = init_project();
         write_feature(dir.path(), "todo-management", None);
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls/second")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/features/second")).unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/second/feature.yml"),
-            "id: second-feature\nrequirement: controls\nlabel: second-feature\naxis: []\n",
+                .join(".markharness/knowledge/features/second/feature.yml"),
+            "id: second-feature\nrequirement_ids: [controls]\nlabel: second-feature\naxis: []\n",
         )
         .unwrap();
 
@@ -2751,39 +2756,35 @@ mod tests {
         init_git_repo(dir.path());
         let base = dir
             .path()
-            .join(".markharness/knowledge/req/feature/behavior/condition");
-        fs::create_dir_all(base.join("expected")).unwrap();
+            .join(".markharness/knowledge/features/feature/behavior/scenario");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/requirements/req")).unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/req/requirement.yml"),
+                .join(".markharness/knowledge/requirements/req/requirement.yml"),
             "id: req\nlabel: req\naxis: []\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/req/feature/feature.yml"),
-            "id: feature\nrequirement: req\nlabel: feature\naxis: []\n",
+                .join(".markharness/knowledge/features/feature/feature.yml"),
+            "id: feature\nrequirement_ids: [req]\nlabel: feature\naxis: []\n",
         )
         .unwrap();
         fs::write(
             base.parent().unwrap().join("behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\npreconditions:\n  - \"d\"\n",
+            "id: behavior\nfeature: feature\nlabel: behavior\naxis: []\ndescription: |\n  d\nprocedures: {}\n",
         )
         .unwrap();
         fs::write(
-            base.join("condition.yml"),
-            "id: condition\nbehavior: behavior\nlabel: condition\ndescription: |\n  d\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::write(
-            base.join("expected/001.yml"),
-            "id: condition-001\ncondition: condition\ndescription: |\n  d\nresults:\n  - \"Confirmed.\"\n",
+            base.join("scenario.yml"),
+            "id: scenario\nbehavior: behavior\nlabel: scenario\ndescription: |\n  d\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
         dir
     }
 
-    /// Step 30: `identity migrate` must cover all five `EntityKind`s in a
+    /// Step 30: `identity migrate` must cover all four `EntityKind`s in a
     /// single operation, not just Feature.
     #[test]
     fn migrate_entities_assigns_a_uid_to_every_kind_in_one_operation() {
@@ -2798,11 +2799,11 @@ mod tests {
             EntityKind::ALL.into_iter().collect(),
             "expected every EntityKind to be migrated, got {report:?}"
         );
-        assert_eq!(report.migrated.len(), 5);
+        assert_eq!(report.migrated.len(), 4);
     }
 
     /// The batch is genuinely one operation: every migrated element,
-    /// across all five kinds, shares the same `recorded_at`.
+    /// across all four kinds, shares the same `recorded_at`.
     #[test]
     fn migrate_entities_shares_one_recorded_at_across_every_kind() {
         let dir = full_tree_project();
@@ -2839,7 +2840,7 @@ mod tests {
             .unwrap();
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/req/feature/behavior/behavior.yml"),
+                .join(".markharness/knowledge/features/feature/behavior/behavior.yml"),
         )
         .unwrap();
         let behavior: knowledge::Behavior = knowledge::parse_behavior(&content).unwrap();
@@ -2856,15 +2857,15 @@ mod tests {
         // Reuse "req"'s id for the Feature too: allowed, different kinds.
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/req/feature/feature.yml"),
-            "id: req\nrequirement: req\nlabel: feature\naxis: []\n",
+                .join(".markharness/knowledge/features/feature/feature.yml"),
+            "id: req\nrequirement_ids: [req]\nlabel: feature\naxis: []\n",
         )
         .unwrap();
 
         let report = migrate_entities(dir.path()).unwrap();
 
         assert!(report.conflicts.is_empty());
-        assert_eq!(report.migrated.len(), 5);
+        assert_eq!(report.migrated.len(), 4);
     }
 
     /// Step 34 (design doc §13 Phase 5): once every element of every kind
@@ -2889,13 +2890,13 @@ mod tests {
         let dir = full_tree_project();
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/req/feature/other-behavior"),
+                .join(".markharness/knowledge/features/feature/other-behavior"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/req/feature/other-behavior/behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\npreconditions:\n  - \"d\"\n",
+                .join(".markharness/knowledge/features/feature/other-behavior/behavior.yml"),
+            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\nprocedures: {}\n",
         )
         .unwrap();
 
@@ -2929,13 +2930,13 @@ mod tests {
         let dir = full_tree_project();
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/req/feature/other-behavior"),
+                .join(".markharness/knowledge/features/feature/other-behavior"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/req/feature/other-behavior/behavior.yml"),
-            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\npreconditions:\n  - \"d\"\n",
+                .join(".markharness/knowledge/features/feature/other-behavior/behavior.yml"),
+            "id: behavior\nfeature: feature\nlabel: other\naxis: []\ndescription: |\n  d\nprocedures: {}\n",
         )
         .unwrap();
 
@@ -2980,7 +2981,7 @@ mod tests {
             dir.path(),
             EntityKind::Behavior,
             &dir.path()
-                .join(".markharness/knowledge/req/feature/behavior/behavior.yml"),
+                .join(".markharness/knowledge/features/feature/behavior/behavior.yml"),
             "behavior",
             UID,
         )
@@ -3030,7 +3031,7 @@ mod tests {
 
         let content = fs::read_to_string(
             dir.path()
-                .join(".markharness/knowledge/req/feature/behavior/behavior.yml"),
+                .join(".markharness/knowledge/features/feature/behavior/behavior.yml"),
         )
         .unwrap();
         assert!(
@@ -3040,7 +3041,7 @@ mod tests {
     }
 
     /// Step 31: a single `migrate_entities` call that completes every one
-    /// of a case's five contributing elements at once must also record
+    /// of a case's three contributing elements at once must also record
     /// that case's `legacy_case_id` -> `case_uid` mapping in the
     /// migration manifest — not require a separate command.
     #[test]
@@ -3053,7 +3054,7 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         assert_eq!(
             manifest.entries[0].legacy_case_id,
-            "tc-req-feature-behavior-condition"
+            "tc-feature-behavior-scenario"
         );
     }
 

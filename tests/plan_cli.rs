@@ -26,35 +26,31 @@ fn git_output(root: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
-fn write_knowledge(root: &Path, condition_description: &str) {
-    let base = root.join(".markharness/knowledge/shop/checkout/pay/valid-card");
-    std::fs::create_dir_all(base.join("expected")).unwrap();
+fn write_knowledge(root: &Path, scenario_description: &str) {
+    let base = root.join(".markharness/knowledge/features/checkout/pay/valid-card");
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/shop")).unwrap();
     std::fs::write(
         root.join(".markharness/config.toml"),
         "schema_version = 1\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/requirement.yml"),
+        root.join(".markharness/knowledge/requirements/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/checkout/feature.yml"),
-        "id: checkout\nrequirement: shop\nlabel: Checkout\naxis: []\n",
+        root.join(".markharness/knowledge/features/checkout/feature.yml"),
+        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/checkout/pay/behavior.yml"),
-        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\npreconditions:\n  - \"Enter the card number.\"\n",
+        root.join(".markharness/knowledge/features/checkout/pay/behavior.yml"),
+        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\nprocedures: {}\n",
     )
     .unwrap();
-    std::fs::write(base.join("condition.yml"), format!("id: valid-card\nbehavior: pay\nlabel: Valid card\ndescription: {condition_description}\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n")).unwrap();
-    std::fs::write(
-        base.join("expected/001.yml"),
-        "id: accepted\ncondition: valid-card\ndescription: Accepted.\nresults:\n  - \"Confirmed.\"\n",
-    )
-    .unwrap();
+    std::fs::write(base.join("scenario.yml"), format!("id: valid-card\nbehavior: pay\nlabel: Valid card\ndescription: {scenario_description}\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Accepted.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FS2\n")).unwrap();
 }
 
 #[test]
@@ -85,7 +81,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
     assert_eq!(plan["summary"]["changed_features"], 1);
     assert_eq!(
         plan["affected_existing_tests"][0]["id"],
-        "tc-shop-checkout-pay-valid-card"
+        "tc-checkout-pay-valid-card"
     );
     assert_eq!(plan["affected_existing_tests"][0]["status"], "pending");
     let schema: serde_json::Value =
@@ -95,22 +91,59 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         .validate(&plan)
         .unwrap();
 
+    let head_oid = git_output(repo.path(), &["rev-parse", "HEAD"]);
     let tree_sha = git_output(
         repo.path(),
-        &["rev-parse", "HEAD:.markharness/knowledge/shop/checkout"],
+        &["rev-parse", "HEAD:.markharness/knowledge/features/checkout"],
     );
-    std::fs::create_dir_all(repo.path().join(".markharness/executions/ci")).unwrap();
-    std::fs::write(
-        repo.path().join(".markharness/executions/ci/results.yml"),
-        format!(
-            "- case_id: tc-shop-checkout-pay-valid-card\n  result: pass\n  executor: ci\n  executed_at: 2026-08-18T10:00:00Z\n  verified_feature_tree_shas:\n    checkout: {tree_sha}\n"
-        ),
-    )
-    .unwrap();
+    let generate_output = Command::new(env!("CARGO_BIN_EXE_markharness"))
+        .current_dir(repo.path())
+        .args(["generate", "--dir", "."])
+        .output()
+        .unwrap();
+    assert!(generate_output.status.success());
+    let record_output = Command::new(env!("CARGO_BIN_EXE_markharness"))
+        .current_dir(repo.path())
+        .args([
+            "execution",
+            "record",
+            "tc-checkout-pay-valid-card",
+            "--target-revision",
+            &head_oid,
+            "--environment",
+            "ci",
+            "--result",
+            "pass",
+            "--executor",
+            "ci",
+            "--json",
+            "--dir",
+            ".",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        record_output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&record_output.stdout),
+        String::from_utf8_lossy(&record_output.stderr)
+    );
+    let recorded: serde_json::Value = serde_json::from_slice(&record_output.stdout).unwrap();
+    let recorded_execution_uid = recorded["execution_uid"].as_str().unwrap().to_string();
     let verified = Command::new(env!("CARGO_BIN_EXE_markharness"))
         .current_dir(repo.path())
         .args([
-            "plan", "--base", "HEAD~1", "--head", "HEAD", "--format", "json", "--dir", ".",
+            "plan",
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+            "--format",
+            "json",
+            "--environment",
+            "ci",
+            "--dir",
+            ".",
         ])
         .output()
         .unwrap();
@@ -120,6 +153,11 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         "passed"
     );
     assert_eq!(verified_plan["summary"]["passed"], 1);
+    assert_eq!(
+        verified_plan["affected_existing_tests"][0]["execution_uids"],
+        serde_json::json!([recorded_execution_uid]),
+        "the plan must name the execution_uid of the record that backs the passed status"
+    );
 
     let imported = repo.path().join("junit-canonical.json");
     std::fs::write(
@@ -137,7 +175,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
             "relations": [{
                 "from": "junit:test_case:checkout:external_pay",
                 "relation_type": "verifies",
-                "to": "markharness-native:condition:valid-card",
+                "to": "markharness-native:scenario:valid-card",
                 "origin": {"kind": "stored"},
                 "confidence": 1.0
             }],
@@ -171,11 +209,24 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         .unwrap();
     let stored_plan: serde_json::Value = serde_json::from_slice(&with_stored_trace.stdout).unwrap();
     assert_eq!(stored_plan["summary"]["affected_tests"], 2);
-    assert!(
-        stored_plan["affected_existing_tests"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|test| test["id"] == "junit:checkout:external_pay" && test["origin"] == "stored")
+    let junit_test = stored_plan["affected_existing_tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["id"] == "junit:checkout:external_pay" && test["origin"] == "stored")
+        .expect("stored trace from the canonical snapshot must still be discovered as a test");
+    // ADR 0017 §5: canonical/JUnit evidence is never merged into the
+    // evidence a plan judges pass/fail against — only native
+    // `execution::record_execution` records are. The imported snapshot's
+    // evidence claims "pass", but that must not surface as a Passed status
+    // or an adopted `execution_uid` here.
+    assert_eq!(
+        junit_test["status"], "pending",
+        "canonical/JUnit evidence must never decide a test's status"
+    );
+    assert_eq!(
+        junit_test["execution_uids"],
+        serde_json::json!([]),
+        "canonical/JUnit evidence has no execution_uid to adopt"
     );
 }

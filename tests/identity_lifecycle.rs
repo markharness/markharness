@@ -13,14 +13,11 @@ use markharness::identity::{
 use markharness::knowledge::{self, Feature};
 
 fn write_feature(root: &Path, requirement: &str, feature: &str, id: &str, uid: Option<&str>) {
-    let dir = root
-        .join(".markharness/knowledge")
-        .join(requirement)
-        .join(feature);
+    let dir = root.join(".markharness/knowledge/features").join(feature);
     fs::create_dir_all(&dir).unwrap();
     let value = Feature {
         id: id.to_string(),
-        requirement: requirement.to_string(),
+        requirement_ids: vec![requirement.to_string()],
         label: id.to_string(),
         axis: Vec::new(),
         description: None,
@@ -38,10 +35,14 @@ fn write_feature(root: &Path, requirement: &str, feature: &str, id: &str, uid: O
 fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_crash() {
     let dir = tempfile::tempdir().unwrap();
     markharness::init::run_init(dir.path()).unwrap();
-    fs::create_dir_all(dir.path().join(".markharness/knowledge/controls")).unwrap();
+    fs::create_dir_all(
+        dir.path()
+            .join(".markharness/knowledge/requirements/controls"),
+    )
+    .unwrap();
     fs::write(
         dir.path()
-            .join(".markharness/knowledge/controls/requirement.yml"),
+            .join(".markharness/knowledge/requirements/controls/requirement.yml"),
         "id: controls\nlabel: controls\naxis: []\n",
     )
     .unwrap();
@@ -68,7 +69,7 @@ fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_cr
     identity::rename_id(dir.path(), "player-jump", "player-double-jump").unwrap();
     let content = fs::read_to_string(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
     )
     .unwrap();
     let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -125,7 +126,7 @@ fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_cr
     identity::resolve_divergence(dir.path(), EntityKind::Feature, &uid, &branch_a).unwrap();
     let content = fs::read_to_string(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
     )
     .unwrap();
     let feature: Feature = knowledge::parse_feature(&content).unwrap();
@@ -163,7 +164,7 @@ fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_cr
 
     let stale = fs::read_to_string(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
     )
     .unwrap();
     assert!(
@@ -178,7 +179,7 @@ fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_cr
 
     let recovered = fs::read_to_string(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
     )
     .unwrap();
     let feature: Feature = knowledge::parse_feature(&recovered).unwrap();

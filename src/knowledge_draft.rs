@@ -1,9 +1,9 @@
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use crate::knowledge::{self, is_valid_slug, strip_redundant_condition_prefix};
+use crate::knowledge::{self, StepItem, is_valid_slug, strip_redundant_scenario_prefix};
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct RequirementDraft {
@@ -29,6 +29,15 @@ pub struct FeatureDraft {
     pub forked_from: Option<String>,
 }
 
+/// ADR 0017 §2: a common procedure a Behavior's Scenarios may reference by
+/// name via `use:`.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct ProcedureDraft {
+    pub name: String,
+    #[serde(default)]
+    pub steps: Option<Vec<String>>,
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct BehaviorDraft {
     pub id: String,
@@ -38,41 +47,36 @@ pub struct BehaviorDraft {
     pub axis: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
-    /// ADR 0016: 全Conditionに共通する前提。既存Behaviorの再利用時
-    /// (`exists`)は`description`同様省略可(`push_missing_steps`参照)。
+    /// ADR 0017 §2: common procedures this Behavior declares. Omitting the
+    /// field, like an existing Behavior's `procedures: {}`, means none.
     #[serde(default)]
-    pub steps: Option<Vec<String>>,
+    pub procedures: Option<Vec<ProcedureDraft>>,
 }
 
+/// ADR 0017 §2: one Phase within a Scenario draft.
 #[derive(Debug, Deserialize, PartialEq, Eq)]
-pub struct ConditionDraft {
+pub struct PhaseDraft {
+    #[serde(default)]
+    pub steps: Option<Vec<StepItem>>,
+    #[serde(default)]
+    pub results: Option<Vec<String>>,
+}
+
+/// ADR 0017 §2/§3: a Scenario draft. Unlike Requirement/Feature/Behavior,
+/// a Scenario is never a create-or-reuse chain link — **1 Scenario = 1
+/// TestCase** (§3), so every draft always fully specifies `description`
+/// and `phases`; reusing an existing `id` is checked for an exact content
+/// match (`ConflictingExistingValue`), not silently merged (§4: "改訂か
+/// 新規作成かを編集者が明示する").
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct ScenarioDraft {
     pub id: String,
     #[serde(default)]
     pub label: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    /// ADR 0016: この条件固有の操作手順。既存Conditionの再利用時(`exists`)は
-    /// `description`同様省略可(`push_missing_steps`参照)。
     #[serde(default)]
-    pub steps: Option<Vec<String>>,
-    /// ADR 0016: 手順だけでは到達できない、この条件固有の追加前提。
-    /// 空配列許容のため省略時は空扱い(`unwrap_or_default`)。
-    #[serde(default)]
-    pub additional_preconditions: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-pub struct ExpectedDraft {
-    #[serde(default)]
-    pub description: String,
-    /// ADR 0016: 観測可能な複数の結果。`push_missing_steps`と同じ
-    /// exists-skipパターンは持たない(ExpectedResultは常に新規追加のため)。
-    #[serde(default)]
-    pub results: Option<Vec<String>>,
-    /// ADR 0016: この結果を確認する前に必要な追加操作。省略可。
-    #[serde(default)]
-    pub additional_steps: Option<Vec<String>>,
-    /// ADR 0016: 実装根拠メモ。省略可。
+    pub phases: Option<Vec<PhaseDraft>>,
     #[serde(default)]
     pub implementation_note: Option<String>,
 }
@@ -82,9 +86,7 @@ pub struct KnowledgeDraft {
     pub requirement: RequirementDraft,
     pub feature: FeatureDraft,
     pub behavior: BehaviorDraft,
-    pub condition: ConditionDraft,
-    #[serde(default)]
-    pub expected: Vec<ExpectedDraft>,
+    pub scenario: ScenarioDraft,
 }
 
 #[derive(Debug)]
@@ -167,53 +169,36 @@ pub struct ValidateOptions {
     pub strip_redundant_prefix: bool,
 }
 
-/// Searches every `knowledge/<requirement>/<feature>/feature.yml` for one
-/// whose `id` matches `feature_id`. Feature ids are unique across the whole
-/// tree even though they are nested under a requirement directory, so a
-/// `forked_from` reference cannot be resolved by path alone.
+/// Checks `knowledge/features/<feature_id>/feature.yml` (ADR 0017 §1:
+/// Feature is stored independently of Requirement, as a top-level
+/// directory keyed by its own id).
 fn feature_id_exists(knowledge_root: &Path, feature_id: &str) -> bool {
-    let Ok(requirement_entries) = fs::read_dir(knowledge_root) else {
-        return false;
-    };
-    for requirement_entry in requirement_entries.filter_map(|e| e.ok()) {
-        let requirement_dir = requirement_entry.path();
-        if !requirement_dir.is_dir() {
-            continue;
-        }
-        let Ok(feature_entries) = fs::read_dir(&requirement_dir) else {
-            continue;
-        };
-        for feature_entry in feature_entries.filter_map(|e| e.ok()) {
-            let feature_dir = feature_entry.path();
-            if feature_dir.join("feature.yml").is_file()
-                && feature_dir.file_name().and_then(|n| n.to_str()) == Some(feature_id)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    knowledge_root
+        .join("features")
+        .join(feature_id)
+        .join("feature.yml")
+        .is_file()
 }
 
-/// Determines which directory a condition should be read from / written to,
+/// Determines which directory a Scenario should be read from / written to,
 /// mirroring the legacy-directory-wins-over-stripping behavior of the
 /// interactive CLI (`interactive.rs::run_add`).
-pub fn resolve_effective_condition_id(
+pub fn resolve_effective_scenario_id(
     behavior_dir: &Path,
     behavior_id: &str,
-    raw_condition_id: &str,
+    raw_scenario_id: &str,
     strip_redundant_prefix: bool,
 ) -> String {
-    let legacy_path = behavior_dir.join(raw_condition_id).join("condition.yml");
+    let legacy_path = behavior_dir.join(raw_scenario_id).join("scenario.yml");
     if legacy_path.is_file() {
-        return raw_condition_id.to_string();
+        return raw_scenario_id.to_string();
     }
     if strip_redundant_prefix
-        && let Some(stripped) = strip_redundant_condition_prefix(behavior_id, raw_condition_id)
+        && let Some(stripped) = strip_redundant_scenario_prefix(behavior_id, raw_scenario_id)
     {
         return stripped;
     }
-    raw_condition_id.to_string()
+    raw_scenario_id.to_string()
 }
 
 fn levenshtein(a: &str, b: &str) -> usize {
@@ -388,45 +373,68 @@ fn push_missing_steps(
     }
 }
 
-/// Optional array field where an empty array is itself legitimate (the
-/// field may be omitted or empty), but any element present must be
-/// non-blank — matches `items.minLength: 1` in the JSON Schema. Used for
-/// `behavior.steps`, `condition.additional_preconditions`, and
-/// `expected[].additional_steps`. `behavior.steps` maps to the persisted
-/// `preconditions` field, whose schema description says an empty array
-/// means "no shared precondition" (ADR 0016's comparison table: "空配列許容
-/// (minItemsなし)") — `knowledge_apply.rs` materializes an omitted `steps`
-/// to the same `[]`, so omission and an explicit empty array must be
-/// equally valid here.
-/// For `additional_steps` specifically, ADR 0016 §1 says the first
-/// ExpectedResult in a Condition "may omit it, or it may be empty" — an
-/// explicit `[]` carries the same meaning as omission, so only a blank
-/// *element* (not bare emptiness) is rejected here. Whether a later
-/// ExpectedResult is required to have non-empty content is a position-
-/// dependent rule this single-draft check cannot see (it doesn't know
-/// about `expected/*.yml` files already on disk); that part is enforced
-/// separately by `validate.rs`'s cross-reference check.
-fn push_blank_elements_in_optional_array(
+/// ADR 0017 §2: a Scenario always fully specifies its own `phases` (no
+/// create-or-reuse skip pattern — see `ScenarioDraft`'s doc comment), so
+/// this is unconditional, unlike `push_missing_steps`.
+fn push_missing_phases(
     errors: &mut Vec<ValidationError>,
     path: &str,
-    values: &Option<Vec<String>>,
+    phases: &Option<Vec<PhaseDraft>>,
 ) {
-    if let Some(values) = values
-        && values.iter().any(|s| s.trim().is_empty())
-    {
+    let is_missing = match phases {
+        None => true,
+        Some(values) => values.is_empty(),
+    };
+    if is_missing {
         errors.push(ValidationError {
             code: ValidationErrorCode::MissingSteps,
             path: path.to_string(),
             value: None,
-            message: format!("{path} must not contain empty elements"),
+            message: format!("{path} must contain at least one phase"),
             suggestion: None,
         });
     }
 }
 
+fn push_missing_phase_steps(
+    errors: &mut Vec<ValidationError>,
+    path: &str,
+    steps: &Option<Vec<StepItem>>,
+) {
+    let is_missing = match steps {
+        None => true,
+        Some(values) => values.is_empty(),
+    };
+    if is_missing {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::MissingSteps,
+            path: path.to_string(),
+            value: None,
+            message: format!("{path} must contain at least one step"),
+            suggestion: None,
+        });
+        return;
+    }
+    for (i, step) in steps.as_ref().unwrap().iter().enumerate() {
+        let blank = match step {
+            StepItem::Action { action } => action.trim().is_empty(),
+            StepItem::Use { procedure } => procedure.trim().is_empty(),
+        };
+        if blank {
+            errors.push(ValidationError {
+                code: ValidationErrorCode::MissingSteps,
+                path: format!("{path}[{i}]"),
+                value: None,
+                message: format!("{path}[{i}] must not be blank"),
+                suggestion: None,
+            });
+        }
+    }
+}
+
 /// Optional string field that must be non-blank whenever provided
 /// (`minLength: 1` in the JSON Schema) — omitting it is the only way to
-/// signal "none". Used for `expected[].implementation_note`.
+/// signal "none". Used for `scenario.implementation_note`.
 fn push_blank_optional_string(
     errors: &mut Vec<ValidationError>,
     path: &str,
@@ -509,6 +517,64 @@ fn push_parent_mismatch(
     }
 }
 
+/// ADR 0017 §1: Featureは`requirement_ids`で複数Requirementへ対等に関連付く
+/// ため、draftチェーンの単一requirementは「一致」ではなく「一覧に含まれる
+/// か」で照合する。
+fn push_parent_membership_mismatch(
+    errors: &mut Vec<ValidationError>,
+    path: &str,
+    expected: &str,
+    actual: &[String],
+) {
+    if !actual.iter().any(|id| id == expected) {
+        errors.push(ValidationError {
+            code: ValidationErrorCode::ParentNotFound,
+            path: path.to_string(),
+            value: Some(actual.join(", ")),
+            message: format!(
+                "{path} lists [{}] but the draft chain expects \"{expected}\" to be included",
+                actual.join(", ")
+            ),
+            suggestion: Some(expected.to_string()),
+        });
+    }
+}
+
+/// Converts declared `ProcedureDraft`s into the same `BTreeMap` shape
+/// `Behavior.procedures` stores, for a straightforward equality comparison
+/// against an existing Behavior's declared procedures.
+fn draft_procedures_map(procedures: &[ProcedureDraft]) -> BTreeMap<String, knowledge::Procedure> {
+    procedures
+        .iter()
+        .map(|p| {
+            (
+                p.name.clone(),
+                knowledge::Procedure {
+                    steps: p.steps.clone().unwrap_or_default(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Converts declared `PhaseDraft`s (every one already checked non-missing
+/// by `push_missing_phase_steps`/`push_missing_steps`) into the same shape
+/// `Scenario.phases` stores, for comparison against an existing Scenario.
+/// `None` if any phase is still missing `steps`/`results` — in that case
+/// there is nothing meaningful to compare yet (the missing-content errors
+/// already cover it).
+fn draft_phases(phases: &[PhaseDraft]) -> Option<Vec<knowledge::Phase>> {
+    phases
+        .iter()
+        .map(|phase| {
+            Some(knowledge::Phase {
+                steps: phase.steps.clone()?,
+                results: phase.results.clone()?,
+            })
+        })
+        .collect()
+}
+
 pub fn validate_draft(
     root: &Path,
     draft: &KnowledgeDraft,
@@ -523,7 +589,7 @@ pub fn validate_draft(
     push_invalid_slug(&mut errors, "requirement.id", &draft.requirement.id);
     push_invalid_slug(&mut errors, "feature.id", &draft.feature.id);
     push_invalid_slug(&mut errors, "behavior.id", &draft.behavior.id);
-    push_invalid_slug(&mut errors, "condition.id", &draft.condition.id);
+    push_invalid_slug(&mut errors, "scenario.id", &draft.scenario.id);
 
     if let Some(label) = &draft.requirement.label {
         push_multiline_label(&mut errors, "requirement.label", label);
@@ -534,15 +600,17 @@ pub fn validate_draft(
     if let Some(label) = &draft.behavior.label {
         push_multiline_label(&mut errors, "behavior.label", label);
     }
-    if let Some(label) = &draft.condition.label {
-        push_multiline_label(&mut errors, "condition.label", label);
+    if let Some(label) = &draft.scenario.label {
+        push_multiline_label(&mut errors, "scenario.label", label);
     }
 
-    let requirement_dir = knowledge_root.join(&draft.requirement.id);
+    let requirement_dir = knowledge_root
+        .join("requirements")
+        .join(&draft.requirement.id);
     let requirement_path = requirement_dir.join("requirement.yml");
     let requirement_exists = requirement_path.is_file();
 
-    let feature_dir = requirement_dir.join(&draft.feature.id);
+    let feature_dir = knowledge_root.join("features").join(&draft.feature.id);
     let feature_path = feature_dir.join("feature.yml");
     let feature_exists = feature_path.is_file();
 
@@ -550,33 +618,33 @@ pub fn validate_draft(
     let behavior_path = behavior_dir.join("behavior.yml");
     let behavior_exists = behavior_path.is_file();
 
-    let legacy_condition_path = behavior_dir.join(&draft.condition.id).join("condition.yml");
-    if !legacy_condition_path.is_file()
+    let legacy_scenario_path = behavior_dir.join(&draft.scenario.id).join("scenario.yml");
+    if !legacy_scenario_path.is_file()
         && let Some(stripped) =
-            strip_redundant_condition_prefix(&draft.behavior.id, &draft.condition.id)
+            strip_redundant_scenario_prefix(&draft.behavior.id, &draft.scenario.id)
         && !options.strip_redundant_prefix
     {
         errors.push(ValidationError {
             code: ValidationErrorCode::RedundantPrefix,
-            path: "condition.id".to_string(),
-            value: Some(draft.condition.id.clone()),
+            path: "scenario.id".to_string(),
+            value: Some(draft.scenario.id.clone()),
             message: format!(
-                "condition.id \"{}\" starts with behavior.id \"{}-\" prefix",
-                draft.condition.id, draft.behavior.id
+                "scenario.id \"{}\" starts with behavior.id \"{}-\" prefix",
+                draft.scenario.id, draft.behavior.id
             ),
             suggestion: Some(stripped),
         });
     }
 
-    let effective_condition_id = resolve_effective_condition_id(
+    let effective_scenario_id = resolve_effective_scenario_id(
         &behavior_dir,
         &draft.behavior.id,
-        &draft.condition.id,
+        &draft.scenario.id,
         options.strip_redundant_prefix,
     );
-    let condition_dir = behavior_dir.join(&effective_condition_id);
-    let condition_path = condition_dir.join("condition.yml");
-    let condition_exists = condition_path.is_file();
+    let scenario_dir = behavior_dir.join(&effective_scenario_id);
+    let scenario_path = scenario_dir.join("scenario.yml");
+    let scenario_exists = scenario_path.is_file();
 
     if let Some(forked_from) = &draft.feature.forked_from
         && !feature_id_exists(&knowledge_root, forked_from)
@@ -617,55 +685,51 @@ pub fn validate_draft(
         &draft.behavior.description,
         behavior_exists,
     );
-    if !behavior_exists {
-        push_blank_elements_in_optional_array(&mut errors, "behavior.steps", &draft.behavior.steps);
+    if !behavior_exists && let Some(procedures) = &draft.behavior.procedures {
+        for (i, procedure) in procedures.iter().enumerate() {
+            push_invalid_slug(
+                &mut errors,
+                &format!("behavior.procedures[{i}].name"),
+                &procedure.name,
+            );
+            push_missing_steps(
+                &mut errors,
+                &format!("behavior.procedures[{i}].steps"),
+                &procedure.steps,
+                false,
+            );
+        }
     }
+
+    // ADR 0017 §2/§3: a Scenario always fully specifies its own content —
+    // no create-or-reuse skip pattern (see `ScenarioDraft`'s doc comment).
     push_missing_description(
         &mut errors,
-        "condition.description",
-        &draft.condition.description,
-        condition_exists,
+        "scenario.description",
+        &draft.scenario.description,
+        false,
     );
-    push_missing_steps(
-        &mut errors,
-        "condition.steps",
-        &draft.condition.steps,
-        condition_exists,
-    );
-    if !condition_exists {
-        push_blank_elements_in_optional_array(
-            &mut errors,
-            "condition.additional_preconditions",
-            &draft.condition.additional_preconditions,
-        );
-    }
-    for (i, expected) in draft.expected.iter().enumerate() {
-        if expected.description.trim().is_empty() {
-            errors.push(ValidationError {
-                code: ValidationErrorCode::MissingDescription,
-                path: format!("expected[{i}].description"),
-                value: None,
-                message: format!("expected[{i}].description must not be empty"),
-                suggestion: None,
-            });
+    push_missing_phases(&mut errors, "scenario.phases", &draft.scenario.phases);
+    if let Some(phases) = &draft.scenario.phases {
+        for (i, phase) in phases.iter().enumerate() {
+            push_missing_phase_steps(
+                &mut errors,
+                &format!("scenario.phases[{i}].steps"),
+                &phase.steps,
+            );
+            push_missing_steps(
+                &mut errors,
+                &format!("scenario.phases[{i}].results"),
+                &phase.results,
+                false,
+            );
         }
-        push_missing_steps(
-            &mut errors,
-            &format!("expected[{i}].results"),
-            &expected.results,
-            false,
-        );
-        push_blank_elements_in_optional_array(
-            &mut errors,
-            &format!("expected[{i}].additional_steps"),
-            &expected.additional_steps,
-        );
-        push_blank_optional_string(
-            &mut errors,
-            &format!("expected[{i}].implementation_note"),
-            &expected.implementation_note,
-        );
     }
+    push_blank_optional_string(
+        &mut errors,
+        "scenario.implementation_note",
+        &draft.scenario.implementation_note,
+    );
 
     if requirement_exists
         && let Ok(yaml) = fs::read_to_string(&requirement_path)
@@ -691,11 +755,11 @@ pub fn validate_draft(
         && let Ok(yaml) = fs::read_to_string(&feature_path)
         && let Ok(existing) = knowledge::parse_feature(&yaml)
     {
-        push_parent_mismatch(
+        push_parent_membership_mismatch(
             &mut errors,
-            "feature.requirement",
+            "feature.requirement_ids",
             &draft.requirement.id,
-            &existing.requirement,
+            &existing.requirement_ids,
         );
         if let Some(label) = &draft.feature.label {
             push_conflicting_value(&mut errors, "feature.label", label, &existing.label);
@@ -737,43 +801,53 @@ pub fn validate_draft(
                 &existing.description,
             );
         }
-        if let Some(steps) = &draft.behavior.steps
-            && steps != &existing.preconditions
-        {
-            errors.push(ValidationError {
-                code: ValidationErrorCode::ConflictingExistingValue,
-                path: "behavior.steps".to_string(),
-                value: Some(steps.join(" / ")),
-                message: format!(
-                    "behavior.steps [{}] conflicts with existing value [{}]",
-                    steps.join(" / "),
-                    existing.preconditions.join(" / ")
-                ),
-                suggestion: Some(existing.preconditions.join(" / ")),
-            });
+        if let Some(procedures) = &draft.behavior.procedures {
+            let provided = draft_procedures_map(procedures);
+            if provided != existing.procedures {
+                errors.push(ValidationError {
+                    code: ValidationErrorCode::ConflictingExistingValue,
+                    path: "behavior.procedures".to_string(),
+                    value: None,
+                    message: "behavior.procedures conflicts with the existing declaration"
+                        .to_string(),
+                    suggestion: None,
+                });
+            }
         }
     }
 
-    if condition_exists
-        && let Ok(yaml) = fs::read_to_string(&condition_path)
-        && let Ok(existing) = knowledge::parse_condition(&yaml)
+    if scenario_exists
+        && let Ok(yaml) = fs::read_to_string(&scenario_path)
+        && let Ok(existing) = knowledge::parse_scenario(&yaml)
     {
         push_parent_mismatch(
             &mut errors,
-            "condition.behavior",
+            "scenario.behavior",
             &draft.behavior.id,
             &existing.behavior,
         );
-        if let Some(label) = &draft.condition.label {
-            push_conflicting_value(&mut errors, "condition.label", label, &existing.label);
+        if let Some(label) = &draft.scenario.label {
+            push_conflicting_value(&mut errors, "scenario.label", label, &existing.label);
         }
-        if let Some(description) = &draft.condition.description {
+        if let Some(description) = &draft.scenario.description {
             push_conflicting_value(
                 &mut errors,
-                "condition.description",
+                "scenario.description",
                 description,
                 &existing.description,
             );
+        }
+        if let Some(phases) = &draft.scenario.phases
+            && let Some(provided) = draft_phases(phases)
+            && provided != existing.phases
+        {
+            errors.push(ValidationError {
+                code: ValidationErrorCode::ConflictingExistingValue,
+                path: "scenario.phases".to_string(),
+                value: None,
+                message: "scenario.phases conflicts with the existing declaration".to_string(),
+                suggestion: None,
+            });
         }
     }
 
@@ -801,23 +875,24 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
-  steps:
-    - Press the jump button.
+  procedures:
+    - name: hold
+      steps:
+        - Press the jump button.
 
-condition:
+scenario:
   id: ground
   label: ground
   description: Jump from the ground and land
-  steps:
-    - Land on the ground.
-
-expected:
-  - description: lands safely
-    results:
-      - Player is standing on the ground.
-  - description: takes fall damage if height > 3m
-    results:
-      - Player's health decreases.
+  phases:
+    - steps:
+        - action: Land on the ground.
+      results:
+        - Player is standing on the ground.
+    - steps:
+        - use: hold
+      results:
+        - Player's health decreases if height > 3m.
 ";
 
     #[test]
@@ -840,22 +915,32 @@ expected:
             draft.behavior.description,
             Some("Player presses jump.".to_string())
         );
+        let procedures = draft.behavior.procedures.as_ref().unwrap();
+        assert_eq!(procedures.len(), 1);
+        assert_eq!(procedures[0].name, "hold");
         assert_eq!(
-            draft.behavior.steps,
+            procedures[0].steps,
             Some(vec!["Press the jump button.".to_string()])
         );
 
-        assert_eq!(draft.condition.id, "ground");
+        assert_eq!(draft.scenario.id, "ground");
         assert_eq!(
-            draft.condition.description,
+            draft.scenario.description,
             Some("Jump from the ground and land".to_string())
         );
-
-        assert_eq!(draft.expected.len(), 2);
-        assert_eq!(draft.expected[0].description, "lands safely");
+        let phases = draft.scenario.phases.as_ref().unwrap();
+        assert_eq!(phases.len(), 2);
         assert_eq!(
-            draft.expected[1].description,
-            "takes fall damage if height > 3m"
+            phases[0].steps,
+            Some(vec![StepItem::Action {
+                action: "Land on the ground.".to_string()
+            }])
+        );
+        assert_eq!(
+            phases[1].steps,
+            Some(vec![StepItem::Use {
+                procedure: "hold".to_string()
+            }])
         );
     }
 
@@ -871,11 +956,14 @@ feature:
 behavior:
   id: jump
 
-condition:
+scenario:
   id: ground
-
-expected:
-  - description: lands safely
+  description: Jump from the ground and land
+  phases:
+    - steps:
+        - action: Land on the ground.
+      results:
+        - Player is standing on the ground.
 ";
 
         let draft = parse_draft(yaml).unwrap();
@@ -886,8 +974,7 @@ expected:
         assert_eq!(draft.feature.axis, None);
         assert_eq!(draft.behavior.axis, None);
         assert_eq!(draft.behavior.description, None);
-        assert_eq!(draft.condition.label, None);
-        assert_eq!(draft.condition.description, None);
+        assert_eq!(draft.scenario.label, None);
     }
 
     #[test]
@@ -971,14 +1058,14 @@ expected:
     fn validate_draft_reports_invalid_slug_for_bad_id() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
-        draft.condition.id = "Ground!".to_string();
+        draft.scenario.id = "Ground!".to_string();
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
         assert!(
             errors
                 .iter()
-                .any(|e| e.code == ValidationErrorCode::InvalidSlug && e.path == "condition.id")
+                .any(|e| e.code == ValidationErrorCode::InvalidSlug && e.path == "scenario.id")
         );
     }
 
@@ -1027,18 +1114,17 @@ expected:
     }
 
     #[test]
-    fn validate_draft_reports_multiline_label_for_condition_label() {
+    fn validate_draft_reports_multiline_label_for_scenario_label() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
-        draft.condition.label = Some("line one\nline two".to_string());
+        draft.scenario.label = Some("line one\nline two".to_string());
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
         assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MultilineLabel
-                    && e.path == "condition.label")
+            errors.iter().any(
+                |e| e.code == ValidationErrorCode::MultilineLabel && e.path == "scenario.label"
+            )
         );
     }
 
@@ -1124,80 +1210,29 @@ expected:
     }
 
     #[test]
-    fn validate_draft_allows_omitting_behavior_steps_entirely_for_a_new_behavior() {
-        // knowledge_apply.rs materializes `None` to the same `[]` as an
-        // explicit empty array, so the two must be equally valid.
+    fn validate_draft_allows_omitting_behavior_procedures_entirely_for_a_new_behavior() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
-        draft.behavior.steps = None;
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            !errors.iter().any(|e| e.path == "behavior.steps"),
-            "omitting behavior.steps entirely is as valid as an explicit empty array: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_reports_missing_steps_for_new_condition_without_steps() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.condition.steps = None;
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "condition.steps")
-        );
-    }
-
-    #[test]
-    fn validate_draft_skips_missing_steps_check_for_condition_when_it_already_exists() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        std::fs::create_dir_all(
-            dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground"),
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        let mut draft = full_new_draft();
-        draft.condition.steps = None;
+        draft.behavior.procedures = None;
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
         assert!(
             !errors
                 .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "condition.steps")
+                .any(|e| e.path.starts_with("behavior.procedures")),
+            "omitting behavior.procedures entirely is as valid as an explicit empty list: {errors:?}"
         );
     }
 
     #[test]
-    fn validate_draft_reports_missing_results_for_an_expected_entry_without_results() {
+    fn validate_draft_reports_missing_steps_for_a_procedure_without_steps() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
-        draft.expected[0].results = None;
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(errors.iter().any(
-            |e| e.code == ValidationErrorCode::MissingSteps && e.path == "expected[0].results"
-        ));
-    }
-
-    #[test]
-    fn validate_draft_reports_blank_element_in_condition_additional_preconditions() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.condition.additional_preconditions = Some(vec!["   ".to_string()]);
+        draft.behavior.procedures = Some(vec![ProcedureDraft {
+            name: "hold".to_string(),
+            steps: None,
+        }]);
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
@@ -1205,52 +1240,15 @@ expected:
             errors
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::MissingSteps
-                    && e.path == "condition.additional_preconditions"),
-            "expected a missing_steps error for a blank additional_preconditions element, got: {errors:?}"
+                    && e.path == "behavior.procedures[0].steps")
         );
     }
 
     #[test]
-    fn validate_draft_allows_an_empty_condition_additional_preconditions_array() {
+    fn validate_draft_reports_missing_phases_for_new_scenario_without_phases() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
-        draft.condition.additional_preconditions = Some(Vec::new());
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            !errors
-                .iter()
-                .any(|e| e.path == "condition.additional_preconditions"),
-            "an empty additional_preconditions array is legitimate and must not error: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_allows_an_explicitly_empty_additional_steps_array_for_an_expected_entry() {
-        // ADR 0016 §1: "先頭のexpected_resultのみ省略可、または空でよい" — an
-        // explicit empty array on the first ExpectedResult is just as valid
-        // as omitting the field entirely; only a *non-empty-but-blank*
-        // element (e.g. a single whitespace-only string) is invalid.
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.expected[0].additional_steps = Some(Vec::new());
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            !errors
-                .iter()
-                .any(|e| e.path == "expected[0].additional_steps"),
-            "an explicitly empty additional_steps array is as valid as omitting it: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_reports_a_blank_element_in_expected_additional_steps() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.expected[0].additional_steps = Some(vec!["   ".to_string()]);
+        draft.scenario.phases = None;
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
@@ -1258,168 +1256,106 @@ expected:
             errors
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::MissingSteps
-                    && e.path == "expected[0].additional_steps"),
+                    && e.path == "scenario.phases")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_phases_for_an_empty_phases_array() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.scenario.phases = Some(Vec::new());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps
+                    && e.path == "scenario.phases")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_steps_for_a_phase_without_steps() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.scenario.phases.as_mut().unwrap()[0].steps = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps
+                    && e.path == "scenario.phases[0].steps")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_results_for_a_phase_without_results() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.scenario.phases.as_mut().unwrap()[0].results = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps
+                    && e.path == "scenario.phases[0].results")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_a_blank_action_step_in_a_phase() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.scenario.phases.as_mut().unwrap()[0].steps = Some(vec![StepItem::Action {
+            action: "   ".to_string(),
+        }]);
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingSteps
+                    && e.path == "scenario.phases[0].steps[0]")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_missing_description_for_new_scenario_without_description() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.scenario.description = None;
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingDescription
+                    && e.path == "scenario.description")
+        );
+    }
+
+    #[test]
+    fn validate_draft_reports_a_blank_implementation_note() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let mut draft = full_new_draft();
+        draft.scenario.implementation_note = Some("   ".to_string());
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::MissingDescription
+                    && e.path == "scenario.implementation_note"),
             "expected: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_allows_omitting_expected_additional_steps_entirely() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.expected[0].additional_steps = None;
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            !errors
-                .iter()
-                .any(|e| e.path == "expected[0].additional_steps"),
-            "omitting additional_steps entirely is always legitimate: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_reports_a_blank_implementation_note_for_an_expected_entry() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.expected[0].implementation_note = Some("   ".to_string());
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingDescription
-                    && e.path == "expected[0].implementation_note"),
-            "expected: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_skips_additional_preconditions_check_when_condition_already_exists() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        std::fs::create_dir_all(
-            dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground"),
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nsteps:\n  - \"Land on the ground.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        let mut draft = full_new_draft();
-        draft.condition.steps = None;
-        draft.condition.additional_preconditions = Some(vec!["   ".to_string()]);
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            !errors
-                .iter()
-                .any(|e| e.path == "condition.additional_preconditions"),
-            "additional_preconditions is ignored entirely when reusing an existing condition: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_allows_an_empty_behavior_steps_array_for_a_new_behavior() {
-        // ADR 0016: behavior.preconditions has no minItems — an empty array
-        // means "no shared precondition", a legitimate value for a
-        // brand-new Behavior, just like condition.additional_preconditions.
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.behavior.steps = Some(Vec::new());
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            !errors.iter().any(|e| e.path == "behavior.steps"),
-            "an empty behavior.steps array is legitimate (no shared precondition) and must not error: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_draft_reports_missing_steps_for_new_behavior_with_blank_step_element() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.behavior.steps = Some(vec![
-            "Press the jump button.".to_string(),
-            "   ".to_string(),
-        ]);
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingSteps && e.path == "behavior.steps")
-        );
-    }
-
-    #[test]
-    fn validate_draft_skips_missing_steps_check_when_behavior_already_exists() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        std::fs::create_dir_all(
-            dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump"),
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
-        )
-        .unwrap();
-        let mut draft = full_new_draft();
-        draft.behavior.steps = None;
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            !errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingSteps)
-        );
-    }
-
-    #[test]
-    fn validate_draft_reports_missing_description_for_new_condition_without_description() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.condition.description = None;
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingDescription
-                    && e.path == "condition.description")
-        );
-    }
-
-    #[test]
-    fn validate_draft_reports_missing_description_for_empty_expected_entry() {
-        let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        let mut draft = full_new_draft();
-        draft.expected.push(ExpectedDraft {
-            description: "   ".to_string(),
-            results: Some(vec!["Player is standing on the ground.".to_string()]),
-            additional_steps: None,
-            implementation_note: None,
-        });
-        let last = draft.expected.len() - 1;
-
-        let errors = validate_draft(dir.path(), &draft, &no_strip());
-
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.code == ValidationErrorCode::MissingDescription
-                    && e.path == format!("expected[{last}].description"))
         );
     }
 
@@ -1443,7 +1379,7 @@ expected:
     fn validate_draft_reports_redundant_prefix_without_strip_flag() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
-        draft.condition.id = "jump-ground".to_string();
+        draft.scenario.id = "jump-ground".to_string();
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
@@ -1458,7 +1394,7 @@ expected:
     fn validate_draft_allows_redundant_prefix_when_strip_flag_set() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         let mut draft = full_new_draft();
-        draft.condition.id = "jump-ground".to_string();
+        draft.scenario.id = "jump-ground".to_string();
 
         let errors = validate_draft(
             dir.path(),
@@ -1476,44 +1412,56 @@ expected:
     }
 
     #[test]
-    fn validate_draft_reuses_legacy_condition_dir_without_stripping() {
+    fn validate_draft_reuses_legacy_scenario_dir_without_stripping() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        // Pre-create requirement/feature/behavior and a legacy condition dir
+        // Pre-create requirement/feature/behavior and a legacy scenario dir
         // whose literal name still carries the redundant prefix.
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/jump-ground"),
+                .join(".markharness/knowledge/features/player-jump/jump/jump-ground"),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/requirement.yml"),
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\n",
+                .join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nprocedures: {}\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/jump-ground/condition.yml"),
-            "id: jump-ground\nbehavior: jump\nlabel: jump-ground\ndescription: |\n  legacy\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+                .join(".markharness/knowledge/features/player-jump/jump/jump-ground/scenario.yml"),
+            "id: jump-ground\nbehavior: jump\nlabel: jump-ground\ndescription: |\n  legacy\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
 
         let mut draft = full_new_draft();
-        draft.condition.id = "jump-ground".to_string();
-        draft.condition.description = None;
-        draft.condition.label = None;
+        draft.behavior.procedures = None;
+        draft.scenario.id = "jump-ground".to_string();
+        draft.scenario.label = None;
+        draft.scenario.description = Some("legacy".to_string());
+        draft.scenario.phases = Some(vec![PhaseDraft {
+            steps: Some(vec![StepItem::Action {
+                action: "Do it.".to_string(),
+            }]),
+            results: Some(vec!["Confirmed.".to_string()]),
+        }]);
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
 
@@ -1530,19 +1478,24 @@ expected:
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump"),
+                .join(".markharness/knowledge/features/player-jump"),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/requirement.yml"),
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: some-other-requirement\nlabel: player-jump\naxis: [gameplay, animation]\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [some-other-requirement]\nlabel: player-jump\naxis: [gameplay, animation]\n",
         )
         .unwrap();
 
@@ -1556,7 +1509,7 @@ expected:
             errors
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::ParentNotFound
-                    && e.path == "feature.requirement")
+                    && e.path == "feature.requirement_ids")
         );
     }
 
@@ -1581,19 +1534,24 @@ expected:
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump"),
+                .join(".markharness/knowledge/features/player-jump"),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/requirement.yml"),
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n",
         )
         .unwrap();
         let mut draft = full_new_draft();
@@ -1612,10 +1570,14 @@ expected:
     #[test]
     fn validate_draft_reports_conflicting_existing_value_when_label_differs() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
+        )
+        .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/requirement.yml"),
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
@@ -1637,10 +1599,14 @@ expected:
     #[test]
     fn validate_draft_succeeds_when_existing_id_reused_with_omitted_fields() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
-        fs::create_dir_all(dir.path().join(".markharness/knowledge/controls")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
+        )
+        .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/requirement.yml"),
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();

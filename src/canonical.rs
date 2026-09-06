@@ -11,7 +11,7 @@ use crate::{generate, git, id_cache};
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
     Feature,
-    Condition,
+    Scenario,
     TestCase,
 }
 
@@ -42,7 +42,7 @@ pub struct CanonicalArtifact {
     /// system tracks one. `external_id` still reflects the current,
     /// human-readable id — `uid` lets a consumer correlate this artifact
     /// across snapshots even after `external_id` changes (a rename).
-    /// `None` for artifact kinds that don't carry a `uid` yet (Condition
+    /// `None` for artifact kinds that don't carry a `uid` yet (Scenario
     /// and TestCase, until Phase 3/4 of ADR 0013's migration) and for
     /// importers (e.g. junit) with no concept of one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,7 +147,7 @@ struct JunitProperty {
 fn canonical_id(kind: ArtifactKind, external_id: &str) -> String {
     let kind = match kind {
         ArtifactKind::Feature => "feature",
-        ArtifactKind::Condition => "condition",
+        ArtifactKind::Scenario => "scenario",
         ArtifactKind::TestCase => "test_case",
     };
     format!("markharness-native:{kind}:{external_id}")
@@ -199,25 +199,35 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
     let mut relations = Vec::new();
     for testcase in &testcases {
         let Some(case) = knowledge.cases.iter().find(|case| {
-            case.requirement_id == testcase.generated_from.requirement
-                && case.feature_id == testcase.generated_from.feature
+            case.feature_id == testcase.generated_from.feature
                 && case.behavior_id == testcase.generated_from.behavior
-                && case.condition_id == testcase.generated_from.condition
+                && case.scenario_id == testcase.generated_from.scenario
         }) else {
             continue;
         };
-        let version = ArtifactVersion {
+        // ADR 0017 §3: `case_revision` *is* the canonicalization rule for
+        // Scenario/TestCase content — already a deterministic function of
+        // effective input alone (never display-only fields), unlike
+        // `git_oid`, which changes on a description-only edit. Recorded
+        // directly rather than re-hashed through `canonical_hash` (that
+        // helper is for turning an arbitrary opaque string into a hash;
+        // `case_revision` already is one, and re-hashing it would only
+        // sever the traceable link back to `case-definitions/<case_uid>/
+        // <case_revision>.yml`). Feature has no `case_revision` equivalent
+        // yet, so its `canonical_hash` stays `None`.
+        let scenario_version = ArtifactVersion {
             git_oid: feature_versions
                 .get(&case.feature_id)
                 .map(|v| v.tree_sha.clone()),
-            canonical_hash: None,
+            canonical_hash: Some(testcase.case_revision.clone()),
         };
+        let testcase_version = scenario_version.clone();
         artifacts.push(CanonicalArtifact {
-            canonical_id: canonical_id(ArtifactKind::Condition, &case.condition_id),
+            canonical_id: canonical_id(ArtifactKind::Scenario, &case.scenario_id),
             source: "markharness-native".to_string(),
-            external_id: case.condition_id.clone(),
-            kind: ArtifactKind::Condition,
-            version: version.clone(),
+            external_id: case.scenario_id.clone(),
+            kind: ArtifactKind::Scenario,
+            version: scenario_version,
             provenance: provenance.clone(),
             uid: None,
         });
@@ -226,14 +236,17 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
             source: "markharness-native".to_string(),
             external_id: testcase.case_id.clone(),
             kind: ArtifactKind::TestCase,
-            version,
+            version: testcase_version,
             provenance: provenance.clone(),
-            uid: None,
+            // ADR 0017 §3/§5: `plan::build_plan`'s evidence matching reads
+            // this to learn each TestCase's current `case_uid` (paired with
+            // `version.canonical_hash`, which already carries `case_revision`).
+            uid: testcase.case_uid.clone(),
         });
         relations.push(CanonicalRelation {
             from: canonical_id(ArtifactKind::TestCase, &testcase.case_id),
             relation_type: "verifies".to_string(),
-            to: canonical_id(ArtifactKind::Condition, &case.condition_id),
+            to: canonical_id(ArtifactKind::Scenario, &case.scenario_id),
             origin: RelationOrigin {
                 kind: RelationOriginKind::Derived,
                 rule: Some("markharness-generate".to_string()),
@@ -278,12 +291,12 @@ pub fn import_junit(
     let mut relations = Vec::new();
     for suite in suites {
         for case in suite.testcases {
-            let condition_ids: Vec<String> = case
+            let scenario_ids: Vec<String> = case
                 .properties
                 .as_ref()
                 .into_iter()
                 .flat_map(|properties| &properties.properties)
-                .filter(|property| property.name == "markharness.condition")
+                .filter(|property| property.name == "markharness.scenario")
                 .map(|property| property.value.clone())
                 .collect();
             let external_id = if case.classname.is_empty() {
@@ -318,11 +331,11 @@ pub fn import_junit(
                 bound_versions: bound_versions.clone(),
                 provenance: provenance.clone(),
             });
-            for condition_id in condition_ids {
+            for scenario_id in scenario_ids {
                 relations.push(CanonicalRelation {
                     from: format!("junit:test_case:{external_id}"),
                     relation_type: "verifies".to_string(),
-                    to: canonical_id(ArtifactKind::Condition, &condition_id),
+                    to: canonical_id(ArtifactKind::Scenario, &scenario_id),
                     origin: RelationOrigin {
                         kind: RelationOriginKind::Stored,
                         rule: None,

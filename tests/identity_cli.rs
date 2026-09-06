@@ -57,20 +57,14 @@ fn identity_migrate_json_reports_kind_id_and_uid_for_every_migrated_element() {
     let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["dry_run"], false);
     let migrated = body["migrated"].as_array().unwrap();
-    assert_eq!(migrated.len(), 5);
+    assert_eq!(migrated.len(), 4);
     let kinds: std::collections::BTreeSet<&str> = migrated
         .iter()
         .map(|entry| entry["kind"].as_str().unwrap())
         .collect();
     assert_eq!(
         kinds,
-        std::collections::BTreeSet::from([
-            "requirement",
-            "feature",
-            "behavior",
-            "condition",
-            "expected_result",
-        ])
+        std::collections::BTreeSet::from(["requirement", "feature", "behavior", "scenario",])
     );
     for entry in migrated {
         assert!(entry["id"].as_str().is_some());
@@ -92,8 +86,7 @@ fn identity_migrate_human_readable_output_names_every_kind() {
         "migrated requirement 'req-todo'",
         "migrated feature 'todo'",
         "migrated behavior 'todo-add-task'",
-        "migrated condition 'todo-add-task-empty-input'",
-        "migrated expected_result 'todo-add-task-empty-input-001'",
+        "migrated scenario 'todo-add-task-empty-input'",
     ] {
         assert!(
             stdout.contains(expected),
@@ -119,7 +112,7 @@ fn identity_migrate_dry_run_writes_nothing() {
     assert!(output.status.success(), "{output:?}");
     let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["dry_run"], true);
-    assert_eq!(body["migrated"].as_array().unwrap().len(), 5);
+    assert_eq!(body["migrated"].as_array().unwrap().len(), 4);
 
     assert!(!dir.path().join(".markharness/identity-events").exists());
     assert!(
@@ -129,7 +122,7 @@ fn identity_migrate_dry_run_writes_nothing() {
     );
     let feature_yml = std::fs::read_to_string(
         dir.path()
-            .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+            .join(".markharness/knowledge/features/todo/feature.yml"),
     )
     .unwrap();
     assert!(!feature_yml.contains("uid:"));
@@ -164,13 +157,13 @@ fn identity_migrate_exits_nonzero_and_reports_conflicts_for_a_duplicate_id_withi
     // Requirement — a duplicate within the Feature kind.
     std::fs::create_dir_all(
         dir.path()
-            .join(".markharness/knowledge/req-todo/todo-again"),
+            .join(".markharness/knowledge/features/todo-again"),
     )
     .unwrap();
     std::fs::write(
         dir.path()
-            .join(".markharness/knowledge/req-todo/todo-again/feature.yml"),
-        "id: todo\nrequirement: req-todo\nlabel: todo again\naxis: []\n",
+            .join(".markharness/knowledge/features/todo-again/feature.yml"),
+        "id: todo\nrequirement_ids: [req-todo]\nlabel: todo again\naxis: []\n",
     )
     .unwrap();
 
@@ -233,7 +226,7 @@ fn identity_audit_exits_nonzero_when_an_event_file_is_deleted_out_of_band() {
 
     let feature_yml = std::fs::read_to_string(
         dir.path()
-            .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+            .join(".markharness/knowledge/features/todo/feature.yml"),
     )
     .unwrap();
     let feature_uid = feature_yml
@@ -266,7 +259,7 @@ fn identity_audit_exits_nonzero_when_an_event_file_is_deleted_out_of_band() {
 
 fn migrated_feature_uid(dir: &std::path::Path) -> String {
     let feature_yml =
-        std::fs::read_to_string(dir.join(".markharness/knowledge/req-todo/todo/feature.yml"))
+        std::fs::read_to_string(dir.join(".markharness/knowledge/features/todo/feature.yml"))
             .unwrap();
     feature_yml
         .lines()
@@ -285,7 +278,7 @@ fn identity_retire_then_restore_round_trips_through_the_cli() {
 
     std::fs::remove_file(
         dir.path()
-            .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+            .join(".markharness/knowledge/features/todo/feature.yml"),
     )
     .unwrap();
 
@@ -353,7 +346,7 @@ fn identity_reissue_json_reports_the_new_uid_and_source_uid() {
     let foreign_uid = "01FOREIGN00000000000000000";
     let feature_yml = dir
         .path()
-        .join(".markharness/knowledge/req-todo/todo/feature.yml");
+        .join(".markharness/knowledge/features/todo/feature.yml");
     let content = std::fs::read_to_string(&feature_yml).unwrap();
     std::fs::write(&feature_yml, format!("{content}uid: {foreign_uid}\n")).unwrap();
 

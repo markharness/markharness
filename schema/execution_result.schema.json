@@ -2,22 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://markharness.com/schema/execution_result.schema.json",
   "title": "ExecutionResult",
-  "description": "executions/<milestone>/results.yml: an append-only array of TestCase execution records (§3.1 TESTEXECUTION).",
-  "type": "array",
-  "items": {
-    "type": "object",
-    "properties": {
-      "case_id": { "type": "string", "minLength": 1 },
-      "result": { "type": "string", "enum": ["pass", "fail", "skip"] },
-      "executor": { "type": "string", "minLength": 1 },
-      "note": { "type": "string" },
-      "executed_at": { "type": "string", "minLength": 1 },
-      "verified_feature_tree_shas": {
-        "type": "object",
-        "additionalProperties": { "type": "string" }
-      }
-    },
-    "required": ["case_id", "result", "executor", "executed_at"],
-    "additionalProperties": false
-  }
+  "description": "executions/records/<execution_uid>.yml: one TestCase execution record (ADR 0017 §5). One file per execution.",
+  "type": "object",
+  "properties": {
+    "execution_uid": { "type": "string", "minLength": 1 },
+    "case_id": { "type": "string", "minLength": 1 },
+    "case_uid": { "type": "string", "minLength": 1 },
+    "case_revision": { "type": "string", "minLength": 1 },
+    "target_revision": { "type": "string", "minLength": 1 },
+    "environment": { "type": "string", "minLength": 1 },
+    "result": { "type": "string", "enum": ["pass", "fail", "skip"] },
+    "executor": { "type": "string", "minLength": 1 },
+    "note": { "type": "string" },
+    "executed_at": { "type": "string", "minLength": 1 },
+    "source_report": { "type": "string", "minLength": 1 }
+  },
+  "required": [
+    "execution_uid",
+    "case_id",
+    "case_uid",
+    "case_revision",
+    "target_revision",
+    "result",
+    "executor",
+    "executed_at"
+  ],
+  "additionalProperties": false
 }

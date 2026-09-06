@@ -84,6 +84,11 @@ pub enum Command {
         /// Canonical snapshot containing imported stored traces/evidence (repeatable)
         #[arg(long, value_name = "CANONICAL_JSON")]
         evidence: Vec<PathBuf>,
+        /// The environment execution evidence must have run in to be
+        /// considered applicable (ADR 0017 §5). Omit to require evidence
+        /// recorded with no environment at all.
+        #[arg(long)]
+        environment: Option<String>,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -157,8 +162,7 @@ pub enum EntityKindArg {
     Requirement,
     Feature,
     Behavior,
-    Condition,
-    ExpectedResult,
+    Scenario,
 }
 
 impl From<EntityKindArg> for crate::identity::EntityKind {
@@ -167,8 +171,7 @@ impl From<EntityKindArg> for crate::identity::EntityKind {
             EntityKindArg::Requirement => crate::identity::EntityKind::Requirement,
             EntityKindArg::Feature => crate::identity::EntityKind::Feature,
             EntityKindArg::Behavior => crate::identity::EntityKind::Behavior,
-            EntityKindArg::Condition => crate::identity::EntityKind::Condition,
-            EntityKindArg::ExpectedResult => crate::identity::EntityKind::ExpectedResult,
+            EntityKindArg::Scenario => crate::identity::EntityKind::Scenario,
         }
     }
 }
@@ -202,7 +205,7 @@ pub enum IdentityCommand {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Condition/ExpectedResult) that doesn't have one yet (design doc §12). Idempotent.
+    /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Scenario) that doesn't have one yet (design doc §12). Idempotent.
     Migrate {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -334,13 +337,20 @@ impl From<ResultArg> for ExecutionResult {
 
 #[derive(Subcommand)]
 pub enum ExecutionCommand {
-    /// Append one TestCase execution result to executions/<milestone>/results.yml
+    /// Record one TestCase execution result (ADR 0017 §5), one file per
+    /// execution under executions/records/
     Record {
         /// The TestCase's case_id (as generated into generated/testcases/*.yml)
         case_id: String,
-        /// The milestone this result belongs to, matching an existing executions/<name>/milestone.yml
+        /// An opaque, non-empty identifier of the build/commit under test
+        /// (a commit OID, a CI build number, a release tag — never a
+        /// project milestone name; never inferred).
         #[arg(long)]
-        milestone: String,
+        target_revision: String,
+        /// Free-text environment identifier. Omit to record explicitly no
+        /// environment (never inferred).
+        #[arg(long)]
+        environment: Option<String>,
         /// The outcome of this execution
         #[arg(long, value_enum)]
         result: ResultArg,
@@ -361,53 +371,12 @@ pub enum ExecutionCommand {
 
 #[derive(clap::Args)]
 pub struct VerifyArgs {
-    /// Target project directory. Defaults to the current directory. Only used when no subcommand is given (bare `verify`'s diff mode); `trace`/`pending` carry their own --dir.
+    /// Target project directory. Defaults to the current directory.
     #[arg(long, short = 'd')]
     pub dir: Option<PathBuf>,
-    /// Emit machine-readable JSON instead of human-readable text. Only used when no subcommand is given.
+    /// Emit machine-readable JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
-    #[command(subcommand)]
-    pub command: Option<VerifySubcommand>,
-}
-
-#[derive(Subcommand)]
-pub enum VerifySubcommand {
-    /// Q1: which ChangeEvent a TestExecution's verified_feature_tree_shas reflects
-    Trace {
-        /// The TestCase's case_id
-        case_id: String,
-        /// The milestone the execution result was recorded under
-        #[arg(long)]
-        milestone: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-        /// Emit machine-readable JSON instead of human-readable text
-        #[arg(long)]
-        json: bool,
-    },
-    /// Q2: impacted TestCases not yet re-executed against the new blob (pending/stale)
-    Pending {
-        /// The earlier milestone (defaults to the most recent adjacent pair with --to)
-        #[arg(long, requires = "to")]
-        from: Option<String>,
-        /// The later milestone (defaults to the most recent adjacent pair with --from)
-        #[arg(long, requires = "from")]
-        to: Option<String>,
-        /// Target project directory (a git repository). Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-        /// Emit machine-readable JSON instead of human-readable text
-        #[arg(long)]
-        json: bool,
-        /// Exit with a non-zero status if any TestCase is pending
-        #[arg(long)]
-        fail_on_pending: bool,
-        /// Recompute Feature blob SHAs directly via `git ls-tree` instead of using .markharness-cache/
-        #[arg(long)]
-        no_cache: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -450,14 +419,14 @@ impl From<ChangeTypeArg> for changes::ChangeType {
 
 /// The unit `impacted_testcases` is narrowed down to (issue #15). `Feature`
 /// is the default and matches the tool's behavior before this flag
-/// existed; `Behavior`/`Condition` trade recall for precision (see
+/// existed; `Behavior`/`Scenario` trade recall for precision (see
 /// `changes::Granularity`'s doc comment).
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum GranularityArg {
     #[default]
     Feature,
     Behavior,
-    Condition,
+    Scenario,
 }
 
 impl From<GranularityArg> for changes::Granularity {
@@ -465,7 +434,7 @@ impl From<GranularityArg> for changes::Granularity {
         match value {
             GranularityArg::Feature => changes::Granularity::Feature,
             GranularityArg::Behavior => changes::Granularity::Behavior,
-            GranularityArg::Condition => changes::Granularity::Condition,
+            GranularityArg::Scenario => changes::Granularity::Scenario,
         }
     }
 }
@@ -487,7 +456,7 @@ pub enum ChangesCommand {
         /// Derive impacted_testcases from the current knowledge/ working tree instead of the `to` milestone's committed tree (legacy behavior; recomputing the same past interval later can then yield a different result)
         #[arg(long)]
         current_tree: bool,
-        /// The unit impacted_testcases is narrowed down to. `feature` (default) keeps every TestCase generated from a changed Feature; `behavior`/`condition` narrow further, trading recall for precision (no coupling between siblings is detected — see docs/ja/cli-manual.md 1.12節)
+        /// The unit impacted_testcases is narrowed down to. `feature` (default) keeps every TestCase generated from a changed Feature; `behavior`/`scenario` narrow further, trading recall for precision (no coupling between siblings is detected — see docs/ja/cli-manual.md 1.12節)
         #[arg(long, value_enum, default_value = "feature")]
         granularity: GranularityArg,
     },
@@ -596,7 +565,7 @@ pub enum AxesCommand {
 
 #[derive(Subcommand)]
 pub enum KnowledgeCommand {
-    /// Interactively record a Feature/Condition/ExpectedResult
+    /// Interactively record a Feature/Behavior/Scenario
     Add {
         /// Target project directory containing knowledge/. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -640,7 +609,7 @@ pub enum KnowledgeCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
-        /// Strip a condition.id prefix that redundantly repeats behavior.id, instead of erroring
+        /// Strip a scenario.id prefix that redundantly repeats behavior.id, instead of erroring
         #[arg(long)]
         strip_redundant_prefix: bool,
         /// Validate only, without writing (alias for `knowledge validate`)
@@ -730,6 +699,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             format: ImportFormatArg::Json,
             output,
             evidence,
+            environment,
             dir,
         } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
@@ -740,8 +710,13 @@ pub fn run(cli: Cli) -> io::Result<()> {
                         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
                 })
                 .collect::<io::Result<Vec<_>>>()?;
-            let outcome =
-                application::build_verification_plan(&root, &base, &head, &canonical_inputs)?;
+            let outcome = application::build_verification_plan(
+                &root,
+                &base,
+                &head,
+                environment.as_deref(),
+                &canonical_inputs,
+            )?;
             let presented = JsonPresenter.present(&outcome);
             if let Some(output) = output {
                 let output = if output.is_absolute() {
@@ -1122,7 +1097,8 @@ pub fn run(cli: Cli) -> io::Result<()> {
         }
         Command::Execution(ExecutionCommand::Record {
             case_id,
-            milestone,
+            target_revision,
+            environment,
             result,
             executor,
             note,
@@ -1131,33 +1107,60 @@ pub fn run(cli: Cli) -> io::Result<()> {
         }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let args = RecordArgs {
-                milestone: &milestone,
                 case_id: &case_id,
+                target_revision: &target_revision,
+                environment: environment.as_deref(),
                 result: ExecutionResult::from(result),
                 executor: &executor,
                 note: note.as_deref(),
             };
             match execution::record_execution(&root, &args) {
-                Ok(()) => {
+                Ok(entry) => {
                     if json {
-                        println!("{{\"ok\":true}}");
+                        println!(
+                            "{{\"ok\":true,\"execution_uid\":{:?}}}",
+                            entry.execution_uid
+                        );
                     } else {
                         println!(
-                            "recorded {} for {case_id} into .markharness/executions/{milestone}/results.yml",
-                            args.result.as_str()
+                            "recorded {} for {case_id} into .markharness/executions/records/{}.yml",
+                            args.result.as_str(),
+                            entry.execution_uid
                         );
                     }
                     Ok(())
                 }
-                Err(RecordError::MilestoneNotFound) => {
-                    eprintln!(
-                        "error: milestone '{milestone}' not found. Run `markharness milestone init {milestone}` first."
-                    );
-                    std::process::exit(2);
-                }
                 Err(RecordError::CaseNotFound) => {
                     eprintln!(
                         "error: case_id '{case_id}' not found in .markharness/generated/testcases/. Run `markharness generate` first."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RecordError::CaseNotMigrated) => {
+                    eprintln!(
+                        "error: case_id '{case_id}' has no case_uid yet. Run `markharness identity migrate` first."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RecordError::EmptyTargetRevision) => {
+                    eprintln!("error: --target-revision must not be empty or whitespace-only.");
+                    std::process::exit(2);
+                }
+                Err(RecordError::EmptyEnvironment) => {
+                    eprintln!(
+                        "error: --environment must not be empty or whitespace-only. Omit it instead to record no environment."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RecordError::CaseDefinitionMissing) => {
+                    eprintln!(
+                        "error: no immutable case definition is stored for case_id '{case_id}'. Run `markharness generate` again to (re-)populate .markharness/case-definitions/."
+                    );
+                    std::process::exit(2);
+                }
+                Err(RecordError::CaseDefinitionMismatch) => {
+                    eprintln!(
+                        "error: the generated test case for '{case_id}' no longer matches the immutable case definition stored under its case_uid/case_revision. Run `markharness generate` again to refresh it."
                     );
                     std::process::exit(2);
                 }
@@ -1598,11 +1601,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Verify(VerifyArgs {
-            dir,
-            json,
-            command: None,
-        }) => {
+        Command::Verify(VerifyArgs { dir, json }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let diffs = verify::diff_generated_testcases(&root)?;
             if json {
@@ -1625,98 +1624,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 Ok(())
             } else {
                 std::process::exit(1);
-            }
-        }
-        Command::Verify(VerifyArgs {
-            command:
-                Some(VerifySubcommand::Trace {
-                    case_id,
-                    milestone,
-                    dir,
-                    json,
-                }),
-            ..
-        }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match verify::trace(&root, &case_id, &milestone) {
-                Ok(result) => {
-                    if json {
-                        println!(
-                            "{}",
-                            serde_json::to_string(&result)
-                                .expect("TraceResult serialization is infallible")
-                        );
-                    } else {
-                        println!("case_id: {}", result.case_id);
-                        for entry in &result.entries {
-                            println!("feature: {}", entry.feature_id);
-                            println!("executed_at: {}", result.executed_at);
-                            match &entry.reflects_change {
-                                Some(change) => {
-                                    println!("reflects_change: {}", change.event_id);
-                                    println!("  from_milestone: {}", change.from_milestone);
-                                    println!("  to_milestone: {}", change.to_milestone);
-                                    println!("  change_type: (未記録)");
-                                }
-                                None => println!("reflects_change: (不明)"),
-                            }
-                        }
-                    }
-                    Ok(())
-                }
-                Err(verify::TraceError::NoVerifiedBlobs) => {
-                    eprintln!(
-                        "error: no verified_feature_tree_shas recorded for case_id '{case_id}' at milestone '{milestone}'."
-                    );
-                    std::process::exit(2);
-                }
-                Err(verify::TraceError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-            }
-        }
-        Command::Verify(VerifyArgs {
-            command:
-                Some(VerifySubcommand::Pending {
-                    from,
-                    to,
-                    dir,
-                    json,
-                    fail_on_pending,
-                    no_cache,
-                }),
-            ..
-        }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            let range = match (&from, &to) {
-                (Some(from), Some(to)) => Some((from.as_str(), to.as_str())),
-                _ => None,
-            };
-            match application::verify_pending(&root, range, !no_cache, fail_on_pending) {
-                Ok(outcome) => {
-                    let presented = if json {
-                        JsonPresenter.present(&outcome)
-                    } else {
-                        HumanPresenter.present(&outcome)
-                    };
-                    presentation::emit(presented)
-                }
-                Err(verify::PendingError::NoMilestonePair) => presentation::error(
-                    "error: --from/--to omitted and fewer than two milestones exist to pair.\n"
-                        .to_string(),
-                    2,
-                ),
-                Err(verify::PendingError::MilestoneNotFound) => {
-                    presentation::error("error: --from/--to milestone not found.\n".to_string(), 2)
-                }
-                Err(verify::PendingError::InvalidRange) => presentation::error(
-                    "error: --to must be strictly newer than --from.\n".to_string(),
-                    2,
-                ),
-                Err(verify::PendingError::Io(e)) => {
-                    presentation::error(format!("error: filesystem error: {e}\n"), 3)
-                }
             }
         }
     }
@@ -2245,10 +2152,9 @@ mod tests {
         let cli = Cli::parse_from(["markharness", "verify", "--dir", "some/path", "--json"]);
 
         match cli.command {
-            Command::Verify(VerifyArgs { dir, json, command }) => {
+            Command::Verify(VerifyArgs { dir, json }) => {
                 assert_eq!(dir, Some(PathBuf::from("some/path")));
                 assert!(json);
-                assert!(command.is_none());
             }
             _ => panic!("expected Verify command"),
         }
@@ -2259,10 +2165,9 @@ mod tests {
         let cli = Cli::parse_from(["markharness", "verify"]);
 
         match cli.command {
-            Command::Verify(VerifyArgs { dir, json, command }) => {
+            Command::Verify(VerifyArgs { dir, json }) => {
                 assert_eq!(dir, None);
                 assert!(!json);
-                assert!(command.is_none());
             }
             _ => panic!("expected Verify command"),
         }
@@ -2755,8 +2660,10 @@ mod tests {
             "execution",
             "record",
             "tc-ground-001",
-            "--milestone",
-            "m1",
+            "--target-revision",
+            "abc123",
+            "--environment",
+            "staging",
             "--result",
             "pass",
             "--executor",
@@ -2771,7 +2678,8 @@ mod tests {
         match cli.command {
             Command::Execution(ExecutionCommand::Record {
                 case_id,
-                milestone,
+                target_revision,
+                environment,
                 result,
                 executor,
                 note,
@@ -2779,7 +2687,8 @@ mod tests {
                 json,
             }) => {
                 assert_eq!(case_id, "tc-ground-001");
-                assert_eq!(milestone, "m1");
+                assert_eq!(target_revision, "abc123");
+                assert_eq!(environment, Some("staging".to_string()));
                 assert_eq!(result, ResultArg::Pass);
                 assert_eq!(executor, "yamada");
                 assert_eq!(note, Some("looked fine".to_string()));
@@ -2918,46 +2827,57 @@ mod tests {
         case_id: &str,
         feature_id: &str,
     ) {
+        // `case_revision` is defined as a hash of `phases`
+        // (`generate::compute_case_revision`); `execution record` now
+        // verifies the stored case definition's `phases` actually hash to
+        // it, so this must be the real hash of the `phases: []` written
+        // below rather than an arbitrary placeholder string.
+        let case_revision = crate::generate::compute_case_revision(&[]);
         let dir = root.join(".markharness/generated/testcases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{condition_id}.yml")),
-            format!("case_id: {case_id}\ngenerated_from:\n  feature: {feature_id}\n"),
+            format!(
+                "case_id: {case_id}\ncase_uid: case-uid-1\ncase_revision: {case_revision}\ngenerated_from:\n  requirement_ids: []\n  feature: {feature_id}\nphases: []\n"
+            ),
+        )
+        .unwrap();
+        // `execution record` requires the immutable case definition (ADR
+        // 0017 §5) to already be stored under the same key `generate` would
+        // have populated it at.
+        let definitions_dir = root.join(".markharness/case-definitions/case-uid-1");
+        fs::create_dir_all(&definitions_dir).unwrap();
+        fs::write(
+            definitions_dir.join(format!("{case_revision}.yml")),
+            format!("case_uid: case-uid-1\ncase_revision: {case_revision}\nphases: []\n"),
         )
         .unwrap();
     }
 
     #[test]
-    fn execution_record_writes_results_yml_when_milestone_and_case_exist() {
+    fn execution_record_writes_one_file_under_executions_records_when_case_exists() {
         let dir = init_git_repo_for_test();
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump"),
+                .join(".markharness/knowledge/features/player-jump"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
-        fs::write(
-            dir.path().join(".markharness/executions/m1/milestone.yml"),
-            "id: m1\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: []\n",
         )
         .unwrap();
         run_git_for_test(dir.path(), &["add", "-A"]);
         run_git_for_test(dir.path(), &["commit", "-q", "-m", "add feature"]);
-        run_git_for_test(dir.path(), &["tag", "m1"]);
         write_generated_testcase_for_test(dir.path(), "ground", "tc-ground-001", "player-jump");
         let cli = Cli::parse_from([
             "markharness",
             "execution",
             "record",
             "tc-ground-001",
-            "--milestone",
-            "m1",
+            "--target-revision",
+            "abc123",
             "--result",
             "pass",
             "--executor",
@@ -2968,9 +2888,12 @@ mod tests {
 
         run(cli).unwrap();
 
-        let content =
-            fs::read_to_string(dir.path().join(".markharness/executions/m1/results.yml")).unwrap();
+        let records_dir = dir.path().join(".markharness/executions/records");
+        let entries: Vec<_> = fs::read_dir(&records_dir).unwrap().collect();
+        assert_eq!(entries.len(), 1, "expected exactly one execution record");
+        let content = fs::read_to_string(entries[0].as_ref().unwrap().path()).unwrap();
         assert!(content.contains("case_id: tc-ground-001"));
+        assert!(content.contains("target_revision: abc123"));
     }
 
     #[test]

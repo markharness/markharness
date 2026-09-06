@@ -34,7 +34,7 @@ fn run_with_stdin(args: &[&str], input: &str) -> Output {
     child.wait_with_output().expect("failed to wait on child")
 }
 
-const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n";
+const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n";
 
 #[test]
 fn knowledge_add_writes_full_chain_from_stdin_prompts() {
@@ -53,11 +53,11 @@ fn knowledge_add_writes_full_chain_from_stdin_prompts() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let expected_path = dir
+    let scenario_path = dir
         .path()
-        .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
+        .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml");
     assert_eq!(
-        std::fs::read_to_string(expected_path).unwrap(),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
+        std::fs::read_to_string(scenario_path).unwrap(),
+        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\n"
     );
 }

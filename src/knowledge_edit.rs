@@ -33,20 +33,17 @@ behavior:
   label:
   axis:
   description:
-  steps:
-    -
+  procedures:
 
-condition:
+scenario:
   id:
   label:
   description:
-  steps:
-    -
-
-expected:
-  - description:
-    results:
-      -
+  phases:
+    - steps:
+        - action:
+      results:
+        -
 ";
 
 /// Writes `EDIT_TEMPLATE` — the same blank draft chain `knowledge add --edit`
@@ -226,18 +223,18 @@ mod tests {
         );
     }
 
-    /// ADR 0016: `condition.steps`(必須)と`expected[].results`(必須)の
-    /// プレースホルダーがテンプレートに含まれる。
+    /// ADR 0017 §2: `scenario.phases[].steps`(必須)と
+    /// `scenario.phases[].results`(必須)のプレースホルダーがテンプレートに
+    /// 含まれる。
     #[test]
-    fn edit_template_includes_condition_steps_and_expected_results_placeholders() {
+    fn edit_template_includes_scenario_phase_steps_and_results_placeholders() {
         assert!(
-            EDIT_TEMPLATE
-                .contains("condition:\n  id:\n  label:\n  description:\n  steps:\n    -\n"),
-            "expected a condition.steps placeholder: {EDIT_TEMPLATE}"
+            EDIT_TEMPLATE.contains("scenario:\n  id:\n  label:\n  description:\n  phases:\n"),
+            "expected a scenario.phases placeholder: {EDIT_TEMPLATE}"
         );
         assert!(
-            EDIT_TEMPLATE.contains("expected:\n  - description:\n    results:\n      -\n"),
-            "expected an expected[].results placeholder: {EDIT_TEMPLATE}"
+            EDIT_TEMPLATE.contains("- steps:\n        - action:\n      results:\n        -\n"),
+            "expected a phase steps/results placeholder: {EDIT_TEMPLATE}"
         );
     }
 
@@ -301,16 +298,15 @@ mod tests {
                 label: None,
                 axis: to_vec(behavior_axis),
                 description: None,
-                steps: None,
+                procedures: None,
             },
-            condition: knowledge_draft::ConditionDraft {
+            scenario: knowledge_draft::ScenarioDraft {
                 id: "ground".to_string(),
                 label: None,
                 description: None,
-                steps: None,
-                additional_preconditions: None,
+                phases: None,
+                implementation_note: None,
             },
-            expected: Vec::new(),
         }
     }
 
@@ -387,20 +383,20 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
-  steps:
-    - Press the jump button.
+  procedures:
+    - name: hold
+      steps:
+        - Press the jump button.
 
-condition:
+scenario:
   id: ground
   label: ground
   description: Jump from the ground and land
-  steps:
-    - Land on the ground.
-
-expected:
-  - description: lands safely
-    results:
-      - Player is standing on the ground.
+  phases:
+    - steps:
+        - action: Land on the ground.
+      results:
+        - Player is standing on the ground.
 ";
 
     /// Returns a closure that writes each entry of `contents` to the edited
@@ -453,7 +449,7 @@ expected:
         assert_eq!(call_count.get(), 1);
         assert!(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
+                .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml")
                 .exists()
         );
         assert!(!result.written_paths.is_empty());

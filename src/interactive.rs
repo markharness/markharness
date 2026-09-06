@@ -1,13 +1,13 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use crate::fs_safety::replace_file;
 use crate::knowledge::{
-    Behavior, Condition, ExpectedResult, Feature, Requirement, contains_non_ascii, is_valid_slug,
-    normalize_slug_candidate, romanize_label, serialize_behavior, serialize_condition,
-    serialize_expected_result, serialize_feature, serialize_requirement,
-    strip_redundant_condition_prefix,
+    Behavior, Feature, Phase, Procedure, Requirement, Scenario, StepItem, contains_non_ascii,
+    is_valid_slug, normalize_slug_candidate, romanize_label, serialize_behavior, serialize_feature,
+    serialize_requirement, serialize_scenario, strip_redundant_scenario_prefix,
 };
 
 fn list_candidate_ids(dir: &Path, marker_file: &str) -> Vec<String> {
@@ -46,6 +46,20 @@ fn prompt_line<R: BufRead, W: Write>(
         }
         return Ok(trimmed);
     }
+}
+
+/// A line that may legitimately be blank (signaling "finished"/"none"), so
+/// unlike `prompt_line` this never reprompts on an empty line.
+fn prompt_optional_line<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    label: &str,
+) -> io::Result<String> {
+    write!(writer, "{label}")?;
+    writer.flush()?;
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    Ok(line.trim().to_string())
 }
 
 fn prompt_id_or_label<R: BufRead, W: Write>(
@@ -123,10 +137,9 @@ fn prompt_axis<R: BufRead, W: Write>(
         .collect())
 }
 
-/// ADR 0015 Phase 1: `steps`は1行1操作、空行で入力終了。少なくとも1つ必須。
-/// stdinがEOFに達した場合、1つもstepが無ければエラーを返す(空行の繰り返し
-/// 要求でハングしないように)。1つ以上あれば、空行での終了と同様にそこまで
-/// 集めたstepsを返す。
+/// `steps`は1行1操作、空行で入力終了。少なくとも1つ必須。stdinがEOFに達した
+/// 場合、1つもstepが無ければエラーを返す(空行の繰り返し要求でハングしない
+/// ように)。1つ以上あれば、空行での終了と同様にそこまで集めたstepsを返す。
 fn prompt_steps<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -158,7 +171,7 @@ fn prompt_steps<R: BufRead, W: Write>(
 }
 
 /// `prompt_steps`と同じ入力形式だが、1つも入力せず最初の行を空にして終える
-/// ことを許す(`additional_preconditions`のような0要素許容フィールド向け)。
+/// ことを許す(procedureの有無やPhaseの追加継続確認のような0要素許容箇所向け)。
 fn prompt_optional_steps<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -179,6 +192,70 @@ fn prompt_optional_steps<R: BufRead, W: Write>(
     }
 }
 
+/// ADR 0017 §2: プロンプトで0個以上の共通手順(procedure)を集める。手順名を
+/// 空行で終了する。
+fn prompt_procedures<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+) -> io::Result<BTreeMap<String, Procedure>> {
+    let mut procedures = BTreeMap::new();
+    loop {
+        let name = prompt_optional_line(
+            reader,
+            writer,
+            "Procedure name (blank to finish, e.g. login): ",
+        )?;
+        if name.is_empty() {
+            return Ok(procedures);
+        }
+        let steps = prompt_steps(
+            reader,
+            writer,
+            "Procedure steps (one operation per line, blank line to finish, e.g. Enter credentials.):",
+        )?;
+        procedures.insert(name, Procedure { steps });
+    }
+}
+
+/// ADR 0017 §2: プロンプトで1個以上のPhase(操作+観測可能な結果)を集める。
+/// 各Phaseの操作は`action:`のみ(`use:`参照は対話フローでは扱わない — バッチ
+/// /LLM経由のdraftファイルで行う)。最初のPhase以降は、次のPhaseの操作を
+/// 空行で開始してScenario全体を終了できる。
+fn prompt_phases<R: BufRead, W: Write>(reader: &mut R, writer: &mut W) -> io::Result<Vec<Phase>> {
+    let mut phases = Vec::new();
+    loop {
+        let steps = if phases.is_empty() {
+            prompt_steps(
+                reader,
+                writer,
+                "Scenario steps (one operation per line, blank line to finish this phase, e.g. Leave the title field empty.):",
+            )?
+        } else {
+            let steps = prompt_optional_steps(
+                reader,
+                writer,
+                "Next phase steps (blank first line to finish the scenario, one operation per line otherwise):",
+            )?;
+            if steps.is_empty() {
+                return Ok(phases);
+            }
+            steps
+        };
+        let results = prompt_steps(
+            reader,
+            writer,
+            "Observable results for this phase (one per line, blank line to finish, e.g. Shows a validation error under the input field.):",
+        )?;
+        phases.push(Phase {
+            steps: steps
+                .into_iter()
+                .map(|action| StepItem::Action { action })
+                .collect(),
+            results,
+        });
+    }
+}
+
 pub fn run_add<R: BufRead, W: Write>(
     root: &Path,
     reader: &mut R,
@@ -188,14 +265,17 @@ pub fn run_add<R: BufRead, W: Write>(
         .join(crate::project_root::MARKHARNESS_DIR)
         .join("knowledge");
 
-    let requirement_candidates = list_candidate_ids(&knowledge_root, "requirement.yml");
+    let requirements_root = knowledge_root.join("requirements");
+    let features_root = knowledge_root.join("features");
+
+    let requirement_candidates = list_candidate_ids(&requirements_root, "requirement.yml");
     let (requirement_id, requirement_label) = prompt_id_or_label(
         reader,
         writer,
         "Requirement name (e.g. task-management): ",
         &requirement_candidates,
     )?;
-    let requirement_dir = knowledge_root.join(&requirement_id);
+    let requirement_dir = requirements_root.join(&requirement_id);
     let requirement_path = requirement_dir.join("requirement.yml");
     if requirement_path.exists() {
         writeln!(
@@ -224,14 +304,14 @@ pub fn run_add<R: BufRead, W: Write>(
         )?;
     }
 
-    let feature_candidates = list_candidate_ids(&requirement_dir, "feature.yml");
+    let feature_candidates = list_candidate_ids(&features_root, "feature.yml");
     let (feature_id, feature_label) = prompt_id_or_label(
         reader,
         writer,
         "Feature name (e.g. add-todo): ",
         &feature_candidates,
     )?;
-    let feature_dir = requirement_dir.join(&feature_id);
+    let feature_dir = features_root.join(&feature_id);
     let feature_path = feature_dir.join("feature.yml");
     if feature_path.exists() {
         writeln!(writer, "既存のFeature '{feature_id}' を再利用します。")?;
@@ -243,7 +323,7 @@ pub fn run_add<R: BufRead, W: Write>(
         )?;
         let feature = Feature {
             id: feature_id.clone(),
-            requirement: requirement_id.clone(),
+            requirement_ids: vec![requirement_id.clone()],
             label: feature_label,
             axis,
             description: None,
@@ -275,18 +355,14 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Behavior description (e.g. User adds a new task to the list.): ",
         )?;
-        let steps = prompt_steps(
-            reader,
-            writer,
-            "Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):",
-        )?;
+        let procedures = prompt_procedures(reader, writer)?;
         let behavior = Behavior {
             id: behavior_id.clone(),
             feature: feature_id.clone(),
             label: behavior_label,
             axis,
             description,
-            preconditions: steps,
+            procedures,
             uid: None,
         };
         replace_file(
@@ -296,99 +372,57 @@ pub fn run_add<R: BufRead, W: Write>(
         )?;
     }
 
-    let condition_candidates = list_candidate_ids(&behavior_dir, "condition.yml");
-    let (raw_condition_id, condition_label) = prompt_id_or_label(
+    let scenario_candidates = list_candidate_ids(&behavior_dir, "scenario.yml");
+    let (raw_scenario_id, scenario_label) = prompt_id_or_label(
         reader,
         writer,
-        "Condition name (e.g. empty-title): ",
-        &condition_candidates,
+        "Scenario name (e.g. empty-title): ",
+        &scenario_candidates,
     )?;
-    let condition_id = {
-        let raw_path = behavior_dir.join(&raw_condition_id).join("condition.yml");
+    let scenario_id = {
+        let raw_path = behavior_dir.join(&raw_scenario_id).join("scenario.yml");
         if raw_path.exists() {
-            raw_condition_id
+            raw_scenario_id
         } else if let Some(stripped) =
-            strip_redundant_condition_prefix(&behavior_id, &raw_condition_id)
+            strip_redundant_scenario_prefix(&behavior_id, &raw_scenario_id)
         {
             writeln!(
                 writer,
-                "Condition id '{raw_condition_id}' から Behavior id '{behavior_id}' と重複する接頭辞を除去し、'{stripped}' として作成します。"
+                "Scenario id '{raw_scenario_id}' から Behavior id '{behavior_id}' と重複する接頭辞を除去し、'{stripped}' として作成します。"
             )?;
             stripped
         } else {
-            raw_condition_id
+            raw_scenario_id
         }
     };
-    let condition_dir = behavior_dir.join(&condition_id);
-    let condition_path = condition_dir.join("condition.yml");
-    if condition_path.exists() {
-        writeln!(writer, "既存のCondition '{condition_id}' を再利用します。")?;
-    } else {
-        let description = prompt_line(
-            reader,
-            writer,
-            "Scenario (e.g. Submit the todo form with an empty title): ",
-        )?;
-        let steps = prompt_steps(
-            reader,
-            writer,
-            "Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):",
-        )?;
-        let additional_preconditions = prompt_optional_steps(
-            reader,
-            writer,
-            "Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):",
-        )?;
-        let condition = Condition {
-            id: condition_id.clone(),
-            behavior: behavior_id.clone(),
-            label: condition_label,
-            description,
-            steps,
-            additional_preconditions,
-            uid: None,
-        };
-        replace_file(
-            root,
-            &condition_path,
-            serialize_condition(&condition).as_bytes(),
-        )?;
+    let scenario_dir = behavior_dir.join(&scenario_id);
+    let scenario_path = scenario_dir.join("scenario.yml");
+    if scenario_path.exists() {
+        writeln!(writer, "既存のScenario '{scenario_id}' を再利用します。")?;
+        return Ok(());
     }
-
-    let expected_dir = condition_dir.join("expected");
-    fs::create_dir_all(&expected_dir)?;
-    let existing_count = fs::read_dir(&expected_dir)?
-        .filter(|entry| entry.is_ok())
-        .count();
-    let seq = existing_count + 1;
-    let expected_id = format!("{condition_id}-{seq:03}");
 
     let description = prompt_line(
         reader,
         writer,
-        "Expected result (e.g. shows a validation error): ",
+        "Scenario description (e.g. Submit the todo form with an empty title): ",
     )?;
-    let results = prompt_steps(
-        reader,
-        writer,
-        "Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):",
-    )?;
-    let expected = ExpectedResult {
-        id: expected_id,
-        condition: condition_id.clone(),
+    let phases = prompt_phases(reader, writer)?;
+    let scenario = Scenario {
+        id: scenario_id,
+        behavior: behavior_id,
+        label: scenario_label,
         description,
-        results,
-        additional_steps: None,
+        phases,
         implementation_note: None,
         generated_by: None,
         verified_by: None,
         uid: None,
     };
-    let expected_path = expected_dir.join(format!("{seq:03}.yml"));
     replace_file(
         root,
-        &expected_path,
-        serialize_expected_result(&expected).as_bytes(),
+        &scenario_path,
+        serialize_scenario(&scenario).as_bytes(),
     )?;
 
     Ok(())
@@ -413,7 +447,7 @@ mod tests {
         String::from_utf8(writer).unwrap()
     }
 
-    const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n";
+    const FULL_INPUT: &str = "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n";
 
     #[test]
     fn prompt_steps_errors_instead_of_looping_forever_when_stdin_hits_eof_before_any_step() {
@@ -441,28 +475,51 @@ mod tests {
         let mut reader = Cursor::new(b"\n".to_vec());
         let mut writer = Vec::new();
 
-        let steps =
-            prompt_optional_steps(&mut reader, &mut writer, "Additional preconditions:").unwrap();
+        let steps = prompt_optional_steps(&mut reader, &mut writer, "Next phase steps:").unwrap();
 
         assert_eq!(steps, Vec::<String>::new());
     }
 
     #[test]
     fn prompt_optional_steps_collects_lines_until_a_blank_line() {
-        let mut reader = Cursor::new(b"The character has already been deleted.\n\n".to_vec());
+        let mut reader = Cursor::new(b"Reload the page.\n\n".to_vec());
         let mut writer = Vec::new();
 
-        let steps =
-            prompt_optional_steps(&mut reader, &mut writer, "Additional preconditions:").unwrap();
+        let steps = prompt_optional_steps(&mut reader, &mut writer, "Next phase steps:").unwrap();
 
+        assert_eq!(steps, vec!["Reload the page.".to_string()]);
+    }
+
+    #[test]
+    fn prompt_procedures_returns_empty_map_when_the_first_name_is_blank() {
+        let mut reader = Cursor::new(b"\n".to_vec());
+        let mut writer = Vec::new();
+
+        let procedures = prompt_procedures(&mut reader, &mut writer).unwrap();
+
+        assert!(procedures.is_empty());
+    }
+
+    #[test]
+    fn prompt_procedures_collects_named_procedures_until_a_blank_name() {
+        let mut reader =
+            Cursor::new(b"login\nEnter credentials.\nPress the login button.\n\n\n".to_vec());
+        let mut writer = Vec::new();
+
+        let procedures = prompt_procedures(&mut reader, &mut writer).unwrap();
+
+        assert_eq!(procedures.len(), 1);
         assert_eq!(
-            steps,
-            vec!["The character has already been deleted.".to_string()]
+            procedures["login"].steps,
+            vec![
+                "Enter credentials.".to_string(),
+                "Press the login button.".to_string()
+            ]
         );
     }
 
     #[test]
-    fn creates_new_requirement_feature_behavior_condition_and_expected_from_scratch() {
+    fn creates_new_requirement_feature_behavior_and_scenario_from_scratch() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
@@ -470,19 +527,16 @@ mod tests {
 
         let requirement_path = dir
             .path()
-            .join(".markharness/knowledge/controls/requirement.yml");
+            .join(".markharness/knowledge/requirements/controls/requirement.yml");
         let feature_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/feature.yml");
+            .join(".markharness/knowledge/features/player-jump/feature.yml");
         let behavior_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml");
-        let condition_path = dir
+            .join(".markharness/knowledge/features/player-jump/jump/behavior.yml");
+        let scenario_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml");
-        let expected_path = dir
-            .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml");
 
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
@@ -490,19 +544,15 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n"
         );
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n"
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nprocedures: {}\n"
         );
         assert_eq!(
-            fs::read_to_string(condition_path).unwrap(),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
-        );
-        assert_eq!(
-            fs::read_to_string(expected_path).unwrap(),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
+            fs::read_to_string(scenario_path).unwrap(),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground and land\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\n"
         );
     }
 
@@ -516,22 +566,22 @@ mod tests {
         // second input line is the behavior id, not an axis list.
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\nplayer-jump\nair\ngameplay\nPlayer presses jump while airborne.\n\nspace\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
         let feature_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/feature.yml");
+            .join(".markharness/knowledge/features/player-jump/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n"
         );
         let behavior_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/air/behavior.yml");
+            .join(".markharness/knowledge/features/player-jump/air/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: air\nfeature: player-jump\nlabel: air\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\npreconditions:\n  - \"Press the jump button while airborne.\"\n"
+            "id: air\nfeature: player-jump\nlabel: air\naxis: [gameplay]\ndescription: |\n  Player presses jump while airborne.\nprocedures: {}\n"
         );
     }
 
@@ -541,58 +591,39 @@ mod tests {
         crate::init::run_init(dir.path()).unwrap();
         run_with_input(dir.path(), FULL_INPUT);
 
-        // Second run reuses feature and behavior: no axis/description prompts.
+        // Second run reuses feature and behavior: no axis/description/procedure prompts.
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\njump\nair\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\nplayer-jump\njump\nair\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
-        let condition_path = dir
+        let scenario_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/air/condition.yml");
+            .join(".markharness/knowledge/features/player-jump/jump/air/scenario.yml");
         assert_eq!(
-            fs::read_to_string(condition_path).unwrap(),
-            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump while airborne\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
+            fs::read_to_string(scenario_path).unwrap(),
+            "id: air\nbehavior: jump\nlabel: air\ndescription: |\n  Jump while airborne\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands on platform\"\n"
         );
     }
 
     #[test]
-    fn reuses_existing_condition_and_skips_scenario_prompt() {
+    fn reuses_existing_scenario_and_writes_nothing_new() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         run_with_input(dir.path(), FULL_INPUT);
-
-        // Second run reuses feature, behavior and condition: no scenario prompt.
-        run_with_input(
-            dir.path(),
-            "controls\nplayer-jump\njump\nground\nfalls over\nConfirmed.\n\n",
-        );
-
-        let expected_002 = dir
+        let scenario_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml");
+        let before = fs::read_to_string(&scenario_path).unwrap();
+
+        // Second run reuses feature, behavior and scenario: run_add returns
+        // immediately after the reuse message, no further prompts consumed.
+        run_with_input(dir.path(), "controls\nplayer-jump\njump\nground\n");
+
+        let after = fs::read_to_string(&scenario_path).unwrap();
         assert_eq!(
-            fs::read_to_string(expected_002).unwrap(),
-            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\nresults:\n  - \"Confirmed.\"\n"
-        );
-    }
-
-    #[test]
-    fn reprompts_on_empty_expected_result_input() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-
-        run_with_input(
-            dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\n\nlands safely\nConfirmed.\n\n",
-        );
-
-        let expected_path = dir
-            .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml");
-        assert_eq!(
-            fs::read_to_string(expected_path).unwrap(),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n"
+            before, after,
+            "reusing an existing Scenario must not rewrite it"
         );
     }
 
@@ -615,14 +646,14 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\n\nspace\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
         assert!(output.contains("  1) player-jump\n"));
         assert!(output.contains("既存のFeature 'player-jump' を再利用します。"));
         let behavior_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/air/behavior.yml");
+            .join(".markharness/knowledge/features/player-jump/air/behavior.yml");
         assert!(behavior_path.exists());
     }
 
@@ -635,35 +666,29 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\nplayer-jump\n1\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\nplayer-jump\n1\nspace\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
         assert!(output.contains("  1) jump\n"));
         assert!(output.contains("既存のBehavior 'jump' を再利用します。"));
-        let condition_path = dir
+        let scenario_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/space/condition.yml");
-        assert!(condition_path.exists());
+            .join(".markharness/knowledge/features/player-jump/jump/space/scenario.yml");
+        assert!(scenario_path.exists());
     }
 
     #[test]
-    fn lists_condition_candidates_by_number_and_selects_by_index() {
+    fn lists_scenario_candidates_by_number_and_selects_by_index() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
         run_with_input(dir.path(), FULL_INPUT);
 
-        let output = run_with_input_capturing_output(
-            dir.path(),
-            "controls\nplayer-jump\njump\n1\nfalls over\nConfirmed.\n\n",
-        );
+        let output =
+            run_with_input_capturing_output(dir.path(), "controls\nplayer-jump\njump\n1\n");
 
         assert!(output.contains("  1) ground\n"));
-        assert!(output.contains("既存のCondition 'ground' を再利用します。"));
-        let expected_002 = dir
-            .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
-        assert!(expected_002.exists());
+        assert!(output.contains("既存のScenario 'ground' を再利用します。"));
     }
 
     #[test]
@@ -673,79 +698,65 @@ mod tests {
 
         run_with_input(dir.path(), FULL_INPUT);
 
-        run_with_input(
-            dir.path(),
-            "controls\nplayer-jump\njump\nground\nfalls over\nConfirmed.\n\n",
-        );
+        let output =
+            run_with_input_capturing_output(dir.path(), "controls\nplayer-jump\njump\nground\n");
 
-        let expected_002 = dir
-            .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
-        assert_eq!(
-            fs::read_to_string(expected_002).unwrap(),
-            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\nresults:\n  - \"Confirmed.\"\n"
-        );
+        assert!(output.contains("既存のScenario 'ground' を再利用します。"));
     }
 
     #[test]
-    fn auto_dedup_strips_redundant_condition_prefix_and_notifies() {
+    fn auto_dedup_strips_redundant_scenario_prefix_and_notifies() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\njump-ground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
 
         assert!(output.contains(
-            "Condition id 'jump-ground' から Behavior id 'jump' と重複する接頭辞を除去し、'ground' として作成します。"
+            "Scenario id 'jump-ground' から Behavior id 'jump' と重複する接頭辞を除去し、'ground' として作成します。"
         ));
         assert!(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
-                .exists()
-        );
-        assert!(
-            dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml")
+                .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml")
                 .exists()
         );
         assert!(
             !dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/jump-ground")
+                .join(".markharness/knowledge/features/player-jump/jump/jump-ground")
                 .exists()
         );
     }
 
     #[test]
-    fn legacy_condition_dir_with_redundant_prefix_is_reused_without_stripping() {
+    fn legacy_scenario_dir_with_redundant_prefix_is_reused_without_stripping() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\njump-ground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\njump-ground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
         // Above run already dedupes to `ground/`; create a legacy dir with the
         // literal redundant name directly on disk to simulate pre-existing data.
         let legacy_dir = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/jump-ground");
+            .join(".markharness/knowledge/features/player-jump/jump/jump-ground");
         fs::create_dir_all(&legacy_dir).unwrap();
         fs::write(
-            legacy_dir.join("condition.yml"),
-            "id: jump-ground\nbehavior: jump\ndescription: |\n  legacy\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+            legacy_dir.join("scenario.yml"),
+            "id: jump-ground\nbehavior: jump\nlabel: jump-ground\ndescription: |\n  legacy\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\nplayer-jump\njump\njump-ground\nfell over\nConfirmed.\n\n",
+            "controls\nplayer-jump\njump\njump-ground\n",
         );
 
         assert!(!output.contains("重複する接頭辞を除去"));
-        assert!(output.contains("既存のCondition 'jump-ground' を再利用します。"));
-        assert!(legacy_dir.join("expected/001.yml").exists());
+        assert!(output.contains("既存のScenario 'jump-ground' を再利用します。"));
     }
 
     #[test]
@@ -812,15 +823,15 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
+            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
 
         let feature_path = dir
             .path()
-            .join(".markharness/knowledge/controls/pureiyaagajanpusuru/feature.yml");
+            .join(".markharness/knowledge/features/pureiyaagajanpusuru/feature.yml");
         assert_eq!(
             fs::read_to_string(feature_path).unwrap(),
-            "id: pureiyaagajanpusuru\nrequirement: controls\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
+            "id: pureiyaagajanpusuru\nrequirement_ids: [controls]\nlabel: プレイヤーがジャンプする\naxis: [gameplay, animation]\n"
         );
     }
 
@@ -832,35 +843,35 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\nプレイヤーがジャンプする\n\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nlanding\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\nplayer-jump\nプレイヤーがジャンプする\n\ngameplay\nPlayer presses jump.\n\nlanding\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
         let behavior_path = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/pureiyaagajanpusuru/behavior.yml");
+            .join(".markharness/knowledge/features/player-jump/pureiyaagajanpusuru/behavior.yml");
         assert_eq!(
             fs::read_to_string(behavior_path).unwrap(),
-            "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n"
+            "id: pureiyaagajanpusuru\nfeature: player-jump\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nprocedures: {}\n"
         );
     }
 
     #[test]
-    fn creates_new_condition_with_japanese_label_and_saves_it_to_yaml() {
+    fn creates_new_scenario_with_japanese_label_and_saves_it_to_yaml() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         run_with_input(dir.path(), FULL_INPUT);
 
         run_with_input(
             dir.path(),
-            "controls\nplayer-jump\njump\nプレイヤーがジャンプする\n\nJump animation scenario\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\nplayer-jump\njump\nプレイヤーがジャンプする\n\nJump animation scenario\nDo it.\n\nlands on platform\n\n\n",
         );
 
-        let condition_path = dir.path().join(
-            ".markharness/knowledge/controls/player-jump/jump/pureiyaagajanpusuru/condition.yml",
+        let scenario_path = dir.path().join(
+            ".markharness/knowledge/features/player-jump/jump/pureiyaagajanpusuru/scenario.yml",
         );
         assert_eq!(
-            fs::read_to_string(condition_path).unwrap(),
-            "id: pureiyaagajanpusuru\nbehavior: jump\nlabel: プレイヤーがジャンプする\ndescription: |\n  Jump animation scenario\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
+            fs::read_to_string(scenario_path).unwrap(),
+            "id: pureiyaagajanpusuru\nbehavior: jump\nlabel: プレイヤーがジャンプする\ndescription: |\n  Jump animation scenario\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands on platform\"\n"
         );
     }
 
@@ -871,19 +882,19 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "プレイヤーがジャンプする\n\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
+            "プレイヤーがジャンプする\n\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
 
         let requirement_path = dir
             .path()
-            .join(".markharness/knowledge/pureiyaagajanpusuru/requirement.yml");
+            .join(".markharness/knowledge/requirements/pureiyaagajanpusuru/requirement.yml");
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
             "id: pureiyaagajanpusuru\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\n"
         );
         let feature_path = dir
             .path()
-            .join(".markharness/knowledge/pureiyaagajanpusuru/player-jump/feature.yml");
+            .join(".markharness/knowledge/features/player-jump/feature.yml");
         assert!(feature_path.exists());
     }
 
@@ -897,19 +908,19 @@ mod tests {
         // the second input line is the feature id, not an axis list.
         run_with_input(
             dir.path(),
-            "controls\nother-feature\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\nother-feature\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\n\nlanding\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
         let requirement_path = dir
             .path()
-            .join(".markharness/knowledge/controls/requirement.yml");
+            .join(".markharness/knowledge/requirements/controls/requirement.yml");
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
             "id: controls\nlabel: controls\naxis: [gameplay]\n"
         );
         let feature_path = dir
             .path()
-            .join(".markharness/knowledge/controls/other-feature/feature.yml");
+            .join(".markharness/knowledge/features/other-feature/feature.yml");
         assert!(feature_path.exists());
     }
 
@@ -921,14 +932,14 @@ mod tests {
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "1\nair-support\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nlanding\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "1\nair-support\ngameplay\nspace\ngameplay\nPlayer presses jump while airborne.\n\nlanding\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
         assert!(output.contains("  1) controls\n"));
         assert!(output.contains("既存のRequirement 'controls' を再利用します。"));
         let feature_path = dir
             .path()
-            .join(".markharness/knowledge/controls/air-support/feature.yml");
+            .join(".markharness/knowledge/features/air-support/feature.yml");
         assert!(feature_path.exists());
     }
 
@@ -946,9 +957,12 @@ mod tests {
         assert!(output.contains("Behavior name (e.g. add-task): "));
         assert!(output.contains("Behavior axis (comma separated, e.g. ui, validation): "));
         assert!(output.contains("Behavior description (e.g. User adds a new task to the list.): "));
-        assert!(output.contains("Condition name (e.g. empty-title): "));
-        assert!(output.contains("Scenario (e.g. Submit the todo form with an empty title): "));
-        assert!(output.contains("Expected result (e.g. shows a validation error): "));
+        assert!(output.contains("Procedure name (blank to finish, e.g. login): "));
+        assert!(output.contains("Scenario name (e.g. empty-title): "));
+        assert!(
+            output
+                .contains("Scenario description (e.g. Submit the todo form with an empty title): ")
+        );
     }
 
     #[test]
@@ -958,17 +972,17 @@ mod tests {
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nJump from the ground and land\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
+            "controls\ngameplay\nプレイヤーがジャンプする\n\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nJump from the ground and land\nDo it.\n\nlands safely\n\n\n",
         );
 
         let feature_path = dir
             .path()
-            .join(".markharness/knowledge/controls/pureiyaagajanpusuru/feature.yml");
+            .join(".markharness/knowledge/features/pureiyaagajanpusuru/feature.yml");
         let before = fs::read_to_string(&feature_path).unwrap();
 
         run_with_input(
             dir.path(),
-            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\nPress the jump button while airborne.\n\nspace\nJump while airborne\nDo it.\n\n\nlands on platform\nConfirmed.\n\n",
+            "controls\n1\nair\ngameplay\nPlayer presses jump while airborne.\n\nspace\nJump while airborne\nDo it.\n\nlands on platform\n\n\n",
         );
 
         let after = fs::read_to_string(&feature_path).unwrap();
@@ -977,27 +991,23 @@ mod tests {
     }
 
     #[test]
-    fn stripped_id_matches_a_different_preexisting_condition_reuses_it() {
+    fn stripped_id_matches_a_different_preexisting_scenario_reuses_it() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
 
         run_with_input(
             dir.path(),
-            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\nPress the jump button.\n\nground\nlanded on the ground\nDo it.\n\n\nlands safely\nConfirmed.\n\n",
+            "controls\ngameplay\nplayer-jump\ngameplay, animation\njump\ngameplay\nPlayer presses jump.\n\nground\nlanded on the ground\nDo it.\n\nlands safely\n\n\n",
         );
 
         let output = run_with_input_capturing_output(
             dir.path(),
-            "controls\nplayer-jump\njump\njump-ground\nfalls over\nConfirmed.\n\n",
+            "controls\nplayer-jump\njump\njump-ground\n",
         );
 
         assert!(output.contains(
-            "Condition id 'jump-ground' から Behavior id 'jump' と重複する接頭辞を除去し、'ground' として作成します。"
+            "Scenario id 'jump-ground' から Behavior id 'jump' と重複する接頭辞を除去し、'ground' として作成します。"
         ));
-        assert!(output.contains("既存のCondition 'ground' を再利用します。"));
-        let expected_002 = dir
-            .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml");
-        assert!(expected_002.exists());
+        assert!(output.contains("既存のScenario 'ground' を再利用します。"));
     }
 }

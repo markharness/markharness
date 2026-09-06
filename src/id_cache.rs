@@ -9,12 +9,12 @@ use crate::git::{self, ObjectKind};
 use crate::knowledge;
 
 /// A Feature's id, its directory path, and the git tree SHA of its whole
-/// subtree (feature.yml + behavior/condition/expected files below it) at
-/// some git ref. The id is read from `feature.yml`'s `id:` field, not the
-/// directory name, so it survives directory renames (§3.3 path-independent
-/// id resolution). Using the directory's tree SHA rather than feature.yml's
-/// own blob SHA means Condition/Behavior/ExpectedResult changes are captured
-/// even when feature.yml itself is untouched.
+/// subtree (feature.yml + behavior/scenario files below it) at some git
+/// ref. The id is read from `feature.yml`'s `id:` field, not the directory
+/// name, so it survives directory renames (§3.3 path-independent id
+/// resolution). Using the directory's tree SHA rather than feature.yml's
+/// own blob SHA means Behavior/Scenario changes are captured even when
+/// feature.yml itself is untouched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeatureVersion {
     pub id: String,
@@ -174,11 +174,11 @@ pub fn resolve_feature_versions(
     Ok(features)
 }
 
-/// A Behavior's or Condition's id, its directory path, its subtree's tree
+/// A Behavior's or Scenario's id, its directory path, its subtree's tree
 /// SHA at some git ref, and the directory path of the Feature it belongs
 /// to. Used only to narrow `impacted_testcases` when `--granularity
-/// behavior`/`condition` is requested (issue #15). Unlike `FeatureVersion`
-/// this carries no `uid`: Behavior/Condition rename tracking across
+/// behavior`/`scenario` is requested (issue #15). Unlike `FeatureVersion`
+/// this carries no `uid`: Behavior/Scenario rename tracking across
 /// milestones is explicitly out of scope for that option — it only narrows
 /// the candidate set for a Feature already known (via `FeatureVersion`) to
 /// have changed, so it doesn't need its own identity/rename model.
@@ -189,11 +189,11 @@ pub struct SubunitVersion {
     pub tree_sha: String,
     pub parent_feature_dir: String,
     /// The canonical `id:` (not directory name — same path-independence
-    /// concern as Feature ids, §3.3) of the Behavior this Condition sits
+    /// concern as Feature ids, §3.3) of the Behavior this Scenario sits
     /// under. `None` for a `resolve_behavior_versions` result, where it
     /// doesn't apply. `changes.rs` needs this to build the same
-    /// `(feature_id, behavior_id, condition_id)` key `generate.rs` writes
-    /// into `TestCase.generated_from` — the Condition directory's own
+    /// `(feature_id, behavior_id, scenario_id)` key `generate.rs` writes
+    /// into `TestCase.generated_from` — the Scenario directory's own
     /// parent directory *name* isn't guaranteed to equal the Behavior's
     /// `id:` field.
     pub parent_behavior_id: Option<String>,
@@ -205,29 +205,29 @@ fn feature_dir_of_behavior_dir(behavior_dir: &str) -> Option<&str> {
     behavior_dir.rsplit_once('/').map(|(parent, _)| parent)
 }
 
-/// Condition directories sit one level below their Behavior directory
-/// (`<feature>/<behavior>/<condition>/`).
-fn feature_dir_of_condition_dir(condition_dir: &str) -> Option<&str> {
-    let (behavior_dir, _) = condition_dir.rsplit_once('/')?;
+/// Scenario directories sit one level below their Behavior directory
+/// (`<feature>/<behavior>/<scenario>/`).
+fn feature_dir_of_scenario_dir(scenario_dir: &str) -> Option<&str> {
+    let (behavior_dir, _) = scenario_dir.rsplit_once('/')?;
     behavior_dir.rsplit_once('/').map(|(parent, _)| parent)
 }
 
 /// Shared implementation behind `resolve_behavior_versions` and
-/// `resolve_condition_versions`: the same "marker file → parent directory's
+/// `resolve_scenario_versions`: the same "marker file → parent directory's
 /// tree SHA" pattern `resolve_feature_versions` uses, generalized to an
 /// arbitrary marker filename and directory depth.
 ///
 /// Duplicate ids are only an error *among immediate siblings* (the marker
 /// directory's own parent — the Feature dir for a Behavior, the Behavior
-/// dir for a Condition), not project- or Feature-wide: `docs/ja/cli-manual.md`
+/// dir for a Scenario), not project- or Feature-wide: `docs/ja/cli-manual.md`
 /// 1.2節's interactive `knowledge add` flow only checks for reuse within the
 /// currently selected Feature/Behavior. So two different Features may
 /// legitimately each have e.g. a `validate` Behavior, and two different
 /// Behaviors under the *same* Feature may legitimately each have e.g. an
-/// `empty-input` Condition — `feature_dir_of` (used only to tag each
+/// `empty-input` Scenario — `feature_dir_of` (used only to tag each
 /// resolved version with the Feature it ultimately belongs to, for
 /// `changes.rs`'s per-Feature narrowing) must not be used as the
-/// uniqueness scope for Conditions, which sit one level deeper than that.
+/// uniqueness scope for Scenarios, which sit one level deeper than that.
 fn resolve_marker_versions(
     root: &Path,
     git_ref: &str,
@@ -301,11 +301,11 @@ pub fn resolve_behavior_versions(root: &Path, git_ref: &str) -> io::Result<Vec<S
 }
 
 /// Same as `resolve_behavior_versions`, one level deeper, for
-/// `--granularity condition`. Also resolves each Condition's parent
+/// `--granularity scenario`. Also resolves each Scenario's parent
 /// Behavior's canonical `id:` (`SubunitVersion::parent_behavior_id`) by
 /// scanning the same `ls-tree` listing for `behavior.yml` blobs — a second
 /// pass over already-fetched data, no extra `git` subprocess.
-pub fn resolve_condition_versions(root: &Path, git_ref: &str) -> io::Result<Vec<SubunitVersion>> {
+pub fn resolve_scenario_versions(root: &Path, git_ref: &str) -> io::Result<Vec<SubunitVersion>> {
     let tree_entries =
         git::ls_tree_recursive(root, git_ref, crate::project_root::KNOWLEDGE_PATH_IN_REPO)?;
 
@@ -325,11 +325,11 @@ pub fn resolve_condition_versions(root: &Path, git_ref: &str) -> io::Result<Vec<
     resolve_marker_versions(
         root,
         git_ref,
-        "condition.yml",
-        feature_dir_of_condition_dir,
-        |content| knowledge::parse_condition(content).map(|c| c.id),
-        |condition_dir| {
-            let (behavior_dir, _) = condition_dir.rsplit_once('/')?;
+        "scenario.yml",
+        feature_dir_of_scenario_dir,
+        |content| knowledge::parse_scenario(content).map(|s| s.id),
+        |scenario_dir| {
+            let (behavior_dir, _) = scenario_dir.rsplit_once('/')?;
             behavior_id_by_dir.get(behavior_dir).cloned()
         },
     )
@@ -398,14 +398,13 @@ mod tests {
         let feature_dir = dir
             .path()
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join(requirement_id)
+            .join("knowledge/features")
             .join(feature_id);
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
             format!(
-                "id: {feature_id}\nrequirement: {requirement_id}\nlabel: {feature_id}\naxis: []\n"
+                "id: {feature_id}\nrequirement_ids: [{requirement_id}]\nlabel: {feature_id}\naxis: []\n"
             ),
         )
         .unwrap();
@@ -425,10 +424,10 @@ mod tests {
 
         let old_dir = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump");
+            .join(".markharness/knowledge/features/player-jump");
         let new_dir = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump-renamed");
+            .join(".markharness/knowledge/features/player-jump-renamed");
         fs::rename(&old_dir, &new_dir).unwrap();
         run_git(dir.path(), &["add", "-A"]);
         run_git(dir.path(), &["commit", "-q", "-m", "rename directory"]);
@@ -440,7 +439,7 @@ mod tests {
         assert_eq!(versions[0].id, "player-jump");
         assert_eq!(
             versions[0].path,
-            ".markharness/knowledge/controls/player-jump-renamed"
+            ".markharness/knowledge/features/player-jump-renamed"
         );
     }
 
@@ -453,11 +452,11 @@ mod tests {
 
         let dup_dir = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump-duplicate");
+            .join(".markharness/knowledge/features/player-jump-duplicate");
         fs::create_dir_all(&dup_dir).unwrap();
         fs::write(
             dup_dir.join("feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: dup\naxis: []\n",
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: dup\naxis: []\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -479,7 +478,7 @@ mod tests {
         assert_eq!(versions[0].id, "player-jump");
         assert_eq!(
             versions[0].path,
-            ".markharness/knowledge/controls/player-jump"
+            ".markharness/knowledge/features/player-jump"
         );
         assert_eq!(versions[0].tree_sha.len(), 40);
     }
@@ -506,12 +505,12 @@ mod tests {
             .path()
             .join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge")
-            .join("controls")
+            .join("features")
             .join("player-jump");
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -533,8 +532,8 @@ mod tests {
 
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -546,22 +545,22 @@ mod tests {
         assert_ne!(first[0].tree_sha, second[0].tree_sha);
     }
 
-    /// The regression test motivating this design: a Condition file added
+    /// The regression test motivating this design: a Behavior file added
     /// under a Feature, with feature.yml itself left untouched, must still
     /// change the Feature's version identifier — otherwise `changes compute`
     /// silently misses the change (the bug this module fixes).
     #[test]
-    fn tree_sha_changes_when_a_condition_is_added_without_touching_feature_yml() {
+    fn tree_sha_changes_when_a_behavior_is_added_without_touching_feature_yml() {
         let dir = init_repo_with_feature("player-jump", "controls");
         let first = resolve_feature_versions(dir.path(), "m1", false).unwrap();
 
         let behavior_dir = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump");
+            .join(".markharness/knowledge/features/player-jump/jump");
         fs::create_dir_all(&behavior_dir).unwrap();
         fs::write(
             behavior_dir.join("behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  Player presses jump.\nprocedures: {}\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -582,28 +581,28 @@ mod tests {
         fs::write(
             behavior_dir.join("behavior.yml"),
             format!(
-                "id: {behavior_id}\nfeature: player-jump\nlabel: {behavior_id}\naxis: []\ndescription: |\n  desc.\npreconditions:\n  - \"do it.\"\n"
+                "id: {behavior_id}\nfeature: player-jump\nlabel: {behavior_id}\naxis: []\ndescription: |\n  desc.\nprocedures: {{}}\n"
             ),
         )
         .unwrap();
         behavior_dir
     }
 
-    fn write_condition(behavior_dir: &Path, condition_id: &str) -> PathBuf {
-        let condition_dir = behavior_dir.join(condition_id);
-        fs::create_dir_all(&condition_dir).unwrap();
+    fn write_scenario(behavior_dir: &Path, scenario_id: &str) -> PathBuf {
+        let scenario_dir = behavior_dir.join(scenario_id);
+        fs::create_dir_all(&scenario_dir).unwrap();
         fs::write(
-            condition_dir.join("condition.yml"),
-            format!("id: {condition_id}\nbehavior: jump\nlabel: {condition_id}\ndescription: |\n  desc.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"),
+            scenario_dir.join("scenario.yml"),
+            format!("id: {scenario_id}\nbehavior: jump\nlabel: {scenario_id}\ndescription: |\n  desc.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n"),
         )
         .unwrap();
-        condition_dir
+        scenario_dir
     }
 
     #[test]
     fn resolve_behavior_versions_resolves_id_path_and_tree_sha() {
         let dir = init_repo_with_feature("player-jump", "controls");
-        write_behavior(dir.path(), "controls/player-jump", "jump");
+        write_behavior(dir.path(), "features/player-jump", "jump");
         run_git(dir.path(), &["add", "-A"]);
         run_git(dir.path(), &["commit", "-q", "-m", "add behavior"]);
         run_git(dir.path(), &["tag", "m2"]);
@@ -614,19 +613,19 @@ mod tests {
         assert_eq!(versions[0].id, "jump");
         assert_eq!(
             versions[0].path,
-            ".markharness/knowledge/controls/player-jump/jump"
+            ".markharness/knowledge/features/player-jump/jump"
         );
         assert_eq!(
             versions[0].parent_feature_dir,
-            ".markharness/knowledge/controls/player-jump"
+            ".markharness/knowledge/features/player-jump"
         );
     }
 
     #[test]
     fn resolve_behavior_versions_tree_sha_changes_when_only_that_behavior_is_edited() {
         let dir = init_repo_with_feature("player-jump", "controls");
-        write_behavior(dir.path(), "controls/player-jump", "jump");
-        let jump2_dir = write_behavior(dir.path(), "controls/player-jump", "duck");
+        write_behavior(dir.path(), "features/player-jump", "jump");
+        let jump2_dir = write_behavior(dir.path(), "features/player-jump", "duck");
         run_git(dir.path(), &["add", "-A"]);
         run_git(dir.path(), &["commit", "-q", "-m", "add behaviors"]);
         run_git(dir.path(), &["tag", "m1b"]);
@@ -634,7 +633,7 @@ mod tests {
 
         fs::write(
             jump2_dir.join("behavior.yml"),
-            "id: duck\nfeature: player-jump\nlabel: duck\naxis: []\ndescription: |\n  edited.\npreconditions:\n  - \"do it.\"\n",
+            "id: duck\nfeature: player-jump\nlabel: duck\naxis: []\ndescription: |\n  edited.\nprocedures: {}\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -653,14 +652,14 @@ mod tests {
     #[test]
     fn resolve_behavior_versions_errors_on_duplicate_id_within_the_same_feature() {
         let dir = init_repo_with_feature("player-jump", "controls");
-        write_behavior(dir.path(), "controls/player-jump", "jump");
+        write_behavior(dir.path(), "features/player-jump", "jump");
         let dup_dir = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump-dup");
+            .join(".markharness/knowledge/features/player-jump/jump-dup");
         fs::create_dir_all(&dup_dir).unwrap();
         fs::write(
             dup_dir.join("behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  dup.\npreconditions:\n  - \"do it.\"\n",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  dup.\nprocedures: {}\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
@@ -678,17 +677,17 @@ mod tests {
     #[test]
     fn resolve_behavior_versions_allows_the_same_id_under_different_features() {
         let dir = init_repo_with_feature("player-jump", "controls");
-        write_behavior(dir.path(), "controls/player-jump", "validate");
+        write_behavior(dir.path(), "features/player-jump", "validate");
         let other_feature_dir = dir
             .path()
-            .join(".markharness/knowledge/controls/other-feature");
+            .join(".markharness/knowledge/features/other-feature");
         fs::create_dir_all(&other_feature_dir).unwrap();
         fs::write(
             other_feature_dir.join("feature.yml"),
-            "id: other-feature\nrequirement: controls\nlabel: other-feature\naxis: []\n",
+            "id: other-feature\nrequirement_ids: [controls]\nlabel: other-feature\naxis: []\n",
         )
         .unwrap();
-        write_behavior(dir.path(), "controls/other-feature", "validate");
+        write_behavior(dir.path(), "features/other-feature", "validate");
         run_git(dir.path(), &["add", "-A"]);
         run_git(dir.path(), &["commit", "-q", "-m", "add behaviors"]);
         run_git(dir.path(), &["tag", "m2"]);
@@ -699,67 +698,67 @@ mod tests {
     }
 
     #[test]
-    fn resolve_condition_versions_resolves_id_path_and_parent_feature_dir() {
+    fn resolve_scenario_versions_resolves_id_path_and_parent_feature_dir() {
         let dir = init_repo_with_feature("player-jump", "controls");
-        let behavior_dir = write_behavior(dir.path(), "controls/player-jump", "jump");
-        write_condition(&behavior_dir, "ground");
+        let behavior_dir = write_behavior(dir.path(), "features/player-jump", "jump");
+        write_scenario(&behavior_dir, "ground");
         run_git(dir.path(), &["add", "-A"]);
-        run_git(dir.path(), &["commit", "-q", "-m", "add condition"]);
+        run_git(dir.path(), &["commit", "-q", "-m", "add scenario"]);
         run_git(dir.path(), &["tag", "m2"]);
 
-        let versions = resolve_condition_versions(dir.path(), "m2").unwrap();
+        let versions = resolve_scenario_versions(dir.path(), "m2").unwrap();
 
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].id, "ground");
         assert_eq!(
             versions[0].path,
-            ".markharness/knowledge/controls/player-jump/jump/ground"
+            ".markharness/knowledge/features/player-jump/jump/ground"
         );
         assert_eq!(
             versions[0].parent_feature_dir,
-            ".markharness/knowledge/controls/player-jump"
+            ".markharness/knowledge/features/player-jump"
         );
     }
 
-    /// Regression test for the sibling-scope bug: Condition ids must only
+    /// Regression test for the sibling-scope bug: Scenario ids must only
     /// be checked for uniqueness within their own Behavior, not across the
     /// whole Feature — two different Behaviors under the same Feature
-    /// legitimately reusing a Condition id (e.g. both `add-task` and
-    /// `edit-task` having an `empty-input` Condition) must not error.
+    /// legitimately reusing a Scenario id (e.g. both `add-task` and
+    /// `edit-task` having an `empty-input` Scenario) must not error.
     #[test]
-    fn resolve_condition_versions_allows_the_same_id_under_different_behaviors_of_the_same_feature()
+    fn resolve_scenario_versions_allows_the_same_id_under_different_behaviors_of_the_same_feature()
     {
         let dir = init_repo_with_feature("player-jump", "controls");
-        let jump_dir = write_behavior(dir.path(), "controls/player-jump", "jump");
-        write_condition(&jump_dir, "empty-input");
-        let duck_dir = write_behavior(dir.path(), "controls/player-jump", "duck");
-        write_condition(&duck_dir, "empty-input");
+        let jump_dir = write_behavior(dir.path(), "features/player-jump", "jump");
+        write_scenario(&jump_dir, "empty-input");
+        let duck_dir = write_behavior(dir.path(), "features/player-jump", "duck");
+        write_scenario(&duck_dir, "empty-input");
         run_git(dir.path(), &["add", "-A"]);
-        run_git(dir.path(), &["commit", "-q", "-m", "add conditions"]);
+        run_git(dir.path(), &["commit", "-q", "-m", "add scenarios"]);
         run_git(dir.path(), &["tag", "m2"]);
 
-        let versions = resolve_condition_versions(dir.path(), "m2").unwrap();
+        let versions = resolve_scenario_versions(dir.path(), "m2").unwrap();
 
         assert_eq!(versions.iter().filter(|v| v.id == "empty-input").count(), 2);
     }
 
     #[test]
-    fn resolve_condition_versions_errors_on_duplicate_id_within_the_same_behavior() {
+    fn resolve_scenario_versions_errors_on_duplicate_id_within_the_same_behavior() {
         let dir = init_repo_with_feature("player-jump", "controls");
-        let jump_dir = write_behavior(dir.path(), "controls/player-jump", "jump");
-        write_condition(&jump_dir, "ground");
+        let jump_dir = write_behavior(dir.path(), "features/player-jump", "jump");
+        write_scenario(&jump_dir, "ground");
         let dup_dir = jump_dir.join("ground-dup");
         fs::create_dir_all(&dup_dir).unwrap();
         fs::write(
-            dup_dir.join("condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  dup.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+            dup_dir.join("scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  dup.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
         run_git(dir.path(), &["add", "-A"]);
-        run_git(dir.path(), &["commit", "-q", "-m", "dup condition"]);
+        run_git(dir.path(), &["commit", "-q", "-m", "dup scenario"]);
         run_git(dir.path(), &["tag", "m2"]);
 
-        let result = resolve_condition_versions(dir.path(), "m2");
+        let result = resolve_scenario_versions(dir.path(), "m2");
 
         assert!(result.is_err());
     }
@@ -813,8 +812,8 @@ mod tests {
         // rather than recomputing via `git ls-tree`.
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
 
