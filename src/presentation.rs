@@ -1,6 +1,5 @@
 use crate::canonical::CanonicalSnapshot;
 use crate::plan::VerificationPlan;
-use crate::verify::PendingReport;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -20,10 +19,6 @@ pub enum CommandOutcome {
         /// ref that predates `[knowledge].schema_version`). Empty when
         /// nothing needs the user's attention.
         warnings: Vec<String>,
-    },
-    Pending {
-        report: PendingReport,
-        fail_on_pending: bool,
     },
 }
 
@@ -121,47 +116,6 @@ impl Presenter for HumanPresenter {
                     exit_code: 0,
                 }
             }
-            CommandOutcome::Pending {
-                report,
-                fail_on_pending,
-            } => {
-                let mut stdout = String::from("pending (再実行なし):\n");
-                if report.pending.is_empty() {
-                    stdout.push_str("  (なし)\n");
-                } else {
-                    for entry in &report.pending {
-                        stdout.push_str(&format!(
-                            "  - {}  ({} の変更 {} の影響、未実行)\n",
-                            entry.case_id, entry.feature_id, entry.event_id
-                        ));
-                    }
-                }
-                stdout.push_str("\nstale (影響範囲がさらに変更済み):\n");
-                if report.stale.is_empty() {
-                    stdout.push_str("  (なし)\n");
-                } else {
-                    for entry in &report.stale {
-                        let current = entry
-                            .current_event
-                            .as_ref()
-                            .map(|event| event.event_id.as_str())
-                            .unwrap_or("(不明)");
-                        stdout.push_str(&format!(
-                            "  - {}  ({} の変更 {} は陳腐化、現在の確認対象は {})\n",
-                            entry.case_id, entry.feature_id, entry.original_event_id, current
-                        ));
-                    }
-                }
-                PresentedResult {
-                    stdout,
-                    stderr: String::new(),
-                    exit_code: if *fail_on_pending && !report.pending.is_empty() {
-                        1
-                    } else {
-                        0
-                    },
-                }
-            }
         }
     }
 }
@@ -228,27 +182,6 @@ impl Presenter for JsonPresenter {
                     stdout: format!("{stdout}\n"),
                     stderr: String::new(),
                     exit_code: 0,
-                }
-            }
-            CommandOutcome::Pending {
-                report,
-                fail_on_pending,
-            } => {
-                let stdout = serde_json::json!({
-                    "schema_version": 1,
-                    "outcome": "pending",
-                    "audit_scope": crate::audit_scope::AuditScope::TwoSnapshot,
-                    "pending": report.pending,
-                    "stale": report.stale,
-                });
-                PresentedResult {
-                    stdout: format!("{stdout}\n"),
-                    stderr: String::new(),
-                    exit_code: if *fail_on_pending && !report.pending.is_empty() {
-                        1
-                    } else {
-                        0
-                    },
                 }
             }
         }

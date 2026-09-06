@@ -20,6 +20,17 @@ pub struct StoredTrace {
     pub feature_id: String,
 }
 
+/// A TestCase's current identity (ADR 0017 §3), as of the plan's `head`.
+/// `evidence_status` requires a `PlanEvidence`'s `bound_versions` to name
+/// exactly this `case_uid`/`case_revision` pair before considering it for
+/// applicability — a test absent from `PlanInput::case_versions` (an
+/// unmigrated Scenario) can never be found `Passed`/`Failed`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CaseVersion {
+    pub case_uid: String,
+    pub case_revision: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlanInput {
     pub base: String,
@@ -27,6 +38,22 @@ pub struct PlanInput {
     pub changes: Vec<ChangeEvent>,
     pub evidence: Vec<PlanEvidence>,
     pub stored_traces: Vec<StoredTrace>,
+    /// ADR 0017 §5: the opaque, non-empty build/commit identifier this plan
+    /// asks "is currently verified" — typically `head` resolved to a commit
+    /// OID. Evidence whose own `bound_versions["target_revision"]` doesn't
+    /// match this exactly is inapplicable, however well its `case_uid`/
+    /// `case_revision` matched.
+    pub target_revision: String,
+    /// The environment this plan requires evidence to have run in. `Some`
+    /// matches only evidence recorded with exactly that environment.
+    /// `None` means no specific environment is required, but this is not
+    /// "match anything": evidence with no recorded `environment` at all
+    /// (unknown) never satisfies any requirement, `None` included — ADR
+    /// 0017 §5's "対象・環境が不明な記録は合格を満たさない" is unconditional.
+    pub environment: Option<String>,
+    /// Each affected test's current `(case_uid, case_revision)`, keyed by
+    /// `test_id`/case_id.
+    pub case_versions: BTreeMap<String, CaseVersion>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -139,25 +166,73 @@ pub fn evaluate_proposals(predicted: &[String], expected: &[String]) -> PlanEval
     }
 }
 
+/// ADR 0017 §5: decides a test's status by requiring its evidence's
+/// `bound_versions` to name the test's *current* `case_uid`/`case_revision`
+/// (from `case_versions`) and the plan's required `target_revision`/
+/// `environment` — never a Feature-tree-SHA proxy. A test with no entry in
+/// `case_versions` (an unmigrated Scenario) has no identity to match
+/// against and is always `Pending`. Evidence recorded with no `environment`
+/// at all (unknown) is never applicable, even when the plan itself has no
+/// specific environment requirement — "対象・環境が不明な記録は保存できて
+/// も合格を満たさない" is unconditional, not merely "matches whatever the
+/// plan happens to ask for".
 fn evidence_status(
     test_id: &str,
-    feature_id: &str,
-    target_version: Option<&str>,
+    case_versions: &BTreeMap<String, CaseVersion>,
+    target_revision: &str,
+    environment: Option<&str>,
     evidence: &[PlanEvidence],
 ) -> TestStatus {
     let matching_test: Vec<&PlanEvidence> = evidence
         .iter()
         .filter(|item| item.test_id == test_id)
         .collect();
-    let matching_version: Vec<&PlanEvidence> = matching_test
+    let Some(case_version) = case_versions.get(test_id) else {
+        return TestStatus::Pending;
+    };
+    let applicable: Vec<&PlanEvidence> = matching_test
         .iter()
         .copied()
         .filter(|item| {
-            item.bound_versions.get(feature_id).map(String::as_str) == target_version
-                && target_version.is_some()
+            let case_uid_matches = item.bound_versions.get("case_uid").map(String::as_str)
+                == Some(case_version.case_uid.as_str());
+            let case_revision_matches =
+                item.bound_versions.get("case_revision").map(String::as_str)
+                    == Some(case_version.case_revision.as_str());
+            let target_revision_matches = item
+                .bound_versions
+                .get("target_revision")
+                .map(String::as_str)
+                == Some(target_revision);
+            // ADR 0017 §5: "対象・環境が不明な記録は保存できても合格を満た
+            // さない" is unconditional — an execution record with no
+            // recorded `environment` (unknown) must never be applicable,
+            // even when the plan itself has no specific environment
+            // requirement (`environment: None`). Only a plan with no
+            // requirement paired with a record naming *some* known,
+            // non-blank environment is treated as a match in that case;
+            // `None == None` must never be read as "matches", and a blank
+            // string is not a real environment identifier even if present
+            // as a key — `execution::record_execution` already refuses to
+            // store one, but this guards against a hand-edited record or
+            // an externally imported evidence blob smuggling one in.
+            let recorded_environment = item
+                .bound_versions
+                .get("environment")
+                .map(String::as_str)
+                .filter(|value| !value.trim().is_empty());
+            let environment_matches = match (environment, recorded_environment) {
+                (Some(required), Some(recorded)) => recorded == required,
+                (None, Some(_)) => true,
+                (_, None) => false,
+            };
+            case_uid_matches
+                && case_revision_matches
+                && target_revision_matches
+                && environment_matches
         })
         .collect();
-    if let Some(latest) = matching_version
+    if let Some(latest) = applicable
         .iter()
         .max_by_key(|item| item.executed_at.as_deref().unwrap_or(""))
     {
@@ -221,8 +296,9 @@ pub fn build_plan_with_adapter(
         for (test_id, origin) in test_ids {
             let status = evidence_status(
                 &test_id,
-                &change.feature_id,
-                change.to_tree_sha.as_deref(),
+                &input.case_versions,
+                &input.target_revision,
+                input.environment.as_deref(),
                 &input.evidence,
             );
             let item = AffectedExistingTest {

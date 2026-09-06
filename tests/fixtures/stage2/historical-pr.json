@@ -33,10 +33,23 @@
         "test_id": "tc-checkout",
         "result": "pass",
         "executed_at": "2026-08-18T10:00:00Z",
-        "bound_versions": { "checkout": "checkout-new" }
+        "bound_versions": {
+          "case_uid": "case-checkout-1",
+          "case_revision": "checkout-new",
+          "target_revision": "head-commit",
+          "environment": "ci"
+        }
       }
     ],
-    "stored_traces": []
+    "stored_traces": [],
+    "target_revision": "head-commit",
+    "environment": "ci",
+    "case_versions": {
+      "tc-checkout": {
+        "case_uid": "case-checkout-1",
+        "case_revision": "checkout-new"
+      }
+    }
   },
   "human_required_tests": [
     "new-test:search:missing-coverage",

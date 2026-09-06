@@ -187,7 +187,7 @@ pub fn handle_request(
             };
             let base = params.get("base").unwrap_or(&config.base);
             let head = params.get("head").unwrap_or(&config.head);
-            match application::build_verification_plan_value(root, base, head, &[]) {
+            match application::build_verification_plan_value(root, base, head, None, &[]) {
                 Ok(plan) => match serde_json::to_vec(&plan) {
                     Ok(body) => response(200, "application/json; charset=utf-8", body),
                     Err(error) => error_response(500, error),

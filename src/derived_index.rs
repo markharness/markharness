@@ -122,13 +122,20 @@ pub fn rebuild_indexes(root: &Path, git_ref: &str) -> io::Result<IndexPaths> {
 
     let mut by_case: BTreeMap<String, Vec<ExecutionIndexEntry>> = BTreeMap::new();
     for execution in read_all_results(root)? {
+        let mut bound_versions = BTreeMap::new();
+        bound_versions.insert("case_uid".to_string(), execution.case_uid);
+        bound_versions.insert("case_revision".to_string(), execution.case_revision);
+        bound_versions.insert("target_revision".to_string(), execution.target_revision);
+        if let Some(environment) = execution.environment {
+            bound_versions.insert("environment".to_string(), environment);
+        }
         by_case
             .entry(execution.case_id)
             .or_default()
             .push(ExecutionIndexEntry {
                 result: execution.result,
                 executed_at: execution.executed_at,
-                bound_versions: execution.verified_feature_tree_shas,
+                bound_versions,
             });
     }
     let execution_index = ExecutionIndex {

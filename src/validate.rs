@@ -89,25 +89,25 @@ fn check_axis_tags(
         .collect()
 }
 
-/// Validates every `executions/<milestone>/results.yml` against
-/// `execution_result.schema.json` (§3.1 TESTEXECUTION, records appended by
-/// `markharness execution record`). Records written before
-/// `verified_feature_tree_shas` existed remain valid since the field is
-/// optional in the schema (change-event-verification-tracking-spec.md §6:
-/// no retroactive backfill, treated as "unknown" by `verify trace`/`verify
-/// pending` rather than rejected here).
+/// Validates every `executions/records/*.yml` against
+/// `execution_result.schema.json` (ADR 0017 §5: one execution per file,
+/// each carrying its own `case_uid`/`case_revision`/`target_revision`).
 fn validate_executions(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Result<()> {
-    let executions_dir = root
+    let records_dir = root
         .join(crate::project_root::MARKHARNESS_DIR)
-        .join("executions");
-    if !executions_dir.is_dir() {
+        .join("executions")
+        .join("records");
+    if !records_dir.is_dir() {
         return Ok(());
     }
-    for milestone_dir in sorted_subdirs(&executions_dir)? {
-        let results_path = milestone_dir.join("results.yml");
-        if results_path.is_file() {
-            validate_file(root, "execution_result.schema.json", &results_path, issues)?;
-        }
+    let mut paths: Vec<_> = fs::read_dir(&records_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("yml"))
+        .collect();
+    paths.sort();
+    for path in paths {
+        validate_file(root, "execution_result.schema.json", &path, issues)?;
     }
     Ok(())
 }
@@ -117,7 +117,7 @@ fn validate_executions(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Re
 /// cross-reference rules that JSON Schema alone can't express: `axis` tags
 /// must exist in the `axes/` registry, and `forked_from` must name an
 /// existing Feature id (§3.1). Also validates `axes/*.yml` themselves, and
-/// `executions/*/results.yml` against `execution_result.schema.json`.
+/// `executions/records/*.yml` against `execution_result.schema.json`.
 /// Returns every issue found; an empty result means the tree is valid.
 pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
     let mut issues = Vec::new();
@@ -489,14 +489,15 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_valid_results_yml_including_verified_feature_tree_shas() {
+    fn accepts_a_valid_execution_record_including_environment() {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/records")).unwrap();
         fs::write(
-            dir.path().join(".markharness/executions/m1/results.yml"),
-            "- case_id: tc-ground-001\n  result: pass\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n  verified_feature_tree_shas:\n    player-jump: 1a2b3c\n",
+            dir.path()
+                .join(".markharness/executions/records/exec-1.yml"),
+            "execution_uid: exec-1\ncase_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\ntarget_revision: abc123\nenvironment: staging\nresult: pass\nexecutor: yamada\nexecuted_at: 2026-08-08T03:15:00Z\n",
         )
         .unwrap();
 
@@ -506,14 +507,15 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_pre_existing_results_yml_without_verified_feature_tree_shas() {
+    fn accepts_a_valid_execution_record_without_environment() {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/records")).unwrap();
         fs::write(
-            dir.path().join(".markharness/executions/m1/results.yml"),
-            "- case_id: tc-ground-001\n  result: pass\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n",
+            dir.path()
+                .join(".markharness/executions/records/exec-1.yml"),
+            "execution_uid: exec-1\ncase_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\ntarget_revision: abc123\nresult: pass\nexecutor: yamada\nexecuted_at: 2026-08-08T03:15:00Z\n",
         )
         .unwrap();
 
@@ -523,14 +525,15 @@ mod tests {
     }
 
     #[test]
-    fn reports_an_invalid_result_value_in_results_yml() {
+    fn reports_an_invalid_result_value_in_an_execution_record() {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/executions/records")).unwrap();
         fs::write(
-            dir.path().join(".markharness/executions/m1/results.yml"),
-            "- case_id: tc-ground-001\n  result: bogus\n  executor: yamada\n  executed_at: 2026-08-08T03:15:00Z\n",
+            dir.path()
+                .join(".markharness/executions/records/exec-1.yml"),
+            "execution_uid: exec-1\ncase_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\ntarget_revision: abc123\nresult: bogus\nexecutor: yamada\nexecuted_at: 2026-08-08T03:15:00Z\n",
         )
         .unwrap();
 
@@ -539,8 +542,8 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|i| i.path.contains("results.yml") && i.message.contains("bogus")),
-            "expected a results.yml schema issue, got: {issues:?}"
+                .any(|i| i.path.contains("exec-1.yml") && i.message.contains("bogus")),
+            "expected an execution record schema issue, got: {issues:?}"
         );
     }
 

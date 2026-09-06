@@ -6,10 +6,9 @@ use crate::case_definition;
 use crate::changes::{self, ChangeOptions};
 use crate::fs_safety::{copy_unmanaged_siblings_no_follow, replace_dir_from_staging, replace_file};
 use crate::generate;
-use crate::plan::{self, PlanEvidence, PlanInput};
+use crate::plan::{self, CaseVersion, PlanEvidence, PlanInput};
 use crate::presentation::CommandOutcome;
 use crate::traceability;
-use crate::verify::{self, PendingError};
 
 pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CommandOutcome> {
     Ok(CommandOutcome::CanonicalImported(canonical::import_native(
@@ -33,12 +32,14 @@ pub fn build_verification_plan(
     root: &Path,
     base: &str,
     head: &str,
+    environment: Option<&str>,
     canonical_inputs: &[canonical::CanonicalSnapshot],
 ) -> io::Result<CommandOutcome> {
     Ok(CommandOutcome::PlanBuilt(build_verification_plan_value(
         root,
         base,
         head,
+        environment,
         canonical_inputs,
     )?))
 }
@@ -47,6 +48,7 @@ pub fn build_verification_plan_value(
     root: &Path,
     base: &str,
     head: &str,
+    environment: Option<&str>,
     canonical_inputs: &[canonical::CanonicalSnapshot],
 ) -> io::Result<plan::VerificationPlan> {
     let analyzer = changes::ChangeAnalyzer::new(root);
@@ -55,17 +57,32 @@ pub fn build_verification_plan_value(
         &changes::CommitRef::commit(head),
         ChangeOptions::default(),
     )?;
+    // ADR 0017 §5: the plan's `target_revision` requirement is `head`
+    // resolved to a concrete commit OID, so a symbolic `head` (a branch or
+    // tag name that could move) still matches evidence recorded against the
+    // exact commit that was actually tested.
+    let target_revision = crate::git::resolve_commit_oid(root, head)?;
+
     let mut evidence: Vec<PlanEvidence> = crate::execution::read_all_results(root)?
         .into_iter()
-        .map(|entry| PlanEvidence {
-            test_id: entry.case_id,
-            result: match entry.result.as_str() {
-                "pass" => canonical::EvidenceResult::Pass,
-                "fail" => canonical::EvidenceResult::Fail,
-                _ => canonical::EvidenceResult::Skip,
-            },
-            executed_at: Some(entry.executed_at),
-            bound_versions: entry.verified_feature_tree_shas,
+        .map(|entry| {
+            let mut bound_versions = std::collections::BTreeMap::new();
+            bound_versions.insert("case_uid".to_string(), entry.case_uid);
+            bound_versions.insert("case_revision".to_string(), entry.case_revision);
+            bound_versions.insert("target_revision".to_string(), entry.target_revision);
+            if let Some(environment) = entry.environment {
+                bound_versions.insert("environment".to_string(), environment);
+            }
+            PlanEvidence {
+                test_id: entry.case_id,
+                result: match entry.result.as_str() {
+                    "pass" => canonical::EvidenceResult::Pass,
+                    "fail" => canonical::EvidenceResult::Fail,
+                    _ => canonical::EvidenceResult::Skip,
+                },
+                executed_at: Some(entry.executed_at),
+                bound_versions,
+            }
         })
         .collect();
     evidence.extend(canonical_inputs.iter().flat_map(|snapshot| {
@@ -78,6 +95,22 @@ pub fn build_verification_plan_value(
     }));
 
     let native = canonical::import_native(root, head)?;
+    let case_versions: std::collections::BTreeMap<String, CaseVersion> = native
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == canonical::ArtifactKind::TestCase)
+        .filter_map(|artifact| {
+            let case_uid = artifact.uid.clone()?;
+            let case_revision = artifact.version.canonical_hash.clone()?;
+            Some((
+                artifact.external_id.clone(),
+                CaseVersion {
+                    case_uid,
+                    case_revision,
+                },
+            ))
+        })
+        .collect();
     let mut condition_features = std::collections::BTreeMap::new();
     for change in &changes {
         for case_id in &change.impacted_testcases {
@@ -113,6 +146,9 @@ pub fn build_verification_plan_value(
         changes,
         evidence,
         stored_traces,
+        target_revision,
+        environment: environment.map(str::to_string),
+        case_versions,
     }))
 }
 
@@ -232,18 +268,6 @@ pub fn compute_changes(
         count: outcome.events.len(),
         to: to.to_string(),
         warnings: outcome.warnings,
-    })
-}
-
-pub fn verify_pending(
-    root: &Path,
-    range: Option<(&str, &str)>,
-    use_cache: bool,
-    fail_on_pending: bool,
-) -> Result<CommandOutcome, PendingError> {
-    Ok(CommandOutcome::Pending {
-        report: verify::pending(root, range, use_cache)?,
-        fail_on_pending,
     })
 }
 

@@ -45,8 +45,13 @@ fn indexes_are_reconstructible_from_git_changes_and_executions() {
     )
     .unwrap();
     std::fs::write(repo.path().join(".markharness/changes/head.yaml"), "- event_id: checkout--base--head\n  feature_id: checkout\n  from_milestone: base\n  to_milestone: head\n  from_tree_sha: old\n  to_tree_sha: new\n  impacted_testcases: [tc-checkout]\n").unwrap();
-    std::fs::create_dir_all(repo.path().join(".markharness/executions/head")).unwrap();
-    std::fs::write(repo.path().join(".markharness/executions/head/results.yml"), "- case_id: tc-checkout\n  result: pass\n  executor: ci\n  executed_at: 2026-08-18T10:00:00Z\n  verified_feature_tree_shas:\n    checkout: new\n").unwrap();
+    std::fs::create_dir_all(repo.path().join(".markharness/executions/records")).unwrap();
+    std::fs::write(
+        repo.path()
+            .join(".markharness/executions/records/exec-1.yml"),
+        "execution_uid: exec-1\ncase_id: tc-checkout\ncase_uid: case-uid-1\ncase_revision: rev-1\ntarget_revision: head-commit\nresult: pass\nexecutor: ci\nexecuted_at: 2026-08-18T10:00:00Z\n",
+    )
+    .unwrap();
 
     let first = rebuild_indexes(repo.path(), "HEAD").unwrap();
     let first_bytes = std::fs::read(&first.change_events).unwrap();

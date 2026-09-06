@@ -1,7 +1,6 @@
 use markharness::presentation::{
     CommandOutcome, HumanPresenter, JsonPresenter, PresentedResult, Presenter,
 };
-use markharness::verify::PendingReport;
 
 #[test]
 fn human_presenter_renders_generated_outcome_without_side_effects() {
@@ -108,22 +107,6 @@ fn human_presenter_prints_warnings_for_changes_computed() {
         result
             .stdout
             .contains("warning: legacy schema version 1 assumed at ref v1\n"),
-        "unexpected stdout: {}",
-        result.stdout
-    );
-}
-
-/// Same `audit_scope` contract for `verify pending`'s JSON output.
-#[test]
-fn json_presenter_marks_pending_with_the_two_snapshot_audit_scope() {
-    let result = JsonPresenter.present(&CommandOutcome::Pending {
-        report: PendingReport::default(),
-        fail_on_pending: false,
-    });
-
-    assert_eq!(result.exit_code, 0);
-    assert!(
-        result.stdout.contains("\"audit_scope\":\"two_snapshot\""),
         "unexpected stdout: {}",
         result.stdout
     );

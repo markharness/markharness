@@ -12,7 +12,6 @@ use std::path::Path;
 use std::process::Command;
 
 use markharness::changes::{ChangeOptions, compute_changes};
-use markharness::execution::{ExecutionResult, RecordArgs, read_all_results, record_execution};
 use markharness::generate::{generate_testcases, serialize_testcase};
 use markharness::identity::{self, migration_manifest};
 
@@ -68,9 +67,11 @@ fn legacy_case_id_and_change_event_identity_survive_migration_and_a_later_rename
     run_git(dir.path(), &["config", "user.name", "Test"]);
     run_git(dir.path(), &["config", "core.autocrlf", "false"]);
 
-    // 1. Pre-migration: no uid anywhere. Record an execution under the
-    // legacy case_id, matching what a real project's history looks like
-    // before ADR 0013.
+    // 1. Pre-migration: no uid anywhere, matching what a real project's
+    // history looks like before ADR 0013. (Execution evidence cannot be
+    // recorded at this stage at all under ADR 0017 §3/§5 — recording
+    // requires a `case_uid`, which doesn't exist yet — so this fixture no
+    // longer records one here, unlike before that ADR's implementation.)
     write_full_tree(dir.path(), "todo");
     let pre_migration_testcases =
         generate_testcases(&dir.path().join(".markharness/knowledge")).unwrap();
@@ -78,17 +79,6 @@ fn legacy_case_id_and_change_event_identity_survive_migration_and_a_later_rename
     assert_eq!(pre_migration_testcases[0].case_uid, None);
     write_generated_testcase(dir.path(), &pre_migration_testcases[0]);
     commit_and_tag_milestone(dir.path(), "v1", 1);
-    record_execution(
-        dir.path(),
-        &RecordArgs {
-            milestone: "v1",
-            case_id: &legacy_case_id,
-            result: ExecutionResult::Pass,
-            executor: "yamada",
-            note: None,
-        },
-    )
-    .unwrap();
 
     // 2. Migrate: every element gets a uid; the manifest records
     // legacy_case_id -> case_uid.
@@ -147,34 +137,7 @@ fn legacy_case_id_and_change_event_identity_survive_migration_and_a_later_rename
         "the post-rename case_id must resolve to the same case_uid as the pre-rename one"
     );
 
-    // 5. The actual regression this manifest exists to prevent: the
-    // execution recorded back in step 1, under `legacy_case_id`, at
-    // milestone v1 — long before migration or the rename — must still
-    // resolve (via the manifest) to the *same* case_uid the freshly
-    // regenerated, post-rename TestCase resolves to. A tool correlating
-    // "have we re-verified this TestCase since it last changed" has to be
-    // able to make this connection, or the old execution looks like it
-    // belongs to a TestCase that no longer exists.
-    let all_results = read_all_results(dir.path()).unwrap();
-    let legacy_execution = all_results
-        .iter()
-        .find(|entry| entry.case_id == legacy_case_id)
-        .expect("the pre-migration execution recorded in step 1 must still be on record");
-    let legacy_execution_case_uid =
-        migration_manifest::resolve_case_uid(&refreshed_manifest, &legacy_execution.case_id)
-            .unwrap()
-            .expect("the legacy execution's case_id must resolve to a case_uid");
-    let current_case_uid = post_rename_testcases[0]
-        .case_uid
-        .as_deref()
-        .expect("the current, post-rename TestCase must have a case_uid");
-    assert_eq!(
-        legacy_execution_case_uid, current_case_uid,
-        "an execution recorded under the pre-migration case_id must resolve to the same \
-         case_uid as the current, post-rename TestCase"
-    );
-
-    // 6. The Feature rename between v2 and v3 (both post-migration) must
+    // 5. The Feature rename between v2 and v3 (both post-migration) must
     // be tracked as a single ChangeEvent via its uid, not a delete+add —
     // reconfirming ADR 0013's core guarantee holds in this full lifecycle,
     // not just in isolation.

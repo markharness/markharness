@@ -50,7 +50,7 @@ fn write_knowledge(root: &Path, scenario_description: &str) {
         "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\nprocedures: {}\n",
     )
     .unwrap();
-    std::fs::write(base.join("scenario.yml"), format!("id: valid-card\nbehavior: pay\nlabel: Valid card\ndescription: {scenario_description}\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Accepted.\"\n")).unwrap();
+    std::fs::write(base.join("scenario.yml"), format!("id: valid-card\nbehavior: pay\nlabel: Valid card\ndescription: {scenario_description}\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Accepted.\"\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FS2\n")).unwrap();
 }
 
 #[test]
@@ -91,22 +91,56 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
         .validate(&plan)
         .unwrap();
 
+    let head_oid = git_output(repo.path(), &["rev-parse", "HEAD"]);
     let tree_sha = git_output(
         repo.path(),
         &["rev-parse", "HEAD:.markharness/knowledge/features/checkout"],
     );
-    std::fs::create_dir_all(repo.path().join(".markharness/executions/ci")).unwrap();
-    std::fs::write(
-        repo.path().join(".markharness/executions/ci/results.yml"),
-        format!(
-            "- case_id: tc-checkout-pay-valid-card\n  result: pass\n  executor: ci\n  executed_at: 2026-08-18T10:00:00Z\n  verified_feature_tree_shas:\n    checkout: {tree_sha}\n"
-        ),
-    )
-    .unwrap();
+    let generate_output = Command::new(env!("CARGO_BIN_EXE_markharness"))
+        .current_dir(repo.path())
+        .args(["generate", "--dir", "."])
+        .output()
+        .unwrap();
+    assert!(generate_output.status.success());
+    let record_output = Command::new(env!("CARGO_BIN_EXE_markharness"))
+        .current_dir(repo.path())
+        .args([
+            "execution",
+            "record",
+            "tc-checkout-pay-valid-card",
+            "--target-revision",
+            &head_oid,
+            "--environment",
+            "ci",
+            "--result",
+            "pass",
+            "--executor",
+            "ci",
+            "--dir",
+            ".",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        record_output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&record_output.stdout),
+        String::from_utf8_lossy(&record_output.stderr)
+    );
     let verified = Command::new(env!("CARGO_BIN_EXE_markharness"))
         .current_dir(repo.path())
         .args([
-            "plan", "--base", "HEAD~1", "--head", "HEAD", "--format", "json", "--dir", ".",
+            "plan",
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+            "--format",
+            "json",
+            "--environment",
+            "ci",
+            "--dir",
+            ".",
         ])
         .output()
         .unwrap();

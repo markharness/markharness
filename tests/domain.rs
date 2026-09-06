@@ -2,9 +2,6 @@ use markharness::changes::CommitRef;
 use markharness::generate::{
     CaseFilePaths, KnowledgeCaseSnapshot, KnowledgeSnapshot, Phase, compile_testcases,
 };
-use markharness::verify::{
-    PendingCandidate, ReflectedChange, VerificationStatus, evaluate_pending_candidate,
-};
 
 #[test]
 fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
@@ -37,56 +34,6 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             steps: vec!["confirm the state".to_string()],
             results: vec!["result".to_string()],
         }]
-    );
-}
-
-#[test]
-fn verification_engine_classifies_loaded_candidates_without_io() {
-    let candidate = PendingCandidate {
-        case_id: "tc-1".to_string(),
-        feature_id: "feature-1".to_string(),
-        original_event_id: "event-1".to_string(),
-        target_tree_sha: Some("target".to_string()),
-        current_tree_sha: Some("current".to_string()),
-        current_event: Some(ReflectedChange {
-            event_id: "event-2".to_string(),
-            from_milestone: "v2".to_string(),
-            to_milestone: "v3".to_string(),
-        }),
-        reexecuted: false,
-    };
-
-    assert_eq!(
-        evaluate_pending_candidate(&candidate),
-        VerificationStatus::Stale
-    );
-
-    let pending = PendingCandidate {
-        current_tree_sha: Some("target".to_string()),
-        ..candidate.clone()
-    };
-    assert_eq!(
-        evaluate_pending_candidate(&pending),
-        VerificationStatus::Pending
-    );
-
-    let current = PendingCandidate {
-        reexecuted: true,
-        ..candidate.clone()
-    };
-    assert_eq!(
-        evaluate_pending_candidate(&current),
-        VerificationStatus::Current
-    );
-
-    let unknown = PendingCandidate {
-        current_tree_sha: None,
-        current_event: None,
-        ..candidate
-    };
-    assert_eq!(
-        evaluate_pending_candidate(&unknown),
-        VerificationStatus::Unknown
     );
 }
 

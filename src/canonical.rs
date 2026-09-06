@@ -238,7 +238,10 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
             kind: ArtifactKind::TestCase,
             version: testcase_version,
             provenance: provenance.clone(),
-            uid: None,
+            // ADR 0017 §3/§5: `plan::build_plan`'s evidence matching reads
+            // this to learn each TestCase's current `case_uid` (paired with
+            // `version.canonical_hash`, which already carries `case_revision`).
+            uid: testcase.case_uid.clone(),
         });
         relations.push(CanonicalRelation {
             from: canonical_id(ArtifactKind::TestCase, &testcase.case_id),
