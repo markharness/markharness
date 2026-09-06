@@ -69,6 +69,13 @@ pub enum RecordError {
     /// satisfy a plan with no specific environment requirement (ADR 0017
     /// §5: unknown environments must never satisfy passing).
     EmptyEnvironment,
+    /// No immutable case definition (`case_definition::load_case_definition`)
+    /// is stored for this TestCase's `(case_uid, case_revision)`. ADR 0017
+    /// §5 requires evidence to reference a frozen definition of what was
+    /// actually executed; recording against a key nothing was ever stored
+    /// under (the case-definitions store was never populated, or was
+    /// deleted) would produce an audit trail with nothing to audit.
+    CaseDefinitionMissing,
     Io(io::Error),
 }
 
@@ -231,6 +238,11 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<ExecutionEntry
     let Some(case_uid) = testcase.case_uid else {
         return Err(RecordError::CaseNotMigrated);
     };
+    if crate::case_definition::load_case_definition(root, &case_uid, &testcase.case_revision)?
+        .is_none()
+    {
+        return Err(RecordError::CaseDefinitionMissing);
+    }
 
     let execution_uid = ulid::Ulid::new().to_string();
     let entry = ExecutionEntry {
@@ -273,6 +285,22 @@ mod tests {
             format!("case_id: {case_id}\n{uid_line}case_revision: {case_revision}\nphases: []\n"),
         )
         .unwrap();
+        // `record_execution` requires the immutable case definition
+        // (ADR 0017 §5) to already be stored under the same key that
+        // `generate` would have populated it at.
+        if let Some(case_uid) = case_uid {
+            let definition_path = root
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("case-definitions")
+                .join(case_uid)
+                .join(format!("{case_revision}.yml"));
+            fs::create_dir_all(definition_path.parent().unwrap()).unwrap();
+            fs::write(
+                &definition_path,
+                format!("case_uid: {case_uid}\ncase_revision: {case_revision}\nphases: []\n"),
+            )
+            .unwrap();
+        }
     }
 
     #[test]
@@ -362,6 +390,40 @@ mod tests {
         );
 
         assert!(matches!(result, Err(RecordError::CaseNotMigrated)));
+    }
+
+    /// ADR 0017 §5: recording evidence for a `(case_uid, case_revision)` with
+    /// no stored immutable case definition (the case-definitions store was
+    /// never populated, or the file was deleted) must be rejected rather
+    /// than producing evidence nothing can audit.
+    #[test]
+    fn record_execution_errors_when_the_case_definition_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        let path = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("generated/testcases/feature/behavior/scenario.yml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\nphases: []\n",
+        )
+        .unwrap();
+
+        let result = record_execution(
+            dir.path(),
+            &RecordArgs {
+                case_id: "tc-ground-001",
+                target_revision: "abc123",
+                environment: None,
+                result: ExecutionResult::Pass,
+                executor: "tester",
+                note: None,
+            },
+        );
+
+        assert!(matches!(result, Err(RecordError::CaseDefinitionMissing)));
     }
 
     #[test]

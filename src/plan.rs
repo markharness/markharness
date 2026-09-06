@@ -63,6 +63,11 @@ pub enum TestStatus {
     Failed,
     Pending,
     Stale,
+    /// ADR 0017 §5: multiple applicable records (same case_uid, case_revision,
+    /// target_revision, and environment) disagree on the result. The plan
+    /// must not resolve this by timestamp alone ("日時だけで独立した結果を
+    /// 上書き・優先しない") — an explicit human decision is required.
+    Unresolved,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -111,6 +116,7 @@ pub struct PlanSummary {
     pub pending: usize,
     pub failed: usize,
     pub stale_evidence: usize,
+    pub unresolved: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -232,11 +238,18 @@ fn evidence_status(
                 && environment_matches
         })
         .collect();
-    if let Some(latest) = applicable
-        .iter()
-        .max_by_key(|item| item.executed_at.as_deref().unwrap_or(""))
-    {
-        match latest.result {
+    let conflicting = applicable
+        .split_first()
+        .is_some_and(|(first, rest)| rest.iter().any(|item| item.result != first.result));
+    if conflicting {
+        // ADR 0017 §5: two applicable records disagree (e.g. a pass and a
+        // fail both bound to the same case_uid/case_revision/target_revision/
+        // environment). Picking whichever has the later `executed_at` would
+        // let a timestamp alone settle a contradiction the ADR says must
+        // never be resolved that way.
+        TestStatus::Unresolved
+    } else if let Some(first) = applicable.first() {
+        match first.result {
             EvidenceResult::Pass => TestStatus::Passed,
             EvidenceResult::Fail => TestStatus::Failed,
             EvidenceResult::Skip => TestStatus::Pending,
@@ -338,6 +351,7 @@ pub fn build_plan_with_adapter(
             TestStatus::Failed => summary.failed += 1,
             TestStatus::Pending => summary.pending += 1,
             TestStatus::Stale => summary.stale_evidence += 1,
+            TestStatus::Unresolved => summary.unresolved += 1,
         }
     }
     VerificationPlan {

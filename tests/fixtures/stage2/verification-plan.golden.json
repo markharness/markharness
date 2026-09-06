@@ -10,7 +10,8 @@
     "passed": 1,
     "pending": 0,
     "failed": 0,
-    "stale_evidence": 0
+    "stale_evidence": 0,
+    "unresolved": 0
   },
   "changed_features": [
     {

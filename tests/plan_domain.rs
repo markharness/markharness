@@ -139,6 +139,77 @@ fn plan_engine_treats_a_blank_environment_value_the_same_as_no_environment_key()
     );
 }
 
+/// ADR 0017 §5: "日時だけで独立した結果を上書き・優先しない" — two applicable
+/// records (identical case_uid/case_revision/target_revision/environment)
+/// that disagree must not be resolved by picking whichever has the later
+/// `executed_at`. Regression test for a bug where `max_by_key(executed_at)`
+/// silently let a later "pass" hide an earlier "fail" (or vice versa).
+#[test]
+fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_picking_by_time() {
+    let change = ChangeEvent {
+        event_id: "checkout--base--head".to_string(),
+        feature_id: "checkout".to_string(),
+        feature_uid: None,
+        feature_id_at_from: None,
+        feature_id_at_to: None,
+        from_milestone: "base".to_string(),
+        to_milestone: "head".to_string(),
+        from_tree_sha: Some("old".to_string()),
+        to_tree_sha: Some("new".to_string()),
+        impacted_testcases: vec!["tc-checkout".to_string()],
+        impact_reason: markharness::changes::ImpactReason::default(),
+        change_type: None,
+        true_divergences: vec![],
+        related_events: vec![],
+    };
+    let bound_versions = BTreeMap::from([
+        ("case_uid".to_string(), "case-checkout-1".to_string()),
+        ("case_revision".to_string(), "rev-new".to_string()),
+        ("target_revision".to_string(), "head".to_string()),
+        ("environment".to_string(), "ci".to_string()),
+    ]);
+    let evidence = vec![
+        PlanEvidence {
+            test_id: "tc-checkout".to_string(),
+            result: EvidenceResult::Fail,
+            executed_at: Some("2026-08-18T10:00:00Z".to_string()),
+            bound_versions: bound_versions.clone(),
+        },
+        // Recorded later, but disagrees with the fail above — the plan must
+        // not let this later timestamp silently override it.
+        PlanEvidence {
+            test_id: "tc-checkout".to_string(),
+            result: EvidenceResult::Pass,
+            executed_at: Some("2026-08-18T11:00:00Z".to_string()),
+            bound_versions,
+        },
+    ];
+
+    let plan = build_plan(PlanInput {
+        base: "base".to_string(),
+        head: "head".to_string(),
+        changes: vec![change],
+        evidence,
+        stored_traces: vec![],
+        target_revision: "head".to_string(),
+        environment: Some("ci".to_string()),
+        case_versions: BTreeMap::from([(
+            "tc-checkout".to_string(),
+            markharness::plan::CaseVersion {
+                case_uid: "case-checkout-1".to_string(),
+                case_revision: "rev-new".to_string(),
+            },
+        )]),
+    });
+
+    assert_eq!(
+        plan.affected_existing_tests[0].status,
+        TestStatus::Unresolved,
+        "conflicting applicable evidence must be unresolved, not silently picked by timestamp"
+    );
+    assert_eq!(plan.summary.unresolved, 1);
+}
+
 #[test]
 fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
     let changes = vec![
@@ -181,10 +252,13 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
         ("target_revision".to_string(), "head".to_string()),
         ("environment".to_string(), "ci".to_string()),
     ]);
+    // Two applicable records that agree (both pass, at different times):
+    // ADR 0017 §5 only forbids resolving *conflicting* results by timestamp
+    // alone — agreeing records may coexist without ambiguity.
     let evidence = vec![
         PlanEvidence {
             test_id: "tc-checkout".to_string(),
-            result: EvidenceResult::Fail,
+            result: EvidenceResult::Pass,
             executed_at: Some("2026-08-18T09:00:00Z".to_string()),
             bound_versions: bound_versions.clone(),
         },

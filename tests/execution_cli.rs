@@ -40,6 +40,18 @@ fn write_generated_testcase(
         format!("case_id: {case_id}\n{uid_line}case_revision: rev-1\n"),
     )
     .unwrap();
+    // `execution record` requires the immutable case definition (ADR 0017
+    // §5) to already be stored under the same key `generate` would have
+    // populated it at.
+    if let Some(case_uid) = case_uid {
+        let definitions_dir = root.join(".markharness/case-definitions").join(case_uid);
+        std::fs::create_dir_all(&definitions_dir).unwrap();
+        std::fs::write(
+            definitions_dir.join("rev-1.yml"),
+            format!("case_uid: {case_uid}\ncase_revision: rev-1\nphases: []\n"),
+        )
+        .unwrap();
+    }
 }
 
 #[test]
@@ -123,6 +135,43 @@ fn execution_record_exits_two_when_target_revision_is_blank() {
         stderr.contains("--target-revision must not be empty"),
         "unexpected stderr: {stderr}"
     );
+}
+
+/// ADR 0017 §5: recording evidence against a `(case_uid, case_revision)`
+/// with no stored immutable case definition must be rejected.
+#[test]
+fn execution_record_exits_two_when_the_case_definition_is_missing() {
+    let dir = init_project();
+    // Deliberately skip `write_generated_testcase`'s case-definitions write.
+    let generated_dir = dir.path().join(".markharness/generated/testcases");
+    std::fs::create_dir_all(&generated_dir).unwrap();
+    std::fs::write(
+        generated_dir.join("ground.yml"),
+        "case_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\n",
+    )
+    .unwrap();
+
+    let output = run(&[
+        "execution",
+        "record",
+        "tc-ground-001",
+        "--target-revision",
+        "abc123",
+        "--result",
+        "pass",
+        "--executor",
+        "yamada",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no immutable case definition is stored"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(!dir.path().join(".markharness/executions/records").exists());
 }
 
 #[test]

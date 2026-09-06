@@ -1152,6 +1152,12 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     );
                     std::process::exit(2);
                 }
+                Err(RecordError::CaseDefinitionMissing) => {
+                    eprintln!(
+                        "error: no immutable case definition is stored for case_id '{case_id}'. Run `markharness generate` again to (re-)populate .markharness/case-definitions/."
+                    );
+                    std::process::exit(2);
+                }
                 Err(RecordError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
@@ -2822,6 +2828,16 @@ mod tests {
             format!(
                 "case_id: {case_id}\ncase_uid: case-uid-1\ncase_revision: rev-1\ngenerated_from:\n  requirement_ids: []\n  feature: {feature_id}\nphases: []\n"
             ),
+        )
+        .unwrap();
+        // `execution record` requires the immutable case definition (ADR
+        // 0017 §5) to already be stored under the same key `generate` would
+        // have populated it at.
+        let definitions_dir = root.join(".markharness/case-definitions/case-uid-1");
+        fs::create_dir_all(&definitions_dir).unwrap();
+        fs::write(
+            definitions_dir.join("rev-1.yml"),
+            "case_uid: case-uid-1\ncase_revision: rev-1\nphases: []\n",
         )
         .unwrap();
     }

@@ -54,7 +54,10 @@ pub struct HumanPresenter;
 pub struct JsonPresenter;
 
 fn plan_exit_code(plan: &VerificationPlan) -> i32 {
-    if plan.summary.failed > 0 {
+    // ADR 0017 §5: unresolved (mutually conflicting) evidence must never be
+    // treated as a clean plan — it needs the same human attention as an
+    // outright failure, not silent success.
+    if plan.summary.failed > 0 || plan.summary.unresolved > 0 {
         1
     } else if plan.summary.pending > 0
         || plan.summary.stale_evidence > 0

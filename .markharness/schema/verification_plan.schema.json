@@ -19,7 +19,7 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["changed_features", "affected_tests", "new_tests", "obsolete_tests", "passed", "pending", "failed", "stale_evidence"],
+      "required": ["changed_features", "affected_tests", "new_tests", "obsolete_tests", "passed", "pending", "failed", "stale_evidence", "unresolved"],
       "properties": {
         "changed_features": { "type": "integer", "minimum": 0 },
         "affected_tests": { "type": "integer", "minimum": 0 },
@@ -28,7 +28,8 @@
         "passed": { "type": "integer", "minimum": 0 },
         "pending": { "type": "integer", "minimum": 0 },
         "failed": { "type": "integer", "minimum": 0 },
-        "stale_evidence": { "type": "integer", "minimum": 0 }
+        "stale_evidence": { "type": "integer", "minimum": 0 },
+        "unresolved": { "type": "integer", "minimum": 0 }
       }
     },
     "changed_feature": {
@@ -51,7 +52,7 @@
         "feature_id": { "type": "string", "minLength": 1 },
         "reason": { "type": "string", "minLength": 1 },
         "origin": { "enum": ["stored", "derived"] },
-        "status": { "enum": ["passed", "failed", "pending", "stale"] }
+        "status": { "enum": ["passed", "failed", "pending", "stale", "unresolved"] }
       }
     },
     "proposal": {

@@ -1,6 +1,20 @@
+use markharness::plan::{PlanSummary, VerificationPlan};
 use markharness::presentation::{
     CommandOutcome, HumanPresenter, JsonPresenter, PresentedResult, Presenter,
 };
+
+fn empty_plan(summary: PlanSummary) -> VerificationPlan {
+    VerificationPlan {
+        schema_version: 1,
+        base: "base".to_string(),
+        head: "head".to_string(),
+        summary,
+        changed_features: Vec::new(),
+        affected_existing_tests: Vec::new(),
+        new_required_tests: Vec::new(),
+        obsolete_tests: Vec::new(),
+    }
+}
 
 #[test]
 fn human_presenter_renders_generated_outcome_without_side_effects() {
@@ -93,6 +107,25 @@ fn json_presenter_omits_warnings_for_changes_computed_when_there_are_none() {
         "unexpected stdout: {}",
         result.stdout
     );
+}
+
+/// ADR 0017 §5: unresolved (mutually conflicting) evidence must stop a
+/// verification plan from reading as clean — it needs the same attention as
+/// an outright failure. Regression test for a bug where `plan_exit_code`
+/// ignored `summary.unresolved`, letting a plan with contradictory evidence
+/// exit 0.
+#[test]
+fn plan_exit_code_is_nonzero_when_evidence_is_unresolved() {
+    let plan = empty_plan(PlanSummary {
+        unresolved: 1,
+        ..PlanSummary::default()
+    });
+
+    let json_result = JsonPresenter.present(&CommandOutcome::PlanBuilt(plan.clone()));
+    let human_result = HumanPresenter.present(&CommandOutcome::PlanBuilt(plan));
+
+    assert_eq!(json_result.exit_code, 1);
+    assert_eq!(human_result.exit_code, 1);
 }
 
 #[test]

@@ -65,6 +65,27 @@ pub fn build_verification_plan_value(
 
     let mut evidence: Vec<PlanEvidence> = crate::execution::read_all_results(root)?
         .into_iter()
+        // ADR 0017 §5: a record whose immutable case definition
+        // (`case_definition::load_case_definition`) is missing — the
+        // case-definitions store was never populated, or the file was
+        // deleted after recording — has nothing to audit against and must
+        // never count toward a passing plan. A definition that exists but
+        // fails to parse (on-disk corruption) is a stronger integrity
+        // failure than "inapplicable evidence", so it's surfaced as a hard
+        // error via `?` rather than silently dropped.
+        .filter_map(|entry| {
+            match crate::case_definition::load_case_definition(
+                root,
+                &entry.case_uid,
+                &entry.case_revision,
+            ) {
+                Ok(Some(_)) => Some(Ok(entry)),
+                Ok(None) => None,
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .collect::<io::Result<Vec<_>>>()?
+        .into_iter()
         .map(|entry| {
             let mut bound_versions = std::collections::BTreeMap::new();
             bound_versions.insert("case_uid".to_string(), entry.case_uid);
