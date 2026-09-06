@@ -23,10 +23,11 @@ pub struct Requirement {
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Feature {
     pub id: String,
-    /// 関連するRequirementの表示ID配列(ADR 0017 §1)。Featureが関係の正本であり、
+    /// 関連するRequirementのUID配列(ADR 0017 §1・§3)。Featureが関係の正本であり、
     /// Requirementはこの一覧を通じて逆参照される。複数要件への対等な関連付けを表し、
-    /// Feature単独で要件全体を満たす証明ではない。
-    pub requirement_ids: Vec<String>,
+    /// Feature単独で要件全体を満たす証明ではない。表示IDとUIDを同じ照合キーとして
+    /// 扱わないため、要素はRequirement.uidの値(ULID)であり、表示IDではない。
+    pub requirement_uids: Vec<String>,
     pub label: String,
     pub axis: Vec<String>,
     #[serde(default)]
@@ -198,9 +199,9 @@ pub fn serialize_feature(feature: &Feature) -> String {
     let mut out = format!(
         // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
         // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
-        "id: {}\nrequirement_ids: {}\nlabel: {}\naxis: {}\n",
+        "id: {}\nrequirement_uids: {}\nlabel: {}\naxis: {}\n",
         feature.id,
-        yaml_flow_array(&feature.requirement_ids),
+        yaml_flow_array(&feature.requirement_uids),
         feature.label,
         yaml_flow_array(&feature.axis)
     );
@@ -483,12 +484,15 @@ mod tests {
 
     #[test]
     fn parses_feature_yaml() {
-        let yaml = "id: player-jump\nrequirement_ids: [player-controls]\nlabel: player-jump\naxis: [gameplay, animation]\n";
+        let yaml = "id: player-jump\nrequirement_uids: [player-controls]\nlabel: player-jump\naxis: [gameplay, animation]\n";
 
         let feature: Feature = parse_feature(yaml).unwrap();
 
         assert_eq!(feature.id, "player-jump");
-        assert_eq!(feature.requirement_ids, vec!["player-controls".to_string()]);
+        assert_eq!(
+            feature.requirement_uids,
+            vec!["player-controls".to_string()]
+        );
         assert_eq!(feature.label, "player-jump");
         assert_eq!(feature.axis, vec!["gameplay", "animation"]);
         assert_eq!(feature.description, None);
@@ -496,13 +500,13 @@ mod tests {
 
     /// ADR 0017 §1: Featureは複数Requirementへ対等に関連付けられる。
     #[test]
-    fn parses_feature_yaml_with_multiple_requirement_ids() {
-        let yaml = "id: player-jump\nrequirement_ids: [player-controls, player-scoring]\nlabel: player-jump\naxis: [gameplay]\n";
+    fn parses_feature_yaml_with_multiple_requirement_uids() {
+        let yaml = "id: player-jump\nrequirement_uids: [player-controls, player-scoring]\nlabel: player-jump\naxis: [gameplay]\n";
 
         let feature: Feature = parse_feature(yaml).unwrap();
 
         assert_eq!(
-            feature.requirement_ids,
+            feature.requirement_uids,
             vec!["player-controls".to_string(), "player-scoring".to_string()]
         );
     }
@@ -511,7 +515,7 @@ mod tests {
     fn serializes_feature_to_deterministic_yaml() {
         let feature = Feature {
             id: "player-jump".to_string(),
-            requirement_ids: vec!["player-controls".to_string()],
+            requirement_uids: vec!["player-controls".to_string()],
             label: "player-jump".to_string(),
             axis: vec!["gameplay".to_string(), "animation".to_string()],
             description: None,
@@ -523,7 +527,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump\nrequirement_ids: [player-controls]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            "id: player-jump\nrequirement_uids: [player-controls]\nlabel: player-jump\naxis: [gameplay, animation]\n"
         );
     }
 
@@ -531,7 +535,7 @@ mod tests {
     fn serializes_feature_with_description_when_present() {
         let feature = Feature {
             id: "player-jump".to_string(),
-            requirement_ids: vec!["player-controls".to_string()],
+            requirement_uids: vec!["player-controls".to_string()],
             label: "プレイヤージャンプ".to_string(),
             axis: vec!["gameplay".to_string()],
             description: Some("Jump related behaviors.".to_string()),
@@ -543,7 +547,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-jump\nrequirement_ids: [player-controls]\nlabel: プレイヤージャンプ\naxis: [gameplay]\ndescription: |\n  Jump related behaviors.\n"
+            "id: player-jump\nrequirement_uids: [player-controls]\nlabel: プレイヤージャンプ\naxis: [gameplay]\ndescription: |\n  Jump related behaviors.\n"
         );
     }
 
@@ -551,7 +555,7 @@ mod tests {
     fn serializes_feature_with_multiline_description_as_valid_yaml() {
         let feature = Feature {
             id: "player-jump".to_string(),
-            requirement_ids: vec!["player-controls".to_string()],
+            requirement_uids: vec!["player-controls".to_string()],
             label: "player-jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: Some(
@@ -569,7 +573,7 @@ mod tests {
 
     #[test]
     fn parses_feature_yaml_with_forked_from() {
-        let yaml = "id: player-double-jump\nrequirement_ids: [player-controls]\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n";
+        let yaml = "id: player-double-jump\nrequirement_uids: [player-controls]\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n";
 
         let feature: Feature = parse_feature(yaml).unwrap();
 
@@ -579,7 +583,7 @@ mod tests {
     #[test]
     fn parses_feature_yaml_without_forked_from_as_none() {
         let feature: Feature = parse_feature(
-            "id: player-jump\nrequirement_ids: [player-controls]\nlabel: player-jump\naxis: [gameplay]\n",
+            "id: player-jump\nrequirement_uids: [player-controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
 
@@ -590,7 +594,7 @@ mod tests {
     fn serializes_feature_with_forked_from_when_present() {
         let feature = Feature {
             id: "player-double-jump".to_string(),
-            requirement_ids: vec!["player-controls".to_string()],
+            requirement_uids: vec!["player-controls".to_string()],
             label: "player-double-jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: None,
@@ -602,7 +606,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: player-double-jump\nrequirement_ids: [player-controls]\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n"
+            "id: player-double-jump\nrequirement_uids: [player-controls]\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n"
         );
     }
 
@@ -613,7 +617,7 @@ mod tests {
     #[test]
     fn parses_feature_yaml_without_uid_as_none() {
         let feature: Feature = parse_feature(
-            "id: player-jump\nrequirement_ids: [player-controls]\nlabel: player-jump\naxis: [gameplay]\n",
+            "id: player-jump\nrequirement_uids: [player-controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
 
@@ -622,7 +626,7 @@ mod tests {
 
     #[test]
     fn parses_feature_yaml_with_uid() {
-        let yaml = "id: task-management\nrequirement_ids: [player-controls]\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n";
+        let yaml = "id: task-management\nrequirement_uids: [player-controls]\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n";
 
         let feature: Feature = parse_feature(yaml).unwrap();
 
@@ -633,7 +637,7 @@ mod tests {
     fn serializes_feature_with_uid_when_present() {
         let feature = Feature {
             id: "task-management".to_string(),
-            requirement_ids: vec!["player-controls".to_string()],
+            requirement_uids: vec!["player-controls".to_string()],
             label: "task-management".to_string(),
             axis: vec!["gameplay".to_string()],
             description: None,
@@ -645,7 +649,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: task-management\nrequirement_ids: [player-controls]\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+            "id: task-management\nrequirement_uids: [player-controls]\nlabel: task-management\naxis: [gameplay]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
         );
         let reparsed: Feature = parse_feature(&yaml).unwrap();
         assert_eq!(reparsed, feature);

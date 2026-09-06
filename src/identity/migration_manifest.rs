@@ -641,7 +641,7 @@ mod tests {
             root.join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/features/todo/feature.yml"),
             format!(
-                "id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\n{}",
+                "id: todo\nrequirement_uids: [req-todo]\nlabel: todo\naxis: []\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FE0")
             ),
         )
@@ -1008,7 +1008,7 @@ mod tests {
             .join(".markharness/knowledge/features/todo/feature.yml");
         fs::write(
             &feature_path,
-            "id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\n",
+            "id: todo\nrequirement_uids: [req-todo]\nlabel: todo\naxis: []\n",
         )
         .unwrap();
         crate::identity::migrate_entities(dir.path()).unwrap();

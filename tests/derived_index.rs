@@ -33,7 +33,7 @@ fn indexes_are_reconstructible_from_git_changes_and_executions() {
     std::fs::write(
         repo.path()
             .join(".markharness/knowledge/features/checkout/feature.yml"),
-        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
+        "id: checkout\nrequirement_uids: [shop]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     git(&["add", "."]);
@@ -99,7 +99,7 @@ fn change_event_index_groups_by_uid_across_a_rename() {
     std::fs::write(
         repo.path()
             .join(".markharness/knowledge/features/checkout/feature.yml"),
-        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
+        "id: checkout\nrequirement_uids: [shop]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     git(&["add", "."]);

@@ -89,15 +89,24 @@ pub fn apply_draft(
             uid: None,
         };
         pending.push((
-            requirement_path,
+            requirement_path.clone(),
             knowledge::serialize_requirement(&requirement),
         ));
     }
 
     if !feature_exists {
+        // validate_draft (already run above) rejects the draft unless this
+        // Requirement already exists on disk with a uid (ADR 0017 §1・§3:
+        // a brand-new Requirement is always uid: None until `identity
+        // migrate` runs, so it can never be reached here).
+        let requirement_uid = fs::read_to_string(&requirement_path)
+            .ok()
+            .and_then(|yaml| knowledge::parse_requirement(&yaml).ok())
+            .and_then(|requirement| requirement.uid)
+            .expect("validate_draft must reject an unmigrated requirement before this point");
         let feature = Feature {
             id: draft.feature.id.clone(),
-            requirement_ids: vec![draft.requirement.id.clone()],
+            requirement_uids: vec![requirement_uid],
             label: draft
                 .feature
                 .label
@@ -505,6 +514,20 @@ scenario:
         }
     }
 
+    /// `identity migrate`実行後を模したRequirement.uid値(ULID形式)。
+    const CONTROLS_REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    fn write_migrated_controls_requirement(dir: &Path) {
+        fs::create_dir_all(dir.join(".markharness/knowledge/requirements/controls")).unwrap();
+        fs::write(
+            dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            ),
+        )
+        .unwrap();
+    }
+
     #[cfg(unix)]
     fn link_dir(link: &Path, target: &Path) {
         if let Some(parent) = link.parent() {
@@ -555,29 +578,24 @@ scenario:
     #[test]
     fn apply_draft_creates_new_requirement_feature_behavior_and_scenario_from_scratch() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        write_migrated_controls_requirement(dir.path());
         let draft = parse_draft(FULL_DRAFT_YAML).unwrap();
 
         let result = apply_draft(dir.path(), &draft, &no_strip()).unwrap();
 
-        assert_eq!(result.written_paths.len(), 4);
-        assert!(result.written_paths.contains(&PathBuf::from(
-            ".markharness/knowledge/requirements/controls/requirement.yml"
-        )));
-        assert_eq!(
-            fs::read_to_string(
-                dir.path()
-                    .join(".markharness/knowledge/requirements/controls/requirement.yml")
-            )
-            .unwrap(),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n"
-        );
+        // 3, not 4: the Requirement is pre-seeded (already migrated with a
+        // uid) rather than freshly written by this call, so only the
+        // Feature/Behavior/Scenario are written here.
+        assert_eq!(result.written_paths.len(), 3);
         assert_eq!(
             fs::read_to_string(
                 dir.path()
                     .join(".markharness/knowledge/features/player-jump/feature.yml")
             )
             .unwrap(),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            format!(
+                "id: player-jump\nrequirement_uids: [{CONTROLS_REQUIREMENT_UID}]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            )
         );
         assert_eq!(
             fs::read_to_string(
@@ -616,6 +634,7 @@ scenario:
     #[test]
     fn apply_draft_is_idempotent_when_the_same_scenario_is_reapplied_unchanged() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        write_migrated_controls_requirement(dir.path());
         let draft = parse_draft(FULL_DRAFT_YAML).unwrap();
         apply_draft(dir.path(), &draft, &no_strip()).unwrap();
 
@@ -631,6 +650,7 @@ scenario:
     #[test]
     fn apply_draft_creates_a_second_scenario_under_the_same_behavior() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        write_migrated_controls_requirement(dir.path());
         let draft = parse_draft(FULL_DRAFT_YAML).unwrap();
         apply_draft(dir.path(), &draft, &no_strip()).unwrap();
 
@@ -651,6 +671,7 @@ scenario:
     #[test]
     fn apply_draft_strips_redundant_scenario_prefix_when_flag_set() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        write_migrated_controls_requirement(dir.path());
         let mut draft = parse_draft(FULL_DRAFT_YAML).unwrap();
         draft.scenario.id = "jump-ground".to_string();
 
@@ -711,6 +732,7 @@ scenario:
     #[test]
     fn apply_batch_applies_every_draft_and_returns_their_combined_written_paths() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        write_migrated_controls_requirement(dir.path());
         let drafts_dir = dir.path().join("drafts");
         fs::create_dir_all(&drafts_dir).unwrap();
         let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
@@ -722,7 +744,7 @@ scenario:
 
         let result = apply_batch(dir.path(), &[first, second], &no_strip()).unwrap();
 
-        assert_eq!(result.written_paths.len(), 5); // 4 from the first draft + 1 (scenario.yml) from the second
+        assert_eq!(result.written_paths.len(), 4); // 3 from the first draft + 1 (scenario.yml) from the second
         assert!(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml")
@@ -738,12 +760,14 @@ scenario:
     #[test]
     fn apply_batch_lets_a_later_draft_reuse_a_parent_an_earlier_draft_in_the_batch_just_created() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        // `controls` must already be migrated (real uid) before any Feature
+        // can reference it (ADR 0017 §1・§3); `player-jump` and `jump`
+        // still don't exist on disk before this call — the second draft
+        // only supplies bare ids for them, relying on the first draft
+        // (applied first, within this same batch) to have created them.
+        write_migrated_controls_requirement(dir.path());
         let drafts_dir = dir.path().join("drafts");
         fs::create_dir_all(&drafts_dir).unwrap();
-        // Neither `controls`, `player-jump`, nor `jump` exist on disk before
-        // this call — the second draft only supplies bare ids for them,
-        // relying on the first draft (applied first, within this same
-        // batch) to have created them.
         let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
         let second = write_draft_file(
             &drafts_dir,
@@ -800,6 +824,11 @@ scenario:
     #[test]
     fn apply_batch_rolls_back_every_file_when_a_later_draft_fails_to_parse() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        // `controls` is pre-seeded (already migrated) so the first draft can
+        // create its Feature; the Feature itself is what this test checks
+        // gets rolled back — the pre-seeded Requirement was never written by
+        // this batch call, so rollback correctly leaves it in place.
+        write_migrated_controls_requirement(dir.path());
         let drafts_dir = dir.path().join("drafts");
         fs::create_dir_all(&drafts_dir).unwrap();
         let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
@@ -816,7 +845,7 @@ scenario:
         ));
         assert!(
             !dir.path()
-                .join(".markharness/knowledge/requirements/controls/requirement.yml")
+                .join(".markharness/knowledge/features/player-jump/feature.yml")
                 .exists(),
             "the first draft's files must be rolled back when the second draft fails to parse"
         );
@@ -825,6 +854,11 @@ scenario:
     #[test]
     fn validate_batch_reports_ok_for_a_single_valid_draft_and_does_not_touch_real_root() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        // `controls` must already be migrated (real uid) for the draft's
+        // Feature to validate; it's pre-seeded directly on the real root, so
+        // it's the Feature (never pre-existing) that proves validate_batch
+        // wrote nothing into the real root.
+        write_migrated_controls_requirement(dir.path());
         let drafts_dir = dir.path().join("drafts");
         fs::create_dir_all(&drafts_dir).unwrap();
         let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
@@ -836,7 +870,7 @@ scenario:
         assert!(result.results[0].error.is_none());
         assert!(
             !dir.path()
-                .join(".markharness/knowledge/requirements/controls")
+                .join(".markharness/knowledge/features/player-jump")
                 .exists(),
             "validate_batch must not write into the real root"
         );
@@ -845,12 +879,14 @@ scenario:
     #[test]
     fn validate_batch_lets_a_later_draft_reuse_a_parent_an_earlier_draft_in_the_batch_creates() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        // `controls` must already be migrated (real uid) before any Feature
+        // can reference it (ADR 0017 §1・§3); `player-jump` and `jump`
+        // still don't exist on disk before this call — the second draft
+        // only supplies bare ids for them, relying on the first draft
+        // (validated first, within this same batch) to have created them.
+        write_migrated_controls_requirement(dir.path());
         let drafts_dir = dir.path().join("drafts");
         fs::create_dir_all(&drafts_dir).unwrap();
-        // Neither `controls`, `player-jump`, nor `jump` exist on disk before
-        // this call — the second draft only supplies bare ids for them,
-        // relying on the first draft (validated first, within this same
-        // batch) to have created them.
         let first = write_draft_file(&drafts_dir, "01-ground.yml", FULL_DRAFT_YAML);
         let second = write_draft_file(
             &drafts_dir,
@@ -870,6 +906,7 @@ scenario:
     #[test]
     fn validate_batch_reports_every_file_instead_of_stopping_at_the_first_failure() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        write_migrated_controls_requirement(dir.path());
         let drafts_dir = dir.path().join("drafts");
         fs::create_dir_all(&drafts_dir).unwrap();
         let broken = write_draft_file(&drafts_dir, "01-broken.yml", "not: [valid yaml");

@@ -116,6 +116,7 @@ pub enum ValidationErrorCode {
     ParentNotFound,
     UnknownForkedFrom,
     MultilineLabel,
+    RequirementNotMigrated,
 }
 
 impl ValidationErrorCode {
@@ -131,6 +132,7 @@ impl ValidationErrorCode {
             ValidationErrorCode::ParentNotFound => "parent_not_found",
             ValidationErrorCode::UnknownForkedFrom => "unknown_forked_from",
             ValidationErrorCode::MultilineLabel => "multiline_label",
+            ValidationErrorCode::RequirementNotMigrated => "requirement_not_migrated",
         }
     }
 }
@@ -517,7 +519,22 @@ fn push_parent_mismatch(
     }
 }
 
-/// ADR 0017 §1: Featureは`requirement_ids`で複数Requirementへ対等に関連付く
+/// ADR 0017 §1・§3: FeatureはRequirement.uidで関連付くため、参照先
+/// Requirementがuid未発行(未migrate)の間は新規参照を拒否する。Scenario→
+/// Caseの`CaseNotMigrated`(`src/execution.rs`)に相当する扱い。
+fn push_requirement_not_migrated(errors: &mut Vec<ValidationError>, requirement_id: &str) {
+    errors.push(ValidationError {
+        code: ValidationErrorCode::RequirementNotMigrated,
+        path: "requirement.uid".to_string(),
+        value: Some(requirement_id.to_string()),
+        message: format!(
+            "requirement \"{requirement_id}\" has no uid yet; run `markharness identity migrate` before a Feature can reference it"
+        ),
+        suggestion: None,
+    });
+}
+
+/// ADR 0017 §1: Featureは`requirement_uids`で複数Requirementへ対等に関連付く
 /// ため、draftチェーンの単一requirementは「一致」ではなく「一覧に含まれる
 /// か」で照合する。
 fn push_parent_membership_mismatch(
@@ -731,10 +748,16 @@ pub fn validate_draft(
         &draft.scenario.implementation_note,
     );
 
+    // ADR 0017 §1・§3: Featureは表示IDではなくRequirement.uidで関連付ける。
+    // 新規作成されるRequirementは`identity migrate`実行前で常にuid: Noneであり
+    // (Step 3で確定した設計)、既存Requirementもuid未発行(未migrate)のことが
+    // ある。いずれの場合もFeatureからの新規参照はその場で拒否する。
+    let mut requirement_uid: Option<String> = None;
     if requirement_exists
         && let Ok(yaml) = fs::read_to_string(&requirement_path)
         && let Ok(existing) = knowledge::parse_requirement(&yaml)
     {
+        requirement_uid = existing.uid.clone();
         if let Some(label) = &draft.requirement.label {
             push_conflicting_value(&mut errors, "requirement.label", label, &existing.label);
         }
@@ -755,12 +778,15 @@ pub fn validate_draft(
         && let Ok(yaml) = fs::read_to_string(&feature_path)
         && let Ok(existing) = knowledge::parse_feature(&yaml)
     {
-        push_parent_membership_mismatch(
-            &mut errors,
-            "feature.requirement_ids",
-            &draft.requirement.id,
-            &existing.requirement_ids,
-        );
+        match &requirement_uid {
+            Some(uid) => push_parent_membership_mismatch(
+                &mut errors,
+                "feature.requirement_uids",
+                uid,
+                &existing.requirement_uids,
+            ),
+            None => push_requirement_not_migrated(&mut errors, &draft.requirement.id),
+        }
         if let Some(label) = &draft.feature.label {
             push_conflicting_value(&mut errors, "feature.label", label, &existing.label);
         }
@@ -775,6 +801,10 @@ pub fn validate_draft(
                 existing.description.as_deref().unwrap_or(""),
             );
         }
+    } else if requirement_uid.is_none() {
+        // apply_draftはFeatureを新規作成する際`requirement_uids`にこの
+        // Requirementのuidを使う。未migrateなら書き込む前にここで拒否する。
+        push_requirement_not_migrated(&mut errors, &draft.requirement.id);
     }
 
     if behavior_exists
@@ -1038,15 +1068,47 @@ scenario:
         parse_draft(FULL_DRAFT_YAML).unwrap()
     }
 
+    /// `identity migrate`実行後を模したRequirement.uid値(ULID形式)。
+    const CONTROLS_REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    fn write_migrated_controls_requirement(dir: &Path) {
+        fs::create_dir_all(dir.join(".markharness/knowledge/requirements/controls")).unwrap();
+        fs::write(
+            dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            ),
+        )
+        .unwrap();
+    }
+
     fn no_strip() -> ValidateOptions {
         ValidateOptions {
             strip_redundant_prefix: false,
         }
     }
 
+    /// ADR 0017 §1・§3: 新規Requirementは`identity migrate`実行前で常に
+    /// uid: Noneなので、それを参照する新規Featureは作成できない
+    /// (checklist-issue-44-requirement-uids.mdで確定した設計)。
     #[test]
-    fn validate_draft_returns_no_errors_for_a_fully_valid_new_chain() {
+    fn validate_draft_reports_requirement_not_migrated_for_a_brand_new_requirement() {
         let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        let draft = full_new_draft();
+
+        let errors = validate_draft(dir.path(), &draft, &no_strip());
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::RequirementNotMigrated)
+        );
+    }
+
+    #[test]
+    fn validate_draft_returns_no_errors_for_a_fully_valid_new_chain_with_a_migrated_requirement() {
+        let dir = setup_root_with_axes(&["gameplay", "animation"]);
+        write_migrated_controls_requirement(dir.path());
         let draft = full_new_draft();
 
         let errors = validate_draft(dir.path(), &draft, &no_strip());
@@ -1429,13 +1491,17 @@ scenario:
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            ),
         )
         .unwrap();
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n",
+            format!(
+                "id: player-jump\nrequirement_uids: [{CONTROLS_REQUIREMENT_UID}]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            ),
         )
         .unwrap();
         fs::write(
@@ -1489,13 +1555,15 @@ scenario:
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            ),
         )
         .unwrap();
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [some-other-requirement]\nlabel: player-jump\naxis: [gameplay, animation]\n",
+            "id: player-jump\nrequirement_uids: [01ARZ3NDEKTSV4RRFFQ69G5FAW]\nlabel: player-jump\naxis: [gameplay, animation]\n",
         )
         .unwrap();
 
@@ -1509,7 +1577,7 @@ scenario:
             errors
                 .iter()
                 .any(|e| e.code == ValidationErrorCode::ParentNotFound
-                    && e.path == "feature.requirement_ids")
+                    && e.path == "feature.requirement_uids")
         );
     }
 
@@ -1545,13 +1613,17 @@ scenario:
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            ),
         )
         .unwrap();
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay, animation]\n",
+            format!(
+                "id: player-jump\nrequirement_uids: [{CONTROLS_REQUIREMENT_UID}]\nlabel: player-jump\naxis: [gameplay, animation]\n"
+            ),
         )
         .unwrap();
         let mut draft = full_new_draft();
@@ -1607,7 +1679,9 @@ scenario:
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            format!(
+                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            ),
         )
         .unwrap();
 

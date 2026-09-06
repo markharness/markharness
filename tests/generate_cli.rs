@@ -56,12 +56,13 @@ fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, sc
             .join(requirement),
     )
     .unwrap();
+    let requirement_uid = format!("test-uid-{requirement}");
     std::fs::write(
         root.join(markharness::project_root::MARKHARNESS_DIR)
             .join("knowledge/requirements")
             .join(requirement)
             .join("requirement.yml"),
-        format!("id: {requirement}\nlabel: {requirement}\naxis: [ui]\n"),
+        format!("id: {requirement}\nlabel: {requirement}\naxis: [ui]\nuid: {requirement_uid}\n"),
     )
     .unwrap();
     std::fs::write(
@@ -69,7 +70,9 @@ fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, sc
             .join("knowledge/features")
             .join(feature)
             .join("feature.yml"),
-        format!("id: {feature}\nrequirement_ids: [{requirement}]\nlabel: {feature}\naxis: [ui]\n"),
+        format!(
+            "id: {feature}\nrequirement_uids: [{requirement_uid}]\nlabel: {feature}\naxis: [ui]\n"
+        ),
     )
     .unwrap();
     std::fs::write(

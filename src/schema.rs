@@ -222,7 +222,7 @@ expected:
     fn feature_struct_fields_match_feature_schema_properties() {
         let feature = crate::knowledge::Feature {
             id: "player-jump".to_string(),
-            requirement_ids: vec!["player-controls".to_string()],
+            requirement_uids: vec!["player-controls".to_string()],
             label: "player-jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: Some("d".to_string()),
@@ -279,7 +279,7 @@ expected:
                 "feature.schema.json",
                 serde_json::to_value(crate::knowledge::Feature {
                     id: "player-jump".to_string(),
-                    requirement_ids: vec!["player-controls".to_string()],
+                    requirement_uids: vec!["player-controls".to_string()],
                     label: "player-jump".to_string(),
                     axis: vec!["gameplay".to_string()],
                     description: Some("d".to_string()),

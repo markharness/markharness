@@ -74,6 +74,28 @@ fn collect_feature_ids(knowledge_root: &Path) -> io::Result<BTreeSet<String>> {
     Ok(ids)
 }
 
+/// Collects every migrated Requirement's `uid` under `knowledge/`
+/// (best-effort: unparsable `requirement.yml`s are skipped here, reported
+/// as schema issues by the main `validate_all` pass instead), so a
+/// Feature's `requirement_uids` can be checked against a complete set
+/// regardless of walk order.
+fn collect_requirement_uids(knowledge_root: &Path) -> io::Result<BTreeSet<String>> {
+    let mut uids = BTreeSet::new();
+    for requirement_dir in sorted_subdirs(&knowledge_root.join("requirements"))? {
+        let requirement_path = requirement_dir.join("requirement.yml");
+        if !requirement_path.is_file() {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&requirement_path)
+            && let Ok(requirement) = knowledge::parse_requirement(&content)
+            && let Some(uid) = requirement.uid
+        {
+            uids.insert(uid);
+        }
+    }
+    Ok(uids)
+}
+
 fn check_axis_tags(
     root: &Path,
     file_path: &Path,
@@ -130,6 +152,15 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
             .join(crate::project_root::MARKHARNESS_DIR)
             .join("knowledge"),
     )?;
+    let known_requirement_uids = collect_requirement_uids(
+        &root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge"),
+    )?;
+    // ADR 0013と同じ理由(cutover前は移行途中のuidなし要素を誤検出しない):
+    // cutover前はどのRequirementもuidを持たないため、Feature.requirement_uids
+    // が解決できないのは移行途中の通常状態であり、violationではない。
+    let uid_mode = crate::identity::is_uid_mode(root)?;
 
     let axes_dir = root.join(crate::project_root::MARKHARNESS_DIR).join("axes");
     if axes_dir.is_dir() {
@@ -192,6 +223,18 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
                         "forked_from '{forked_from}' does not match any known Feature id"
                     ),
                 });
+            }
+            if uid_mode {
+                for uid in &feature.requirement_uids {
+                    if !known_requirement_uids.contains(uid) {
+                        issues.push(ValidationIssue {
+                            path: rel(root, &feature_path),
+                            message: format!(
+                                "requirement_uids references unknown requirement uid '{uid}'"
+                            ),
+                        });
+                    }
+                }
             }
         }
 
@@ -275,7 +318,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
@@ -399,10 +442,49 @@ mod tests {
         assert!(git_status(&["config", "user.name", "Test"]).success());
         assert!(git_status(&["config", "core.autocrlf", "false"]).success());
         crate::identity::migrate_entities(dir.path()).unwrap();
+        // `identity migrate` only assigns `uid`s; it does not rewrite an
+        // already-existing Feature's `requirement_uids` (ADR 0017 §1・§3 —
+        // that conversion is out of scope, see checklist-issue-44). Simulate
+        // the follow-up manual fix so this "everything migrated" fixture is
+        // actually internally consistent.
+        let requirement_path = dir
+            .path()
+            .join(".markharness/knowledge/requirements/controls/requirement.yml");
+        let requirement =
+            knowledge::parse_requirement(&fs::read_to_string(&requirement_path).unwrap()).unwrap();
+        let feature_path = dir
+            .path()
+            .join(".markharness/knowledge/features/player-jump/feature.yml");
+        let mut feature =
+            knowledge::parse_feature(&fs::read_to_string(&feature_path).unwrap()).unwrap();
+        feature.requirement_uids = vec![requirement.uid.expect("requirement was just migrated")];
+        fs::write(&feature_path, knowledge::serialize_feature(&feature)).unwrap();
 
         let issues = validate_all(dir.path()).unwrap();
 
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    /// ADR 0017 §1・§3: uid mode到達後、Feature.requirement_uidsがどの
+    /// Requirementのuidとも一致しない(壊れた参照)場合を検知する。
+    #[test]
+    fn flags_a_feature_requirement_uid_that_matches_no_requirement_once_in_uid_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        crate::identity::marker::mark_uid_mode(dir.path()).unwrap();
+        // requirement_uids still holds the pre-migration placeholder
+        // ("controls", a display id) — never a real uid — so once in uid
+        // mode this must be reported as a dangling reference.
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(
+            issues.iter().any(|i| i.path.contains("feature.yml")
+                && i.message.contains("requirement_uids")
+                && i.message.contains("controls")),
+            "expected a dangling requirement_uids reference issue, got: {issues:?}"
+        );
     }
 
     #[test]
@@ -457,7 +539,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [not-registered]\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: [not-registered]\n",
         )
         .unwrap();
 
@@ -476,7 +558,7 @@ mod tests {
         write_valid_tree(dir.path());
         fs::write(
             dir.path().join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\nforked_from: no-such-feature\n",
+            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: [gameplay]\nforked_from: no-such-feature\n",
         )
         .unwrap();
 
@@ -560,7 +642,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/player-double-jump/feature.yml"),
-            "id: player-double-jump\nrequirement_ids: [controls]\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n",
+            "id: player-double-jump\nrequirement_uids: [controls]\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n",
         )
         .unwrap();
 

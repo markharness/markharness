@@ -33,7 +33,7 @@ fn write_valid_tree(root: &Path) {
     .unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/features/player-jump/feature.yml"),
-        "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
+        "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
     )
     .unwrap();
     std::fs::write(
@@ -173,7 +173,7 @@ fn validate_exits_one_and_lists_issues_for_an_invalid_feature() {
     std::fs::write(
         dir.path()
             .join(".markharness/knowledge/features/player-jump/feature.yml"),
-        "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [not-registered]\n",
+        "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: [not-registered]\n",
     )
     .unwrap();
 

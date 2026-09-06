@@ -175,7 +175,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/feature/feature.yml"),
-            "id: feature\nrequirement_ids: [req]\nlabel: feature\naxis: []\n",
+            "id: feature\nrequirement_uids: [req]\nlabel: feature\naxis: []\n",
         )
         .unwrap();
         fs::write(
@@ -254,7 +254,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/features/feature/feature.yml"),
-            "id: feature\nrequirement_ids: [req]\nlabel: feature\naxis: []\n",
+            "id: feature\nrequirement_uids: [req]\nlabel: feature\naxis: []\n",
         )
         .unwrap();
         fs::write(

@@ -233,7 +233,7 @@ mod tests {
         fs::write(
             dir.join("feature.yml"),
             format!(
-                "id: player-jump\nrequirement_ids: [controls]\nlabel: {label}\naxis: [gameplay]\n"
+                "id: player-jump\nrequirement_uids: [controls]\nlabel: {label}\naxis: [gameplay]\n"
             ),
         )
         .unwrap();

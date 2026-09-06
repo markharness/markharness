@@ -88,6 +88,24 @@ fn write_draft(dir: &Path, content: &str) -> std::path::PathBuf {
     path
 }
 
+/// ADR 0017 §1・§3: `VALID_DRAFT` references Requirement "controls" from a
+/// brand-new Feature — accepted only once that Requirement already has a
+/// uid (`identity migrate` run), since a brand-new Requirement is always
+/// `uid: None` until then. Pre-seed it already migrated so these CLI tests
+/// exercise Feature/Behavior/Scenario creation, not that unrelated rule.
+const CONTROLS_REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+fn write_migrated_controls_requirement(dir: &Path) {
+    fs::create_dir_all(dir.join(".markharness/knowledge/requirements/controls")).unwrap();
+    fs::write(
+        dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
+        format!(
+            "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
 fn scaffold_prints_the_blank_draft_template_to_stdout_by_default() {
     let output = run(&["knowledge", "scaffold"]);
@@ -133,6 +151,7 @@ fn scaffold_out_refuses_to_overwrite_an_existing_file() {
 #[test]
 fn validate_exits_zero_and_prints_nothing_on_success() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let draft_path = write_draft(dir.path(), VALID_DRAFT);
 
     let output = run(&[
@@ -150,6 +169,7 @@ fn validate_exits_zero_and_prints_nothing_on_success() {
 #[test]
 fn validate_json_prints_ok_true_on_success() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let draft_path = write_draft(dir.path(), VALID_DRAFT);
 
     let output = run(&[
@@ -251,6 +271,7 @@ fn validate_exits_two_when_draft_yaml_is_unparsable() {
 #[test]
 fn apply_exits_zero_and_writes_files_on_success() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let draft_path = write_draft(dir.path(), VALID_DRAFT);
 
     let output = run(&[
@@ -283,6 +304,7 @@ fn apply_writes_a_multiline_description_that_reparses_and_validates() {
         "id: gameplay\nlabel: gameplay\n",
     )
     .unwrap();
+    write_migrated_controls_requirement(dir.path());
 
     let draft = "\
 requirement:
@@ -370,6 +392,7 @@ fn apply_exits_one_and_writes_nothing_on_validation_failure() {
 #[test]
 fn apply_dry_run_validates_only_and_writes_nothing() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let draft_path = write_draft(dir.path(), VALID_DRAFT);
 
     let output = run(&[
@@ -387,8 +410,9 @@ fn apply_dry_run_validates_only_and_writes_nothing() {
     assert_eq!(stdout.trim(), "{\"ok\":true}");
     assert!(
         !dir.path()
-            .join(".markharness/knowledge/requirements/controls")
-            .exists()
+            .join(".markharness/knowledge/features/player-jump")
+            .exists(),
+        "dry-run must write nothing, including the Feature"
     );
 }
 
@@ -420,6 +444,7 @@ fn write_batch_draft(dir: &Path, name: &str, content: &str) {
 #[test]
 fn apply_batch_applies_every_draft_in_file_name_order() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
@@ -453,6 +478,7 @@ fn apply_batch_applies_every_draft_in_file_name_order() {
 #[test]
 fn apply_batch_writes_nothing_when_a_later_draft_is_invalid() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
@@ -527,6 +553,7 @@ fn apply_batch_json_reports_which_file_failed_validation() {
 #[test]
 fn apply_batch_dry_run_validates_only_and_writes_nothing() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
@@ -547,14 +574,16 @@ fn apply_batch_dry_run_validates_only_and_writes_nothing() {
     assert_eq!(stdout.trim(), "{\"ok\":true}");
     assert!(
         !dir.path()
-            .join(".markharness/knowledge/requirements/controls")
-            .exists()
+            .join(".markharness/knowledge/features/player-jump")
+            .exists(),
+        "dry-run must write nothing, including the Feature"
     );
 }
 
 #[test]
 fn validate_batch_exits_zero_and_writes_nothing_for_a_valid_batch() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
@@ -574,14 +603,16 @@ fn validate_batch_exits_zero_and_writes_nothing_for_a_valid_batch() {
     assert_eq!(stdout.trim(), "{\"ok\":true}");
     assert!(
         !dir.path()
-            .join(".markharness/knowledge/requirements/controls")
-            .exists()
+            .join(".markharness/knowledge/features/player-jump")
+            .exists(),
+        "validate must write nothing, including the Feature"
     );
 }
 
 #[test]
 fn validate_batch_lets_a_later_draft_reuse_a_parent_an_earlier_draft_creates() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
@@ -778,6 +809,7 @@ fn apply_batch_and_draft_file_are_mutually_exclusive() {
 #[test]
 fn apply_strip_redundant_prefix_strips_condition_id_and_succeeds() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
+    write_migrated_controls_requirement(dir.path());
     let draft = VALID_DRAFT.replace("id: ground", "id: jump-ground");
     let draft_path = write_draft(dir.path(), &draft);
 

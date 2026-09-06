@@ -38,7 +38,7 @@ fn write_feature(root: &Path, label: &str) {
     .unwrap();
     std::fs::write(
         dir.join("feature.yml"),
-        format!("id: player-jump\nrequirement_ids: [controls]\nlabel: {label}\naxis: []\n"),
+        format!("id: player-jump\nrequirement_uids: [controls]\nlabel: {label}\naxis: []\n"),
     )
     .unwrap();
 }
