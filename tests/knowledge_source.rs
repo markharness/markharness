@@ -20,31 +20,27 @@ fn git(root: &Path, args: &[&str]) {
 }
 
 fn write_chain(root: &Path, step: &str) {
-    let base = root.join(".markharness/knowledge/shop/checkout/pay/card");
-    std::fs::create_dir_all(base.join("expected")).unwrap();
+    let base = root.join(".markharness/knowledge/features/checkout/pay/card");
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/shop")).unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/requirement.yml"),
+        root.join(".markharness/knowledge/requirements/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/checkout/feature.yml"),
-        "id: checkout\nrequirement: shop\nlabel: Checkout\naxis: []\n",
+        root.join(".markharness/knowledge/features/checkout/feature.yml"),
+        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/checkout/pay/behavior.yml"),
-        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\npreconditions:\n  - \"Enter the card number.\"\n",
+        root.join(".markharness/knowledge/features/checkout/pay/behavior.yml"),
+        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\nprocedures: {}\n",
     )
     .unwrap();
     std::fs::write(
-        base.join("condition.yml"),
-        format!("id: card\nbehavior: pay\nlabel: Card\ndescription: A valid card.\nsteps:\n  - \"{step}\"\nadditional_preconditions: []\n"),
-    )
-    .unwrap();
-    std::fs::write(
-        base.join("expected/001.yml"),
-        "id: accepted\ncondition: card\ndescription: Accepted.\nresults:\n  - \"Confirmed.\"\n",
+        base.join("scenario.yml"),
+        format!("id: card\nbehavior: pay\nlabel: Card\ndescription: A valid card.\nphases:\n  - steps:\n      - action: \"{step}\"\n    results:\n      - \"Confirmed.\"\n"),
     )
     .unwrap();
 }
@@ -73,11 +69,11 @@ fn working_tree_and_git_tree_adapters_load_the_same_snapshot_interface() {
         .unwrap();
 
     assert_eq!(
-        working.cases[0].condition_steps,
+        working.cases[0].phases[0].steps,
         vec!["Working tree step.".to_string()]
     );
     assert_eq!(
-        historical.cases[0].condition_steps,
+        historical.cases[0].phases[0].steps,
         vec!["Committed step.".to_string()]
     );
 }

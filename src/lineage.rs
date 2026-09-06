@@ -133,16 +133,17 @@ mod tests {
     }
 
     fn write_feature(root: &Path, label: &str) {
-        let dir = root.join(".markharness/knowledge/controls/player-jump");
+        let dir = root.join(".markharness/knowledge/features/player-jump");
         fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: []\n",
         )
         .unwrap();
         fs::write(
             dir.join("feature.yml"),
-            format!("id: player-jump\nrequirement: controls\nlabel: {label}\naxis: []\n"),
+            format!("id: player-jump\nrequirement_ids: [controls]\nlabel: {label}\naxis: []\n"),
         )
         .unwrap();
     }
@@ -239,16 +240,19 @@ mod tests {
     }
 
     fn write_feature_with_uid(root: &Path, id: &str, label: &str, uid: &str) {
-        let dir = root.join(".markharness/knowledge/controls/player-jump");
+        let dir = root.join(".markharness/knowledge/features/player-jump");
         fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: []\n",
         )
         .unwrap();
         fs::write(
             dir.join("feature.yml"),
-            format!("id: {id}\nrequirement: controls\nlabel: {label}\naxis: []\nuid: {uid}\n"),
+            format!(
+                "id: {id}\nrequirement_ids: [controls]\nlabel: {label}\naxis: []\nuid: {uid}\n"
+            ),
         )
         .unwrap();
     }

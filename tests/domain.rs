@@ -1,7 +1,6 @@
 use markharness::changes::CommitRef;
 use markharness::generate::{
-    CaseFilePaths, ExpectedSnapshot, KnowledgeCaseSnapshot, KnowledgeSnapshot, Phase,
-    compile_testcases,
+    CaseFilePaths, KnowledgeCaseSnapshot, KnowledgeSnapshot, Phase, compile_testcases,
 };
 use markharness::verify::{
     PendingCandidate, ReflectedChange, VerificationStatus, evaluate_pending_candidate,
@@ -11,25 +10,17 @@ use markharness::verify::{
 fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
     let snapshot = KnowledgeSnapshot {
         cases: vec![KnowledgeCaseSnapshot {
-            requirement_id: "req".to_string(),
-            requirement_uid: None,
-            requirement_axis: vec!["ui".to_string()],
+            requirement_ids: vec!["req".to_string()],
             feature_id: "feature".to_string(),
             feature_uid: None,
             feature_axis: vec!["workflow".to_string()],
             behavior_id: "behavior".to_string(),
-            behavior_uid: None,
-            behavior_preconditions: vec!["click the button".to_string()],
             behavior_axis: vec!["ui".to_string()],
-            condition_id: "condition".to_string(),
-            condition_uid: None,
-            condition_steps: vec!["confirm the state".to_string()],
-            condition_additional_preconditions: vec![],
-            expected: vec![ExpectedSnapshot {
-                id: "expected-1".to_string(),
+            scenario_id: "scenario".to_string(),
+            scenario_uid: None,
+            phases: vec![Phase {
+                steps: vec!["confirm the state".to_string()],
                 results: vec!["result".to_string()],
-                additional_steps: None,
-                uid: None,
             }],
             case_files: CaseFilePaths::default(),
         }],
@@ -38,9 +29,8 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
     let testcases = compile_testcases(&snapshot);
 
     assert_eq!(testcases.len(), 1);
-    assert_eq!(testcases[0].case_id, "tc-req-feature-behavior-condition");
+    assert_eq!(testcases[0].case_id, "tc-feature-behavior-scenario");
     assert_eq!(testcases[0].axis, vec!["ui", "workflow"]);
-    assert_eq!(testcases[0].preconditions, vec!["click the button"]);
     assert_eq!(
         testcases[0].phases,
         vec![Phase {

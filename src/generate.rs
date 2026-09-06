@@ -1,144 +1,134 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::knowledge::{
-    is_valid_slug, parse_behavior, parse_condition, parse_expected_result, parse_feature,
-    parse_requirement,
+    Behavior, Procedure, Scenario, StepItem, is_valid_slug, parse_behavior, parse_feature,
+    parse_scenario,
 };
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct GeneratedFrom {
-    pub requirement: String,
+    /// ADR 0017 §1: informational provenance only (a Feature associates
+    /// with zero or more Requirements via `requirement_ids`, not one owning
+    /// parent) — never part of case identity or axis.
+    pub requirement_ids: Vec<String>,
     pub feature: String,
     /// The Feature's immutable identity (ADR 0013), when it has one.
-    /// `None` for a Feature that has not been migrated. Kept alongside
-    /// `TestCase.case_uid` (§8 of the design doc) rather than replaced by
-    /// it, since a case's `case_uid` still needs every one of the other
-    /// four contributing elements to carry a `uid` too.
+    /// `None` for a Feature that has not been migrated. Informational only:
+    /// `TestCase.case_uid` (ADR 0017 §3) is derived from `ScenarioUid`
+    /// alone, not from this value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature_uid: Option<String>,
     pub behavior: String,
-    pub condition: String,
-    pub expected_results: Vec<String>,
+    pub scenario: String,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct TestCase {
     pub case_id: String,
-    /// design doc §8's `case_uid`, computed once every one of the five
-    /// contributing elements (Requirement/Feature/Behavior/Condition/
-    /// every ExpectedResult) carries a `uid`. `None` before ADR 0013's
-    /// migration reaches all five kinds for this specific case, or for a
-    /// project that hasn't adopted the identity model at all — never
-    /// computed from a partial set.
+    /// ADR 0017 §3: derived from `ScenarioUid` alone once the Scenario has
+    /// one (`identity::derived_uid::case_uid`). `None` before the Scenario
+    /// has been migrated, or for a project that hasn't adopted the identity
+    /// model at all — never computed from a substitute value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub case_uid: Option<String>,
-    /// The repo-relative paths of every one of this case's five
-    /// contributing files — `requirement.yml`, `feature.yml`,
-    /// `behavior.yml`, `condition.yml`, and every `expected/*.yml` — used
-    /// by `identity::migration_manifest` to build each case's
-    /// `LegacyElementLocator`s (design doc §12's "legacy snapshot identity
-    /// (tree SHA)、entity kind、旧ID、旧path/content locator"): the paths,
-    /// together with a shared `.markharness/knowledge` tree SHA, qualify
-    /// exactly which files this case was made of at the moment its legacy
-    /// identity was captured — so a reissue (retired and recreated under
-    /// the same `id` with the same content but a different `uid`) is still
-    /// told apart, since the reissue's fresh `uid` changes the tree SHA
-    /// too. Not serialized into `generated/testcases/*.yml`: it is
-    /// migration-manifest plumbing, not part of the TestCase contract
-    /// consumers read.
+    /// ADR 0017 §3: deterministically derived from the canonical encoding
+    /// of `phases` alone (`identity::derived_uid::case_revision`) — never
+    /// from `case_uid` or any display-only field. Unlike `case_uid`, always
+    /// present: it needs no Scenario identity, only the already-expanded
+    /// Phase content every generated TestCase already has.
+    pub case_revision: String,
+    /// The repo-relative paths of this case's contributing files —
+    /// `feature.yml`, `behavior.yml`, `scenario.yml` — used by
+    /// `identity::migration_manifest` to build this case's
+    /// `LegacyElementLocator`s. Not serialized into
+    /// `generated/testcases/*.yml`: it is migration-manifest plumbing, not
+    /// part of the TestCase contract consumers read.
     #[serde(skip)]
     pub case_files: CaseFilePaths,
     pub generated_from: GeneratedFrom,
-    /// ADR 0016: `behavior.preconditions` + `condition.additional_preconditions`
-    /// を連結したもの。`phases`とは独立したフィールド(§4)。
-    pub preconditions: Vec<String>,
-    /// ADR 0016: `expected/*.yml`をファイル名順に走査して1ファイルにつき
-    /// 1つ生成する、人間が上から順に読んで実施する一続きの手順書(§5)。
+    /// ADR 0017 §2: `Scenario.phases`のPhase配列。`use:`参照は所属Behaviorの
+    /// `procedures`へ展開済み(操作列はすべて具体的な文字列)。実行順の正本は
+    /// 配列順。
     pub phases: Vec<Phase>,
-    /// Requirement/Feature/Behavior の axis を合成(union)したもの。決定性のため
-    /// 重複除去のうえソートする(§3.4 axisの継承)。
+    /// Feature/Behavior の axis を合成(union)したもの。決定性のため重複除去の
+    /// うえソートする。ADR 0017 §1: Requirement の axis は自動継承しない
+    /// (Requirement を軸にした検索は`requirement_ids`関連をたどって行う)。
     pub axis: Vec<String>,
 }
 
-/// ADR 0016 §2: 1つの`expected/*.yml`に対応する手順書の一区切り。先頭phaseの
-/// `steps`は`condition.steps`(+その`expected/*.yml`が`additional_steps`を
-/// 持つ場合は末尾に連結)、2番目以降のphaseの`steps`はその`expected/*.yml`の
-/// `additional_steps`のみからなる。
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+/// ADR 0017 §2: Scenarioの1つのPhaseに対応する、展開済みの操作・確認の単位。
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Phase {
     pub steps: Vec<String>,
     pub results: Vec<String>,
 }
 
 /// Repo-relative (forward-slash, `.markharness/knowledge/...`-prefixed)
-/// paths of a case's five contributing files, in the same nesting order
+/// paths of a case's contributing files, in the same nesting order
 /// `knowledge/` itself uses. See `TestCase::case_files`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CaseFilePaths {
-    pub requirement: String,
     pub feature: String,
     pub behavior: String,
-    pub condition: String,
-    /// Sorted, so file read order never affects downstream comparisons.
-    pub expected: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExpectedSnapshot {
-    pub id: String,
-    pub results: Vec<String>,
-    /// `None`はファイル自体に`additional_steps`が無いこと(先頭ファイルのみ
-    /// 許容、`validate.rs`のクロスリファレンスチェック対象)を表す。
-    pub additional_steps: Option<Vec<String>>,
-    pub uid: Option<String>,
+    pub scenario: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnowledgeCaseSnapshot {
-    pub requirement_id: String,
-    pub requirement_uid: Option<String>,
-    pub requirement_axis: Vec<String>,
+    /// ADR 0017 §1: informational only, carried through to
+    /// `GeneratedFrom::requirement_ids`. Never part of case identity or
+    /// `axis` (no automatic Requirement-axis inheritance).
+    pub requirement_ids: Vec<String>,
     pub feature_id: String,
     pub feature_uid: Option<String>,
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
-    pub behavior_uid: Option<String>,
-    pub behavior_preconditions: Vec<String>,
     pub behavior_axis: Vec<String>,
-    pub condition_id: String,
-    pub condition_uid: Option<String>,
-    pub condition_steps: Vec<String>,
-    pub condition_additional_preconditions: Vec<String>,
-    pub expected: Vec<ExpectedSnapshot>,
+    pub scenario_id: String,
+    pub scenario_uid: Option<String>,
+    /// Already expanded: every `use:` step replaced by its Procedure's
+    /// steps (`expand_phases`).
+    pub phases: Vec<Phase>,
     /// See `TestCase::case_files`.
     pub case_files: CaseFilePaths,
 }
 
-/// design doc §8: derives `case_uid` from the sorted set of every
-/// contributing element's `uid`, or `None` if any one of them (including
-/// any ExpectedResult) hasn't been migrated yet — a case_uid is never
-/// computed from a partial set of identities.
+/// Derives `case_uid` from `ScenarioUid` alone (ADR 0017 §3), or `None` if
+/// the Scenario hasn't been migrated yet — never computed from a
+/// substitute value.
 fn compute_case_uid(case: &KnowledgeCaseSnapshot) -> Option<String> {
-    let requirement_uid = case.requirement_uid.as_deref()?;
-    let feature_uid = case.feature_uid.as_deref()?;
-    let behavior_uid = case.behavior_uid.as_deref()?;
-    let condition_uid = case.condition_uid.as_deref()?;
-    let expected_result_uids: Vec<String> = case
-        .expected
-        .iter()
-        .map(|expected| expected.uid.clone())
-        .collect::<Option<_>>()?;
-    Some(crate::identity::derived_uid::case_uid(
-        requirement_uid,
-        feature_uid,
-        behavior_uid,
-        condition_uid,
-        &expected_result_uids,
-    ))
+    let scenario_uid = case.scenario_uid.as_deref()?;
+    Some(crate::identity::derived_uid::case_uid(scenario_uid))
+}
+
+/// Derives `case_revision` (ADR 0017 §3) from `phases` alone: the effective
+/// input a TestCase's revision tracks (operations, expected results, and
+/// their order — already procedure-expanded by `expand_phases`). `Phase`'s
+/// only fields are `steps`/`results`, so this JSON encoding excludes every
+/// display-only field (label, description, source) by construction — there
+/// is nothing else on `Phase` a canonicalization step could leak in.
+/// `serde_json` orders struct fields by declaration, not alphabetically, so
+/// this is deterministic across runs without a separate canonicalization
+/// pass.
+///
+/// ADR §3 also lists setup operations/preconditions and test data as
+/// effective inputs a revision must track. Neither has a separate field in
+/// this schema to have been left out: a precondition is an ordinary
+/// `Phase.steps` entry (directly, or expanded from a `use:`-referenced
+/// `Behavior.procedures` entry), and test data is literal text embedded in
+/// a step's `action` or in `Phase.results` — both already inside `phases`
+/// by the time this function runs. See `identity::derived_uid::case_revision`'s
+/// doc comment for the full accounting, and this module's `case_revision_*`
+/// tests for concrete coverage.
+fn compute_case_revision(phases: &[Phase]) -> String {
+    let canonical =
+        serde_json::to_string(phases).expect("Phase is plain data; serialization is infallible");
+    crate::identity::derived_uid::case_revision(&canonical)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -160,18 +150,17 @@ fn union_axis(sources: &[&[String]]) -> Vec<String> {
 
 impl TestCase {
     /// The path, relative to `generated/testcases/`, this TestCase is
-    /// written to: `{requirement}/{feature}/{behavior}/{condition}.yml`,
-    /// mirroring `knowledge/`'s own hierarchy. Because this mirrors a tree
-    /// that is itself collision-free (two Conditions cannot occupy the same
-    /// `knowledge/<req>/<feature>/<behavior>/<condition>/` directory), no two
-    /// TestCases can ever be written to the same path, unlike the flat
-    /// `<condition.id>.yml` naming this replaced (which silently overwrote
-    /// when the same condition.id was reused under a different Behavior).
+    /// written to: `{feature}/{behavior}/{scenario}.yml`, mirroring
+    /// `knowledge/features/`'s own hierarchy (ADR 0017 §1: Feature is a
+    /// top-level, globally-unique-id directory, no longer nested under a
+    /// single owning Requirement). Because this mirrors a tree that is
+    /// itself collision-free (two Scenarios cannot occupy the same
+    /// `knowledge/features/<feature>/<behavior>/<scenario>.yml` path), no
+    /// two TestCases can ever be written to the same path.
     pub fn relative_path(&self) -> PathBuf {
-        Path::new(&self.generated_from.requirement)
-            .join(&self.generated_from.feature)
+        Path::new(&self.generated_from.feature)
             .join(&self.generated_from.behavior)
-            .join(format!("{}.yml", self.generated_from.condition))
+            .join(format!("{}.yml", self.generated_from.scenario))
     }
 }
 
@@ -276,8 +265,8 @@ pub(crate) fn list_files_recursive(root: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Rejects an id (requirement/feature/behavior/condition) that isn't a
-/// plain slug before it can become a path component of `case_id` or of
+/// Rejects an id (feature/behavior/scenario) that isn't a plain slug before
+/// it can become a path component of `case_id` or of
 /// `generated/testcases/`'s mirrored directory tree (`TestCase::relative_path`).
 /// Without this, a crafted `id:` field (independent of the trusted directory
 /// name it lives in) could smuggle `../` or similar through into the write
@@ -309,128 +298,114 @@ fn repo_relative_path(knowledge_root: &Path, path: &Path) -> String {
     format!("{}/{relative}", crate::project_root::KNOWLEDGE_PATH_IN_REPO)
 }
 
+/// Expands one Phase step (ADR 0017 §2): `action` passes through unchanged,
+/// `use` resolves to its named Procedure's steps within the owning
+/// Behavior. A `use` naming a Procedure the Behavior does not declare is an
+/// explicit, rejected error — never silently dropped or left unexpanded.
+fn expand_step_item(
+    item: &StepItem,
+    procedures: &BTreeMap<String, Procedure>,
+    source_path: &Path,
+) -> io::Result<Vec<String>> {
+    match item {
+        StepItem::Action { action } => Ok(vec![action.clone()]),
+        StepItem::Use { procedure } => procedures
+            .get(procedure)
+            .map(|p| p.steps.clone())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "{}: phase step references unknown procedure \"{procedure}\"",
+                        source_path.display()
+                    ),
+                )
+            }),
+    }
+}
+
+/// Expands every Phase of `scenario` against `behavior`'s procedures
+/// (ADR 0017 §2). An empty `phases` array is an explicit, rejected error
+/// (a Scenario with no phases cannot be a TestCase), matching the missing
+/// `procedures` reference check above.
+fn expand_phases(
+    scenario: &Scenario,
+    behavior: &Behavior,
+    source_path: &Path,
+) -> io::Result<Vec<Phase>> {
+    if scenario.phases.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: scenario has no phases", source_path.display()),
+        ));
+    }
+    scenario
+        .phases
+        .iter()
+        .map(|phase| {
+            let mut steps = Vec::new();
+            for item in &phase.steps {
+                steps.extend(expand_step_item(item, &behavior.procedures, source_path)?);
+            }
+            Ok(Phase {
+                steps,
+                results: phase.results.clone(),
+            })
+        })
+        .collect()
+}
+
 pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSnapshot> {
     let mut cases = Vec::new();
 
-    for requirement_dir in sorted_subdirs(knowledge_root)? {
-        let requirement_path = requirement_dir.join("requirement.yml");
-        if !requirement_path.is_file() {
+    for feature_dir in sorted_subdirs(&knowledge_root.join("features"))? {
+        let feature_path = feature_dir.join("feature.yml");
+        if !feature_path.is_file() {
             continue;
         }
-        let requirement_yaml = fs::read_to_string(&requirement_path)?;
-        let requirement = parse_requirement(&requirement_yaml)
+        let feature_yaml = fs::read_to_string(&feature_path)?;
+        let feature = parse_feature(&feature_yaml)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        require_valid_slug(&requirement_path, "requirement", &requirement.id)?;
+        require_valid_slug(&feature_path, "feature", &feature.id)?;
 
-        for feature_dir in sorted_subdirs(&requirement_dir)? {
-            let feature_path = feature_dir.join("feature.yml");
-            if !feature_path.is_file() {
-                continue;
-            }
-            let feature_yaml = fs::read_to_string(&feature_path)?;
-            let feature = parse_feature(&feature_yaml)
+        for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
+            let behavior_path = behavior_dir.join("behavior.yml");
+            let behavior_yaml = fs::read_to_string(&behavior_path)?;
+            let behavior = parse_behavior(&behavior_yaml)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            require_valid_slug(&feature_path, "feature", &feature.id)?;
+            require_valid_slug(&behavior_path, "behavior", &behavior.id)?;
 
-            for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
-                let behavior_path = behavior_dir.join("behavior.yml");
-                let behavior_yaml = fs::read_to_string(&behavior_path)?;
-                let behavior = parse_behavior(&behavior_yaml)
+            for scenario_dir in find_dirs_with_marker(&behavior_dir, "scenario.yml")? {
+                let scenario_path = scenario_dir.join("scenario.yml");
+                let scenario_yaml = fs::read_to_string(&scenario_path)?;
+                let scenario = parse_scenario(&scenario_yaml)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                require_valid_slug(&behavior_path, "behavior", &behavior.id)?;
+                require_valid_slug(&scenario_path, "scenario", &scenario.id)?;
 
-                for condition_dir in find_dirs_with_marker(&behavior_dir, "condition.yml")? {
-                    let condition_path = condition_dir.join("condition.yml");
-                    let condition_yaml = fs::read_to_string(&condition_path)?;
-                    let condition = parse_condition(&condition_yaml)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                    require_valid_slug(&condition_path, "condition", &condition.id)?;
+                let phases = expand_phases(&scenario, &behavior, &scenario_path)?;
+                let case_files = CaseFilePaths {
+                    feature: repo_relative_path(knowledge_root, &feature_path),
+                    behavior: repo_relative_path(knowledge_root, &behavior_path),
+                    scenario: repo_relative_path(knowledge_root, &scenario_path),
+                };
 
-                    let expected_dir = condition_dir.join("expected");
-                    if !expected_dir.is_dir() {
-                        continue;
-                    }
-                    let mut expected_paths: Vec<PathBuf> = fs::read_dir(&expected_dir)?
-                        .filter_map(|entry| entry.ok())
-                        .map(|entry| entry.path())
-                        .filter(|path| path.is_file())
-                        .collect();
-                    expected_paths.sort();
-                    if expected_paths.is_empty() {
-                        continue;
-                    }
-
-                    let mut expected = Vec::new();
-                    for expected_path in &expected_paths {
-                        let expected_yaml = fs::read_to_string(expected_path)?;
-                        let parsed = parse_expected_result(&expected_yaml)
-                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                        expected.push(ExpectedSnapshot {
-                            id: parsed.id,
-                            results: parsed.results,
-                            additional_steps: parsed.additional_steps,
-                            uid: parsed.uid,
-                        });
-                    }
-                    let case_files = CaseFilePaths {
-                        requirement: repo_relative_path(knowledge_root, &requirement_path),
-                        feature: repo_relative_path(knowledge_root, &feature_path),
-                        behavior: repo_relative_path(knowledge_root, &behavior_path),
-                        condition: repo_relative_path(knowledge_root, &condition_path),
-                        expected: expected_paths
-                            .iter()
-                            .map(|path| repo_relative_path(knowledge_root, path))
-                            .collect(),
-                    };
-
-                    cases.push(KnowledgeCaseSnapshot {
-                        requirement_id: requirement.id.clone(),
-                        requirement_uid: requirement.uid.clone(),
-                        requirement_axis: requirement.axis.clone(),
-                        feature_id: feature.id.clone(),
-                        feature_uid: feature.uid.clone(),
-                        feature_axis: feature.axis.clone(),
-                        behavior_id: behavior.id.clone(),
-                        behavior_uid: behavior.uid.clone(),
-                        behavior_preconditions: behavior.preconditions.clone(),
-                        behavior_axis: behavior.axis.clone(),
-                        condition_id: condition.id,
-                        condition_uid: condition.uid.clone(),
-                        condition_steps: condition.steps,
-                        condition_additional_preconditions: condition.additional_preconditions,
-                        expected,
-                        case_files,
-                    });
-                }
+                cases.push(KnowledgeCaseSnapshot {
+                    requirement_ids: feature.requirement_ids.clone(),
+                    feature_id: feature.id.clone(),
+                    feature_uid: feature.uid.clone(),
+                    feature_axis: feature.axis.clone(),
+                    behavior_id: behavior.id.clone(),
+                    behavior_axis: behavior.axis.clone(),
+                    scenario_id: scenario.id,
+                    scenario_uid: scenario.uid,
+                    phases,
+                    case_files,
+                });
             }
         }
     }
 
     Ok(KnowledgeSnapshot { cases })
-}
-
-/// ADR 0016 §2: `expected/*.yml`をファイル名順(`case.expected`は
-/// `load_knowledge_snapshot`で既にその順に集約済み)に1つのPhaseへ変換する。
-/// 先頭phaseのみ`condition.steps`を前に置き、その`expected/*.yml`自身の
-/// `additional_steps`(先頭は無くてもよい)を末尾に連結する。2番目以降の
-/// phaseの`steps`は`additional_steps`のみからなる。
-fn build_phases(case: &KnowledgeCaseSnapshot) -> Vec<Phase> {
-    case.expected
-        .iter()
-        .enumerate()
-        .map(|(i, expected)| {
-            let additional_steps = expected.additional_steps.clone().unwrap_or_default();
-            let steps = if i == 0 {
-                [case.condition_steps.clone(), additional_steps].concat()
-            } else {
-                additional_steps
-            };
-            Phase {
-                steps,
-                results: expected.results.clone(),
-            }
-        })
-        .collect()
 }
 
 pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
@@ -439,30 +414,21 @@ pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
         .iter()
         .map(|case| TestCase {
             case_id: format!(
-                "tc-{}-{}-{}-{}",
-                case.requirement_id, case.feature_id, case.behavior_id, case.condition_id
+                "tc-{}-{}-{}",
+                case.feature_id, case.behavior_id, case.scenario_id
             ),
             case_uid: compute_case_uid(case),
+            case_revision: compute_case_revision(&case.phases),
             case_files: case.case_files.clone(),
             generated_from: GeneratedFrom {
-                requirement: case.requirement_id.clone(),
+                requirement_ids: case.requirement_ids.clone(),
                 feature: case.feature_id.clone(),
                 feature_uid: case.feature_uid.clone(),
                 behavior: case.behavior_id.clone(),
-                condition: case.condition_id.clone(),
-                expected_results: case.expected.iter().map(|item| item.id.clone()).collect(),
+                scenario: case.scenario_id.clone(),
             },
-            preconditions: [
-                case.behavior_preconditions.clone(),
-                case.condition_additional_preconditions.clone(),
-            ]
-            .concat(),
-            phases: build_phases(case),
-            axis: union_axis(&[
-                &case.requirement_axis,
-                &case.feature_axis,
-                &case.behavior_axis,
-            ]),
+            phases: case.phases.clone(),
+            axis: union_axis(&[&case.feature_axis, &case.behavior_axis]),
         })
         .collect();
     testcases.sort_by(|a, b| a.case_id.cmp(&b.case_id));
@@ -636,7 +602,7 @@ mod tests {
     fn write_requirement(root: &std::path::Path, requirement: &str, axis: &[&str]) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
+            .join("knowledge/requirements")
             .join(requirement);
         fs::create_dir_all(&dir).unwrap();
         let axis_line = axis.join(", ");
@@ -647,184 +613,166 @@ mod tests {
         .unwrap();
     }
 
+    /// ADR 0017 §1: Feature is stored under `knowledge/features/<feature>`,
+    /// independent of any Requirement directory; `requirement` only
+    /// contributes to `requirement_ids:`.
     fn write_feature(root: &std::path::Path, requirement: &str, feature: &str, axis: &[&str]) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join(requirement)
+            .join("knowledge/features")
             .join(feature);
         fs::create_dir_all(&dir).unwrap();
         let axis_line = axis.join(", ");
         fs::write(
             dir.join("feature.yml"),
             format!(
-                "id: {feature}\nrequirement: {requirement}\nlabel: {feature}\naxis: [{axis_line}]\n"
+                "id: {feature}\nrequirement_ids: [{requirement}]\nlabel: {feature}\naxis: [{axis_line}]\n"
             ),
         )
         .unwrap();
     }
 
-    fn write_behavior(
-        root: &std::path::Path,
-        requirement: &str,
-        feature: &str,
-        behavior: &str,
-        description: &str,
-        preconditions: &[&str],
-    ) {
+    /// Writes a Behavior with no common procedures.
+    fn write_behavior(root: &std::path::Path, feature: &str, behavior: &str, description: &str) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join(requirement)
+            .join("knowledge/features")
             .join(feature)
             .join(behavior);
         fs::create_dir_all(&dir).unwrap();
-        let preconditions_block: String = preconditions
+        fs::write(
+            dir.join("behavior.yml"),
+            format!(
+                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\nprocedures: {{}}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Writes a Behavior declaring one common procedure named `login`.
+    fn write_behavior_with_login_procedure(
+        root: &std::path::Path,
+        feature: &str,
+        behavior: &str,
+        description: &str,
+        procedure_steps: &[&str],
+    ) {
+        let dir = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge/features")
+            .join(feature)
+            .join(behavior);
+        fs::create_dir_all(&dir).unwrap();
+        let steps_block: String = procedure_steps
             .iter()
-            .map(|step| format!("  - {}\n", serde_json::to_string(step).unwrap()))
+            .map(|step| format!("      - {}\n", serde_json::to_string(step).unwrap()))
             .collect();
         fs::write(
             dir.join("behavior.yml"),
             format!(
-                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\npreconditions:\n{preconditions_block}"
+                "id: {behavior}\nfeature: {feature}\nlabel: {behavior}\naxis: [ui]\ndescription: |\n  {description}\nprocedures:\n  login:\n    steps:\n{steps_block}"
             ),
         )
         .unwrap();
     }
 
-    fn write_condition(
+    /// Writes a Scenario with one Phase per `(steps, results)` pair, each
+    /// step a plain `action:` (no `use:` reference). Lives in its own
+    /// subdirectory under the Behavior (`behavior_dir/<scenario>/scenario.yml`),
+    /// mirroring the pre-ADR-0017 Condition layout — `id_cache.rs`'s
+    /// fixed-depth `feature_dir_of_scenario_dir` relies on this.
+    fn write_scenario(
         root: &std::path::Path,
-        requirement: &str,
         feature: &str,
         behavior: &str,
-        condition: &str,
+        scenario: &str,
         description: &str,
+        phases: &[(&[&str], &[&str])],
     ) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join(requirement)
+            .join("knowledge/features")
             .join(feature)
             .join(behavior)
-            .join(condition);
+            .join(scenario);
         fs::create_dir_all(&dir).unwrap();
+        let mut phases_block = String::new();
+        for (steps, results) in phases {
+            phases_block.push_str("  - steps:\n");
+            for step in *steps {
+                phases_block.push_str(&format!(
+                    "      - action: {}\n",
+                    serde_json::to_string(step).unwrap()
+                ));
+            }
+            phases_block.push_str("    results:\n");
+            for result in *results {
+                phases_block.push_str(&format!(
+                    "      - {}\n",
+                    serde_json::to_string(result).unwrap()
+                ));
+            }
+        }
         fs::write(
-            dir.join("condition.yml"),
+            dir.join("scenario.yml"),
             format!(
-                "id: {condition}\nbehavior: {behavior}\nlabel: {condition}\ndescription: |\n  {description}\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n"
+                "id: {scenario}\nbehavior: {behavior}\nlabel: {scenario}\ndescription: |\n  {description}\nphases:\n{phases_block}"
             ),
         )
         .unwrap();
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn write_expected(
+    /// Writes a Scenario with one Phase whose steps are exactly `steps_yaml`
+    /// (already-formatted `steps:` list items), for tests that need a
+    /// `use:` reference.
+    fn write_scenario_with_raw_steps(
         root: &std::path::Path,
-        requirement: &str,
         feature: &str,
         behavior: &str,
-        condition: &str,
-        seq: &str,
-        id: &str,
-        results: &[&str],
-    ) {
-        write_expected_with_additional_steps(
-            root,
-            requirement,
-            feature,
-            behavior,
-            condition,
-            seq,
-            id,
-            &[],
-            results,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn write_expected_with_additional_steps(
-        root: &std::path::Path,
-        requirement: &str,
-        feature: &str,
-        behavior: &str,
-        condition: &str,
-        seq: &str,
-        id: &str,
-        additional_steps: &[&str],
+        scenario: &str,
+        description: &str,
+        steps_yaml: &str,
         results: &[&str],
     ) {
         let dir = root
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join(requirement)
+            .join("knowledge/features")
             .join(feature)
             .join(behavior)
-            .join(condition)
-            .join("expected");
+            .join(scenario);
         fs::create_dir_all(&dir).unwrap();
         let results_block: String = results
             .iter()
-            .map(|result| format!("  - {}\n", serde_json::to_string(result).unwrap()))
+            .map(|result| format!("      - {}\n", serde_json::to_string(result).unwrap()))
             .collect();
-        let additional_steps_block = if additional_steps.is_empty() {
-            String::new()
-        } else {
-            let steps_block: String = additional_steps
-                .iter()
-                .map(|step| format!("  - {}\n", serde_json::to_string(step).unwrap()))
-                .collect();
-            format!("additional_steps:\n{steps_block}")
-        };
         fs::write(
-            dir.join(format!("{seq}.yml")),
+            dir.join("scenario.yml"),
             format!(
-                "id: {id}\ncondition: {condition}\ndescription: |\n  d.\n{additional_steps_block}results:\n{results_block}"
+                "id: {scenario}\nbehavior: {behavior}\nlabel: {scenario}\ndescription: |\n  {description}\nphases:\n  - steps:\n{steps_yaml}    results:\n{results_block}"
             ),
         )
         .unwrap();
     }
 
     #[test]
-    fn rejects_condition_with_path_traversal_id() {
+    fn rejects_scenario_with_path_traversal_id() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
-        write_behavior(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "User adds a task.",
-            &["Click the title field.", "Press the add button."],
-        );
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
         // The directory name is a safe slug, but a malicious repository can
-        // still craft the `id:` field inside condition.yml independently of
+        // still craft the `id:` field inside scenario.yml independently of
         // the directory it lives in.
-        let condition_dir = dir
+        let scenario_dir = dir
             .path()
-            .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join("req-todo")
-            .join("todo")
-            .join("todo-add-task")
-            .join("todo-add-task-evil");
-        fs::create_dir_all(&condition_dir).unwrap();
+            .join(".markharness/knowledge/features/todo/todo-add-task/todo-add-task-evil");
+        fs::create_dir_all(&scenario_dir).unwrap();
         fs::write(
-            condition_dir.join("condition.yml"),
-            "id: ../../../../evil\nbehavior: todo-add-task\nlabel: evil\ndescription: |\n  Evil.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+            scenario_dir.join("scenario.yml"),
+            "id: ../../../../evil\nbehavior: todo-add-task\nlabel: evil\ndescription: |\n  Evil.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Shows a validation error.\"\n",
         )
         .unwrap();
-        write_expected(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "todo-add-task-evil",
-            "001",
-            "todo-add-task-evil-001",
-            &["Shows a validation error."],
-        );
 
         let result = generate_testcases(
             &dir.path()
@@ -834,7 +782,7 @@ mod tests {
 
         assert!(
             result.is_err(),
-            "expected an error for a condition.id containing path traversal, got: {result:?}"
+            "expected an error for a scenario.id containing path traversal, got: {result:?}"
         );
     }
 
@@ -854,36 +802,22 @@ mod tests {
     }
 
     #[test]
-    fn generates_single_testcase_aggregating_all_expected_files_under_one_condition() {
+    fn generates_single_testcase_for_one_scenario() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui", "data"]);
-        write_behavior(
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
             dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "User adds a task.",
-            &["Click the title field.", "Press the add button."],
-        );
-        write_condition(
-            dir.path(),
-            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
             "Title is empty.",
-        );
-        write_expected(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "todo-add-task-empty-input",
-            "001",
-            "todo-add-task-empty-input-001",
-            &["Shows a validation error."],
+            &[(
+                &["Click the title field.", "Press the add button."],
+                &["Shows a validation error."],
+            )],
         );
 
         let testcases = generate_testcases(
@@ -897,74 +831,49 @@ mod tests {
         let tc = &testcases[0];
         assert_eq!(
             tc.case_id,
-            "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input"
+            "tc-todo-todo-add-task-todo-add-task-empty-input"
         );
-        assert_eq!(tc.generated_from.requirement, "req-todo");
+        assert_eq!(
+            tc.generated_from.requirement_ids,
+            vec!["req-todo".to_string()]
+        );
         assert_eq!(tc.generated_from.feature, "todo");
         assert_eq!(tc.generated_from.behavior, "todo-add-task");
-        assert_eq!(tc.generated_from.condition, "todo-add-task-empty-input");
-        assert_eq!(
-            tc.generated_from.expected_results,
-            vec!["todo-add-task-empty-input-001".to_string()]
-        );
-        assert_eq!(
-            tc.preconditions,
-            vec![
-                "Click the title field.".to_string(),
-                "Press the add button.".to_string()
-            ]
-        );
+        assert_eq!(tc.generated_from.scenario, "todo-add-task-empty-input");
         assert_eq!(
             tc.phases,
             vec![Phase {
-                steps: vec!["Do it.".to_string()],
+                steps: vec![
+                    "Click the title field.".to_string(),
+                    "Press the add button.".to_string()
+                ],
                 results: vec!["Shows a validation error.".to_string()],
             }]
         );
     }
 
     #[test]
-    fn aggregates_multiple_expected_files_into_a_single_testcase() {
+    fn generates_a_testcase_with_multiple_phases_in_order() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
         write_behavior(
             dir.path(),
-            "req-todo",
             "todo",
             "todo-complete-task",
             "User checks a task.",
-            &["Press the checkbox."],
         );
-        write_condition(
+        write_scenario(
             dir.path(),
-            "req-todo",
             "todo",
             "todo-complete-task",
             "todo-complete-task-toggle-done",
             "Task is unchecked.",
-        );
-        write_expected(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-complete-task",
-            "todo-complete-task-toggle-done",
-            "001",
-            "todo-complete-task-toggle-done-001",
-            &["Task becomes done."],
-        );
-        write_expected_with_additional_steps(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-complete-task",
-            "todo-complete-task-toggle-done",
-            "002",
-            "todo-complete-task-toggle-done-002",
-            &["Reload the page."],
-            &["completedAt is recorded."],
+            &[
+                (&["Press the checkbox."], &["Task becomes done."]),
+                (&["Reload the page."], &["completedAt is recorded."]),
+            ],
         );
 
         let testcases = generate_testcases(
@@ -977,21 +886,10 @@ mod tests {
         assert_eq!(testcases.len(), 1);
         let tc = &testcases[0];
         assert_eq!(
-            tc.case_id,
-            "tc-req-todo-todo-todo-complete-task-todo-complete-task-toggle-done"
-        );
-        assert_eq!(
-            tc.generated_from.expected_results,
-            vec![
-                "todo-complete-task-toggle-done-001".to_string(),
-                "todo-complete-task-toggle-done-002".to_string(),
-            ]
-        );
-        assert_eq!(
             tc.phases,
             vec![
                 Phase {
-                    steps: vec!["Do it.".to_string()],
+                    steps: vec!["Press the checkbox.".to_string()],
                     results: vec!["Task becomes done.".to_string()],
                 },
                 Phase {
@@ -1002,66 +900,141 @@ mod tests {
         );
     }
 
+    /// ADR 0017 §2: a Phase step may `use:` a common procedure declared by
+    /// the owning Behavior; generation expands it inline.
+    #[test]
+    fn expands_a_use_step_into_its_procedures_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-shop", &["security"]);
+        write_feature(dir.path(), "req-shop", "checkout", &["ui"]);
+        write_behavior_with_login_procedure(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "Pay.",
+            &["Enter credentials.", "Press the login button."],
+        );
+        write_scenario_with_raw_steps(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "checkout-pay-valid-card",
+            "Pay then log out and back in.",
+            "      - use: login\n      - action: \"Log out.\"\n      - use: login\n",
+            &["My page is shown again."],
+        );
+
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            testcases[0].phases,
+            vec![Phase {
+                steps: vec![
+                    "Enter credentials.".to_string(),
+                    "Press the login button.".to_string(),
+                    "Log out.".to_string(),
+                    "Enter credentials.".to_string(),
+                    "Press the login button.".to_string(),
+                ],
+                results: vec!["My page is shown again.".to_string()],
+            }]
+        );
+    }
+
+    /// ADR 0017 §2: a `use:` naming a Procedure the Behavior does not
+    /// declare is an explicit, rejected error, not a silently-dropped step.
+    #[test]
+    fn rejects_a_use_step_referencing_an_unknown_procedure() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-shop", &["security"]);
+        write_feature(dir.path(), "req-shop", "checkout", &["ui"]);
+        write_behavior(dir.path(), "checkout", "checkout-pay", "Pay.");
+        write_scenario_with_raw_steps(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "checkout-pay-valid-card",
+            "Pay.",
+            "      - use: login\n",
+            &["Confirmed."],
+        );
+
+        let result = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        );
+
+        assert!(
+            result.is_err(),
+            "expected an error for a use: step referencing an unknown procedure, got: {result:?}"
+        );
+    }
+
+    /// ADR 0017 §2: an empty `phases` array is an explicit, rejected error
+    /// — a Scenario with no phases cannot be a TestCase.
+    #[test]
+    fn rejects_a_scenario_with_an_empty_phases_array() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        let scenario_dir = dir
+            .path()
+            .join(".markharness/knowledge/features/todo/todo-add-task/todo-add-task-empty-input");
+        fs::create_dir_all(&scenario_dir).unwrap();
+        fs::write(
+            scenario_dir.join("scenario.yml"),
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nphases: []\n",
+        )
+        .unwrap();
+
+        let result = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        );
+
+        assert!(
+            result.is_err(),
+            "expected an error for a scenario with an empty phases array, got: {result:?}"
+        );
+    }
+
     #[test]
     fn sorts_testcases_by_case_id_across_multiple_features() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
-        write_behavior(
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
             dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "User adds a task.",
-            &["Click the title field.", "Press the add button."],
-        );
-        write_condition(
-            dir.path(),
-            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
             "Title is empty.",
-        );
-        write_expected(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "todo-add-task-empty-input",
-            "001",
-            "todo-add-task-empty-input-001",
-            &["Shows a validation error."],
+            &[(&["Do it."], &["Shows a validation error."])],
         );
 
         write_requirement(dir.path(), "req-enemy", &["combat"]);
         write_feature(dir.path(), "req-enemy", "enemy", &["combat"]);
-        write_behavior(
+        write_behavior(dir.path(), "enemy", "enemy-attack", "Enemy attacks.");
+        write_scenario(
             dir.path(),
-            "req-enemy",
-            "enemy",
-            "enemy-attack",
-            "Enemy attacks.",
-            &["Press the attack button."],
-        );
-        write_condition(
-            dir.path(),
-            "req-enemy",
             "enemy",
             "enemy-attack",
             "enemy-attack-melee-range",
             "Enemy is in melee range.",
-        );
-        write_expected(
-            dir.path(),
-            "req-enemy",
-            "enemy",
-            "enemy-attack",
-            "enemy-attack-melee-range",
-            "001",
-            "enemy-attack-melee-range-001",
-            &["Deals damage."],
+            &[(&["Do it."], &["Deals damage."])],
         );
 
         let testcases = generate_testcases(
@@ -1074,36 +1047,21 @@ mod tests {
         assert_eq!(testcases.len(), 2);
         assert_eq!(
             testcases[0].case_id,
-            "tc-req-enemy-enemy-enemy-attack-enemy-attack-melee-range"
+            "tc-enemy-enemy-attack-enemy-attack-melee-range"
         );
         assert_eq!(
             testcases[1].case_id,
-            "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input"
+            "tc-todo-todo-add-task-todo-add-task-empty-input"
         );
     }
 
     #[test]
-    fn produces_no_testcase_for_condition_without_expected_files() {
+    fn produces_no_testcase_for_behavior_without_scenario() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
-        write_behavior(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "User adds a task.",
-            &["Click the title field.", "Press the add button."],
-        );
-        write_condition(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "todo-add-task-empty-input",
-            "Title is empty.",
-        );
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
 
         let testcases = generate_testcases(
             &dir.path()
@@ -1138,31 +1096,14 @@ mod tests {
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
-        write_behavior(
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
             dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "User adds a task.",
-            &["Click the title field.", "Press the add button."],
-        );
-        write_condition(
-            dir.path(),
-            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
             "Title is empty.",
-        );
-        write_expected(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "todo-add-task-empty-input",
-            "001",
-            "todo-add-task-empty-input-001",
-            &["Shows a validation error."],
+            &[(&["Do it."], &["Shows a validation error."])],
         );
 
         let first: Vec<String> = generate_testcases(
@@ -1190,18 +1131,17 @@ mod tests {
     #[test]
     fn serialized_testcase_contains_no_leading_comment() {
         let testcase = TestCase {
-            case_id: "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input".to_string(),
+            case_id: "tc-todo-todo-add-task-todo-add-task-empty-input".to_string(),
             case_uid: None,
+            case_revision: "test-revision".to_string(),
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
-                requirement: "req-todo".to_string(),
+                requirement_ids: vec!["req-todo".to_string()],
                 feature: "todo".to_string(),
                 feature_uid: None,
                 behavior: "todo-add-task".to_string(),
-                condition: "todo-add-task-empty-input".to_string(),
-                expected_results: vec!["todo-add-task-empty-input-001".to_string()],
+                scenario: "todo-add-task-empty-input".to_string(),
             },
-            preconditions: vec!["User adds a task.".to_string()],
             phases: vec![Phase {
                 steps: vec!["Do it.".to_string()],
                 results: vec!["Shows a validation error.".to_string()],
@@ -1215,7 +1155,7 @@ mod tests {
         let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(
             parsed["case_id"].as_str(),
-            Some("tc-req-todo-todo-todo-add-task-todo-add-task-empty-input")
+            Some("tc-todo-todo-add-task-todo-add-task-empty-input")
         );
         assert_eq!(parsed["generated_from"]["feature"].as_str(), Some("todo"));
     }
@@ -1233,38 +1173,21 @@ mod tests {
         let feature_dir = dir
             .path()
             .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge/req-todo/todo");
+            .join("knowledge/features/todo");
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
-            format!("id: todo\nrequirement: req-todo\nlabel: todo\naxis: []\nuid: {UID}\n"),
+            format!("id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\nuid: {UID}\n"),
         )
         .unwrap();
-        write_behavior(
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
             dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "User adds a task.",
-            &["Click the title field.", "Press the add button."],
-        );
-        write_condition(
-            dir.path(),
-            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
             "Title is empty.",
-        );
-        write_expected(
-            dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "todo-add-task-empty-input",
-            "001",
-            "todo-add-task-empty-input-001",
-            &["Shows a validation error."],
+            &[(&["Do it."], &["Shows a validation error."])],
         );
 
         let testcases = generate_testcases(
@@ -1280,93 +1203,29 @@ mod tests {
         );
     }
 
-    const REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FR0";
-    const FEATURE_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FE0";
-    const BEHAVIOR_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
-    const CONDITION_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC0";
-    const EXPECTED_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FX0";
+    const SCENARIO_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FS0";
 
-    /// Writes a full req -> feature -> behavior -> condition -> expected
-    /// tree, each level carrying a `uid` when the corresponding `*_uid`
-    /// argument is `Some`.
-    #[allow(clippy::too_many_arguments)]
-    fn write_full_tree_with_uids(
-        root: &std::path::Path,
-        requirement_uid: Option<&str>,
-        feature_uid: Option<&str>,
-        behavior_uid: Option<&str>,
-        condition_uid: Option<&str>,
-        expected_uid: Option<&str>,
-    ) {
-        let knowledge = root
-            .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
-        fs::create_dir_all(knowledge.join("expected")).unwrap();
-        fs::write(
-            root.join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/requirement.yml"),
-            format!(
-                "id: req-todo\nlabel: req-todo\naxis: []\n{}",
-                requirement_uid
-                    .map(|uid| format!("uid: {uid}\n"))
-                    .unwrap_or_default()
-            ),
-        )
-        .unwrap();
-        fs::write(
-            root.join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/todo/feature.yml"),
-            format!(
-                "id: todo\nrequirement: req-todo\nlabel: todo\naxis: []\n{}",
-                feature_uid
-                    .map(|uid| format!("uid: {uid}\n"))
-                    .unwrap_or_default()
-            ),
-        )
-        .unwrap();
-        fs::write(
-            root.join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge/req-todo/todo/todo-add-task/behavior.yml"),
-            format!(
-                "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: []\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n{}",
-                behavior_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
-            ),
-        )
-        .unwrap();
-        fs::write(
-            knowledge.join("condition.yml"),
-            format!(
-                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n{}",
-                condition_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
-            ),
-        )
-        .unwrap();
-        fs::write(
-            knowledge.join("expected/001.yml"),
-            format!(
-                "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n{}",
-                expected_uid.map(|uid| format!("uid: {uid}\n")).unwrap_or_default()
-            ),
-        )
-        .unwrap();
-    }
-
-    /// design doc §8: once every one of the five contributing elements
-    /// carries a `uid`, `case_uid` is computed deterministically from them
-    /// (the same value `identity::derived_uid::case_uid` alone would
-    /// produce, not some ad-hoc recombination).
+    /// ADR 0017 §3: `case_uid` is computed deterministically from
+    /// `ScenarioUid` alone (the same value `identity::derived_uid::case_uid`
+    /// alone would produce, not some ad-hoc recombination).
     #[test]
-    fn case_uid_is_computed_once_every_contributing_element_has_a_uid() {
+    fn case_uid_is_computed_once_the_scenario_has_a_uid() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_full_tree_with_uids(
-            dir.path(),
-            Some(REQUIREMENT_UID),
-            Some(FEATURE_UID),
-            Some(BEHAVIOR_UID),
-            Some(CONDITION_UID),
-            Some(EXPECTED_UID),
-        );
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        let scenario_dir = dir
+            .path()
+            .join(".markharness/knowledge/features/todo/todo-add-task/todo-add-task-empty-input");
+        fs::create_dir_all(&scenario_dir).unwrap();
+        fs::write(
+            scenario_dir.join("scenario.yml"),
+            format!(
+                "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\nuid: {SCENARIO_UID}\n"
+            ),
+        )
+        .unwrap();
 
         let testcases = generate_testcases(
             &dir.path()
@@ -1375,30 +1234,26 @@ mod tests {
         )
         .unwrap();
 
-        let expected = crate::identity::derived_uid::case_uid(
-            REQUIREMENT_UID,
-            FEATURE_UID,
-            BEHAVIOR_UID,
-            CONDITION_UID,
-            &[EXPECTED_UID.to_string()],
-        );
+        let expected = crate::identity::derived_uid::case_uid(SCENARIO_UID);
         assert_eq!(testcases[0].case_uid, Some(expected));
     }
 
-    /// A `case_uid` is never computed from a partial set: if even one
-    /// contributing element (here, the Behavior) hasn't been migrated yet,
-    /// `case_uid` stays `None` — never silently substituting a fallback.
+    /// A `case_uid` is never computed from a substitute value: an
+    /// unmigrated Scenario (no `uid:`) leaves `case_uid` as `None`.
     #[test]
-    fn case_uid_stays_none_when_any_contributing_element_lacks_a_uid() {
+    fn case_uid_stays_none_when_the_scenario_lacks_a_uid() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_full_tree_with_uids(
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
             dir.path(),
-            Some(REQUIREMENT_UID),
-            Some(FEATURE_UID),
-            None, // Behavior not migrated yet.
-            Some(CONDITION_UID),
-            Some(EXPECTED_UID),
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+            &[(&["Do it."], &["Confirmed."])],
         );
 
         let testcases = generate_testcases(
@@ -1411,37 +1266,257 @@ mod tests {
         assert_eq!(testcases[0].case_uid, None);
     }
 
+    /// ADR 0017 §3: a description-only edit (display text, not effective
+    /// content) must leave `case_revision` unchanged.
     #[test]
-    fn testcase_axis_is_union_of_requirement_feature_and_behavior_axis() {
+    fn case_revision_is_stable_across_a_description_only_edit() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
-        write_requirement(dir.path(), "req-todo", &["security", "ui"]);
-        write_feature(dir.path(), "req-todo", "todo", &["ui", "data"]);
-        write_behavior(
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
             dir.path(),
-            "req-todo",
-            "todo",
-            "todo-add-task",
-            "User adds a task.",
-            &["Click the title field.", "Press the add button."],
-        );
-        write_condition(
-            dir.path(),
-            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
             "Title is empty.",
+            &[(&["Do it."], &["Confirmed."])],
         );
-        write_expected(
+        let knowledge_root = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge");
+        let before = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        write_scenario(
             dir.path(),
-            "req-todo",
             "todo",
             "todo-add-task",
             "todo-add-task-empty-input",
-            "001",
-            "todo-add-task-empty-input-001",
-            &["Shows a validation error."],
+            "Title is empty (reworded description).",
+            &[(&["Do it."], &["Confirmed."])],
+        );
+        let after = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        assert_eq!(before, after);
+    }
+
+    /// ADR 0017 §3: an operation/step content edit must change
+    /// `case_revision`.
+    #[test]
+    fn case_revision_changes_when_a_step_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
+            dir.path(),
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+            &[(&["Do it."], &["Confirmed."])],
+        );
+        let knowledge_root = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge");
+        let before = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        write_scenario(
+            dir.path(),
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+            &[(&["Do it differently."], &["Confirmed."])],
+        );
+        let after = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        assert_ne!(before, after);
+    }
+
+    /// ADR 0017 §3: "テストデータ" has no field of its own in this schema —
+    /// it is literal text embedded in a step's `action` (e.g. a specific
+    /// card number). Editing just that embedded value, with the rest of the
+    /// step's wording unchanged, must still change `case_revision`, since it
+    /// is part of `Phase.steps`.
+    #[test]
+    fn case_revision_changes_when_test_data_embedded_in_a_step_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-shop", &["security"]);
+        write_feature(dir.path(), "req-shop", "checkout", &["ui"]);
+        write_behavior(dir.path(), "checkout", "checkout-pay", "Pay by card.");
+        write_scenario(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "checkout-pay-valid-card",
+            "Pay with a valid card.",
+            &[(
+                &["Enter card number 4111-1111-1111-1111."],
+                &["Payment succeeds."],
+            )],
+        );
+        let knowledge_root = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge");
+        let before = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        write_scenario(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "checkout-pay-valid-card",
+            "Pay with a valid card.",
+            &[(
+                &["Enter card number 5555-5555-5555-4444."],
+                &["Payment succeeds."],
+            )],
+        );
+        let after = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        assert_ne!(
+            before, after,
+            "a change to test data embedded in a step must change case_revision"
+        );
+    }
+
+    /// ADR 0017 §3: reordering Phases changes `case_revision` even when the
+    /// same steps/results are present, since execution order is part of the
+    /// effective content.
+    #[test]
+    fn case_revision_changes_when_phase_order_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(
+            dir.path(),
+            "todo",
+            "todo-complete-task",
+            "User checks a task.",
+        );
+        write_scenario(
+            dir.path(),
+            "todo",
+            "todo-complete-task",
+            "todo-complete-task-toggle-done",
+            "Task is unchecked.",
+            &[
+                (&["Press the checkbox."], &["Task becomes done."]),
+                (&["Reload the page."], &["completedAt is recorded."]),
+            ],
+        );
+        let knowledge_root = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge");
+        let before = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        write_scenario(
+            dir.path(),
+            "todo",
+            "todo-complete-task",
+            "todo-complete-task-toggle-done",
+            "Task is unchecked.",
+            &[
+                (&["Reload the page."], &["completedAt is recorded."]),
+                (&["Press the checkbox."], &["Task becomes done."]),
+            ],
+        );
+        let after = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        assert_ne!(before, after);
+    }
+
+    /// ADR 0017 §3: an edit to a common procedure's steps must change
+    /// `case_revision` for every Scenario that references it via `use:`,
+    /// even though the Scenario's own `scenario.yml` bytes are untouched.
+    #[test]
+    fn case_revision_changes_when_a_referenced_procedures_steps_change() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-shop", &["security"]);
+        write_feature(dir.path(), "req-shop", "checkout", &["ui"]);
+        write_behavior_with_login_procedure(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "Pay.",
+            &["Enter credentials.", "Press the login button."],
+        );
+        write_scenario_with_raw_steps(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "checkout-pay-valid-card",
+            "Pay.",
+            "      - use: login\n",
+            &["Confirmed."],
+        );
+        let knowledge_root = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge");
+        let before = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        write_behavior_with_login_procedure(
+            dir.path(),
+            "checkout",
+            "checkout-pay",
+            "Pay.",
+            &[
+                "Enter credentials.",
+                "Press the login button.",
+                "Press remember me.",
+            ],
+        );
+        let after = generate_testcases(&knowledge_root).unwrap()[0]
+            .case_revision
+            .clone();
+
+        assert_ne!(before, after);
+    }
+
+    /// ADR 0017 §1: Requirement.axis is never automatically inherited into
+    /// a case's `axis` — only Feature.axis and Behavior.axis contribute.
+    #[test]
+    fn testcase_axis_is_union_of_feature_and_behavior_axis_and_excludes_requirement_axis() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security", "ui"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui", "data"]);
+        write_behavior(dir.path(), "todo", "todo-add-task", "User adds a task.");
+        write_scenario(
+            dir.path(),
+            "todo",
+            "todo-add-task",
+            "todo-add-task-empty-input",
+            "Title is empty.",
+            &[(&["Do it."], &["Shows a validation error."])],
         );
 
         let testcases = generate_testcases(
@@ -1451,29 +1526,29 @@ mod tests {
         )
         .unwrap();
 
-        // write_behavior always uses axis [ui]; combined with requirement's
-        // [security, ui] and feature's [ui, data], duplicates must collapse.
+        // write_behavior always uses axis [ui]; combined with feature's
+        // [ui, data], duplicates collapse. Requirement's [security, ui] is
+        // deliberately absent — "security" must not appear.
         assert_eq!(
             testcases[0].axis,
-            vec!["data".to_string(), "security".to_string(), "ui".to_string()]
+            vec!["data".to_string(), "ui".to_string()]
         );
     }
 
     #[test]
-    fn relative_path_mirrors_the_requirement_feature_behavior_condition_hierarchy() {
+    fn relative_path_mirrors_the_feature_behavior_scenario_hierarchy() {
         let testcase = TestCase {
-            case_id: "tc-req-todo-todo-todo-add-task-todo-add-task-empty-input".to_string(),
+            case_id: "tc-todo-todo-add-task-todo-add-task-empty-input".to_string(),
             case_uid: None,
+            case_revision: "test-revision".to_string(),
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
-                requirement: "req-todo".to_string(),
+                requirement_ids: vec!["req-todo".to_string()],
                 feature: "todo".to_string(),
                 feature_uid: None,
                 behavior: "todo-add-task".to_string(),
-                condition: "todo-add-task-empty-input".to_string(),
-                expected_results: vec!["todo-add-task-empty-input-001".to_string()],
+                scenario: "todo-add-task-empty-input".to_string(),
             },
-            preconditions: vec!["User adds a task.".to_string()],
             phases: vec![Phase {
                 steps: vec!["Do it.".to_string()],
                 results: vec!["Shows a validation error.".to_string()],
@@ -1483,51 +1558,29 @@ mod tests {
 
         assert_eq!(
             testcase.relative_path(),
-            Path::new("req-todo")
-                .join("todo")
+            Path::new("todo")
                 .join("todo-add-task")
                 .join("todo-add-task-empty-input.yml")
         );
     }
 
-    #[test]
-    fn generate_testcases_rejects_a_requirement_with_path_traversal_id() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::init::run_init(dir.path()).unwrap();
-        let requirement_dir = dir
-            .path()
-            .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join("req-todo");
-        fs::create_dir_all(&requirement_dir).unwrap();
-        fs::write(
-            requirement_dir.join("requirement.yml"),
-            "id: ../../../../evil\nlabel: evil\naxis: []\n",
-        )
-        .unwrap();
-
-        let result = generate_testcases(
-            &dir.path()
-                .join(crate::project_root::MARKHARNESS_DIR)
-                .join("knowledge"),
-        );
-
-        assert!(
-            result.is_err(),
-            "expected an error for a requirement.id containing path traversal, got: {result:?}"
-        );
-    }
+    // A Requirement-id path-traversal test previously lived here.
+    // `load_knowledge_snapshot` no longer reads `requirement.yml` at all
+    // (ADR 0017 §1: Requirement is decoupled from case generation), so the
+    // vulnerability this guarded against cannot occur through this code
+    // path any more; `requirement.id`'s slug format is still enforced by
+    // JSON Schema validation (`validate.rs`).
 
     #[test]
     fn generate_testcases_rejects_a_feature_with_path_traversal_id() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
         write_requirement(dir.path(), "req-todo", &["security"]);
-        let feature_dir = dir.path().join(".markharness/knowledge/req-todo/todo");
+        let feature_dir = dir.path().join(".markharness/knowledge/features/todo");
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
-            "id: ../../../../evil\nrequirement: req-todo\nlabel: evil\naxis: []\n",
+            "id: ../../../../evil\nrequirement_ids: [req-todo]\nlabel: evil\naxis: []\n",
         )
         .unwrap();
 
@@ -1551,11 +1604,11 @@ mod tests {
         write_feature(dir.path(), "req-todo", "todo", &["ui"]);
         let behavior_dir = dir
             .path()
-            .join(".markharness/knowledge/req-todo/todo/todo-add-task");
+            .join(".markharness/knowledge/features/todo/todo-add-task");
         fs::create_dir_all(&behavior_dir).unwrap();
         fs::write(
             behavior_dir.join("behavior.yml"),
-            "id: ../../../../evil\nfeature: todo\nlabel: evil\naxis: []\ndescription: |\n  Evil.\n",
+            "id: ../../../../evil\nfeature: todo\nlabel: evil\naxis: []\ndescription: |\n  Evil.\nprocedures: {}\n",
         )
         .unwrap();
 

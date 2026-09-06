@@ -1,6 +1,7 @@
-/// The five persistent Knowledge element kinds that carry an immutable
+/// The four persistent Knowledge element kinds that carry an immutable
 /// `uid` under the identity model (design doc
-/// `docs/ja/design/immutable-identity-model-design.md` §3.1). Closed by
+/// `docs/ja/design/immutable-identity-model-design.md` §3.1, updated by
+/// ADR 0017 which merges Condition/ExpectedResult into Scenario). Closed by
 /// design: end users never add a sixth kind, so callers match on this enum
 /// directly instead of going through a trait-object `Seam`.
 #[derive(
@@ -11,20 +12,18 @@ pub enum EntityKind {
     Requirement,
     Feature,
     Behavior,
-    Condition,
-    ExpectedResult,
+    Scenario,
 }
 
 impl EntityKind {
     /// Every `EntityKind`, in a stable order. Used by exhaustiveness tests
     /// (design doc §3.3) to detect a kind missing from `DESCRIPTORS`, a
     /// schema file, or a fixture table.
-    pub const ALL: [EntityKind; 5] = [
+    pub const ALL: [EntityKind; 4] = [
         EntityKind::Requirement,
         EntityKind::Feature,
         EntityKind::Behavior,
-        EntityKind::Condition,
-        EntityKind::ExpectedResult,
+        EntityKind::Scenario,
     ];
 
     /// The `kind:` value stored in identity events and Registry entries
@@ -34,8 +33,7 @@ impl EntityKind {
             EntityKind::Requirement => "requirement",
             EntityKind::Feature => "feature",
             EntityKind::Behavior => "behavior",
-            EntityKind::Condition => "condition",
-            EntityKind::ExpectedResult => "expected_result",
+            EntityKind::Scenario => "scenario",
         }
     }
 
@@ -47,8 +45,7 @@ impl EntityKind {
             EntityKind::Requirement => "requirements",
             EntityKind::Feature => "features",
             EntityKind::Behavior => "behaviors",
-            EntityKind::Condition => "conditions",
-            EntityKind::ExpectedResult => "expected_results",
+            EntityKind::Scenario => "scenarios",
         }
     }
 }
@@ -68,7 +65,7 @@ pub struct EntityDescriptor {
 /// One `EntityDescriptor` per `EntityKind::ALL` entry, in the same order.
 /// The exhaustiveness test below verifies this invariant so that adding a
 /// kind without adding its descriptor fails loudly.
-pub const DESCRIPTORS: [EntityDescriptor; 5] = [
+pub const DESCRIPTORS: [EntityDescriptor; 4] = [
     EntityDescriptor {
         kind: EntityKind::Requirement,
         parent_kind: None,
@@ -88,16 +85,10 @@ pub const DESCRIPTORS: [EntityDescriptor; 5] = [
         schema_name: "behavior.schema.json",
     },
     EntityDescriptor {
-        kind: EntityKind::Condition,
+        kind: EntityKind::Scenario,
         parent_kind: Some(EntityKind::Behavior),
-        file_name: "condition.yml",
-        schema_name: "condition.schema.json",
-    },
-    EntityDescriptor {
-        kind: EntityKind::ExpectedResult,
-        parent_kind: Some(EntityKind::Condition),
-        file_name: "expected/*.yml",
-        schema_name: "expected_result.schema.json",
+        file_name: "scenario.yml",
+        schema_name: "scenario.schema.json",
     },
 ];
 
@@ -141,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn feature_requirement_behavior_condition_form_the_expected_parent_chain() {
+    fn feature_behavior_scenario_form_the_expected_parent_chain() {
         assert_eq!(descriptor(EntityKind::Requirement).parent_kind, None);
         assert_eq!(
             descriptor(EntityKind::Feature).parent_kind,
@@ -152,12 +143,8 @@ mod tests {
             Some(EntityKind::Feature)
         );
         assert_eq!(
-            descriptor(EntityKind::Condition).parent_kind,
+            descriptor(EntityKind::Scenario).parent_kind,
             Some(EntityKind::Behavior)
-        );
-        assert_eq!(
-            descriptor(EntityKind::ExpectedResult).parent_kind,
-            Some(EntityKind::Condition)
         );
     }
 
@@ -190,9 +177,6 @@ mod tests {
             .collect();
         assert_eq!(segments.len(), EntityKind::ALL.len());
         assert_eq!(EntityKind::Feature.directory_segment(), "features");
-        assert_eq!(
-            EntityKind::ExpectedResult.directory_segment(),
-            "expected_results"
-        );
+        assert_eq!(EntityKind::Scenario.directory_segment(), "scenarios");
     }
 }

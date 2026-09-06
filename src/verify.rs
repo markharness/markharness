@@ -485,32 +485,27 @@ mod tests {
 
     fn write_knowledge_todo_add_task(root: &Path) {
         let dir = root
-            .join(".markharness/knowledge/req-todo/todo/todo-add-task/todo-add-task-empty-input");
+            .join(".markharness/knowledge/features/todo/todo-add-task/todo-add-task-empty-input");
         fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(root.join(".markharness/knowledge/requirements/req-todo")).unwrap();
         fs::write(
-            root.join(".markharness/knowledge/req-todo/requirement.yml"),
+            root.join(".markharness/knowledge/requirements/req-todo/requirement.yml"),
             "id: req-todo\nlabel: req-todo\naxis: [ui]\n",
         )
         .unwrap();
         fs::write(
-            root.join(".markharness/knowledge/req-todo/todo/feature.yml"),
-            "id: todo\nrequirement: req-todo\nlabel: todo\naxis: [ui]\n",
+            root.join(".markharness/knowledge/features/todo/feature.yml"),
+            "id: todo\nrequirement_ids: [req-todo]\nlabel: todo\naxis: [ui]\n",
         )
         .unwrap();
         fs::write(
-            root.join(".markharness/knowledge/req-todo/todo/todo-add-task/behavior.yml"),
-            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\npreconditions:\n  - \"Press the add button.\"\n",
+            root.join(".markharness/knowledge/features/todo/todo-add-task/behavior.yml"),
+            "id: todo-add-task\nfeature: todo\nlabel: todo-add-task\naxis: [ui]\ndescription: |\n  User adds a task.\nprocedures: {}\n",
         )
         .unwrap();
         fs::write(
-            dir.join("condition.yml"),
-            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(dir.join("expected")).unwrap();
-        fs::write(
-            dir.join("expected/001.yml"),
-            "id: todo-add-task-empty-input-001\ncondition: todo-add-task-empty-input\ndescription: |\n  Shows a validation error.\nresults:\n  - \"Confirmed.\"\n",
+            dir.join("scenario.yml"),
+            "id: todo-add-task-empty-input\nbehavior: todo-add-task\nlabel: todo-add-task-empty-input\ndescription: |\n  Title is empty.\nphases:\n  - steps:\n      - action: \"Press the add button.\"\n    results:\n      - \"Shows a validation error.\"\n",
         )
         .unwrap();
     }
@@ -556,8 +551,7 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml"
-                    .to_string(),
+                file_name: "testcases/todo/todo-add-task/todo-add-task-empty-input.yml".to_string(),
                 kind: DiffKind::Added,
             }]
         );
@@ -596,7 +590,7 @@ mod tests {
 
         let testcases_dir = dir
             .path()
-            .join(".markharness/generated/testcases/req-todo/todo/todo-add-task");
+            .join(".markharness/generated/testcases/todo/todo-add-task");
         fs::create_dir_all(&testcases_dir).unwrap();
         fs::write(
             testcases_dir.join("todo-add-task-empty-input.yml"),
@@ -610,8 +604,7 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "testcases/req-todo/todo/todo-add-task/todo-add-task-empty-input.yml"
-                    .to_string(),
+                file_name: "testcases/todo/todo-add-task/todo-add-task-empty-input.yml".to_string(),
                 kind: DiffKind::Changed,
             }]
         );
@@ -624,7 +617,7 @@ mod tests {
 
         let testcases_dir = dir
             .path()
-            .join(".markharness/generated/testcases/req-todo/todo/todo-add-task");
+            .join(".markharness/generated/testcases/todo/todo-add-task");
         fs::create_dir_all(&testcases_dir).unwrap();
         fs::write(testcases_dir.join("stale-condition.yml"), "stale content\n").unwrap();
         write_matching_index(dir.path());
@@ -634,7 +627,7 @@ mod tests {
         assert_eq!(
             diffs,
             vec![DiffEntry {
-                file_name: "testcases/req-todo/todo/todo-add-task/stale-condition.yml".to_string(),
+                file_name: "testcases/todo/todo-add-task/stale-condition.yml".to_string(),
                 kind: DiffKind::Removed,
             }]
         );
@@ -761,11 +754,11 @@ mod tests {
     }
 
     fn write_feature(root: &Path, label: &str) {
-        let dir = root.join(".markharness/knowledge/req-todo/todo-edit");
+        let dir = root.join(".markharness/knowledge/features/todo-edit");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("feature.yml"),
-            format!("id: todo-edit\nrequirement: req-todo\nlabel: {label}\naxis: []\n"),
+            format!("id: todo-edit\nrequirement_ids: [req-todo]\nlabel: {label}\naxis: []\n"),
         )
         .unwrap();
     }
@@ -883,11 +876,13 @@ mod tests {
     }
 
     fn write_feature_with_uid(root: &Path, id: &str, label: &str, uid: &str) {
-        let dir = root.join(".markharness/knowledge/req-todo/todo-edit");
+        let dir = root.join(".markharness/knowledge/features/todo-edit");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("feature.yml"),
-            format!("id: {id}\nrequirement: req-todo\nlabel: {label}\naxis: []\nuid: {uid}\n"),
+            format!(
+                "id: {id}\nrequirement_ids: [req-todo]\nlabel: {label}\naxis: []\nuid: {uid}\n"
+            ),
         )
         .unwrap();
     }

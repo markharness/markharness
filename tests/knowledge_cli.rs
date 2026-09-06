@@ -66,20 +66,20 @@ behavior:
   label: jump
   axis: [gameplay]
   description: Player presses jump.
-  steps:
-    - Press the jump button.
+  procedures:
+    - name: hold
+      steps:
+        - Press the jump button.
 
-condition:
+scenario:
   id: ground
   label: ground
   description: Jump from the ground and land
-  steps:
-    - Do it.
-
-expected:
-  - description: lands safely
-    results:
-      - Confirmed.
+  phases:
+    - steps:
+        - action: Do it.
+      results:
+        - lands safely
 ";
 
 fn write_draft(dir: &Path, content: &str) -> std::path::PathBuf {
@@ -95,8 +95,8 @@ fn scaffold_prints_the_blank_draft_template_to_stdout_by_default() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("requirement:"), "{stdout}");
-    assert!(stdout.contains("condition:"), "{stdout}");
-    assert!(stdout.contains("expected:"), "{stdout}");
+    assert!(stdout.contains("scenario:"), "{stdout}");
+    assert!(stdout.contains("phases:"), "{stdout}");
 }
 
 #[test]
@@ -268,7 +268,7 @@ fn apply_exits_zero_and_writes_files_on_success() {
     assert!(stdout.contains("\"written\":["), "{stdout}");
     assert!(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml")
             .exists()
     );
 }
@@ -302,20 +302,16 @@ behavior:
   description: |
     line one about foo.js: bar()
     line two about baz.js: qux()
-  steps:
-    - Press the jump button.
 
-condition:
+scenario:
   id: ground
   label: ground
   description: Jump from the ground and land
-  steps:
-    - Do it.
-
-expected:
-  - description: lands safely
-    results:
-      - Confirmed.
+  phases:
+    - steps:
+        - action: Do it.
+      results:
+        - lands safely
 ";
     let draft_path = write_draft(dir.path(), draft);
 
@@ -331,7 +327,7 @@ expected:
 
     let behavior_path = dir
         .path()
-        .join(".markharness/knowledge/controls/player-jump/jump/behavior.yml");
+        .join(".markharness/knowledge/features/player-jump/jump/behavior.yml");
     let written = fs::read_to_string(&behavior_path).unwrap();
     let behavior = markharness::knowledge::parse_behavior(&written).unwrap();
     assert_eq!(
@@ -364,7 +360,11 @@ fn apply_exits_one_and_writes_nothing_on_validation_failure() {
     ]);
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/knowledge/requirements/controls")
+            .exists()
+    );
 }
 
 #[test]
@@ -385,10 +385,14 @@ fn apply_dry_run_validates_only_and_writes_nothing() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "{\"ok\":true}");
-    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/knowledge/requirements/controls")
+            .exists()
+    );
 }
 
-const SECOND_CONDITION_REUSING_PARENT: &str = "\
+const SECOND_SCENARIO_REUSING_PARENT: &str = "\
 requirement:
   id: controls
 
@@ -398,17 +402,15 @@ feature:
 behavior:
   id: jump
 
-condition:
+scenario:
   id: air
   label: air
   description: Jump in the air.
-  steps:
-    - Do it.
-
-expected:
-  - description: does not take fall damage
-    results:
-      - Confirmed.
+  phases:
+    - steps:
+        - action: Do it.
+      results:
+        - does not take fall damage
 ";
 
 fn write_batch_draft(dir: &Path, name: &str, content: &str) {
@@ -421,7 +423,7 @@ fn apply_batch_applies_every_draft_in_file_name_order() {
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
-    write_batch_draft(&drafts_dir, "02-air.yml", SECOND_CONDITION_REUSING_PARENT);
+    write_batch_draft(&drafts_dir, "02-air.yml", SECOND_SCENARIO_REUSING_PARENT);
 
     let output = run(&[
         "knowledge",
@@ -438,12 +440,12 @@ fn apply_batch_applies_every_draft_in_file_name_order() {
     assert!(stdout.contains("\"ok\":true"), "{stdout}");
     assert!(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml")
             .exists()
     );
     assert!(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/air/condition.yml")
+            .join(".markharness/knowledge/features/player-jump/jump/air/scenario.yml")
             .exists()
     );
 }
@@ -454,7 +456,7 @@ fn apply_batch_writes_nothing_when_a_later_draft_is_invalid() {
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
-    // A new condition ("air") missing its required description.
+    // A new scenario ("air") missing its required description/phases.
     write_batch_draft(
         &drafts_dir,
         "02-air.yml",
@@ -468,7 +470,7 @@ feature:
 behavior:
   id: jump
 
-condition:
+scenario:
   id: air
   label: air
 ",
@@ -488,7 +490,7 @@ condition:
     assert!(stderr.contains("02-air.yml"), "{stderr}");
     assert!(
         !dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml")
             .exists(),
         "the first draft's files must be rolled back when the second draft is invalid"
     );
@@ -543,7 +545,11 @@ fn apply_batch_dry_run_validates_only_and_writes_nothing() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "{\"ok\":true}");
-    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/knowledge/requirements/controls")
+            .exists()
+    );
 }
 
 #[test]
@@ -566,7 +572,11 @@ fn validate_batch_exits_zero_and_writes_nothing_for_a_valid_batch() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "{\"ok\":true}");
-    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/knowledge/requirements/controls")
+            .exists()
+    );
 }
 
 #[test]
@@ -575,7 +585,7 @@ fn validate_batch_lets_a_later_draft_reuse_a_parent_an_earlier_draft_creates() {
     let drafts_dir = dir.path().join("drafts");
     fs::create_dir_all(&drafts_dir).unwrap();
     write_batch_draft(&drafts_dir, "01-ground.yml", VALID_DRAFT);
-    write_batch_draft(&drafts_dir, "02-air.yml", SECOND_CONDITION_REUSING_PARENT);
+    write_batch_draft(&drafts_dir, "02-air.yml", SECOND_SCENARIO_REUSING_PARENT);
 
     let output = run(&[
         "knowledge",
@@ -646,7 +656,11 @@ fn apply_batch_dry_run_json_reports_every_failing_file_not_just_the_first() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"file\":\"01-broken.yml\""), "{stdout}");
     assert!(stdout.contains("\"file\":\"02-invalid.yml\""), "{stdout}");
-    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/knowledge/requirements/controls")
+            .exists()
+    );
 }
 
 #[test]
@@ -695,7 +709,11 @@ fn apply_batch_json_reports_error_when_the_directory_has_no_yml_files() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"ok\":false"), "{stdout}");
     assert!(stdout.contains("\"error\":"), "{stdout}");
-    assert!(!dir.path().join(".markharness/knowledge/controls").exists());
+    assert!(
+        !dir.path()
+            .join(".markharness/knowledge/requirements/controls")
+            .exists()
+    );
 }
 
 #[test]
@@ -775,7 +793,7 @@ fn apply_strip_redundant_prefix_strips_condition_id_and_succeeds() {
     assert_eq!(output.status.code(), Some(0));
     assert!(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml")
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml")
             .exists()
     );
 }

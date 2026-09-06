@@ -157,8 +157,7 @@ pub enum EntityKindArg {
     Requirement,
     Feature,
     Behavior,
-    Condition,
-    ExpectedResult,
+    Scenario,
 }
 
 impl From<EntityKindArg> for crate::identity::EntityKind {
@@ -167,8 +166,7 @@ impl From<EntityKindArg> for crate::identity::EntityKind {
             EntityKindArg::Requirement => crate::identity::EntityKind::Requirement,
             EntityKindArg::Feature => crate::identity::EntityKind::Feature,
             EntityKindArg::Behavior => crate::identity::EntityKind::Behavior,
-            EntityKindArg::Condition => crate::identity::EntityKind::Condition,
-            EntityKindArg::ExpectedResult => crate::identity::EntityKind::ExpectedResult,
+            EntityKindArg::Scenario => crate::identity::EntityKind::Scenario,
         }
     }
 }
@@ -202,7 +200,7 @@ pub enum IdentityCommand {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Condition/ExpectedResult) that doesn't have one yet (design doc §12). Idempotent.
+    /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Scenario) that doesn't have one yet (design doc §12). Idempotent.
     Migrate {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -450,14 +448,14 @@ impl From<ChangeTypeArg> for changes::ChangeType {
 
 /// The unit `impacted_testcases` is narrowed down to (issue #15). `Feature`
 /// is the default and matches the tool's behavior before this flag
-/// existed; `Behavior`/`Condition` trade recall for precision (see
+/// existed; `Behavior`/`Scenario` trade recall for precision (see
 /// `changes::Granularity`'s doc comment).
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum GranularityArg {
     #[default]
     Feature,
     Behavior,
-    Condition,
+    Scenario,
 }
 
 impl From<GranularityArg> for changes::Granularity {
@@ -465,7 +463,7 @@ impl From<GranularityArg> for changes::Granularity {
         match value {
             GranularityArg::Feature => changes::Granularity::Feature,
             GranularityArg::Behavior => changes::Granularity::Behavior,
-            GranularityArg::Condition => changes::Granularity::Condition,
+            GranularityArg::Scenario => changes::Granularity::Scenario,
         }
     }
 }
@@ -487,7 +485,7 @@ pub enum ChangesCommand {
         /// Derive impacted_testcases from the current knowledge/ working tree instead of the `to` milestone's committed tree (legacy behavior; recomputing the same past interval later can then yield a different result)
         #[arg(long)]
         current_tree: bool,
-        /// The unit impacted_testcases is narrowed down to. `feature` (default) keeps every TestCase generated from a changed Feature; `behavior`/`condition` narrow further, trading recall for precision (no coupling between siblings is detected — see docs/ja/cli-manual.md 1.12節)
+        /// The unit impacted_testcases is narrowed down to. `feature` (default) keeps every TestCase generated from a changed Feature; `behavior`/`scenario` narrow further, trading recall for precision (no coupling between siblings is detected — see docs/ja/cli-manual.md 1.12節)
         #[arg(long, value_enum, default_value = "feature")]
         granularity: GranularityArg,
     },
@@ -596,7 +594,7 @@ pub enum AxesCommand {
 
 #[derive(Subcommand)]
 pub enum KnowledgeCommand {
-    /// Interactively record a Feature/Condition/ExpectedResult
+    /// Interactively record a Feature/Behavior/Scenario
     Add {
         /// Target project directory containing knowledge/. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -640,7 +638,7 @@ pub enum KnowledgeCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
-        /// Strip a condition.id prefix that redundantly repeats behavior.id, instead of erroring
+        /// Strip a scenario.id prefix that redundantly repeats behavior.id, instead of erroring
         #[arg(long)]
         strip_redundant_prefix: bool,
         /// Validate only, without writing (alias for `knowledge validate`)
@@ -2922,7 +2920,9 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{condition_id}.yml")),
-            format!("case_id: {case_id}\ngenerated_from:\n  feature: {feature_id}\n"),
+            format!(
+                "case_id: {case_id}\ngenerated_from:\n  requirement_ids: []\n  feature: {feature_id}\n"
+            ),
         )
         .unwrap();
     }
@@ -2932,13 +2932,13 @@ mod tests {
         let dir = init_git_repo_for_test();
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump"),
+                .join(".markharness/knowledge/features/player-jump"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: []\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: []\n",
         )
         .unwrap();
         fs::create_dir_all(dir.path().join(".markharness/executions/m1")).unwrap();

@@ -18,37 +18,32 @@ fn run(args: &[&str]) -> Output {
 }
 
 fn write_valid_tree(root: &Path) {
-    let base = root.join(".markharness/knowledge/controls/player-jump/jump/ground");
+    let base = root.join(".markharness/knowledge/features/player-jump/jump/ground");
     std::fs::create_dir_all(&base).unwrap();
+    std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
     std::fs::write(
         root.join(".markharness/axes/gameplay.yml"),
         "id: gameplay\nlabel: Gameplay\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/controls/requirement.yml"),
+        root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
         "id: controls\nlabel: controls\naxis: [gameplay]\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/controls/player-jump/feature.yml"),
-        "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\n",
+        root.join(".markharness/knowledge/features/player-jump/feature.yml"),
+        "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-        "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
+        root.join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
+        "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nprocedures: {}\n",
     )
     .unwrap();
     std::fs::write(
-        base.join("condition.yml"),
-        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(base.join("expected")).unwrap();
-    std::fs::write(
-        base.join("expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n",
+        base.join("scenario.yml"),
+        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\n",
     )
     .unwrap();
 }
@@ -77,7 +72,7 @@ fn validate_accepts_a_requirement_with_source_and_related_issues() {
     assert!(init_output.status.success());
     write_valid_tree(dir.path());
     std::fs::write(
-        dir.path().join(".markharness/knowledge/controls/requirement.yml"),
+        dir.path().join(".markharness/knowledge/requirements/controls/requirement.yml"),
         "id: controls\nlabel: controls\naxis: [gameplay]\nsource: PRD-42\nrelated_issues: [JIRA-123, JIRA-456]\n",
     )
     .unwrap();
@@ -100,7 +95,7 @@ fn validate_rejects_a_requirement_with_a_non_string_related_issues_item() {
     write_valid_tree(dir.path());
     std::fs::write(
         dir.path()
-            .join(".markharness/knowledge/controls/requirement.yml"),
+            .join(".markharness/knowledge/requirements/controls/requirement.yml"),
         "id: controls\nlabel: controls\naxis: [gameplay]\nrelated_issues: [123]\n",
     )
     .unwrap();
@@ -118,8 +113,8 @@ fn validate_accepts_an_expected_result_with_generated_by_and_verified_by() {
     write_valid_tree(dir.path());
     std::fs::write(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\ngenerated_by: llm\nverified_by:\n  human_review: true\n",
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\ngenerated_by: llm\nverified_by:\n  human_review: true\n",
     )
     .unwrap();
 
@@ -141,8 +136,8 @@ fn validate_rejects_an_expected_result_with_an_invalid_generated_by_value() {
     write_valid_tree(dir.path());
     std::fs::write(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\ngenerated_by: made-up\n",
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\ngenerated_by: made-up\n",
     )
     .unwrap();
 
@@ -159,8 +154,8 @@ fn validate_rejects_a_verified_by_without_human_review() {
     write_valid_tree(dir.path());
     std::fs::write(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml"),
-        "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\nverified_by: {}\n",
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+        "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\nverified_by: {}\n",
     )
     .unwrap();
 
@@ -177,8 +172,8 @@ fn validate_exits_one_and_lists_issues_for_an_invalid_feature() {
     write_valid_tree(dir.path());
     std::fs::write(
         dir.path()
-            .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-        "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [not-registered]\n",
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
+        "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [not-registered]\n",
     )
     .unwrap();
 

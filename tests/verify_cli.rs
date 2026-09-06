@@ -48,43 +48,38 @@ fn commit_all_with_date(root: &Path, message: &str, hour_offset: u32) {
 /// A full Requirement->Feature->Behavior->Condition->ExpectedResult chain
 /// (`generate`'s structural input) whose Feature label is the only thing
 /// that changes between v1/v2, so the resulting `case_id` is always
-/// `tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo`
+/// `tc-todo-edit-edit-existing-todo-edit-existing-todo`
 /// (`generate::generate_testcases` derives `case_id` as
-/// `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}`).
+/// `tc-{feature.id}-{behavior.id}-{condition.id}`).
 fn write_full_chain(root: &Path, label: &str) {
-    let dir = root.join(".markharness/knowledge/req-todo/todo-edit/edit-existing-todo");
+    let dir = root.join(".markharness/knowledge/features/todo-edit/edit-existing-todo");
     std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/req-todo")).unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/req-todo/requirement.yml"),
+        root.join(".markharness/knowledge/requirements/req-todo/requirement.yml"),
         "id: req-todo\nlabel: req-todo\naxis: [ui]\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/req-todo/todo-edit/feature.yml"),
-        format!("id: todo-edit\nrequirement: req-todo\nlabel: {label}\naxis: [ui]\n"),
+        root.join(".markharness/knowledge/features/todo-edit/feature.yml"),
+        format!("id: todo-edit\nrequirement_ids: [req-todo]\nlabel: {label}\naxis: [ui]\n"),
     )
     .unwrap();
     std::fs::write(
         dir.parent().unwrap().join("behavior.yml"),
-        "id: edit-existing-todo\nfeature: todo-edit\nlabel: edit-existing-todo\naxis: [ui]\ndescription: |\n  User edits an existing todo.\npreconditions:\n  - \"Press the edit button.\"\n",
+        "id: edit-existing-todo\nfeature: todo-edit\nlabel: edit-existing-todo\naxis: [ui]\ndescription: |\n  User edits an existing todo.\nprocedures: {}\n",
     )
     .unwrap();
     std::fs::write(
-        dir.join("condition.yml"),
-        "id: edit-existing-todo\nbehavior: edit-existing-todo\nlabel: edit-existing-todo\ndescription: |\n  Title is changed.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(dir.join("expected")).unwrap();
-    std::fs::write(
-        dir.join("expected/001.yml"),
-        "id: edit-existing-todo-001\ncondition: edit-existing-todo\ndescription: |\n  The todo is updated.\nresults:\n  - \"Confirmed.\"\n",
+        dir.join("scenario.yml"),
+        "id: edit-existing-todo\nbehavior: edit-existing-todo\nlabel: edit-existing-todo\ndescription: |\n  Title is changed.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"The todo is updated.\"\n",
     )
     .unwrap();
 }
 
 /// A project with two milestones (`test1`, `test2`) where `todo-edit`
 /// changed between them, `changes/test2.yaml` computed via the real CLI
-/// (`generate` + `changes compute`), impacting `tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo`.
+/// (`generate` + `changes compute`), impacting `tc-todo-edit-edit-existing-todo-edit-existing-todo`.
 fn init_project_with_pending_change() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
@@ -127,7 +122,7 @@ fn init_project_with_pending_change() -> tempfile::TempDir {
     assert!(
         dir.path()
             .join(
-                ".markharness/generated/testcases/req-todo/todo-edit/edit-existing-todo/edit-existing-todo.yml"
+                ".markharness/generated/testcases/todo-edit/edit-existing-todo/edit-existing-todo.yml"
             )
             .is_file()
     );
@@ -145,8 +140,8 @@ fn init_project_with_pending_change() -> tempfile::TempDir {
     let changes_content =
         std::fs::read_to_string(dir.path().join(".markharness/changes/test2.yaml")).unwrap();
     assert!(
-        changes_content.contains("tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo"),
-        "expected changes/test2.yaml to impact tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo, got:\n{changes_content}"
+        changes_content.contains("tc-todo-edit-edit-existing-todo-edit-existing-todo"),
+        "expected changes/test2.yaml to impact tc-todo-edit-edit-existing-todo-edit-existing-todo, got:\n{changes_content}"
     );
 
     dir
@@ -263,7 +258,7 @@ fn verify_pending_reports_the_impacted_testcase_before_reexecution() {
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo"),
+        stdout.contains("tc-todo-edit-edit-existing-todo-edit-existing-todo"),
         "unexpected stdout: {stdout}"
     );
     assert!(stdout.contains("pending"), "unexpected stdout: {stdout}");
@@ -306,7 +301,7 @@ fn verify_trace_reports_the_reflected_change_after_reexecution() {
     let record = run(&[
         "execution",
         "record",
-        "tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo",
+        "tc-todo-edit-edit-existing-todo-edit-existing-todo",
         "--milestone",
         "test2",
         "--result",
@@ -321,7 +316,7 @@ fn verify_trace_reports_the_reflected_change_after_reexecution() {
     let output = run(&[
         "verify",
         "trace",
-        "tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo",
+        "tc-todo-edit-edit-existing-todo-edit-existing-todo",
         "--milestone",
         "test2",
         "--dir",
@@ -351,7 +346,7 @@ fn verify_trace_reports_the_reflected_change_after_reexecution() {
     ]);
     let pending_stdout = String::from_utf8_lossy(&pending_after.stdout);
     assert!(
-        !pending_stdout.contains("tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo"),
+        !pending_stdout.contains("tc-todo-edit-edit-existing-todo-edit-existing-todo"),
         "expected re-executed case to no longer be pending: {pending_stdout}"
     );
 }
@@ -363,7 +358,7 @@ fn verify_trace_exits_two_when_no_verified_blobs_recorded() {
     let output = run(&[
         "verify",
         "trace",
-        "tc-req-todo-todo-edit-edit-existing-todo-edit-existing-todo",
+        "tc-todo-edit-edit-existing-todo-edit-existing-todo",
         "--milestone",
         "test2",
         "--dir",

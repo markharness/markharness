@@ -93,7 +93,7 @@ fn legacy_case_id_and_change_event_identity_survive_migration_and_a_later_rename
     // 2. Migrate: every element gets a uid; the manifest records
     // legacy_case_id -> case_uid.
     let migrate_report = identity::migrate_entities(dir.path()).unwrap();
-    assert_eq!(migrate_report.migrated.len(), 5);
+    assert_eq!(migrate_report.migrated.len(), 4);
     commit_and_tag_milestone(dir.path(), "v2", 2);
 
     let post_migrate_testcases =
@@ -113,8 +113,8 @@ fn legacy_case_id_and_change_event_identity_survive_migration_and_a_later_rename
 
     // 3. Post-migration rename: the Feature's id changes, so the
     // TestCase's case_id string changes too (it embeds the Feature id) —
-    // but case_uid must not, since it is a pure function of the five
-    // uids, none of which a rename touches.
+    // but case_uid must not, since it is a pure function of ScenarioUid
+    // alone (ADR 0017 §3), which a Feature rename never touches.
     identity::rename_id(dir.path(), "todo", "todo-v2").unwrap();
     commit_and_tag_milestone(dir.path(), "v3", 3);
 

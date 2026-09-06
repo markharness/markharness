@@ -325,19 +325,20 @@ mod tests {
     }
 
     fn write_full_tree(root: &Path, feature_id: &str) {
-        let knowledge = root.join(".markharness/knowledge/req-todo");
-        let base = knowledge
-            .join(feature_id)
-            .join("todo-add-task/todo-add-task-empty-input");
+        let knowledge = root
+            .join(".markharness/knowledge/features")
+            .join(feature_id);
+        let base = knowledge.join("todo-add-task/todo-add-task-empty-input");
         fs::create_dir_all(base.join("expected")).unwrap();
+        fs::create_dir_all(root.join(".markharness/knowledge/requirements/req-todo")).unwrap();
         fs::write(
-            knowledge.join("requirement.yml"),
+            root.join(".markharness/knowledge/requirements/req-todo/requirement.yml"),
             "id: req-todo\nlabel: req-todo\naxis: []\n",
         )
         .unwrap();
         fs::write(
-            knowledge.join(feature_id).join("feature.yml"),
-            format!("id: {feature_id}\nrequirement: req-todo\nlabel: todo\naxis: []\n"),
+            knowledge.join("feature.yml"),
+            format!("id: {feature_id}\nrequirement_ids: [req-todo]\nlabel: todo\naxis: []\n"),
         )
         .unwrap();
         fs::write(
@@ -427,7 +428,7 @@ mod tests {
         let feature_uid = {
             let content = fs::read_to_string(
                 dir.path()
-                    .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+                    .join(".markharness/knowledge/features/todo/feature.yml"),
             )
             .unwrap();
             crate::knowledge::parse_feature(&content)
@@ -519,7 +520,7 @@ mod tests {
         let feature_uid = {
             let content = fs::read_to_string(
                 dir.path()
-                    .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+                    .join(".markharness/knowledge/features/todo/feature.yml"),
             )
             .unwrap();
             crate::knowledge::parse_feature(&content)
@@ -579,7 +580,7 @@ mod tests {
         let feature_uid = {
             let content = fs::read_to_string(
                 dir.path()
-                    .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+                    .join(".markharness/knowledge/features/todo/feature.yml"),
             )
             .unwrap();
             crate::knowledge::parse_feature(&content)
@@ -631,7 +632,7 @@ mod tests {
         let feature_uid = {
             let content = fs::read_to_string(
                 dir.path()
-                    .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+                    .join(".markharness/knowledge/features/todo/feature.yml"),
             )
             .unwrap();
             crate::knowledge::parse_feature(&content)
@@ -691,7 +692,7 @@ mod tests {
         let feature_uid = {
             let content = fs::read_to_string(
                 dir.path()
-                    .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+                    .join(".markharness/knowledge/features/todo/feature.yml"),
             )
             .unwrap();
             crate::knowledge::parse_feature(&content)
@@ -766,7 +767,7 @@ mod tests {
         let feature_uid = {
             let content = fs::read_to_string(
                 dir.path()
-                    .join(".markharness/knowledge/req-todo/todo/feature.yml"),
+                    .join(".markharness/knowledge/features/todo/feature.yml"),
             )
             .unwrap();
             crate::knowledge::parse_feature(&content)

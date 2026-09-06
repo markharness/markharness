@@ -2,6 +2,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::canonical;
+use crate::case_definition;
 use crate::changes::{self, ChangeOptions};
 use crate::fs_safety::{copy_unmanaged_siblings_no_follow, replace_dir_from_staging, replace_file};
 use crate::generate;
@@ -139,6 +140,15 @@ pub fn generate_testcases(root: &Path) -> io::Result<CommandOutcome> {
             .join("knowledge"),
     )?;
     let testcases = generate::compile_testcases(&snapshot);
+    // ADR 0017 §5: freeze each migrated TestCase's effective content under
+    // its `(case_uid, case_revision)` key. Independent of the
+    // staging/atomic-swap dance below — `generated/` is fully reproducible
+    // from `knowledge/` on every run, but `case-definitions/` is meant to
+    // accumulate durably across runs, so it's written directly rather than
+    // through the disposable staging directory.
+    for testcase in &testcases {
+        case_definition::store_case_definition(root, testcase)?;
+    }
     let generated_dir = root
         .join(crate::project_root::MARKHARNESS_DIR)
         .join("generated");

@@ -27,20 +27,20 @@ fn repository() -> tempfile::TempDir {
     git(dir.path(), &["config", "core.autocrlf", "false"]);
     write(
         dir.path(),
-        ".markharness/knowledge/checkout/requirement.yml",
+        ".markharness/knowledge/requirements/checkout/requirement.yml",
         "id: checkout\nlabel: Checkout\naxis: [commerce]\n",
     );
     write(
         dir.path(),
-        ".markharness/knowledge/checkout/pay/feature.yml",
-        "id: pay\nrequirement: checkout\nlabel: Pay\naxis: [commerce]\n",
+        ".markharness/knowledge/features/pay/feature.yml",
+        "id: pay\nrequirement_ids: [checkout]\nlabel: Pay\naxis: [commerce]\n",
     );
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-qm", "base"]);
     write(
         dir.path(),
-        ".markharness/knowledge/checkout/pay/feature.yml",
-        "id: pay\nrequirement: checkout\nlabel: Pay securely\naxis: [commerce]\n",
+        ".markharness/knowledge/features/pay/feature.yml",
+        "id: pay\nrequirement_ids: [checkout]\nlabel: Pay securely\naxis: [commerce]\n",
     );
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-qm", "head"]);
@@ -126,13 +126,13 @@ fn feature_history_api_includes_change_events_recorded_before_a_uid_preserving_r
     git(dir.path(), &["config", "core.autocrlf", "false"]);
     write(
         dir.path(),
-        ".markharness/knowledge/checkout/requirement.yml",
+        ".markharness/knowledge/requirements/checkout/requirement.yml",
         "id: checkout\nlabel: Checkout\naxis: []\n",
     );
     write(
         dir.path(),
-        ".markharness/knowledge/checkout/pay/feature.yml",
-        &format!("id: pay\nrequirement: checkout\nlabel: Pay\naxis: []\nuid: {UID}\n"),
+        ".markharness/knowledge/features/pay/feature.yml",
+        &format!("id: pay\nrequirement_ids: [checkout]\nlabel: Pay\naxis: []\nuid: {UID}\n"),
     );
     write(
         dir.path(),
@@ -145,14 +145,14 @@ fn feature_history_api_includes_change_events_recorded_before_a_uid_preserving_r
     git(dir.path(), &["commit", "-qm", "base"]);
     write(
         dir.path(),
-        ".markharness/knowledge/checkout/pay-securely/feature.yml",
+        ".markharness/knowledge/features/pay-securely/feature.yml",
         &format!(
-            "id: pay-securely\nrequirement: checkout\nlabel: Pay securely\naxis: []\nuid: {UID}\n"
+            "id: pay-securely\nrequirement_ids: [checkout]\nlabel: Pay securely\naxis: []\nuid: {UID}\n"
         ),
     );
     markharness::fs_safety::remove_dir_all_no_follow(
         dir.path(),
-        &dir.path().join(".markharness/knowledge/checkout/pay"),
+        &dir.path().join(".markharness/knowledge/features/pay"),
     )
     .unwrap();
     write(

@@ -21,12 +21,8 @@ pub const DEFAULT_SCHEMA_FILES: &[(&str, &str)] = &[
         include_str!("../schema/behavior.schema.json"),
     ),
     (
-        "condition.schema.json",
-        include_str!("../schema/condition.schema.json"),
-    ),
-    (
-        "expected_result.schema.json",
-        include_str!("../schema/expected_result.schema.json"),
+        "scenario.schema.json",
+        include_str!("../schema/scenario.schema.json"),
     ),
     (
         "axis.schema.json",
@@ -226,7 +222,7 @@ expected:
     fn feature_struct_fields_match_feature_schema_properties() {
         let feature = crate::knowledge::Feature {
             id: "player-jump".to_string(),
-            requirement: "player-controls".to_string(),
+            requirement_ids: vec!["player-controls".to_string()],
             label: "player-jump".to_string(),
             axis: vec!["gameplay".to_string()],
             description: Some("d".to_string()),
@@ -283,7 +279,7 @@ expected:
                 "feature.schema.json",
                 serde_json::to_value(crate::knowledge::Feature {
                     id: "player-jump".to_string(),
-                    requirement: "player-controls".to_string(),
+                    requirement_ids: vec!["player-controls".to_string()],
                     label: "player-jump".to_string(),
                     axis: vec!["gameplay".to_string()],
                     description: Some("d".to_string()),
@@ -292,40 +288,41 @@ expected:
                 })
                 .unwrap(),
             ),
-            EntityKind::Behavior => (
-                "behavior.schema.json",
-                serde_json::to_value(crate::knowledge::Behavior {
-                    id: "player-jump-jump".to_string(),
-                    feature: "player-jump".to_string(),
-                    label: "jump".to_string(),
-                    axis: vec!["gameplay".to_string()],
-                    description: "Player presses jump.".to_string(),
-                    preconditions: vec!["Press the jump button.".to_string()],
-                    uid: Some(UID.to_string()),
-                })
-                .unwrap(),
-            ),
-            EntityKind::Condition => (
-                "condition.schema.json",
-                serde_json::to_value(crate::knowledge::Condition {
+            EntityKind::Behavior => {
+                let mut procedures = std::collections::BTreeMap::new();
+                procedures.insert(
+                    "login".to_string(),
+                    crate::knowledge::Procedure {
+                        steps: vec!["Enter credentials.".to_string()],
+                    },
+                );
+                (
+                    "behavior.schema.json",
+                    serde_json::to_value(crate::knowledge::Behavior {
+                        id: "player-jump-jump".to_string(),
+                        feature: "player-jump".to_string(),
+                        label: "jump".to_string(),
+                        axis: vec!["gameplay".to_string()],
+                        description: "Player presses jump.".to_string(),
+                        procedures,
+                        uid: Some(UID.to_string()),
+                    })
+                    .unwrap(),
+                )
+            }
+            EntityKind::Scenario => (
+                "scenario.schema.json",
+                serde_json::to_value(crate::knowledge::Scenario {
                     id: "player-jump-jump-ground".to_string(),
                     behavior: "player-jump-jump".to_string(),
                     label: "ground".to_string(),
                     description: "Jump from the ground and land.".to_string(),
-                    steps: vec!["Land on the ground.".to_string()],
-                    additional_preconditions: vec!["Already airborne.".to_string()],
-                    uid: Some(UID.to_string()),
-                })
-                .unwrap(),
-            ),
-            EntityKind::ExpectedResult => (
-                "expected_result.schema.json",
-                serde_json::to_value(crate::knowledge::ExpectedResult {
-                    id: "player-jump-jump-ground-001".to_string(),
-                    condition: "player-jump-jump-ground".to_string(),
-                    description: "Lands safely.".to_string(),
-                    results: vec!["Player is standing on the ground.".to_string()],
-                    additional_steps: Some(vec!["Reload the page.".to_string()]),
+                    phases: vec![crate::knowledge::Phase {
+                        steps: vec![crate::knowledge::StepItem::Action {
+                            action: "Land on the ground.".to_string(),
+                        }],
+                        results: vec!["Player is standing on the ground.".to_string()],
+                    }],
                     implementation_note: Some("saveState() persists position.".to_string()),
                     generated_by: Some(crate::knowledge::GeneratedBy::Manual),
                     verified_by: Some(crate::knowledge::VerifiedBy { human_review: true }),

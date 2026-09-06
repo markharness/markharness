@@ -43,30 +43,43 @@ fn derive(domain_separator: &str, fields: &[&str]) -> String {
     )
 }
 
-/// `case_uid` (design doc §8): derived from the sorted set
-/// `{requirement_uid, feature_uid, behavior_uid, condition_uid,
-/// expected_result_uid}`. Sorting `expected_result_uids` first makes the
-/// result independent of the order they happen to be listed in.
-pub fn case_uid(
-    requirement_uid: &str,
-    feature_uid: &str,
-    behavior_uid: &str,
-    condition_uid: &str,
-    expected_result_uids: &[String],
-) -> String {
-    let mut sorted: Vec<&str> = expected_result_uids.iter().map(String::as_str).collect();
-    sorted.sort_unstable();
-    let joined_expected = sorted.join(",");
-    derive(
-        "markharness:case_uid:v1",
-        &[
-            requirement_uid,
-            feature_uid,
-            behavior_uid,
-            condition_uid,
-            &joined_expected,
-        ],
-    )
+/// `case_uid`: derived from `scenario_uid` alone (ADR 0017 §3: **1 Scenario
+/// = 1 TestCase**, so CaseUid is a type-tagged deterministic derivation of
+/// ScenarioUid, requiring no random issuance or separate case registry).
+/// Rename-and-reimport keeps the same ScenarioUid, so the same CaseUid
+/// survives too; a rewrite of the Scenario's operations/results/phases
+/// changes Case revision (a separate, content-derived value — Step 3), not
+/// CaseUid.
+pub fn case_uid(scenario_uid: &str) -> String {
+    derive("markharness:case_uid:v3", &[scenario_uid])
+}
+
+/// `case_revision` (ADR 0017 §3): derived purely from a TestCase's effective
+/// content — the canonical encoding of its (already procedure-expanded)
+/// Phases, in order — never from `case_uid` or any display-only field
+/// (label, description, implementation notes, source). Two Scenarios whose
+/// effective Phases canonicalize identically get the same `case_revision`;
+/// this is deliberate (ADR §5: "同一定義は共有する" — the immutable frozen
+/// case-definition store keys on `(case_uid, case_revision)`, and identical
+/// content is meant to share a stored definition).
+///
+/// ADR 0017 §3 lists "準備操作・事前条件、展開後の共通手順、操作、期待結果、
+/// 順序、テストデータ" as the effective inputs a revision must track. The
+/// current `knowledge/` schema (`scenario.schema.json`, `behavior.schema.json`)
+/// has no separate `precondition`/`test_data` field to omit: setup
+/// operations and preconditions are ordinary `Phase.steps` (directly, or via
+/// a `use:` reference into `Behavior.procedures` — Step 2's replacement for
+/// the old, removed `Behavior.preconditions`), and test data is whatever
+/// literal text an author writes into a step's `action` or a Phase's
+/// `results` (e.g. "Enter card number 4111-1111-1111-1111"). Both are
+/// already inside `Phase.steps`/`Phase.results`, so canonicalizing `Phase`
+/// alone captures every one of ADR §3's listed inputs without omission —
+/// this is `case_revision`'s explicit, narrowed contract: it hashes
+/// `Phase`, and `Phase` is defined to carry all of ADR §3's effective
+/// inputs, and nothing else. See the `case_revision_*` tests in
+/// `generate.rs` for the concrete cases this covers.
+pub fn case_revision(canonical_phases: &str) -> String {
+    derive("markharness:case_revision:v1", &[canonical_phases])
 }
 
 /// `change_event_uid` (design doc §8): derived from the identity
@@ -102,70 +115,20 @@ mod tests {
 
     #[test]
     fn case_uid_is_deterministic() {
-        let a = case_uid(
-            "req",
-            "feat",
-            "beh",
-            "cond",
-            &["er1".to_string(), "er2".to_string()],
-        );
-        let b = case_uid(
-            "req",
-            "feat",
-            "beh",
-            "cond",
-            &["er1".to_string(), "er2".to_string()],
-        );
+        let a = case_uid("scenario-uid");
+        let b = case_uid("scenario-uid");
         assert_eq!(a, b);
     }
 
     #[test]
-    fn case_uid_is_independent_of_expected_result_order() {
-        let a = case_uid(
-            "req",
-            "feat",
-            "beh",
-            "cond",
-            &["er1".to_string(), "er2".to_string()],
-        );
-        let b = case_uid(
-            "req",
-            "feat",
-            "beh",
-            "cond",
-            &["er2".to_string(), "er1".to_string()],
-        );
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn case_uid_changes_when_any_component_changes() {
-        let base = case_uid("req", "feat", "beh", "cond", &["er1".to_string()]);
-        assert_ne!(
-            base,
-            case_uid("req2", "feat", "beh", "cond", &["er1".to_string()])
-        );
-        assert_ne!(
-            base,
-            case_uid("req", "feat2", "beh", "cond", &["er1".to_string()])
-        );
-        assert_ne!(
-            base,
-            case_uid("req", "feat", "beh", "cond", &["er2".to_string()])
-        );
-    }
-
-    /// Guards against naive concatenation collisions ("ab"+"c" vs "a"+"bc").
-    #[test]
-    fn case_uid_does_not_collide_across_a_shifted_field_boundary() {
-        let a = case_uid("ab", "c", "beh", "cond", &[]);
-        let b = case_uid("a", "bc", "beh", "cond", &[]);
-        assert_ne!(a, b);
+    fn case_uid_changes_when_scenario_uid_changes() {
+        let base = case_uid("scenario-uid");
+        assert_ne!(base, case_uid("other-scenario-uid"));
     }
 
     #[test]
     fn case_uid_is_a_valid_version_five_uuid_string() {
-        let uid = case_uid("req", "feat", "beh", "cond", &[]);
+        let uid = case_uid("scenario-uid");
         let parts: Vec<&str> = uid.split('-').collect();
         assert_eq!(
             parts.iter().map(|part| part.len()).collect::<Vec<_>>(),
@@ -197,8 +160,30 @@ mod tests {
     fn change_event_uid_and_case_uid_never_collide_with_each_other() {
         // Different domain separators guarantee this even for otherwise
         // identical field values.
-        let case = case_uid("x", "x", "x", "x", &[]);
+        let case = case_uid("x");
         let change = change_event_uid("x", "x", "x", "x", "x", "");
         assert_ne!(case, change);
+    }
+
+    #[test]
+    fn case_revision_is_deterministic() {
+        let a = case_revision("phases-json");
+        let b = case_revision("phases-json");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn case_revision_changes_when_the_canonical_phases_change() {
+        let base = case_revision("phases-json-a");
+        assert_ne!(base, case_revision("phases-json-b"));
+    }
+
+    #[test]
+    fn case_revision_never_collides_with_case_uid_or_change_event_uid() {
+        let revision = case_revision("x");
+        let case = case_uid("x");
+        let change = change_event_uid("x", "x", "x", "x", "x", "");
+        assert_ne!(revision, case);
+        assert_ne!(revision, change);
     }
 }

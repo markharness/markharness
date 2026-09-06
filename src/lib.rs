@@ -10,6 +10,7 @@ pub mod audit_scope;
 pub mod axes;
 pub mod backfill;
 pub mod canonical;
+pub mod case_definition;
 pub mod changes;
 pub mod cli;
 pub mod derived_index;

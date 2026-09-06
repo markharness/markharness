@@ -362,12 +362,14 @@ mod tests {
         run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         let feature_dir = dir
             .path()
-            .join(".markharness/knowledge/controls")
+            .join(".markharness/knowledge/features")
             .join(feature_id);
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
-            format!("id: {feature_id}\nrequirement: controls\nlabel: {feature_id}\naxis: []\n"),
+            format!(
+                "id: {feature_id}\nrequirement_ids: [controls]\nlabel: {feature_id}\naxis: []\n"
+            ),
         )
         .unwrap();
         fs::create_dir_all(
@@ -450,13 +452,13 @@ mod tests {
         run_git(dir.path(), &["config", "core.autocrlf", "false"]);
         let feature_dir = dir
             .path()
-            .join(".markharness/knowledge/controls")
+            .join(".markharness/knowledge/features")
             .join(feature_id);
         fs::create_dir_all(&feature_dir).unwrap();
         fs::write(
             feature_dir.join("feature.yml"),
             format!(
-                "id: {feature_id}\nrequirement: controls\nlabel: {feature_id}\naxis: []\nuid: {uid}\n"
+                "id: {feature_id}\nrequirement_ids: [controls]\nlabel: {feature_id}\naxis: []\nuid: {uid}\n"
             ),
         )
         .unwrap();

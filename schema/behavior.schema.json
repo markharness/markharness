@@ -9,13 +9,24 @@
     "label": { "type": "string", "minLength": 1 },
     "axis": { "type": "array", "items": { "type": "string" } },
     "description": { "type": "string", "minLength": 1 },
-    "preconditions": {
-      "description": "Operations common to every Condition under this Behavior, executed before the Condition's own steps. Empty array means no shared precondition.",
-      "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+    "procedures": {
+      "description": "Common procedures this Behavior's Scenarios may reference by name via a Phase step's `use:` (ADR 0017 §2). No automatic insertion; a procedure may not reference another procedure. Empty object means none.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "required": ["steps"],
+        "additionalProperties": false
+      }
     },
     "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
-  "required": ["id", "feature", "label", "axis", "description", "preconditions"],
+  "required": ["id", "feature", "label", "axis", "description", "procedures"],
   "additionalProperties": false
 }

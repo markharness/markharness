@@ -60,17 +60,15 @@ fn validate_file(
 /// references can be checked against a complete set regardless of walk order.
 fn collect_feature_ids(knowledge_root: &Path) -> io::Result<BTreeSet<String>> {
     let mut ids = BTreeSet::new();
-    for requirement_dir in sorted_subdirs(knowledge_root)? {
-        for feature_dir in sorted_subdirs(&requirement_dir)? {
-            let feature_path = feature_dir.join("feature.yml");
-            if !feature_path.is_file() {
-                continue;
-            }
-            if let Ok(content) = fs::read_to_string(&feature_path)
-                && let Ok(feature) = knowledge::parse_feature(&content)
-            {
-                ids.insert(feature.id);
-            }
+    for feature_dir in sorted_subdirs(&knowledge_root.join("features"))? {
+        let feature_path = feature_dir.join("feature.yml");
+        if !feature_path.is_file() {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&feature_path)
+            && let Ok(feature) = knowledge::parse_feature(&content)
+        {
+            ids.insert(feature.id);
         }
     }
     Ok(ids)
@@ -149,7 +147,7 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
     let knowledge_root = root
         .join(crate::project_root::MARKHARNESS_DIR)
         .join("knowledge");
-    for requirement_dir in sorted_subdirs(&knowledge_root)? {
+    for requirement_dir in sorted_subdirs(&knowledge_root.join("requirements"))? {
         let requirement_path = requirement_dir.join("requirement.yml");
         if !requirement_path.is_file() {
             continue;
@@ -168,87 +166,52 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
                 &known_axes,
             ));
         }
+    }
 
-        for feature_dir in sorted_subdirs(&requirement_dir)? {
-            let feature_path = feature_dir.join("feature.yml");
-            if !feature_path.is_file() {
-                continue;
+    for feature_dir in sorted_subdirs(&knowledge_root.join("features"))? {
+        let feature_path = feature_dir.join("feature.yml");
+        if !feature_path.is_file() {
+            continue;
+        }
+        if let Some(content) =
+            validate_file(root, "feature.schema.json", &feature_path, &mut issues)?
+            && let Ok(feature) = knowledge::parse_feature(&content)
+        {
+            issues.extend(check_axis_tags(
+                root,
+                &feature_path,
+                &feature.axis,
+                &known_axes,
+            ));
+            if let Some(forked_from) = &feature.forked_from
+                && !known_feature_ids.contains(forked_from)
+            {
+                issues.push(ValidationIssue {
+                    path: rel(root, &feature_path),
+                    message: format!(
+                        "forked_from '{forked_from}' does not match any known Feature id"
+                    ),
+                });
             }
+        }
+
+        for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
+            let behavior_path = behavior_dir.join("behavior.yml");
             if let Some(content) =
-                validate_file(root, "feature.schema.json", &feature_path, &mut issues)?
-                && let Ok(feature) = knowledge::parse_feature(&content)
+                validate_file(root, "behavior.schema.json", &behavior_path, &mut issues)?
+                && let Ok(behavior) = knowledge::parse_behavior(&content)
             {
                 issues.extend(check_axis_tags(
                     root,
-                    &feature_path,
-                    &feature.axis,
+                    &behavior_path,
+                    &behavior.axis,
                     &known_axes,
                 ));
-                if let Some(forked_from) = &feature.forked_from
-                    && !known_feature_ids.contains(forked_from)
-                {
-                    issues.push(ValidationIssue {
-                        path: rel(root, &feature_path),
-                        message: format!(
-                            "forked_from '{forked_from}' does not match any known Feature id"
-                        ),
-                    });
-                }
             }
 
-            for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
-                let behavior_path = behavior_dir.join("behavior.yml");
-                if let Some(content) =
-                    validate_file(root, "behavior.schema.json", &behavior_path, &mut issues)?
-                    && let Ok(behavior) = knowledge::parse_behavior(&content)
-                {
-                    issues.extend(check_axis_tags(
-                        root,
-                        &behavior_path,
-                        &behavior.axis,
-                        &known_axes,
-                    ));
-                }
-
-                for condition_dir in find_dirs_with_marker(&behavior_dir, "condition.yml")? {
-                    let condition_path = condition_dir.join("condition.yml");
-                    validate_file(root, "condition.schema.json", &condition_path, &mut issues)?;
-
-                    let expected_dir = condition_dir.join("expected");
-                    if !expected_dir.is_dir() {
-                        continue;
-                    }
-                    let mut expected_paths: Vec<_> = fs::read_dir(&expected_dir)?
-                        .filter_map(|e| e.ok())
-                        .map(|e| e.path())
-                        .filter(|p| p.is_file())
-                        .collect();
-                    expected_paths.sort();
-                    for (i, expected_path) in expected_paths.iter().enumerate() {
-                        if let Some(content) = validate_file(
-                            root,
-                            "expected_result.schema.json",
-                            expected_path,
-                            &mut issues,
-                        )? && let Ok(expected) = knowledge::parse_expected_result(&content)
-                            && i > 0
-                            && expected
-                                .additional_steps
-                                .as_ref()
-                                .is_none_or(|steps| steps.is_empty())
-                        {
-                            issues.push(ValidationIssue {
-                                path: rel(root, expected_path),
-                                message: format!(
-                                    "additional_steps must contain at least one operation \
-                                     (this file is not the first, by filename order, under \
-                                     {}/expected/)",
-                                    rel(root, &condition_dir)
-                                ),
-                            });
-                        }
-                    }
-                }
+            for scenario_dir in find_dirs_with_marker(&behavior_dir, "scenario.yml")? {
+                let scenario_path = scenario_dir.join("scenario.yml");
+                validate_file(root, "scenario.schema.json", &scenario_path, &mut issues)?;
             }
         }
     }
@@ -302,32 +265,27 @@ mod tests {
         )
         .unwrap();
 
-        let base = root.join(".markharness/knowledge/controls/player-jump/jump/ground");
+        let base = root.join(".markharness/knowledge/features/player-jump/jump/ground");
         fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/requirement.yml"),
+            root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
             "id: controls\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\n",
+            root.join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(
-            root.join(".markharness/knowledge/controls/player-jump/jump/behavior.yml"),
-            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\npreconditions:\n  - \"Press the jump button.\"\n",
+            root.join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nprocedures: {}\n",
         )
         .unwrap();
         fs::write(
-            base.join("condition.yml"),
-            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
-        )
-        .unwrap();
-        fs::create_dir_all(base.join("expected")).unwrap();
-        fs::write(
-            base.join("expected/001.yml"),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nresults:\n  - \"Confirmed.\"\n",
+            base.join("scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\n",
         )
         .unwrap();
     }
@@ -343,36 +301,18 @@ mod tests {
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
     }
 
-    /// ADR 0016 §1: Condition内でファイル名順が先頭の`expected_result`は
-    /// `additional_steps`を省略してよい。
+    /// ADR 0017 §2: Scenarioは複数Phaseを配列順に持てる。
     #[test]
-    fn accepts_a_lone_expected_result_without_additional_steps() {
-        let dir = tempfile::tempdir().unwrap();
-        init_project(dir.path());
-        write_valid_tree(dir.path());
-
-        let issues = validate_all(dir.path()).unwrap();
-
-        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
-    }
-
-    /// ADR 0016 §1: "先頭のexpected_resultのみ省略可、または空でよい" — an
-    /// explicit `additional_steps: []` on the first (by filename)
-    /// expected_result is exactly as valid as omitting the field, both at
-    /// the schema level (no `minItems` on `additional_steps`) and at
-    /// `validate.rs`'s cross-reference check (which only requires non-empty
-    /// content starting from the second file).
-    #[test]
-    fn accepts_a_lone_expected_result_with_an_explicitly_empty_additional_steps_array() {
+    fn accepts_a_scenario_with_multiple_phases() {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
         let base = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground");
+            .join(".markharness/knowledge/features/player-jump/jump/ground");
         fs::write(
-            base.join("expected/001.yml"),
-            "id: ground-001\ncondition: ground\ndescription: |\n  lands safely\nadditional_steps: []\nresults:\n  - \"Confirmed.\"\n",
+            base.join("scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\n  - steps:\n      - action: \"Reload the page.\"\n    results:\n      - \"still on the ground\"\n",
         )
         .unwrap();
 
@@ -381,19 +321,18 @@ mod tests {
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
     }
 
-    /// ADR 0016 §1: 2番目以降の`expected_result`で`additional_steps`が
-    /// 省略(または空配列)の場合はクロスリファレンスエラーとなる。
+    /// ADR 0017 §2: 空のPhase配列はschema(`minItems: 1`)で拒否される。
     #[test]
-    fn reports_a_second_expected_result_missing_additional_steps() {
+    fn reports_a_scenario_with_an_empty_phases_array() {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
         let base = dir
             .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground");
+            .join(".markharness/knowledge/features/player-jump/jump/ground");
         fs::write(
-            base.join("expected/002.yml"),
-            "id: ground-002\ncondition: ground\ndescription: |\n  falls over\nresults:\n  - \"Confirmed.\"\n",
+            base.join("scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases: []\n",
         )
         .unwrap();
 
@@ -402,31 +341,9 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|issue| issue.message.contains("additional_steps")
-                    && issue.path.ends_with("expected/002.yml")),
-            "expected an additional_steps issue for expected/002.yml, got: {issues:?}"
+                .any(|issue| issue.path.ends_with("scenario.yml")),
+            "expected a schema issue for an empty phases array, got: {issues:?}"
         );
-    }
-
-    /// ADR 0016 §1: 2番目以降の`expected_result`に`additional_steps`が
-    /// 1操作以上あれば成功する。
-    #[test]
-    fn accepts_a_second_expected_result_with_additional_steps() {
-        let dir = tempfile::tempdir().unwrap();
-        init_project(dir.path());
-        write_valid_tree(dir.path());
-        let base = dir
-            .path()
-            .join(".markharness/knowledge/controls/player-jump/jump/ground");
-        fs::write(
-            base.join("expected/002.yml"),
-            "id: ground-002\ncondition: ground\ndescription: |\n  still on the ground after reload\nadditional_steps:\n  - \"Reload the page.\"\nresults:\n  - \"Confirmed.\"\n",
-        )
-        .unwrap();
-
-        let issues = validate_all(dir.path()).unwrap();
-
-        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
     }
 
     /// ADR 0013 検証規則: cutover前(markerなし)のprojectでは、uidなし
@@ -489,14 +406,14 @@ mod tests {
     }
 
     #[test]
-    fn reports_a_schema_violation_when_condition_id_is_not_a_valid_slug() {
+    fn reports_a_schema_violation_when_scenario_id_is_not_a_valid_slug() {
         let dir = tempfile::tempdir().unwrap();
         init_project(dir.path());
         write_valid_tree(dir.path());
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/jump/ground/condition.yml"),
-            "id: ../../../../evil\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n",
+                .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+            "id: ../../../../evil\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Confirmed.\"\n",
         )
         .unwrap();
 
@@ -505,8 +422,8 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|i| i.path.contains("condition.yml") && i.message.contains("does not match")),
-            "expected a pattern-violation issue for condition.yml, got: {issues:?}"
+                .any(|i| i.path.contains("scenario.yml") && i.message.contains("does not match")),
+            "expected a pattern-violation issue for scenario.yml, got: {issues:?}"
         );
     }
 
@@ -517,7 +434,7 @@ mod tests {
         write_valid_tree(dir.path());
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
             "id: player-jump\nlabel: player-jump\naxis: [gameplay]\n",
         )
         .unwrap();
@@ -539,8 +456,8 @@ mod tests {
         write_valid_tree(dir.path());
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [not-registered]\n",
+                .join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [not-registered]\n",
         )
         .unwrap();
 
@@ -558,8 +475,8 @@ mod tests {
         init_project(dir.path());
         write_valid_tree(dir.path());
         fs::write(
-            dir.path().join(".markharness/knowledge/controls/player-jump/feature.yml"),
-            "id: player-jump\nrequirement: controls\nlabel: player-jump\naxis: [gameplay]\nforked_from: no-such-feature\n",
+            dir.path().join(".markharness/knowledge/features/player-jump/feature.yml"),
+            "id: player-jump\nrequirement_ids: [controls]\nlabel: player-jump\naxis: [gameplay]\nforked_from: no-such-feature\n",
         )
         .unwrap();
 
@@ -634,13 +551,13 @@ mod tests {
         write_valid_tree(dir.path());
         fs::create_dir_all(
             dir.path()
-                .join(".markharness/knowledge/controls/player-double-jump"),
+                .join(".markharness/knowledge/features/player-double-jump"),
         )
         .unwrap();
         fs::write(
             dir.path()
-                .join(".markharness/knowledge/controls/player-double-jump/feature.yml"),
-            "id: player-double-jump\nrequirement: controls\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n",
+                .join(".markharness/knowledge/features/player-double-jump/feature.yml"),
+            "id: player-double-jump\nrequirement_ids: [controls]\nlabel: player-double-jump\naxis: [gameplay]\nforked_from: player-jump\n",
         )
         .unwrap();
 

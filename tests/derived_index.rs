@@ -22,17 +22,18 @@ fn indexes_are_reconstructible_from_git_changes_and_executions() {
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     git(&["config", "core.autocrlf", "false"]);
-    std::fs::create_dir_all(repo.path().join(".markharness/knowledge/shop/checkout")).unwrap();
+    std::fs::create_dir_all(repo.path().join(".markharness/knowledge/features/checkout")).unwrap();
+    std::fs::create_dir_all(repo.path().join(".markharness/knowledge/requirements/shop")).unwrap();
     std::fs::write(
         repo.path()
-            .join(".markharness/knowledge/shop/requirement.yml"),
+            .join(".markharness/knowledge/requirements/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
         repo.path()
-            .join(".markharness/knowledge/shop/checkout/feature.yml"),
-        "id: checkout\nrequirement: shop\nlabel: Checkout\naxis: []\n",
+            .join(".markharness/knowledge/features/checkout/feature.yml"),
+        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     git(&["add", "."]);
@@ -82,17 +83,18 @@ fn change_event_index_groups_by_uid_across_a_rename() {
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
     git(&["config", "core.autocrlf", "false"]);
-    std::fs::create_dir_all(repo.path().join(".markharness/knowledge/shop/checkout")).unwrap();
+    std::fs::create_dir_all(repo.path().join(".markharness/knowledge/features/checkout")).unwrap();
+    std::fs::create_dir_all(repo.path().join(".markharness/knowledge/requirements/shop")).unwrap();
     std::fs::write(
         repo.path()
-            .join(".markharness/knowledge/shop/requirement.yml"),
+            .join(".markharness/knowledge/requirements/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
         repo.path()
-            .join(".markharness/knowledge/shop/checkout/feature.yml"),
-        "id: checkout\nrequirement: shop\nlabel: Checkout\naxis: []\n",
+            .join(".markharness/knowledge/features/checkout/feature.yml"),
+        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     git(&["add", "."]);

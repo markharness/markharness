@@ -28,16 +28,17 @@ fn run_git(root: &Path, args: &[&str]) {
 }
 
 fn write_feature(root: &Path, label: &str) {
-    let dir = root.join(".markharness/knowledge/controls/player-jump");
+    let dir = root.join(".markharness/knowledge/features/player-jump");
     std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/controls/requirement.yml"),
+        root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
         "id: controls\nlabel: controls\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("feature.yml"),
-        format!("id: player-jump\nrequirement: controls\nlabel: {label}\naxis: []\n"),
+        format!("id: player-jump\nrequirement_ids: [controls]\nlabel: {label}\naxis: []\n"),
     )
     .unwrap();
 }

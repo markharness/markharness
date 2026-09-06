@@ -26,35 +26,31 @@ fn git_output(root: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
-fn write_knowledge(root: &Path, condition_description: &str) {
-    let base = root.join(".markharness/knowledge/shop/checkout/pay/valid-card");
-    std::fs::create_dir_all(base.join("expected")).unwrap();
+fn write_knowledge(root: &Path, scenario_description: &str) {
+    let base = root.join(".markharness/knowledge/features/checkout/pay/valid-card");
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/shop")).unwrap();
     std::fs::write(
         root.join(".markharness/config.toml"),
         "schema_version = 1\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/requirement.yml"),
+        root.join(".markharness/knowledge/requirements/shop/requirement.yml"),
         "id: shop\nlabel: Shop\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/checkout/feature.yml"),
-        "id: checkout\nrequirement: shop\nlabel: Checkout\naxis: []\n",
+        root.join(".markharness/knowledge/features/checkout/feature.yml"),
+        "id: checkout\nrequirement_ids: [shop]\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
-        root.join(".markharness/knowledge/shop/checkout/pay/behavior.yml"),
-        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\npreconditions:\n  - \"Enter the card number.\"\n",
+        root.join(".markharness/knowledge/features/checkout/pay/behavior.yml"),
+        "id: pay\nfeature: checkout\nlabel: Pay\naxis: []\ndescription: Pay.\nprocedures: {}\n",
     )
     .unwrap();
-    std::fs::write(base.join("condition.yml"), format!("id: valid-card\nbehavior: pay\nlabel: Valid card\ndescription: {condition_description}\nsteps:\n  - \"Do it.\"\nadditional_preconditions: []\n")).unwrap();
-    std::fs::write(
-        base.join("expected/001.yml"),
-        "id: accepted\ncondition: valid-card\ndescription: Accepted.\nresults:\n  - \"Confirmed.\"\n",
-    )
-    .unwrap();
+    std::fs::write(base.join("scenario.yml"), format!("id: valid-card\nbehavior: pay\nlabel: Valid card\ndescription: {scenario_description}\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"Accepted.\"\n")).unwrap();
 }
 
 #[test]
@@ -85,7 +81,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
     assert_eq!(plan["summary"]["changed_features"], 1);
     assert_eq!(
         plan["affected_existing_tests"][0]["id"],
-        "tc-shop-checkout-pay-valid-card"
+        "tc-checkout-pay-valid-card"
     );
     assert_eq!(plan["affected_existing_tests"][0]["status"], "pending");
     let schema: serde_json::Value =
@@ -97,13 +93,13 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
 
     let tree_sha = git_output(
         repo.path(),
-        &["rev-parse", "HEAD:.markharness/knowledge/shop/checkout"],
+        &["rev-parse", "HEAD:.markharness/knowledge/features/checkout"],
     );
     std::fs::create_dir_all(repo.path().join(".markharness/executions/ci")).unwrap();
     std::fs::write(
         repo.path().join(".markharness/executions/ci/results.yml"),
         format!(
-            "- case_id: tc-shop-checkout-pay-valid-card\n  result: pass\n  executor: ci\n  executed_at: 2026-08-18T10:00:00Z\n  verified_feature_tree_shas:\n    checkout: {tree_sha}\n"
+            "- case_id: tc-checkout-pay-valid-card\n  result: pass\n  executor: ci\n  executed_at: 2026-08-18T10:00:00Z\n  verified_feature_tree_shas:\n    checkout: {tree_sha}\n"
         ),
     )
     .unwrap();
@@ -137,7 +133,7 @@ fn plan_command_builds_a_versioned_plan_for_arbitrary_base_and_head_commits() {
             "relations": [{
                 "from": "junit:test_case:checkout:external_pay",
                 "relation_type": "verifies",
-                "to": "markharness-native:condition:valid-card",
+                "to": "markharness-native:scenario:valid-card",
                 "origin": {"kind": "stored"},
                 "confidence": 1.0
             }],

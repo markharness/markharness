@@ -18,6 +18,7 @@ pub mod marker;
 pub mod migration_manifest;
 pub mod recovery;
 pub mod registry;
+pub mod typed_uid;
 
 pub use audit::{AuditReport, AuditViolation, run_audit};
 pub use engine::{IdHistoryEntry, ReplayError, ReplayResult, Status, replay};
@@ -34,4 +35,8 @@ pub use migration_manifest::{
     AmbiguousCaseId, CrossBoundaryError, LegacyElementLocator, LegacySnapshot, Manifest,
     ManifestEntry, read as read_manifest, resolve_case_uid, resolve_case_uid_across_refs,
     resolve_case_uid_with_signature,
+};
+pub use typed_uid::{
+    BehaviorUid, BlankValueError, CaseRevision, CaseUid, DisplayId, ExecutionUid, FeatureUid,
+    RequirementUid, ScenarioUid,
 };

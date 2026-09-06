@@ -20,7 +20,7 @@
     {
       "from": "junit:test_case:checkout:accepts_card",
       "relation_type": "verifies",
-      "to": "markharness-native:condition:valid-card",
+      "to": "markharness-native:scenario:valid-card",
       "origin": {
         "kind": "stored"
       },
