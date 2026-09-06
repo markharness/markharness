@@ -97,17 +97,13 @@ A plan explicitly references the execution result it selects. Accept it only whe
 
 External tools own execution, retries, aggregation, and final results. markharness owns storage and applicability verification. Do not introduce a Run/Attempt model, flaky-test adjudication, or a rule independently rejecting a success after retry. Manual records use the same reference and applicability contracts.
 
-Records are logically independent per case. Split external reports into individual records, preserve references to the original report, and prevent duplicate imports. Decide physical records-per-file based on expected scale; this ADR does not commit to one file per record.
+Records are logically independent per case. Decide physical records-per-file based on expected scale; this ADR does not commit to one file per record.
 
 Persist the effective definition used by execution in Git as an immutable record per Case UID + Case revision, referenced by evidence and shared by executions using that definition. Display names are outside revision inputs: changing them must not overwrite a definition under the same key. Keep execution-time display information and source-snapshot audit metadata separate; specify the concrete format during implementation design.
 
-### 6. Mapping to external tests
+### 6. Boundary with external integration
 
-Keep one authority for mapping information. When the external side manages a mapping (e.g. to Scenario UIDs), receive and validate it. When it does not, supplement it with an explicit, Git-managed mapping. Never maintain the same mapping on both sides.
-
-markharness's import process resolves mappings to verified internal references. It never guesses matches from name similarity. It does not require external tools to issue markharness UIDs. It never registers an unresolved or ambiguous mapping as valid evidence.
-
-Integration with a specific external tool (syntax or execution framework) is out of scope for this ADR. Address it in a dedicated ADR or issue, grounded in the actual discussion and requirements, once that integration is undertaken.
+This ADR covers the internal data model: execution record identity and references to cases, revisions, targets, and environments. The tool responsible for importing and the integration approach belong in a separate ADR based on concrete integration requirements. Gherkin and Playwright are anticipated use cases, not established integration contracts.
 
 ### 7. Prototype policy and existing ADRs
 
@@ -115,11 +111,11 @@ The project is currently a prototype without users. Replace the model directly w
 
 - [0013](0013-immutable-identity-model.md): partially replace the five independently identified hierarchy levels, provenance-set Case UID derivation, and Feature-version-centered execution matching. This does not abandon identity declaration, determinism, or recovery safety. Adapt those guarantees to the new entity model during implementation.
 - [0014](0014-knowledge-schema-version-persistence.md): retain the prototype format-version policy.
-- [0015](0015-behavior-step-model.md) / [0016](0016-behavior-condition-precondition-step-result-model.md): replace separate Condition / ExpectedResult entities, filename order, and automatically combined setup operations. Do not adopt an arbitrary shared Step registry. Retain 0016's human-reviewed one-way import policy.
+- [0015](0015-behavior-step-model.md) / [0016](0016-behavior-condition-precondition-step-result-model.md): replace separate Condition / ExpectedResult entities, filename order, and automatically combined setup operations. Do not adopt an arbitrary shared Step registry.
 
 ## Alternatives and consequences
 
-See [Section 3.8 of the paper](../git-native-model-for-test-knowledge-management.md#38-settled-design-and-open-contracts) for the relationship to the previous model. Previous implementation checks do not validate this ADR's implementation. Case revision changes and the scope of semantic reconsideration after requirement/code changes are not synonymous; candidate selection rules remain open. Even with an external editing authority, imported inputs and mappings needed for internal historical comparison must be fixed in Git snapshots.
+See [Section 3.8 of the paper](../git-native-model-for-test-knowledge-management.md#38-settled-design-and-open-contracts) for the relationship to the previous model. Previous implementation checks do not validate this ADR's implementation. Case revision changes and the scope of semantic reconsideration after requirement/code changes are not synonymous; candidate selection rules remain open. Inputs needed for internal historical comparison must be fixed in Git snapshots.
 
 | Alternative | Disposition and reason |
 |---|---|
@@ -130,10 +126,10 @@ See [Section 3.8 of the paper](../git-native-model-for-test-knowledge-management
 | Use only Feature tree SHA as verification revision | Rejected: misses complete effective inputs and case-level changes |
 | Manage execution and retries in markharness | Rejected: exceeds test-management and change-detection responsibilities |
 
-Reference resolution, case revision computation, and immutable definition storage add work. In return, Phase identity management, filename-based order, and duplicate external editing disappear. Independent Phase history and complete source-document round trips are not guaranteed. Performance superiority has not been measured.
+Reference resolution, case revision computation, and immutable definition storage add work. In return, Phase identity management and filename-based order disappear. Independent Phase history is not guaranteed. Performance superiority has not been measured.
 
 ## Behaviors this decision must satisfy
 
-Required examples cover UID continuity across renames and repeated imports; revision changes for operations, order, and common procedures; unchanged revisions for descriptions alone; new identities after split/merge; rejecting old revisions, different builds, unknown environments, and skip as proof of passing; duplicate imports and concurrent recording; and never replacing the executed revision with the current one.
+Required examples cover UID continuity across renames; revision changes for operations, order, and common procedures; unchanged revisions for descriptions alone; new identities after split/merge; rejecting old revisions, different builds, unknown environments, and skip as proof of passing; consistency during concurrent recording; and never replacing the executed revision with the current one.
 
-Decide atomic import and corruption preservation, duplicate keys, corrections, timestamp comparison, target/environment types, canonicalization, missing-reference and empty-Phase validation, and exact derived-model formats before implementation. This ADR does not establish every implementable schema detail. Implementation ordering and task breakdown are tracked separately as a `checklist-<task>.md` once work begins ([checklist-workflow](../../../.github/instructions/checklist-workflow.instructions.md)).
+Decide atomic record storage and corruption preservation, corrections, timestamp comparison, target/environment types, canonicalization, missing-reference and empty-Phase validation, and exact derived-model formats before implementation. This ADR does not establish every implementable schema detail. Implementation ordering and task breakdown are tracked separately as a `checklist-<task>.md` once work begins ([checklist-workflow](../../../.github/instructions/checklist-workflow.instructions.md)).
