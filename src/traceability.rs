@@ -50,12 +50,13 @@ pub fn serialize_index(index: &TraceabilityIndex) -> String {
 mod tests {
     use super::*;
     use crate::generate::{CaseFilePaths, GeneratedFrom, Phase};
+    use crate::identity::CaseRevision;
 
     fn sample_testcase() -> TestCase {
         TestCase {
             case_id: "tc-todo-add-task-empty-input-001".to_string(),
             case_uid: None,
-            case_revision: "test-revision".to_string(),
+            case_revision: CaseRevision::new("test-revision").unwrap(),
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-todo".to_string()],

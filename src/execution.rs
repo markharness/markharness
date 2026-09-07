@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::fs_safety::replace_file;
+use crate::identity::{CaseRevision, CaseUid, Environment, ExecutionUid, TargetRevision};
 
 /// Only the fields `record_execution` needs from a generated TestCase.
 /// Includes `phases` (unlike a purely-identity view) because ADR 0017 §5
@@ -20,8 +21,8 @@ use crate::fs_safety::replace_file;
 struct MinimalTestCase {
     case_id: String,
     #[serde(default)]
-    case_uid: Option<String>,
-    case_revision: String,
+    case_uid: Option<CaseUid>,
+    case_revision: CaseRevision,
     phases: Vec<crate::generate::Phase>,
 }
 
@@ -113,15 +114,15 @@ impl From<io::Error> for RecordError {
 /// type: this is only the durable record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExecutionEntry {
-    pub execution_uid: String,
+    pub execution_uid: ExecutionUid,
     /// Informational: the display `case_id` at record time. Never used as a
     /// matching key by itself — `case_uid`/`case_revision` are.
     pub case_id: String,
-    pub case_uid: String,
-    pub case_revision: String,
-    pub target_revision: String,
+    pub case_uid: CaseUid,
+    pub case_revision: CaseRevision,
+    pub target_revision: TargetRevision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment: Option<String>,
+    pub environment: Option<Environment>,
     pub result: String,
     pub executor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -237,20 +238,14 @@ fn find_testcase_by_case_id(root: &Path, case_id: &str) -> io::Result<Option<Min
 /// mismatched or stale identity. `target_revision`/`environment` are always
 /// exactly what the caller passed, never inferred.
 pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<ExecutionEntry, RecordError> {
-    let target_revision = args.target_revision.trim();
-    if target_revision.is_empty() {
-        return Err(RecordError::EmptyTargetRevision);
-    }
-    let environment = match args.environment {
-        Some(environment) => {
-            let trimmed = environment.trim();
-            if trimmed.is_empty() {
-                return Err(RecordError::EmptyEnvironment);
-            }
-            Some(trimmed)
-        }
-        None => None,
-    };
+    let target_revision = TargetRevision::new(args.target_revision.trim())
+        .map_err(|_| RecordError::EmptyTargetRevision)?;
+    let environment = args
+        .environment
+        .map(|environment| {
+            Environment::new(environment.trim()).map_err(|_| RecordError::EmptyEnvironment)
+        })
+        .transpose()?;
 
     let Some(testcase) = find_testcase_by_case_id(root, args.case_id)? else {
         return Err(RecordError::CaseNotFound);
@@ -272,14 +267,15 @@ pub fn record_execution(root: &Path, args: &RecordArgs) -> Result<ExecutionEntry
         return Err(RecordError::CaseDefinitionMismatch);
     }
 
-    let execution_uid = ulid::Ulid::new().to_string();
+    let execution_uid = ExecutionUid::new(ulid::Ulid::new().to_string())
+        .expect("ulid::Ulid::new().to_string() is always a non-blank string");
     let entry = ExecutionEntry {
         execution_uid: execution_uid.clone(),
         case_id: testcase.case_id,
         case_uid,
         case_revision: testcase.case_revision,
-        target_revision: target_revision.to_string(),
-        environment: environment.map(str::to_string),
+        target_revision,
+        environment,
         result: args.result.as_str().to_string(),
         executor: args.executor.to_string(),
         note: args.note.map(str::to_string),
@@ -305,7 +301,7 @@ mod tests {
     /// only `case_revision` value that will pass `load_case_definition`'s
     /// self-consistency check (`case_revision` is defined as a hash of
     /// `phases`) once a definition is stored under it.
-    fn real_case_revision_for_empty_phases() -> String {
+    fn real_case_revision_for_empty_phases() -> CaseRevision {
         crate::generate::compute_case_revision(&[])
     }
 
@@ -537,7 +533,7 @@ mod tests {
         }];
         let case_revision = crate::generate::compute_case_revision(&original_phases);
         let definition = crate::case_definition::CaseDefinition {
-            case_uid: "case-uid-1".to_string(),
+            case_uid: CaseUid::new("case-uid-1").unwrap(),
             case_revision: case_revision.clone(),
             phases: original_phases,
         };
@@ -594,7 +590,7 @@ mod tests {
             dir.path(),
             "tc-ground-001",
             Some("case-uid-1"),
-            &case_revision,
+            case_revision.as_str(),
         );
 
         let entry = record_execution(
@@ -618,10 +614,13 @@ mod tests {
 
         let all = read_all_results(dir.path()).unwrap();
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0].case_uid, "case-uid-1");
+        assert_eq!(all[0].case_uid.as_str(), "case-uid-1");
         assert_eq!(all[0].case_revision, case_revision);
-        assert_eq!(all[0].target_revision, "abc123");
-        assert_eq!(all[0].environment.as_deref(), Some("staging"));
+        assert_eq!(all[0].target_revision.as_str(), "abc123");
+        assert_eq!(
+            all[0].environment.as_ref().map(Environment::as_str),
+            Some("staging")
+        );
         assert_eq!(all[0].result, "pass");
         assert_eq!(all[0].note.as_deref(), Some("looks good"));
     }
@@ -634,7 +633,7 @@ mod tests {
             dir.path(),
             "tc-ground-001",
             Some("case-uid-1"),
-            &real_case_revision_for_empty_phases(),
+            real_case_revision_for_empty_phases().as_str(),
         );
 
         let args = RecordArgs {

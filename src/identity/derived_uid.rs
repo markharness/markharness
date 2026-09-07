@@ -142,6 +142,50 @@ mod tests {
         ));
     }
 
+    /// Design doc `verification-plan-canonical-model-design.md` §7.4: the
+    /// `.expect()` calls that convert `case_uid`/`case_revision` output into
+    /// `CaseUid`/`CaseRevision` (`generate::compute_case_uid`,
+    /// `generate::compute_case_revision`, `application::
+    /// build_verification_plan_value`'s reconstruction from
+    /// `CanonicalArtifact.uid`) rely on `derive()` always formatting a
+    /// 36-character, non-blank string regardless of its input — including a
+    /// blank or empty input, which this pins down explicitly so a future
+    /// change to `derive()`'s format cannot silently turn those `.expect()`s
+    /// into live panics.
+    #[test]
+    fn case_uid_is_well_formed_even_for_a_blank_input() {
+        for input in ["", "   "] {
+            let uid = case_uid(input);
+            assert!(
+                !uid.trim().is_empty(),
+                "blank input {input:?} produced a blank case_uid"
+            );
+            assert_eq!(
+                uid.len(),
+                36,
+                "blank input {input:?} produced a malformed case_uid"
+            );
+        }
+    }
+
+    /// See `case_uid_is_well_formed_even_for_a_blank_input`: `case_revision`
+    /// shares the same `derive()` formatting, so the same guarantee applies.
+    #[test]
+    fn case_revision_is_well_formed_even_for_a_blank_input() {
+        for input in ["", "   "] {
+            let revision = case_revision(input);
+            assert!(
+                !revision.trim().is_empty(),
+                "blank input {input:?} produced a blank case_revision"
+            );
+            assert_eq!(
+                revision.len(),
+                36,
+                "blank input {input:?} produced a malformed case_revision"
+            );
+        }
+    }
+
     #[test]
     fn change_event_uid_is_deterministic() {
         let a = change_event_uid("1", "m1", "m2", "feat-uid", "payload", "");

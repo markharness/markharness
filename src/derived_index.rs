@@ -9,6 +9,7 @@ use crate::changes::ChangeEvent;
 use crate::execution::read_all_results;
 use crate::fs_safety::replace_file;
 use crate::id_cache;
+use crate::plan::BoundVersions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexPaths {
@@ -55,7 +56,7 @@ struct ExecutionIndex {
 struct ExecutionIndexEntry {
     result: String,
     executed_at: String,
-    bound_versions: BTreeMap<String, String>,
+    bound_versions: BoundVersions,
 }
 
 fn serialize<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
@@ -122,13 +123,12 @@ pub fn rebuild_indexes(root: &Path, git_ref: &str) -> io::Result<IndexPaths> {
 
     let mut by_case: BTreeMap<String, Vec<ExecutionIndexEntry>> = BTreeMap::new();
     for execution in read_all_results(root)? {
-        let mut bound_versions = BTreeMap::new();
-        bound_versions.insert("case_uid".to_string(), execution.case_uid);
-        bound_versions.insert("case_revision".to_string(), execution.case_revision);
-        bound_versions.insert("target_revision".to_string(), execution.target_revision);
-        if let Some(environment) = execution.environment {
-            bound_versions.insert("environment".to_string(), environment);
-        }
+        let bound_versions = BoundVersions {
+            case_uid: execution.case_uid,
+            case_revision: execution.case_revision,
+            target_revision: execution.target_revision,
+            environment: execution.environment,
+        };
         by_case
             .entry(execution.case_id)
             .or_default()

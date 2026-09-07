@@ -283,4 +283,4 @@ CLI JSON契約は次の方針でversioningする。
 
 安全性の根拠は「上流のどこかを信頼する」という間接的なものではなく、`identity::derived_uid::case_uid`(`derive()`)の構造そのものにある。`derive()`はSHA1ハッシュを`format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", ...)`という固定書式で文字列化するため、入力(`scenario_uid`)の値によらず常に36文字の非空文字列を返す。したがって、この関数の出力を`CaseUid::new(...)`に通す限り、失敗するケースが構造的に存在しない。`filter_map`内の`?`による`None`除外(`uid`自体が欠落した未移行Scenarioを除外する処理)とは別の話であり、`Some`の中身が空文字になり得ないことの根拠がこちらである。
 
-`io::Error`への伝播は到達不能なエラーパスを追加することになり、「起こり得ないシナリオに対するエラーハンドリングを追加しない」という設計方針(CLAUDE.md)に反するため採用しない。この保証を将来のリファクタリングで壊さないよう、`derive()`の出力が入力によらず常に36文字・非空であることを固定するユニットテスト(空文字入力を含む)を`identity/derived_uid.rs`に追加する**予定である(未実装。`checklist-issue-43-typed-identifiers.md` Step 6で実施する)**。
+`io::Error`への伝播は到達不能なエラーパスを追加することになり、「起こり得ないシナリオに対するエラーハンドリングを追加しない」という設計方針(CLAUDE.md)に反するため採用しない。この保証を将来のリファクタリングで壊さないよう、`derive()`の出力が入力によらず常に36文字・非空であることを固定するユニットテスト(空文字入力を含む)を`identity/derived_uid.rs`に追加している(`case_uid_is_well_formed_even_for_a_blank_input`・`case_revision_is_well_formed_even_for_a_blank_input`)。

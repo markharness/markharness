@@ -219,7 +219,7 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
             git_oid: feature_versions
                 .get(&case.feature_id)
                 .map(|v| v.tree_sha.clone()),
-            canonical_hash: Some(testcase.case_revision.clone()),
+            canonical_hash: Some(testcase.case_revision.to_string()),
         };
         let testcase_version = scenario_version.clone();
         artifacts.push(CanonicalArtifact {
@@ -241,7 +241,7 @@ pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CanonicalSnapshot
             // ADR 0017 §3/§5: `plan::build_plan`'s evidence matching reads
             // this to learn each TestCase's current `case_uid` (paired with
             // `version.canonical_hash`, which already carries `case_revision`).
-            uid: testcase.case_uid.clone(),
+            uid: testcase.case_uid.as_ref().map(|uid| uid.to_string()),
         });
         relations.push(CanonicalRelation {
             from: canonical_id(ArtifactKind::TestCase, &testcase.case_id),
