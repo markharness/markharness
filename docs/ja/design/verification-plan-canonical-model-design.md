@@ -253,3 +253,34 @@ CLI JSON契約は次の方針でversioningする。
 - **`ChangeEvent`とは別の新エンティティとして`Change`を実装する**：設計検討文書は概念モデル上`Change`という名称を使うが、markharness既存実装の`ChangeEvent`と機能的に同一(tree SHA比較による差分)であるため、別エンティティとして実装せず、`ChangeEvent`のfrom/toをmilestoneタグ限定から任意refへ一般化する(第2.2節)。エンティティを分けると、統合版第3章の実証対象(RQ1)とVerification Planの評価が別モデルを見ることになり、Stage 2の評価結果を論文側のモデルへフィードバックできなくなる。
 - **SaaS API由来のcanonical_hashをStage 1で先行実装する**：TestRail等のAPI認証・pagination・rate limit対応はfile-based importerより実装コストが高く、Stage 1の目的(canonical schemaの検証)を遅らせる。Stage 4まで持ち越す([decisions/0008](../decisions/0008-verification-plan-product-roadmap.md)第4節)。
 - **`new_required_tests`のconfidenceスコアを`generated_by`/`verified_by`(統合版第3.5節の製品化提案フィールド)へ統合する**：`generated_by`/`verified_by`はExpectedResultという確定済みknowledgeに対するメタデータであり、`proposed`状態のproposalとは意味論が異なる(確定知識 vs 未承認候補)。両者を混在させると、統合版が明記する「`knowledge/`配下は検証済みの確定知識である」という前提(第3.5節)が崩れるため、proposalは`.markharness/verification-plan.json`側にのみ保持し、acceptされて初めて通常のknowledgeへ反映する。
+
+## 7. `bound_versions`の型付け([decisions/0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md)の本番経路への適用、Issue #43)
+
+[decisions/0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md) §3はCase UID・Case revisionを意味の異なる型として扱うことを要求するが、Step 1a(型の新設)の時点では`ExecutionEntry`・`PlanEvidence`・`CaseVersion`・`TestCase`・`CaseDefinition`等の本番経路は引き続き`String`/`BTreeMap<String, String>`のままだった。この節はその契約を本番経路のRust型システムへ実際に反映する際の設計を記録する。
+
+### 7.1 `PlanEvidence.bound_versions`の構造体化と、`CanonicalEvidence.bound_versions`との分離
+
+第1.4節の表は`bound_versions`を単に「Evidence領域のフィールド」として一括りに扱っていたが、実装を追うと2つの異なる性質のものが同じ型(`BTreeMap<String, String>`)を共有していたことが分かった。
+
+- `plan::PlanEvidence.bound_versions`・`derived_index`の実行インデックスが持つ`bound_versions`：`execution::ExecutionEntry`から、`case_uid`/`case_revision`/`target_revision`という必須3項目と、値がある場合だけ保持する任意項目`environment`を詰めて作られる。項目の意味と集合は固定されており、任意キーを追加できるマップである必然性がない。
+- `canonical::CanonicalEvidence.bound_versions`：`markharness import --bind ARTIFACT_ID=VERSION`(任意個・任意キー)がそのまま入る、外部importer向けの汎用バインディング。`application::build_verification_plan_value`はこの経路のevidenceを計画の証跡候補から意図的に除外している(第2.1節図の`Evidence resolution`が対象とするのは`ExecutionEntry`由来のみ)。
+
+前者だけを`struct BoundVersions { case_uid: CaseUid, case_revision: CaseRevision, target_revision: TargetRevision, environment: Option<Environment> }`に置き換え、キーのtypo・欠落をコンパイル時に排除する。`CanonicalEvidence.bound_versions`は汎用`BTreeMap<String, String>`のまま据え置く。両者が同名・同型でありながら異なる契約を持つのは意図的な設計であり、統合を目指さない。
+
+### 7.2 新規の型付き識別子
+
+`target_revision`・`environment`は[decisions/0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md) §3が列挙する型に含まれないが、`execution::record_execution`が既に空文字を拒否する専用の検証ロジック(`EmptyTargetRevision`・`EmptyEnvironment`)を持っていた。`identity::typed_uid`の既存マクロ(`define_typed_uid!`)をそのまま使って`TargetRevision`・`Environment`を追加し、この検証をCase UID等と同じ形へ揃える。入力境界での検証は`record_execution`の関数境界そのもので行い(CLI層での事前変換は行わない)、`RecordError::EmptyTargetRevision`/`EmptyEnvironment`はCLIのエラーメッセージ互換のため維持する(内部で`BlankValueError`をラップする)。
+
+### 7.3 意図的にスコープ外とした箇所
+
+- `canonical::CanonicalArtifact.uid`(Feature/Scenario/TestCaseで多態的に使われる`Option<String>`)の型分離：既存フィールドの構造変更であり、今回の「本番経路への伝播」より大きい別の設計判断のため、将来の別Issue/ADRに委ねる。
+- `generate::GeneratedFrom.feature_uid`/`requirement_uids`：情報用途のみで照合キーに使われないため、取り違えリスクが実在しない。
+- `identity/migration_manifest.rs`(レガシー`case_id`→`case_uid`のロゼッタストーン)：証跡・計画照合パスとは別の関心事であり、新規Issueとして切り出す。破壊的変更が自由なプロトタイプ期であることは、無関係な関心事を1つのIssueへ混ぜてよい理由にはならない。
+
+### 7.4 `CanonicalArtifact.uid`から`CaseUid`を再構築する箇所の失敗方針
+
+`application::build_verification_plan_value`が`case_versions`を組み立てる際、`CanonicalArtifact.uid`(§7.3の通り型分離のスコープ外、`Option<String>`のまま)から`CaseVersion.case_uid: CaseUid`を再構築する必要がある。この変換には`CaseUid::new(value).expect(...)`を使い、`io::Error`等への伝播は行わない。
+
+安全性の根拠は「上流のどこかを信頼する」という間接的なものではなく、`identity::derived_uid::case_uid`(`derive()`)の構造そのものにある。`derive()`はSHA1ハッシュを`format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", ...)`という固定書式で文字列化するため、入力(`scenario_uid`)の値によらず常に36文字の非空文字列を返す。したがって、この関数の出力を`CaseUid::new(...)`に通す限り、失敗するケースが構造的に存在しない。`filter_map`内の`?`による`None`除外(`uid`自体が欠落した未移行Scenarioを除外する処理)とは別の話であり、`Some`の中身が空文字になり得ないことの根拠がこちらである。
+
+`io::Error`への伝播は到達不能なエラーパスを追加することになり、「起こり得ないシナリオに対するエラーハンドリングを追加しない」という設計方針(CLAUDE.md)に反するため採用しない。この保証を将来のリファクタリングで壊さないよう、`derive()`の出力が入力によらず常に36文字・非空であることを固定するユニットテスト(空文字入力を含む)を`identity/derived_uid.rs`に追加する**予定である(未実装。`checklist-issue-43-typed-identifiers.md` Step 6で実施する)**。
