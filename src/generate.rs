@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::identity::{CaseRevision, CaseUid};
 use crate::knowledge::{
     Behavior, Procedure, Scenario, StepItem, is_valid_slug, parse_behavior, parse_feature,
     parse_requirement, parse_scenario,
@@ -42,13 +43,13 @@ pub struct TestCase {
     /// has been migrated, or for a project that hasn't adopted the identity
     /// model at all — never computed from a substitute value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub case_uid: Option<String>,
+    pub case_uid: Option<CaseUid>,
     /// ADR 0017 §3: deterministically derived from the canonical encoding
     /// of `phases` alone (`identity::derived_uid::case_revision`) — never
     /// from `case_uid` or any display-only field. Unlike `case_uid`, always
     /// present: it needs no Scenario identity, only the already-expanded
     /// Phase content every generated TestCase already has.
-    pub case_revision: String,
+    pub case_revision: CaseRevision,
     /// The repo-relative paths of this case's contributing files —
     /// `feature.yml`, `behavior.yml`, `scenario.yml` — used by
     /// `identity::migration_manifest` to build this case's
@@ -111,9 +112,12 @@ pub struct KnowledgeCaseSnapshot {
 /// Derives `case_uid` from `ScenarioUid` alone (ADR 0017 §3), or `None` if
 /// the Scenario hasn't been migrated yet — never computed from a
 /// substitute value.
-fn compute_case_uid(case: &KnowledgeCaseSnapshot) -> Option<String> {
+fn compute_case_uid(case: &KnowledgeCaseSnapshot) -> Option<CaseUid> {
     let scenario_uid = case.scenario_uid.as_deref()?;
-    Some(crate::identity::derived_uid::case_uid(scenario_uid))
+    Some(
+        CaseUid::new(crate::identity::derived_uid::case_uid(scenario_uid))
+            .expect("derived_uid::case_uid always formats a 36-character, non-blank UUID string"),
+    )
 }
 
 /// Derives `case_revision` (ADR 0017 §3) from `phases` alone: the effective
@@ -135,10 +139,11 @@ fn compute_case_uid(case: &KnowledgeCaseSnapshot) -> Option<String> {
 /// by the time this function runs. See `identity::derived_uid::case_revision`'s
 /// doc comment for the full accounting, and this module's `case_revision_*`
 /// tests for concrete coverage.
-pub(crate) fn compute_case_revision(phases: &[Phase]) -> String {
+pub(crate) fn compute_case_revision(phases: &[Phase]) -> CaseRevision {
     let canonical =
         serde_json::to_string(phases).expect("Phase is plain data; serialization is infallible");
-    crate::identity::derived_uid::case_revision(&canonical)
+    CaseRevision::new(crate::identity::derived_uid::case_revision(&canonical))
+        .expect("derived_uid::case_revision always formats a non-blank hash string")
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1183,7 +1188,7 @@ mod tests {
         let testcase = TestCase {
             case_id: "tc-todo-todo-add-task-todo-add-task-empty-input".to_string(),
             case_uid: None,
-            case_revision: "test-revision".to_string(),
+            case_revision: CaseRevision::new("test-revision").unwrap(),
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-todo".to_string()],
@@ -1285,7 +1290,7 @@ mod tests {
         )
         .unwrap();
 
-        let expected = crate::identity::derived_uid::case_uid(SCENARIO_UID);
+        let expected = CaseUid::new(crate::identity::derived_uid::case_uid(SCENARIO_UID)).unwrap();
         assert_eq!(testcases[0].case_uid, Some(expected));
     }
 
@@ -1591,7 +1596,7 @@ mod tests {
         let testcase = TestCase {
             case_id: "tc-todo-todo-add-task-todo-add-task-empty-input".to_string(),
             case_uid: None,
-            case_revision: "test-revision".to_string(),
+            case_revision: CaseRevision::new("test-revision").unwrap(),
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-todo".to_string()],

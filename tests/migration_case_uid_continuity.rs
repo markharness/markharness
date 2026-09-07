@@ -116,8 +116,8 @@ fn legacy_case_id_and_change_event_identity_survive_migration_and_a_later_rename
         "the rename must actually change the case_id string, or this test proves nothing"
     );
     assert_eq!(
-        post_rename_testcases[0].case_uid.as_deref(),
-        Some(case_uid.as_str()),
+        post_rename_testcases[0].case_uid.as_ref(),
+        Some(&case_uid),
         "case_uid must stay identical across a rename of one of its contributing elements"
     );
 

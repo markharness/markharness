@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fs_safety::replace_file;
 use crate::generate::{Phase, TestCase};
+use crate::identity::{CaseRevision, CaseUid};
 
 /// The frozen, effective content of a TestCase at one `(case_uid,
 /// case_revision)` key. Deliberately excludes every display-only field
@@ -25,15 +26,15 @@ use crate::generate::{Phase, TestCase};
 /// label" overwrite of what is meant to be an immutable record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CaseDefinition {
-    pub case_uid: String,
-    pub case_revision: String,
+    pub case_uid: CaseUid,
+    pub case_revision: CaseRevision,
     pub phases: Vec<Phase>,
 }
 
-fn definition_path(root: &Path, case_uid: &str, case_revision: &str) -> PathBuf {
+fn definition_path(root: &Path, case_uid: &CaseUid, case_revision: &CaseRevision) -> PathBuf {
     root.join(crate::project_root::MARKHARNESS_DIR)
         .join("case-definitions")
-        .join(case_uid)
+        .join(case_uid.as_str())
         .join(format!("{case_revision}.yml"))
 }
 
@@ -106,15 +107,15 @@ pub fn store_case_definition(root: &Path, testcase: &TestCase) -> io::Result<Opt
 /// or handed back as if it were trustworthy.
 pub fn load_case_definition(
     root: &Path,
-    case_uid: &str,
-    case_revision: &str,
+    case_uid: &CaseUid,
+    case_revision: &CaseRevision,
 ) -> io::Result<Option<CaseDefinition>> {
     let path = definition_path(root, case_uid, case_revision);
     if !path.is_file() {
         return Ok(None);
     }
     let definition = load_case_definition_at(&path)?;
-    if definition.case_uid != case_uid || definition.case_revision != case_revision {
+    if &definition.case_uid != case_uid || &definition.case_revision != case_revision {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
@@ -128,7 +129,7 @@ pub fn load_case_definition(
         ));
     }
     let actual_revision = crate::generate::compute_case_revision(&definition.phases);
-    if actual_revision != case_revision {
+    if &actual_revision != case_revision {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
@@ -152,7 +153,7 @@ mod tests {
     /// actually compute, so tests that go through `load_case_definition`'s
     /// self-consistency check use a `case_revision` that's genuinely the
     /// hash of the phases they store.
-    fn real_case_revision(step: &str) -> String {
+    fn real_case_revision(step: &str) -> CaseRevision {
         crate::generate::compute_case_revision(&[Phase {
             steps: vec![step.to_string()],
             results: vec!["Confirmed.".to_string()],
@@ -162,8 +163,8 @@ mod tests {
     fn sample_testcase(case_uid: Option<&str>, case_revision: &str, step: &str) -> TestCase {
         TestCase {
             case_id: "tc-checkout-pay-valid-card".to_string(),
-            case_uid: case_uid.map(str::to_string),
-            case_revision: case_revision.to_string(),
+            case_uid: case_uid.map(|uid| CaseUid::new(uid).unwrap()),
+            case_revision: CaseRevision::new(case_revision).unwrap(),
             case_files: CaseFilePaths::default(),
             generated_from: GeneratedFrom {
                 requirement_ids: vec!["req-shop".to_string()],
@@ -185,17 +186,18 @@ mod tests {
     fn stores_and_loads_back_the_same_definition() {
         let dir = tempfile::tempdir().unwrap();
         let revision = real_case_revision("Do it.");
-        let testcase = sample_testcase(Some("case-uid-1"), &revision, "Do it.");
+        let testcase = sample_testcase(Some("case-uid-1"), revision.as_str(), "Do it.");
 
         let path = store_case_definition(dir.path(), &testcase)
             .unwrap()
             .expect("case_uid is present, so a path must be returned");
         assert!(path.is_file());
 
-        let loaded = load_case_definition(dir.path(), "case-uid-1", &revision)
-            .unwrap()
-            .expect("just-stored definition must load back");
-        assert_eq!(loaded.case_uid, "case-uid-1");
+        let loaded =
+            load_case_definition(dir.path(), &CaseUid::new("case-uid-1").unwrap(), &revision)
+                .unwrap()
+                .expect("just-stored definition must load back");
+        assert_eq!(loaded.case_uid.as_str(), "case-uid-1");
         assert_eq!(loaded.case_revision, revision);
         assert_eq!(loaded.phases, testcase.phases);
     }
@@ -220,7 +222,12 @@ mod tests {
     fn load_case_definition_returns_none_for_an_unknown_key() {
         let dir = tempfile::tempdir().unwrap();
 
-        let result = load_case_definition(dir.path(), "case-uid-1", "rev-1").unwrap();
+        let result = load_case_definition(
+            dir.path(),
+            &CaseUid::new("case-uid-1").unwrap(),
+            &CaseRevision::new("rev-1").unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(result, None);
     }
@@ -246,7 +253,11 @@ mod tests {
         )
         .unwrap();
 
-        let result = load_case_definition(dir.path(), "case-uid-1", "rev-1");
+        let result = load_case_definition(
+            dir.path(),
+            &CaseUid::new("case-uid-1").unwrap(),
+            &CaseRevision::new("rev-1").unwrap(),
+        );
 
         assert!(
             result.is_err(),
@@ -277,7 +288,11 @@ mod tests {
         )
         .unwrap();
 
-        let result = load_case_definition(dir.path(), "case-uid-1", "rev-1");
+        let result = load_case_definition(
+            dir.path(),
+            &CaseUid::new("case-uid-1").unwrap(),
+            &CaseRevision::new("rev-1").unwrap(),
+        );
 
         assert!(
             result.is_err(),
@@ -292,7 +307,11 @@ mod tests {
     #[test]
     fn storing_the_same_key_twice_with_matching_content_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
-        let testcase = sample_testcase(Some("case-uid-1"), &real_case_revision("Do it."), "Do it.");
+        let testcase = sample_testcase(
+            Some("case-uid-1"),
+            real_case_revision("Do it.").as_str(),
+            "Do it.",
+        );
 
         store_case_definition(dir.path(), &testcase).unwrap();
         let second = store_case_definition(dir.path(), &testcase);
@@ -311,7 +330,7 @@ mod tests {
         store_case_definition(dir.path(), &first).unwrap();
 
         let mut second = sample_testcase(Some("case-uid-1"), "rev-1", "Do it differently.");
-        second.case_revision = "rev-1".to_string(); // force a hash-collision-like scenario
+        second.case_revision = CaseRevision::new("rev-1").unwrap(); // force a hash-collision-like scenario
 
         let result = store_case_definition(dir.path(), &second);
 
@@ -324,8 +343,12 @@ mod tests {
         // simulate a collision against `store_case_definition`'s own guard),
         // so it would fail `load_case_definition`'s separate self-consistency
         // check for an unrelated reason.
-        let reloaded =
-            load_case_definition_at(&definition_path(dir.path(), "case-uid-1", "rev-1")).unwrap();
+        let reloaded = load_case_definition_at(&definition_path(
+            dir.path(),
+            &CaseUid::new("case-uid-1").unwrap(),
+            &CaseRevision::new("rev-1").unwrap(),
+        ))
+        .unwrap();
         assert_eq!(
             reloaded.phases, first.phases,
             "the original definition must be left untouched"
@@ -337,16 +360,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let revision1 = real_case_revision("Do it.");
         let revision2 = real_case_revision("Do it differently.");
-        let v1 = sample_testcase(Some("case-uid-1"), &revision1, "Do it.");
-        let v2 = sample_testcase(Some("case-uid-1"), &revision2, "Do it differently.");
+        let v1 = sample_testcase(Some("case-uid-1"), revision1.as_str(), "Do it.");
+        let v2 = sample_testcase(Some("case-uid-1"), revision2.as_str(), "Do it differently.");
 
         store_case_definition(dir.path(), &v1).unwrap();
         store_case_definition(dir.path(), &v2).unwrap();
 
-        let loaded_v1 = load_case_definition(dir.path(), "case-uid-1", &revision1)
+        let case_uid = CaseUid::new("case-uid-1").unwrap();
+        let loaded_v1 = load_case_definition(dir.path(), &case_uid, &revision1)
             .unwrap()
             .unwrap();
-        let loaded_v2 = load_case_definition(dir.path(), "case-uid-1", &revision2)
+        let loaded_v2 = load_case_definition(dir.path(), &case_uid, &revision2)
             .unwrap()
             .unwrap();
         assert_ne!(loaded_v1.phases, loaded_v2.phases);

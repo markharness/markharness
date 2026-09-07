@@ -2,10 +2,25 @@ use std::collections::BTreeMap;
 
 use markharness::canonical::EvidenceResult;
 use markharness::changes::ChangeEvent;
+use markharness::identity::{CaseRevision, CaseUid, Environment, ExecutionUid, TargetRevision};
 use markharness::plan::{
-    NewRequiredTest, PlanEvidence, PlanInput, ProposalAdapter, ProposalDecision, StoredTrace,
-    TestStatus, build_plan, build_plan_with_adapter, evaluate_proposals,
+    BoundVersions, NewRequiredTest, PlanEvidence, PlanInput, ProposalAdapter, ProposalDecision,
+    StoredTrace, TestStatus, build_plan, build_plan_with_adapter, evaluate_proposals,
 };
+
+fn bound_versions(
+    case_uid: &str,
+    case_revision: &str,
+    target_revision: &str,
+    environment: Option<&str>,
+) -> BoundVersions {
+    BoundVersions {
+        case_uid: CaseUid::new(case_uid).unwrap(),
+        case_revision: CaseRevision::new(case_revision).unwrap(),
+        target_revision: TargetRevision::new(target_revision).unwrap(),
+        environment: environment.map(|e| Environment::new(e).unwrap()),
+    }
+}
 
 #[derive(serde::Deserialize)]
 struct HistoricalFixture {
@@ -38,17 +53,12 @@ fn plan_engine_never_treats_unknown_environment_evidence_as_applicable_even_with
         related_events: vec![],
     };
     // No "environment" key at all: an unknown-environment record.
-    let bound_versions = BTreeMap::from([
-        ("case_uid".to_string(), "case-checkout-1".to_string()),
-        ("case_revision".to_string(), "rev-new".to_string()),
-        ("target_revision".to_string(), "head".to_string()),
-    ]);
     let evidence = vec![PlanEvidence {
         test_id: "tc-checkout".to_string(),
         result: EvidenceResult::Pass,
         executed_at: Some("2026-08-18T10:00:00Z".to_string()),
         execution_uid: None,
-        bound_versions,
+        bound_versions: bound_versions("case-checkout-1", "rev-new", "head", None),
     }];
 
     let plan = build_plan(PlanInput {
@@ -57,7 +67,7 @@ fn plan_engine_never_treats_unknown_environment_evidence_as_applicable_even_with
         changes: vec![change],
         evidence,
         stored_traces: vec![],
-        target_revision: "head".to_string(),
+        target_revision: TargetRevision::new("head").unwrap(),
         // No environment requirement — must NOT be read as "match only
         // evidence with no environment", which would let the unknown-
         // environment record above count as Passed.
@@ -65,8 +75,8 @@ fn plan_engine_never_treats_unknown_environment_evidence_as_applicable_even_with
         case_versions: BTreeMap::from([(
             "tc-checkout".to_string(),
             markharness::plan::CaseVersion {
-                case_uid: "case-checkout-1".to_string(),
-                case_revision: "rev-new".to_string(),
+                case_uid: CaseUid::new("case-checkout-1").unwrap(),
+                case_revision: CaseRevision::new("rev-new").unwrap(),
             },
         )]),
     });
@@ -80,64 +90,34 @@ fn plan_engine_never_treats_unknown_environment_evidence_as_applicable_even_with
 }
 
 /// Defense in depth alongside `execution::record_execution`'s own
-/// blank-environment rejection: even if a blank `environment` value reaches
-/// `evidence_status` (a hand-edited record, or an externally imported
-/// evidence blob via `--bind`), it must be treated the same as no
-/// `environment` key at all — never as a "known" environment that could
-/// satisfy a plan with no specific requirement.
+/// blank-environment rejection: a blank `environment` value (a hand-edited
+/// record, or an externally imported evidence blob via `--bind`) must never
+/// reach `evidence_status` as a "known" environment that could satisfy a
+/// plan with no specific requirement. Since `BoundVersions.environment` is
+/// now `Option<Environment>` (not `Option<String>`), this is enforced at
+/// deserialization — a blank value can no longer be constructed as an
+/// `Environment` at all, in Rust code or from a YAML/JSON file — rather than
+/// by a runtime filter inside `evidence_status`.
 #[test]
-fn plan_engine_treats_a_blank_environment_value_the_same_as_no_environment_key() {
-    let change = ChangeEvent {
-        event_id: "checkout--base--head".to_string(),
-        feature_id: "checkout".to_string(),
-        feature_uid: None,
-        feature_id_at_from: None,
-        feature_id_at_to: None,
-        from_milestone: "base".to_string(),
-        to_milestone: "head".to_string(),
-        from_tree_sha: Some("old".to_string()),
-        to_tree_sha: Some("new".to_string()),
-        impacted_testcases: vec!["tc-checkout".to_string()],
-        impact_reason: markharness::changes::ImpactReason::default(),
-        change_type: None,
-        true_divergences: vec![],
-        related_events: vec![],
-    };
-    let bound_versions = BTreeMap::from([
-        ("case_uid".to_string(), "case-checkout-1".to_string()),
-        ("case_revision".to_string(), "rev-new".to_string()),
-        ("target_revision".to_string(), "head".to_string()),
-        ("environment".to_string(), "   ".to_string()),
-    ]);
-    let evidence = vec![PlanEvidence {
-        test_id: "tc-checkout".to_string(),
-        result: EvidenceResult::Pass,
-        executed_at: Some("2026-08-18T10:00:00Z".to_string()),
-        execution_uid: None,
-        bound_versions,
-    }];
+fn plan_evidence_deserialization_rejects_a_blank_environment_value() {
+    let json = r#"{
+        "test_id": "tc-checkout",
+        "result": "pass",
+        "executed_at": "2026-08-18T10:00:00Z",
+        "bound_versions": {
+            "case_uid": "case-checkout-1",
+            "case_revision": "rev-new",
+            "target_revision": "head",
+            "environment": "   "
+        }
+    }"#;
 
-    let plan = build_plan(PlanInput {
-        base: "base".to_string(),
-        head: "head".to_string(),
-        changes: vec![change],
-        evidence,
-        stored_traces: vec![],
-        target_revision: "head".to_string(),
-        environment: None,
-        case_versions: BTreeMap::from([(
-            "tc-checkout".to_string(),
-            markharness::plan::CaseVersion {
-                case_uid: "case-checkout-1".to_string(),
-                case_revision: "rev-new".to_string(),
-            },
-        )]),
-    });
+    let result: Result<PlanEvidence, _> = serde_json::from_str(json);
 
-    assert_eq!(
-        plan.affected_existing_tests[0].status,
-        TestStatus::Stale,
-        "a blank environment value must never count as a known environment"
+    assert!(
+        result.is_err(),
+        "a blank environment value must be rejected at deserialization, not silently accepted \
+         as a known environment"
     );
 }
 
@@ -164,19 +144,13 @@ fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_pi
         true_divergences: vec![],
         related_events: vec![],
     };
-    let bound_versions = BTreeMap::from([
-        ("case_uid".to_string(), "case-checkout-1".to_string()),
-        ("case_revision".to_string(), "rev-new".to_string()),
-        ("target_revision".to_string(), "head".to_string()),
-        ("environment".to_string(), "ci".to_string()),
-    ]);
     let evidence = vec![
         PlanEvidence {
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Fail,
             executed_at: Some("2026-08-18T10:00:00Z".to_string()),
-            execution_uid: Some("exec-fail".to_string()),
-            bound_versions: bound_versions.clone(),
+            execution_uid: Some(ExecutionUid::new("exec-fail").unwrap()),
+            bound_versions: bound_versions("case-checkout-1", "rev-new", "head", Some("ci")),
         },
         // Recorded later, but disagrees with the fail above — the plan must
         // not let this later timestamp silently override it.
@@ -184,8 +158,8 @@ fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_pi
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Pass,
             executed_at: Some("2026-08-18T11:00:00Z".to_string()),
-            execution_uid: Some("exec-pass".to_string()),
-            bound_versions,
+            execution_uid: Some(ExecutionUid::new("exec-pass").unwrap()),
+            bound_versions: bound_versions("case-checkout-1", "rev-new", "head", Some("ci")),
         },
     ];
 
@@ -195,13 +169,13 @@ fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_pi
         changes: vec![change],
         evidence,
         stored_traces: vec![],
-        target_revision: "head".to_string(),
-        environment: Some("ci".to_string()),
+        target_revision: TargetRevision::new("head").unwrap(),
+        environment: Some(Environment::new("ci").unwrap()),
         case_versions: BTreeMap::from([(
             "tc-checkout".to_string(),
             markharness::plan::CaseVersion {
-                case_uid: "case-checkout-1".to_string(),
-                case_revision: "rev-new".to_string(),
+                case_uid: CaseUid::new("case-checkout-1").unwrap(),
+                case_revision: CaseRevision::new("rev-new").unwrap(),
             },
         )]),
     });
@@ -214,7 +188,10 @@ fn plan_engine_marks_conflicting_applicable_evidence_as_unresolved_instead_of_pi
     assert_eq!(plan.summary.unresolved, 1);
     assert_eq!(
         plan.affected_existing_tests[0].execution_uids,
-        vec!["exec-fail".to_string(), "exec-pass".to_string()],
+        vec![
+            ExecutionUid::new("exec-fail").unwrap(),
+            ExecutionUid::new("exec-pass").unwrap()
+        ],
         "an Unresolved status must name every conflicting execution so a human can audit them"
     );
 }
@@ -255,12 +232,6 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
             related_events: vec![],
         },
     ];
-    let bound_versions = BTreeMap::from([
-        ("case_uid".to_string(), "case-checkout-1".to_string()),
-        ("case_revision".to_string(), "rev-new".to_string()),
-        ("target_revision".to_string(), "head".to_string()),
-        ("environment".to_string(), "ci".to_string()),
-    ]);
     // Two applicable records that agree (both pass, at different times):
     // ADR 0017 §5 only forbids resolving *conflicting* results by timestamp
     // alone — agreeing records may coexist without ambiguity.
@@ -271,15 +242,15 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Pass,
             executed_at: Some("2026-08-18T10:00:00Z".to_string()),
-            execution_uid: Some("exec-later".to_string()),
-            bound_versions: bound_versions.clone(),
+            execution_uid: Some(ExecutionUid::new("exec-later").unwrap()),
+            bound_versions: bound_versions("case-checkout-1", "rev-new", "head", Some("ci")),
         },
         PlanEvidence {
             test_id: "tc-checkout".to_string(),
             result: EvidenceResult::Pass,
             executed_at: Some("2026-08-18T09:00:00Z".to_string()),
-            execution_uid: Some("exec-earlier".to_string()),
-            bound_versions,
+            execution_uid: Some(ExecutionUid::new("exec-earlier").unwrap()),
+            bound_versions: bound_versions("case-checkout-1", "rev-new", "head", Some("ci")),
         },
     ];
 
@@ -289,13 +260,13 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
         changes,
         evidence,
         stored_traces: vec![],
-        target_revision: "head".to_string(),
-        environment: Some("ci".to_string()),
+        target_revision: TargetRevision::new("head").unwrap(),
+        environment: Some(Environment::new("ci").unwrap()),
         case_versions: BTreeMap::from([(
             "tc-checkout".to_string(),
             markharness::plan::CaseVersion {
-                case_uid: "case-checkout-1".to_string(),
-                case_revision: "rev-new".to_string(),
+                case_uid: CaseUid::new("case-checkout-1").unwrap(),
+                case_revision: CaseRevision::new("rev-new").unwrap(),
             },
         )]),
     });
@@ -304,7 +275,7 @@ fn plan_engine_resolves_version_bound_evidence_and_missing_test_gaps() {
     assert_eq!(plan.affected_existing_tests[0].status, TestStatus::Passed);
     assert_eq!(
         plan.affected_existing_tests[0].execution_uids,
-        vec!["exec-earlier".to_string()],
+        vec![ExecutionUid::new("exec-earlier").unwrap()],
         "agreeing evidence must deterministically adopt the earliest-executed record, \
          regardless of input order"
     );
@@ -337,18 +308,12 @@ fn plan_engine_exposes_the_execution_uid_that_backs_a_passed_status() {
         true_divergences: vec![],
         related_events: vec![],
     };
-    let bound_versions = BTreeMap::from([
-        ("case_uid".to_string(), "case-checkout-1".to_string()),
-        ("case_revision".to_string(), "rev-new".to_string()),
-        ("target_revision".to_string(), "head".to_string()),
-        ("environment".to_string(), "ci".to_string()),
-    ]);
     let evidence = vec![PlanEvidence {
         test_id: "tc-checkout".to_string(),
         result: EvidenceResult::Pass,
         executed_at: Some("2026-08-18T10:00:00Z".to_string()),
-        execution_uid: Some("exec-1".to_string()),
-        bound_versions,
+        execution_uid: Some(ExecutionUid::new("exec-1").unwrap()),
+        bound_versions: bound_versions("case-checkout-1", "rev-new", "head", Some("ci")),
     }];
 
     let plan = build_plan(PlanInput {
@@ -357,13 +322,13 @@ fn plan_engine_exposes_the_execution_uid_that_backs_a_passed_status() {
         changes: vec![change],
         evidence,
         stored_traces: vec![],
-        target_revision: "head".to_string(),
-        environment: Some("ci".to_string()),
+        target_revision: TargetRevision::new("head").unwrap(),
+        environment: Some(Environment::new("ci").unwrap()),
         case_versions: BTreeMap::from([(
             "tc-checkout".to_string(),
             markharness::plan::CaseVersion {
-                case_uid: "case-checkout-1".to_string(),
-                case_revision: "rev-new".to_string(),
+                case_uid: CaseUid::new("case-checkout-1").unwrap(),
+                case_revision: CaseRevision::new("rev-new").unwrap(),
             },
         )]),
     });
@@ -371,7 +336,7 @@ fn plan_engine_exposes_the_execution_uid_that_backs_a_passed_status() {
     assert_eq!(plan.affected_existing_tests[0].status, TestStatus::Passed);
     assert_eq!(
         plan.affected_existing_tests[0].execution_uids,
-        vec!["exec-1".to_string()]
+        vec![ExecutionUid::new("exec-1").unwrap()]
     );
 }
 
@@ -452,7 +417,7 @@ fn optional_proposal_adapter_adds_reviewable_proposals_without_changing_the_base
         changes: vec![change],
         evidence: vec![],
         stored_traces: vec![],
-        target_revision: "head".to_string(),
+        target_revision: TargetRevision::new("head").unwrap(),
         environment: None,
         case_versions: BTreeMap::new(),
     };
@@ -495,7 +460,7 @@ fn plan_engine_uses_stored_traces_as_affected_existing_tests() {
             test_id: "junit:checkout:pays".to_string(),
             feature_id: "checkout".to_string(),
         }],
-        target_revision: "head".to_string(),
+        target_revision: TargetRevision::new("head").unwrap(),
         environment: None,
         case_versions: BTreeMap::new(),
     });

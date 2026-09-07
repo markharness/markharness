@@ -8,6 +8,7 @@ use crate::fs_safety::replace_file;
 use crate::generate;
 use crate::git;
 use crate::id_cache::{self, by_identity_key};
+use crate::identity::CaseRevision;
 use crate::knowledge_source::{
     GitTreeKnowledgeSource, KnowledgeSource, WorkingTreeKnowledgeSource,
 };
@@ -334,8 +335,8 @@ enum SubunitContext {
         to_versions: SubunitsByFeatureDir,
         /// `subunit_key` → `(case_id, case_revision, scenario.yml path)`,
         /// used for the actual impact decision.
-        from_case_map: BTreeMap<String, (String, String, String)>,
-        to_case_map: BTreeMap<String, (String, String, String)>,
+        from_case_map: BTreeMap<String, (String, CaseRevision, String)>,
+        to_case_map: BTreeMap<String, (String, CaseRevision, String)>,
     },
 }
 
@@ -430,8 +431,8 @@ fn validate_scenario_subunits_have_parent_behavior(
 /// unchanged (ADR 0017 §3's "共通手順の変更" row).
 fn changed_scenario_impacted_testcases_by_revision(
     feature_id: &str,
-    from_map: &BTreeMap<String, (String, String, String)>,
-    to_map: &BTreeMap<String, (String, String, String)>,
+    from_map: &BTreeMap<String, (String, CaseRevision, String)>,
+    to_map: &BTreeMap<String, (String, CaseRevision, String)>,
 ) -> SubunitNarrowing {
     let prefix = format!("{feature_id}{SUBUNIT_KEY_SEP}");
     let keys: BTreeSet<&String> = from_map
@@ -467,7 +468,7 @@ fn changed_scenario_impacted_testcases_by_revision(
 /// `changed_scenario_impacted_testcases_by_revision`.
 fn scenario_testcases_by_key(
     source: &dyn KnowledgeSource,
-) -> io::Result<BTreeMap<String, (String, String, String)>> {
+) -> io::Result<BTreeMap<String, (String, CaseRevision, String)>> {
     let testcases = generate::compile_testcases(&source.load_snapshot()?);
     Ok(testcases
         .into_iter()

@@ -1119,7 +1119,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     if json {
                         println!(
                             "{{\"ok\":true,\"execution_uid\":{:?}}}",
-                            entry.execution_uid
+                            entry.execution_uid.as_str()
                         );
                     } else {
                         println!(

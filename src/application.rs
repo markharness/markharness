@@ -6,7 +6,8 @@ use crate::case_definition;
 use crate::changes::{self, ChangeOptions};
 use crate::fs_safety::{copy_unmanaged_siblings_no_follow, replace_dir_from_staging, replace_file};
 use crate::generate;
-use crate::plan::{self, CaseVersion, PlanEvidence, PlanInput};
+use crate::identity::{CaseRevision, CaseUid, Environment, TargetRevision};
+use crate::plan::{self, BoundVersions, CaseVersion, PlanEvidence, PlanInput};
 use crate::presentation::CommandOutcome;
 use crate::traceability;
 
@@ -51,6 +52,10 @@ pub fn build_verification_plan_value(
     environment: Option<&str>,
     canonical_inputs: &[canonical::CanonicalSnapshot],
 ) -> io::Result<plan::VerificationPlan> {
+    let environment = environment
+        .map(Environment::new)
+        .transpose()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     let analyzer = changes::ChangeAnalyzer::new(root);
     let changes = analyzer.compute(
         &changes::CommitRef::commit(base),
@@ -61,7 +66,8 @@ pub fn build_verification_plan_value(
     // resolved to a concrete commit OID, so a symbolic `head` (a branch or
     // tag name that could move) still matches evidence recorded against the
     // exact commit that was actually tested.
-    let target_revision = crate::git::resolve_commit_oid(root, head)?;
+    let target_revision = TargetRevision::new(crate::git::resolve_commit_oid(root, head)?)
+        .expect("git::resolve_commit_oid returns a non-blank commit OID on success");
 
     // ADR 0017 §5: the evidence candidates a plan judges are limited to
     // native execution records (`execution::ExecutionEntry`). Canonical
@@ -98,13 +104,12 @@ pub fn build_verification_plan_value(
         .collect::<io::Result<Vec<_>>>()?
         .into_iter()
         .map(|entry| {
-            let mut bound_versions = std::collections::BTreeMap::new();
-            bound_versions.insert("case_uid".to_string(), entry.case_uid);
-            bound_versions.insert("case_revision".to_string(), entry.case_revision);
-            bound_versions.insert("target_revision".to_string(), entry.target_revision);
-            if let Some(environment) = entry.environment {
-                bound_versions.insert("environment".to_string(), environment);
-            }
+            let bound_versions = BoundVersions {
+                case_uid: entry.case_uid,
+                case_revision: entry.case_revision,
+                target_revision: entry.target_revision,
+                environment: entry.environment,
+            };
             PlanEvidence {
                 test_id: entry.case_id,
                 result: match entry.result.as_str() {
@@ -125,8 +130,21 @@ pub fn build_verification_plan_value(
         .iter()
         .filter(|artifact| artifact.kind == canonical::ArtifactKind::TestCase)
         .filter_map(|artifact| {
-            let case_uid = artifact.uid.clone()?;
-            let case_revision = artifact.version.canonical_hash.clone()?;
+            // `CanonicalArtifact.uid`/`canonical_hash` are untyped `String`
+            // (design doc `verification-plan-canonical-model-design.md`
+            // §7.3: out of scope for type-splitting here), but for a
+            // `TestCase`-kind artifact from `import_native` they are always
+            // `CaseUid`/`CaseRevision` values stringified a moment earlier
+            // in this same call (`canonical::import_native` reads them from
+            // `generate::TestCase.case_uid`/`case_revision`, both already
+            // typed). `CaseUid`/`CaseRevision::new` re-parsing that string
+            // cannot fail (design doc §7.4): `derived_uid::case_uid`/
+            // `case_revision` always format a 36-character, non-blank hash
+            // string regardless of input.
+            let case_uid = CaseUid::new(artifact.uid.clone()?)
+                .expect("a TestCase artifact's uid, when present, is always a CaseUid's own string form");
+            let case_revision = CaseRevision::new(artifact.version.canonical_hash.clone()?)
+                .expect("a TestCase artifact's canonical_hash, when present, is always a CaseRevision's own string form");
             Some((
                 artifact.external_id.clone(),
                 CaseVersion {
@@ -172,7 +190,7 @@ pub fn build_verification_plan_value(
         evidence,
         stored_traces,
         target_revision,
-        environment: environment.map(str::to_string),
+        environment,
         case_versions,
     }))
 }

@@ -309,7 +309,7 @@ pub fn record_new_case_uids(
         };
         newly_recorded.push(ManifestEntry {
             legacy_case_id: testcase.case_id,
-            case_uid,
+            case_uid: case_uid.to_string(),
             legacy_snapshot: legacy_snapshot.clone(),
             recorded_at: recorded_at.clone(),
         });
@@ -546,6 +546,7 @@ fn resolve_case_uid_at_ref(
     let found = testcase_and_legacy_snapshot_at_ref(root, git_ref, case_id)?;
     let manifest = read_from_ref(root, git_ref)?;
     if let Some(case_uid) = found.as_ref().and_then(|(tc, _)| tc.case_uid.clone()) {
+        let case_uid = case_uid.to_string();
         let corroborated = manifest
             .entries
             .iter()
@@ -1219,14 +1220,16 @@ mod tests {
             testcase_at_ref(dir.path(), "v1", case_id)
                 .unwrap()
                 .and_then(|tc| tc.case_uid)
-                .as_deref()
+                .as_ref()
+                .map(|uid| uid.as_str())
         );
         assert_eq!(
             Some(case_uid_v2.as_str()),
             testcase_at_ref(dir.path(), "v2", case_id)
                 .unwrap()
                 .and_then(|tc| tc.case_uid)
-                .as_deref()
+                .as_ref()
+                .map(|uid| uid.as_str())
         );
     }
 
@@ -1279,7 +1282,8 @@ mod tests {
             testcase_at_ref(dir.path(), "v1", case_id)
                 .unwrap()
                 .and_then(|tc| tc.case_uid)
-                .as_deref()
+                .as_ref()
+                .map(|uid| uid.as_str())
         );
     }
 

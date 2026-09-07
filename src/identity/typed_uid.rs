@@ -88,6 +88,16 @@ define_typed_uid!(ScenarioUid);
 define_typed_uid!(CaseUid);
 define_typed_uid!(CaseRevision);
 define_typed_uid!(ExecutionUid);
+// ADR 0017 §5: the opaque, non-empty identifier of the build/commit under
+// test. Not among ADR 0017 §3's enumerated identity types, but added here
+// (design doc `verification-plan-canonical-model-design.md` §7.2) so its
+// existing non-blank requirement (`execution::RecordArgs`) is enforced by
+// the type system, same as the identifiers above.
+define_typed_uid!(TargetRevision);
+// A free-text environment identifier. `None` means explicitly unknown; a
+// blank string is never a valid value (see `TargetRevision` above for why
+// this is typed rather than left as `String`).
+define_typed_uid!(Environment);
 // A mutable, human-facing `id:` field. Never accepted where a uid is
 // required (ADR 0017 §3: "Never mix display IDs and UIDs as matching
 // keys").
@@ -100,6 +110,58 @@ mod tests {
     #[test]
     fn new_rejects_an_empty_string() {
         assert!(ScenarioUid::new("").is_err());
+    }
+
+    #[test]
+    fn target_revision_new_rejects_a_blank_string() {
+        assert!(TargetRevision::new("   ").is_err());
+    }
+
+    #[test]
+    fn target_revision_new_accepts_a_non_blank_string() {
+        let revision = TargetRevision::new("abc123").unwrap();
+        assert_eq!(revision.as_str(), "abc123");
+    }
+
+    #[test]
+    fn target_revision_round_trips_through_yaml() {
+        let revision = TargetRevision::new("abc123").unwrap();
+        let yaml = serde_yaml_ng::to_string(&revision).unwrap();
+        assert_eq!(yaml.trim(), "abc123");
+        let deserialized: TargetRevision = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(deserialized, revision);
+    }
+
+    #[test]
+    fn target_revision_deserialize_rejects_a_blank_string() {
+        let result: Result<TargetRevision, _> = serde_yaml_ng::from_str("\"  \"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn environment_new_rejects_a_blank_string() {
+        assert!(Environment::new("").is_err());
+    }
+
+    #[test]
+    fn environment_new_accepts_a_non_blank_string() {
+        let environment = Environment::new("staging").unwrap();
+        assert_eq!(environment.as_str(), "staging");
+    }
+
+    #[test]
+    fn environment_round_trips_through_yaml() {
+        let environment = Environment::new("staging").unwrap();
+        let yaml = serde_yaml_ng::to_string(&environment).unwrap();
+        assert_eq!(yaml.trim(), "staging");
+        let deserialized: Environment = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(deserialized, environment);
+    }
+
+    #[test]
+    fn environment_deserialize_rejects_a_blank_string() {
+        let result: Result<Environment, _> = serde_yaml_ng::from_str("\"  \"");
+        assert!(result.is_err());
     }
 
     #[test]

@@ -4,6 +4,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::canonical::{EvidenceResult, RelationOriginKind};
 use crate::changes::ChangeEvent;
+use crate::identity::{CaseRevision, CaseUid, Environment, ExecutionUid, TargetRevision};
+
+/// ADR 0017 §3/§5: the Case UID/Case revision/target build/environment a
+/// piece of evidence is bound to, as a fixed set of typed fields rather than
+/// a `BTreeMap<String, String>` — every `BoundVersions` is built from exactly
+/// these four fields (`execution::ExecutionEntry`'s own fields), so a map
+/// that permits arbitrary or missing keys buys nothing but a class of typo
+/// bugs. This is deliberately a different type from
+/// `canonical::CanonicalEvidence.bound_versions`, which holds whatever
+/// arbitrary keys `markharness import --bind` supplies for external
+/// importers and is never fed into `evidence_status` (see
+/// `application::build_verification_plan_value`'s doc comment on why
+/// canonical/imported evidence is excluded from Plan evidence candidates).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BoundVersions {
+    pub case_uid: CaseUid,
+    pub case_revision: CaseRevision,
+    pub target_revision: TargetRevision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<Environment>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanEvidence {
@@ -19,8 +40,8 @@ pub struct PlanEvidence {
     /// plan judges (out of scope for ADR 0017 §5; see the Case UID/revision
     /// model this evidence still requires via `bound_versions`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution_uid: Option<String>,
-    pub bound_versions: BTreeMap<String, String>,
+    pub execution_uid: Option<ExecutionUid>,
+    pub bound_versions: BoundVersions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,8 +57,8 @@ pub struct StoredTrace {
 /// unmigrated Scenario) can never be found `Passed`/`Failed`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CaseVersion {
-    pub case_uid: String,
-    pub case_revision: String,
+    pub case_uid: CaseUid,
+    pub case_revision: CaseRevision,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,17 +70,17 @@ pub struct PlanInput {
     pub stored_traces: Vec<StoredTrace>,
     /// ADR 0017 §5: the opaque, non-empty build/commit identifier this plan
     /// asks "is currently verified" — typically `head` resolved to a commit
-    /// OID. Evidence whose own `bound_versions["target_revision"]` doesn't
+    /// OID. Evidence whose own `bound_versions.target_revision` doesn't
     /// match this exactly is inapplicable, however well its `case_uid`/
     /// `case_revision` matched.
-    pub target_revision: String,
+    pub target_revision: TargetRevision,
     /// The environment this plan requires evidence to have run in. `Some`
     /// matches only evidence recorded with exactly that environment.
     /// `None` means no specific environment is required, but this is not
     /// "match anything": evidence with no recorded `environment` at all
     /// (unknown) never satisfies any requirement, `None` included — ADR
     /// 0017 §5's "対象・環境が不明な記録は合格を満たさない" is unconditional.
-    pub environment: Option<String>,
+    pub environment: Option<Environment>,
     /// Each affected test's current `(case_uid, case_revision)`, keyed by
     /// `test_id`/case_id.
     pub case_versions: BTreeMap<String, CaseVersion>,
@@ -111,7 +132,7 @@ pub struct AffectedExistingTest {
     /// (canonical/imported evidence) contributes nothing to this list even
     /// when it was the evidence that decided `status`.
     #[serde(default)]
-    pub execution_uids: Vec<String>,
+    pub execution_uids: Vec<ExecutionUid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -203,10 +224,10 @@ pub fn evaluate_proposals(predicted: &[String], expected: &[String]) -> PlanEval
 fn evidence_status(
     test_id: &str,
     case_versions: &BTreeMap<String, CaseVersion>,
-    target_revision: &str,
-    environment: Option<&str>,
+    target_revision: &TargetRevision,
+    environment: Option<&Environment>,
     evidence: &[PlanEvidence],
-) -> (TestStatus, Vec<String>) {
+) -> (TestStatus, Vec<ExecutionUid>) {
     let matching_test: Vec<&PlanEvidence> = evidence
         .iter()
         .filter(|item| item.test_id == test_id)
@@ -218,33 +239,22 @@ fn evidence_status(
         .iter()
         .copied()
         .filter(|item| {
-            let case_uid_matches = item.bound_versions.get("case_uid").map(String::as_str)
-                == Some(case_version.case_uid.as_str());
+            let case_uid_matches = item.bound_versions.case_uid == case_version.case_uid;
             let case_revision_matches =
-                item.bound_versions.get("case_revision").map(String::as_str)
-                    == Some(case_version.case_revision.as_str());
-            let target_revision_matches = item
-                .bound_versions
-                .get("target_revision")
-                .map(String::as_str)
-                == Some(target_revision);
+                item.bound_versions.case_revision == case_version.case_revision;
+            let target_revision_matches = item.bound_versions.target_revision == *target_revision;
             // ADR 0017 §5: "対象・環境が不明な記録は保存できても合格を満た
             // さない" is unconditional — an execution record with no
             // recorded `environment` (unknown) must never be applicable,
             // even when the plan itself has no specific environment
             // requirement (`environment: None`). Only a plan with no
-            // requirement paired with a record naming *some* known,
-            // non-blank environment is treated as a match in that case;
-            // `None == None` must never be read as "matches", and a blank
-            // string is not a real environment identifier even if present
-            // as a key — `execution::record_execution` already refuses to
-            // store one, but this guards against a hand-edited record or
-            // an externally imported evidence blob smuggling one in.
-            let recorded_environment = item
-                .bound_versions
-                .get("environment")
-                .map(String::as_str)
-                .filter(|value| !value.trim().is_empty());
+            // requirement paired with a record naming *some* known
+            // environment is treated as a match in that case; `None ==
+            // None` must never be read as "matches". A blank environment
+            // can no longer reach here at all: `Environment::new` rejects
+            // blank strings at construction, both at `record_execution`'s
+            // boundary and at `BoundVersions`' own YAML deserialization.
+            let recorded_environment = item.bound_versions.environment.as_ref();
             let environment_matches = match (environment, recorded_environment) {
                 (Some(required), Some(recorded)) => recorded == required,
                 (None, Some(_)) => true,
@@ -270,9 +280,15 @@ fn evidence_status(
             .cmp(b.executed_at.as_deref().unwrap_or(""))
             .then(
                 a.execution_uid
-                    .as_deref()
+                    .as_ref()
+                    .map(ExecutionUid::as_str)
                     .unwrap_or("")
-                    .cmp(b.execution_uid.as_deref().unwrap_or("")),
+                    .cmp(
+                        b.execution_uid
+                            .as_ref()
+                            .map(ExecutionUid::as_str)
+                            .unwrap_or(""),
+                    ),
             )
     });
     let conflicting = applicable
@@ -354,7 +370,7 @@ pub fn build_plan_with_adapter(
                 &test_id,
                 &input.case_versions,
                 &input.target_revision,
-                input.environment.as_deref(),
+                input.environment.as_ref(),
                 &input.evidence,
             );
             let item = AffectedExistingTest {

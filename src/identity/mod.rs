@@ -37,6 +37,6 @@ pub use migration_manifest::{
     resolve_case_uid_with_signature,
 };
 pub use typed_uid::{
-    BehaviorUid, BlankValueError, CaseRevision, CaseUid, DisplayId, ExecutionUid, FeatureUid,
-    RequirementUid, ScenarioUid,
+    BehaviorUid, BlankValueError, CaseRevision, CaseUid, DisplayId, Environment, ExecutionUid,
+    FeatureUid, RequirementUid, ScenarioUid, TargetRevision,
 };
