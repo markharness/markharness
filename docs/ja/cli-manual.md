@@ -1278,7 +1278,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 
 **用途**: `.markharness/knowledge/`配下のRequirement/Feature/Behavior/Condition/ExpectedResultのうち、まだ`uid:`を持たない要素全てへ新規UIDを発行し、root `Issued` identity eventを記録する。冪等な操作であり、copy/import/手編集で後からuidなし要素が混入した場合も安全に再実行できる。TestCaseの`case_id`→`case_uid`対応(migration manifest、`.markharness/identity-migration-manifest.yml`)もあわせて記録する。
 
-5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 2`・`mode = "uid"`を書き込み、schema version 2への公開cutoverを完了する(design doc §13 Phase 5)。cutover後は`markharness validate`(1.18節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
+5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 1`・`mode = "uid"`を書き込み、UID modeへの公開cutoverを完了する(design doc §13 Phase 5)。cutover完了の判定は`schema_version`ではなく`mode`のみで行う(ADR 0018)。cutover後は`markharness validate`(1.18節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
 
 **前提条件**: 対象ディレクトリがgitリポジトリであること。legacy snapshot identityとして`.markharness/knowledge`のtree SHAをmigration manifestへ記録するため、内部で一時indexを使った`git write-tree`相当の処理を行う(実リポジトリのstaging areaは変更しない)。
 
@@ -1316,7 +1316,7 @@ $ markharness identity migrate --json
 
 (2回目の`--json`実行は全要素が既にmigrate済みのため、`migrated`が空のno-op応答になっている。)
 
-**ユースケース対応**: ADR 0013「移行」節、design doc §12(migration時のrecorded_at・crash-recovery)・§13 Phase 4(全要素migration)/Phase 5(schema version 2公開cutover)。
+**ユースケース対応**: ADR 0013「移行」節、design doc §12(migration時のrecorded_at・crash-recovery)・§13 Phase 4(全要素migration)/Phase 5(UID modeへの公開cutover)。
 
 ---
 

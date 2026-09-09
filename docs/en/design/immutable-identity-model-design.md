@@ -297,7 +297,7 @@ The order follows ADR 0013's "Migration" section as-is:
 2. An end-to-end vertical slice using Feature (an internal stage, never published or permanently supported)
 3. Descriptors/adapters for the remaining four kinds (Requirement, Behavior, Condition, ExpectedResult)
 4. Migration of every entity
-5. The public schema-version-2 cutover (all five kinds switch together)
+5. The public cutover to UID mode (all five kinds switch together)
 
 Because nothing is published during the vertical-slice stage (2), no temporary compatibility adapter is needed (this resolves the ADR condition on "the implementation order for migrating all consumers to UID and the removal condition for temporary compatibility adapters").
 
