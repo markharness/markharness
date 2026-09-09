@@ -1,10 +1,11 @@
 #![allow(clippy::disallowed_methods)]
 //! Step 35 (design doc §13 Phase 5, ADR 0013 「移行」節): end-to-end
-//! coverage for the schema version 2 public cutover — all five
-//! `EntityKind`s flip to UID mode together, as one operation, and the
-//! `[identity] mode = "uid"` marker (not a count of migrated elements) is
-//! what governs whether a uid-less element is legitimate pre-migration
-//! state or a rejected data-integrity violation.
+//! coverage for the UID-mode public cutover — all five `EntityKind`s flip
+//! to UID mode together, as one operation, and the `[identity]
+//! mode = "uid"` marker (not a count of migrated elements, and not
+//! `schema_version`, which ADR 0018 keeps frozen at 1) is what governs
+//! whether a uid-less element is legitimate pre-migration state or a
+//! rejected data-integrity violation.
 
 use std::path::Path;
 

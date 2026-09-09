@@ -1048,9 +1048,9 @@ fn write_feature_fixups(
     Ok(())
 }
 
-/// The schema version 2 public cutover (design doc §13 Phase 5, ADR 0013
-/// 「移行」節): once every element of all five `EntityKind`s carries a
-/// `uid`, flips `config.toml`'s `[identity]` marker to `mode = "uid"` — the
+/// The UID-mode public cutover (design doc §13 Phase 5, ADR 0013 「移行」
+/// 節): once every element of all five `EntityKind`s carries a `uid`,
+/// flips `config.toml`'s `[identity]` marker to `mode = "uid"` — the
 /// single authoritative flag consumers use to decide whether uid-less
 /// elements are a legitimate pre-migration state or a data-integrity
 /// violation. Re-scans the working tree directly rather than trusting the
