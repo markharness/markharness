@@ -51,6 +51,19 @@ Before adding a new crate, check its license. Only licenses listed in `deny.toml
 - English and Japanese docs under `docs/en/` and `docs/ja/` are updated together — a change to one language's docs should be mirrored in the other in the same PR.
 - Transient documents (investigation notes, superseded drafts) should be deleted once they've served their purpose rather than left to accumulate.
 
+## Information placement and comments
+
+Keep each kind of knowledge in its proper source:
+
+- Code expresses the current What / How.
+- Comments preserve local Why, invariants, and non-obvious constraints that are required to change the code safely.
+- ADRs record why a design was chosen, the alternatives considered, and the resulting decision.
+- Git history records how the implementation evolved.
+
+Write a comment when the information cannot be recovered from the code, types, tests, or names and is useful for a future change. Prefer a precise invariant or constraint over a description of control flow. Keep comments local to the code they protect. Put design-level rationale, alternatives, and historical context in an ADR or Git history instead of duplicating it in comments. When a design decision is relevant at a code location, link to the ADR briefly.
+
+During review, check both that comments do not restate the current implementation and that non-obvious local constraints are documented. Treat a comment that belongs in an ADR, a stale comment, or a missing constraint explanation as a review finding when it affects maintainability or correctness.
+
 ## Commit style
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`) — the release changelog is generated from them automatically.

@@ -30,6 +30,8 @@ Review changes independently along both axes. Report findings under the correspo
 
 Determine whether the change follows repository instructions, `CONTRIBUTING.md`, accepted ADRs, design-document invariants, documented module interfaces, and established safety constraints. A documented project decision overrides a generic code-smell preference.
 
+For comments and documentation placement, apply the repository's information-placement policy: Code owns current What/How; comments own local Why, invariants, and non-obvious constraints; ADRs own design choices and alternatives; Git history owns implementation evolution. Report a finding when a comment merely restates the implementation, when a correctness-relevant local constraint is undocumented, or when design rationale or historical narrative is duplicated in the wrong medium. Do not require comments for information already clear from code, types, tests, or names.
+
 ### Spec
 
 Determine whether the change implements the requested checklist, issue, or specification completely and correctly. Report missing or partial requirements, incorrect behavior, and material behavior outside the requested scope.
