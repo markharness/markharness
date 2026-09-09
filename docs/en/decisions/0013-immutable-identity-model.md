@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-08-22. Implementation complete; see `checklist-immutable-identity-model.md`)
+Accepted (2026-08-22. Implementation complete; see `checklist-immutable-identity-model.md`). The `schema_version = 2` value specified in the "Migration" section below is corrected to `schema_version = 1` by [0018](./0018-identity-schema-version-freeze.md); the rest of this ADR remains in effect as written.
 
 ## Background
 

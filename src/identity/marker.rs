@@ -1,18 +1,20 @@
 //! Project-level `[identity]` marker in `.markharness/config.toml`
-//! (ADR 0013 「移行」節): the single authoritative flag for whether a
-//! project has completed the schema version 2 cutover. Whether a project
-//! is migrated is judged by this marker, never by counting how many
-//! elements happen to carry a `uid` (ADR: 「移行済みかどうかはFeature数や
-//! UIDの有無ではなくproject markerで判定する」).
+//! (ADR 0013 「移行」節): `mode` is the single authoritative flag for
+//! whether a project has completed the UID-mode cutover. Whether a
+//! project is migrated is judged by this marker, never by counting how
+//! many elements happen to carry a `uid` (ADR: 「移行済みかどうかは
+//! Feature数やUIDの有無ではなくproject markerで判定する」).
+//!
+//! `schema_version` plays no part in that determination (ADR 0018).
 
 use std::io;
 use std::path::Path;
 
 use crate::project_root::MARKER_FILE;
 
-/// The `[identity].schema_version` value written once the schema version 2
-/// cutover has completed (ADR 0013).
-pub const IDENTITY_SCHEMA_VERSION: u32 = 2;
+/// The `[identity].schema_version` value written at UID-mode cutover
+/// (ADR 0018).
+pub const IDENTITY_SCHEMA_VERSION: u32 = 1;
 
 const UID_MODE: &str = "uid";
 
@@ -36,7 +38,7 @@ pub fn is_uid_mode(root: &Path) -> io::Result<bool> {
     Ok(mode == Some(UID_MODE))
 }
 
-/// Idempotently writes `[identity]\nschema_version = 2\nmode = "uid"\n`
+/// Idempotently writes `[identity]\nschema_version = 1\nmode = "uid"\n`
 /// into `config.toml`, preserving any other keys/tables already there
 /// (e.g. the top-level `schema_version` `init` writes, or user
 /// customizations — see `project_root::MARKER_FILE`'s doc comment).
@@ -124,7 +126,7 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join(MARKER_FILE)).unwrap();
         let parsed: toml::Table = content.parse().unwrap();
         let identity = parsed["identity"].as_table().unwrap();
-        assert_eq!(identity["schema_version"].as_integer(), Some(2));
+        assert_eq!(identity["schema_version"].as_integer(), Some(1));
         assert_eq!(identity["mode"].as_str(), Some("uid"));
     }
 

@@ -265,7 +265,7 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
     Ok(issues)
 }
 
-/// ADR 0013 検証規則: schema version 2 の公開cutover後(`[identity]
+/// ADR 0013 検証規則: UID modeへの公開cutover後(`[identity]
 /// mode = "uid"`)は、UIDなし要素の新規追加を通常コマンドが拒否する。
 /// copy/import/手編集で紛れ込んだuidなし要素をここで検出し、
 /// `markharness identity migrate`(明示的なrepair操作)を促す。cutover前

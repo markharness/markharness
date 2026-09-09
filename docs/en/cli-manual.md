@@ -1278,7 +1278,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 
 **Purpose**: Issues a fresh uid, and records a root `Issued` identity event, for every Requirement/Feature/Behavior/Condition/ExpectedResult under `.markharness/knowledge/` that doesn't have one yet. Idempotent — safe to re-run after copy/import/hand-editing introduces new uid-less elements. Also records TestCase `case_id` → `case_uid` mappings (the migration manifest, `.markharness/identity-migration-manifest.yml`).
 
-Once every one of the five kinds has zero uid-less elements left, writes `schema_version = 2` / `mode = "uid"` into `.markharness/config.toml`'s `[identity]` marker, completing the schema version 2 public cutover (design doc §13 Phase 5). After cutover, `markharness validate` (section 1.18) starts reporting any newly introduced uid-less element as a validation issue.
+Once every one of the five kinds has zero uid-less elements left, writes `schema_version = 1` / `mode = "uid"` into `.markharness/config.toml`'s `[identity]` marker, completing the public cutover to UID mode (design doc §13 Phase 5). Cutover completion is determined by `mode` alone, not `schema_version` (ADR 0018). After cutover, `markharness validate` (section 1.18) starts reporting any newly introduced uid-less element as a validation issue.
 
 **Precondition**: The target directory must already be a Git repository. To record the legacy snapshot identity (the tree SHA of `.markharness/knowledge`) into the migration manifest, this internally performs a `git write-tree`-equivalent operation against a disposable temporary index (the repository's real staging area is never touched).
 
@@ -1316,7 +1316,7 @@ $ markharness identity migrate --json
 
 (The second `--json` run is a no-op response with an empty `migrated`, since every element is already migrated.)
 
-**Use case mapping**: ADR 0013's "Migration" section; design doc §12 (`recorded_at` and crash-recovery during migration) and §13 Phase 4 (migrating all elements) / Phase 5 (schema version 2 public cutover).
+**Use case mapping**: ADR 0013's "Migration" section; design doc §12 (`recorded_at` and crash-recovery during migration) and §13 Phase 4 (migrating all elements) / Phase 5 (public cutover to UID mode).
 
 ---
 

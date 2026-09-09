@@ -297,7 +297,7 @@ ADR 0013の「移行」節が定める順序をそのまま踏襲する。
 2. Featureを使ったend-to-endのvertical slice(公開・永続サポートしない内部段階)
 3. 残る4種類(Requirement/Behavior/Condition/ExpectedResult)のdescriptor/adapter
 4. 全要素のmigration
-5. schema version 2の公開cutover(5種類を一括切替)
+5. UID modeへの公開cutover(5種類を一括切替)
 
 vertical slice段階(2)では何も公開しないため、一時的な互換adapterは不要と判断した(ADR条件「全consumerをUIDベースへ移行する実装順序と、一時的な互換adapterの削除条件」に対応)。
 

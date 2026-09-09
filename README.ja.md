@@ -75,7 +75,7 @@ markharness verify pending --from v1 --to v2
 
 - 既存TMS(TestRail/Xray等)からのインポータ(UC8) — 未実装。
 - id解決キャッシュの `canonicalization_rule_version` / `id_index_schema_version` — 現状固定値で、実際の改訂運用は未検証。
-- ADR 0013の「schema version 2公開cutover後にuidなし要素が追加された場合は通常コマンドを拒否する」検証規則は `markharness validate` にのみ実装されており、`knowledge apply`/`interactive add` 等の生成系コマンドへの拡張は未定。
+- ADR 0013の「UID modeへの公開cutover後にuidなし要素が追加された場合は通常コマンドを拒否する」検証規則は `markharness validate` にのみ実装されており、`knowledge apply`/`interactive add` 等の生成系コマンドへの拡張は未定。
 - `verify trace` / `verify pending` — 導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用されない(「不明」扱い)。`.markharness/executions/*/results.yml` はJSON Schema検証済み(`.markharness/schema/execution_result.schema.json`)。
 - `markharness backfill run` — 常駐デーモンではなく、呼び出しごとに未処理ペアを1パス処理して終了する設計(CI等からの反復呼び出しを前提とする)。
 
