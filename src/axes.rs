@@ -210,7 +210,7 @@ mod tests {
         fs::create_dir_all(&requirement_dir).unwrap();
         fs::write(
             requirement_dir.join("requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
 
@@ -263,7 +263,7 @@ mod tests {
         fs::create_dir_all(&requirement_dir).unwrap();
         fs::write(
             requirement_dir.join("requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
 

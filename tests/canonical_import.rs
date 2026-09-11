@@ -103,7 +103,7 @@ fn native_import_exposes_versioned_artifacts_and_derived_generation_relations() 
     fs::write(
         repo.path()
             .join(".markharness/knowledge/requirements/checkout/requirement.yml"),
-        "id: checkout\nlabel: Checkout\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        "id: checkout\nsource: native\nlabel: Checkout\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
     )
     .unwrap();
     fs::write(
@@ -187,7 +187,7 @@ fn native_import_canonical_hash_reflects_case_revision_not_raw_git_oid() {
     fs::write(
         repo.path()
             .join(".markharness/knowledge/requirements/checkout/requirement.yml"),
-        "id: checkout\nlabel: Checkout\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        "id: checkout\nsource: native\nlabel: Checkout\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
     )
     .unwrap();
     fs::create_dir_all(repo.path().join(".markharness/knowledge/features/pay/card")).unwrap();
@@ -267,7 +267,7 @@ fn native_import_carries_the_feature_uid_when_the_feature_has_one() {
     fs::write(
         repo.path()
             .join(".markharness/knowledge/requirements/checkout/requirement.yml"),
-        "id: checkout\nlabel: Checkout\naxis: []\n",
+        "id: checkout\nsource: native\nlabel: Checkout\naxis: []\n",
     )
     .unwrap();
     fs::write(

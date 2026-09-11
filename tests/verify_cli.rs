@@ -29,7 +29,7 @@ fn write_full_chain(root: &Path, label: &str) {
     std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/req-todo")).unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/requirements/req-todo/requirement.yml"),
-        "id: req-todo\nlabel: req-todo\naxis: [ui]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        "id: req-todo\nsource: native\nlabel: req-todo\naxis: [ui]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
     )
     .unwrap();
     std::fs::write(

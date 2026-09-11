@@ -31,6 +31,7 @@ pub mod lineage;
 pub mod milestone;
 pub mod presentation;
 pub mod project_root;
+pub mod requirement;
 pub mod schema;
 pub mod time;
 pub mod traceability;

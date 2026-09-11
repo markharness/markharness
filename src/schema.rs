@@ -258,10 +258,12 @@ expected:
                 "requirement.schema.json",
                 serde_json::to_value(crate::knowledge::Requirement {
                     id: "account-management".to_string(),
-                    label: "account-management".to_string(),
+                    source: crate::knowledge::RequirementSource::Native,
+                    label: Some("account-management".to_string()),
                     axis: vec!["security".to_string()],
                     description: Some("d".to_string()),
-                    source: Some("issue-1".to_string()),
+                    source_locator: None,
+                    source_revision: None,
                     related_issues: vec!["issue-2".to_string()],
                     uid: Some(UID.to_string()),
                 })

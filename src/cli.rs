@@ -94,6 +94,9 @@ pub enum Command {
     /// Declare how a TestCase is verified (ADR 0020, ADR 0025)
     #[command(subcommand)]
     Binding(BindingCommand),
+    /// Relate Features to Requirements, and re-pin an external Requirement (ADR 0023)
+    #[command(subcommand)]
+    Requirement(RequirementCommand),
     /// Validate knowledge/ and axes/ against schema/*.schema.json plus axis/forked_from cross-references (§3.5/§3.6)
     Validate {
         /// Target project directory. Defaults to the current directory.
@@ -220,6 +223,45 @@ pub enum MilestoneCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RequirementCommand {
+    /// Relate a Feature to a Requirement. The Feature owns the relation
+    /// (ADR 0017 §1/§3), so this edits its `requirement_uids`.
+    Link {
+        /// The Feature's display id
+        #[arg(long)]
+        feature: String,
+        /// The Requirement's display id. Its uid is what gets stored.
+        #[arg(long)]
+        requirement: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+    /// Remove a Feature-to-Requirement relation
+    Unlink {
+        /// The Feature's display id
+        #[arg(long)]
+        feature: String,
+        /// The Requirement's display id
+        #[arg(long)]
+        requirement: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+    /// Move an external Requirement's `source_revision` to the blob OID its
+    /// `.sdoc` currently has. Never cancels a detected spec change (ADR 0023).
+    Repin {
+        /// The Requirement's display id
+        #[arg(long)]
+        requirement: String,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -1005,6 +1047,83 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     Ok(())
                 }
                 Err(binding::BindingError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Requirement(RequirementCommand::Link {
+            feature,
+            requirement,
+            dir,
+        }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::requirement::link(&root, &feature, &requirement) {
+                Ok(crate::requirement::LinkOutcome::Changed) => {
+                    println!("linked {feature} to {requirement}");
+                    Ok(())
+                }
+                Ok(crate::requirement::LinkOutcome::AlreadyInDesiredState) => {
+                    println!("{feature} is already linked to {requirement}");
+                    Ok(())
+                }
+                Err(crate::requirement::RequirementOpError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Requirement(RequirementCommand::Unlink {
+            feature,
+            requirement,
+            dir,
+        }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::requirement::unlink(&root, &feature, &requirement) {
+                Ok(crate::requirement::LinkOutcome::Changed) => {
+                    println!("unlinked {feature} from {requirement}");
+                    Ok(())
+                }
+                Ok(crate::requirement::LinkOutcome::AlreadyInDesiredState) => {
+                    println!("{feature} is not linked to {requirement}");
+                    Ok(())
+                }
+                Err(crate::requirement::RequirementOpError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Requirement(RequirementCommand::Repin { requirement, dir }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::requirement::repin(&root, &requirement) {
+                Ok(outcome) if outcome.changed() => {
+                    println!(
+                        "repinned {requirement} to {} ({})",
+                        outcome.new_revision, outcome.locator
+                    );
+                    Ok(())
+                }
+                Ok(outcome) => {
+                    println!(
+                        "{requirement} is already pinned to {} ({})",
+                        outcome.new_revision, outcome.locator
+                    );
+                    Ok(())
+                }
+                Err(crate::requirement::RequirementOpError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }

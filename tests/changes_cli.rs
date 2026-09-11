@@ -33,7 +33,7 @@ fn write_feature(root: &Path, label: &str) {
     std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
-        "id: controls\nlabel: controls\naxis: [gameplay]\n",
+        "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n",
     )
     .unwrap();
     std::fs::write(

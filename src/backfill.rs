@@ -227,7 +227,7 @@ mod tests {
         fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
             root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(

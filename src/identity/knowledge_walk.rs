@@ -169,7 +169,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/req/requirement.yml"),
-            "id: req\nlabel: req\naxis: []\n",
+            "id: req\nsource: native\nlabel: req\naxis: []\n",
         )
         .unwrap();
         fs::write(
@@ -248,7 +248,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/req/requirement.yml"),
-            "id: req\nlabel: req\naxis: []\n",
+            "id: req\nsource: native\nlabel: req\naxis: []\n",
         )
         .unwrap();
         fs::write(

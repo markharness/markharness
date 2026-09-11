@@ -43,7 +43,7 @@ fn feature_lifecycle_migrates_renames_resolves_divergence_and_recovers_from_a_cr
     fs::write(
         dir.path()
             .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-        "id: controls\nlabel: controls\naxis: []\n",
+        "id: controls\nsource: native\nlabel: controls\naxis: []\n",
     )
     .unwrap();
     write_feature(dir.path(), "controls", "player-jump", "player-jump", None);

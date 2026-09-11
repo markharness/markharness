@@ -805,11 +805,11 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
   - `behavior`/`condition`はFeature単位の変更検出そのもの(どのFeatureに`ChangeEvent`を1件生成するか、rename追跡、`true_divergences`判定)には影響しない。影響するのは`impacted_testcases`の絞り込みのみ。
   - **注意(false negativeのリスク)**: Behavior/Conditionのスキーマには兄弟間の依存関係を表すフィールドが存在せず、本コマンドはそれを検出・推論しない。Feature境界には著者が暗黙に込めた関連性(共有のセットアップ、前提条件等)が含まれている可能性があり、`behavior`/`condition`はその関連性を意図的に無視した上で再現率(recall)を精度(precision)と引き換える機能である。この判断はツール側では保証できないため、利用者が個々のプロジェクトの実情に応じて選択する必要がある。
   - 選択した粒度と、絞り込みの根拠は算出された各`ChangeEvent`の`impact_reason`フィールド(`granularity`と`changed_paths`)に記録される(後述の出力例を参照)。`changed_paths`は`behavior`/`condition`のときのみ、実際にtree SHAが変化した(または追加/削除された)Behavior/Conditionのマーカーファイルパス(`behavior.yml`/`condition.yml`)の一覧であり、`feature`のときは空配列になる(Feature単位では個々のBehavior/Conditionを解決しないため)。
-- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.16節)で事後入力する運用(§3.5)。
+- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.17節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.11節)。
 - 成功時、人間向け出力にはlegacyスキーマバージョン1へフォールバックした側ごとに`warning: ...`行が追加される。`--json`出力では同じメッセージが既存のJSON envelope内の`"warnings"`配列として含まれる。両refが`[knowledge].schema_version`を記録している場合はどちらも出力されない — JSON側の`"warnings"`キーは`[]`としてではなく、キー自体を省略する。同一`schema_version`内での追加はoptionalなフィールドに限られるため([verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)§5)。
 - `from-milestone`・`to-milestone`のいずれかに`.markharness/executions/<name>/milestone.yml`が存在し、その記録された`commit_oid`/`knowledge_schema_version`がそのtagの現在の解決結果と食い違っている場合(tagの移動、または手編集)、何も計算せずエラー終了する([decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))。これらのフィールドを持たない`milestone.yml`は検証対象外。
-- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.17節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
+- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.18節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
 - **ブランチ戦略への依存に注意**：`from_tree_sha`/`to_tree_sha`の差分検出そのものはブランチ戦略(merge/squash/rebase/fast-forward)に依存しないが、`true_divergences`はマイルストーン区間内に2親を持つマージコミットが実際に残っていることが前提であり、squash mergeやrebase・fast-forward mergeでは元ブランチの分岐関係がコミットグラフから失われるため検出されない(空配列のまま。論文§3.4表2)。
 
 **出力例**(`.markharness/changes/m2.yaml`、線形履歴の場合)
@@ -1035,7 +1035,52 @@ reference: tests/login.spec.ts
 
 ---
 
-### 1.16 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
+### 1.16 `markharness requirement link` / `unlink` / `repin` — Requirementとの関連付けと固定参照の更新(ADR 0023)
+
+```text
+markharness requirement link --feature <feature-id> --requirement <requirement-id> [-d, --dir <path>]
+markharness requirement unlink --feature <feature-id> --requirement <requirement-id> [-d, --dir <path>]
+markharness requirement repin --requirement <requirement-id> [-d, --dir <path>]
+```
+
+**用途**: FeatureとRequirementの多対多関連を編集し、`source: external` のRequirementの固定参照を更新する。
+
+**関連の正本はFeature側**(ADR 0017 §1・§3)。`link`/`unlink` は `feature.yml` の `requirement_uids` を編集するのであって、新しい格納先を作らない。保存される値はRequirementの**uid**であり表示idではない(ADR 0013)。Requirementの `id:` を後からrenameしても関連が切れないようにするため。
+
+**Requirementの二モード**(ADR 0023)
+
+| モード | 正本 | 持てるフィールド | 変更検知 |
+| --- | --- | --- | --- |
+| `source: native` | markharness | `label`(必須)・`description`(任意) | `requirement.yml` 自体のbase/head差分 |
+| `source: external` | 外部 `.sdoc` | `source_locator`(必須)・`source_revision`(必須) | `source_locator` が指す `.sdoc` blobのbase/head差分 |
+
+`axis` は markharness 自身の分類であり外部正本の複製ではないため、両モードで保持する。`source` は**必須**で、省略は `validate` が拒否する。両モードのフィールドを併せ持つ、あるいはどちらとしても不完全な `requirement.yml` も拒否する。
+
+**`repin` の意味**: `source_revision` を、`source_locator` が指すファイルの現在のblob OIDへ移す。**repinは仕様変更を打ち消さない**。Change Impactは `.sdoc` blobのbase/head差分で仕様側変更を検知するため、同じ変更区間の中でrepinしても検知結果は変わらない(設計書§6.1、AC18・AC19)。repinは「人が見た」という記録であって、対応確認の代替でもない。
+
+**終了コード**
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 成功(既に希望の状態だった場合も含む) |
+| 2 | Feature/Requirementが存在しない、Requirementに `uid` が無い(`identity migrate` 未実行)、`repin` 対象が `source: native`、`source_locator` が指すファイルが無い |
+| 3 | ファイルシステムエラー |
+
+**使用例**
+
+```console
+$ markharness requirement link --feature player-jump --requirement controls
+linked player-jump to controls
+
+$ markharness requirement repin --requirement controls
+repinned controls to 0123456789abcdef0123456789abcdef01234567 (docs/requirements.sdoc)
+```
+
+**ユースケース対応**: [markharness v2設計書](./design/markharness-v2-design.md)§5.2・§5.2.1。対話作成フロー(1.2節)が作るRequirementは常に `source: native` であり、externalは本コマンド群と手書きで扱う。
+
+---
+
+### 1.17 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
 
 ```text
 markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
@@ -1065,7 +1110,7 @@ set related_events on player-jump--m2--m3
 
 ---
 
-### 1.17 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
+### 1.18 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
 
 ```text
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
@@ -1089,7 +1134,7 @@ player-jump: linear
 
 ---
 
-### 1.18 `markharness validate` — .markharness/knowledge/・.markharness/axes/・.markharness/executions/ の構造検証(§3.5/§3.6)
+### 1.19 `markharness validate` — .markharness/knowledge/・.markharness/axes/・.markharness/bindings/ の構造検証(§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
@@ -1119,7 +1164,7 @@ $ echo $?
 
 ---
 
-### 1.19 `markharness --version` / `-V` — バージョン表示
+### 1.20 `markharness --version` / `-V` — バージョン表示
 
 ```text
 markharness --version
@@ -1137,7 +1182,7 @@ markharness 0.3.1
 
 ---
 
-### 1.20 `markharness axes prune` — 未使用axisの検出・削除
+### 1.21 `markharness axes prune` — 未使用axisの検出・削除
 
 ```text
 markharness axes prune [--delete] [--json] [-d, --dir <path>]
@@ -1172,7 +1217,7 @@ $ markharness axes list --dir tmp/todo-sample --json
 
 ---
 
-### 1.21 `markharness knowledge scaffold` — 空のドラフトYAML雛形の出力
+### 1.22 `markharness knowledge scaffold` — 空のドラフトYAML雛形の出力
 
 ```text
 markharness knowledge scaffold [--out <path>]
@@ -1206,7 +1251,7 @@ $ echo $?
 
 ---
 
-### 1.22 `markharness import` — canonical snapshotの生成
+### 1.23 `markharness import` — canonical snapshotの生成
 
 ```text
 markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
@@ -1216,7 +1261,7 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
-### 1.23 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
+### 1.24 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
 
 ```text
 markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
@@ -1243,7 +1288,7 @@ renamed Feature 'todo' to 'todo-v2' (uid preserved)
 
 ---
 
-### 1.24 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
+### 1.25 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
 
 ```text
 markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
@@ -1251,7 +1296,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 
 **用途**: `.markharness/knowledge/`配下のRequirement/Feature/Behavior/Condition/ExpectedResultのうち、まだ`uid:`を持たない要素全てへ新規UIDを発行し、root `Issued` identity eventを記録する。冪等な操作であり、copy/import/手編集で後からuidなし要素が混入した場合も安全に再実行できる。TestCaseの`case_id`→`case_uid`対応(migration manifest、`.markharness/identity-migration-manifest.yml`)もあわせて記録する。
 
-5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 1`・`mode = "uid"`を書き込み、UID modeへの公開cutoverを完了する(design doc §13 Phase 5)。cutover完了の判定は`schema_version`ではなく`mode`のみで行う(ADR 0018)。cutover後は`markharness validate`(1.18節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
+5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 1`・`mode = "uid"`を書き込み、UID modeへの公開cutoverを完了する(design doc §13 Phase 5)。cutover完了の判定は`schema_version`ではなく`mode`のみで行う(ADR 0018)。cutover後は`markharness validate`(1.19節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
 
 **前提条件**: 対象ディレクトリがgitリポジトリであること。legacy snapshot identityとして`.markharness/knowledge`のtree SHAをmigration manifestへ記録するため、内部で一時indexを使った`git write-tree`相当の処理を行う(実リポジトリのstaging areaは変更しない)。
 
@@ -1293,7 +1338,7 @@ $ markharness identity migrate --json
 
 ---
 
-### 1.25 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
+### 1.26 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
 
 ```text
 markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
@@ -1313,7 +1358,7 @@ markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
 
 ---
 
-### 1.26 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
+### 1.27 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
 
 ```text
 markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
@@ -1354,7 +1399,7 @@ $ echo $?
 
 ---
 
-### 1.27 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
+### 1.28 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
 
 ```text
 markharness identity sync <KIND> <UID> [-d, --dir <path>]

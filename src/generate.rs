@@ -663,7 +663,9 @@ mod tests {
         let axis_line = axis.join(", ");
         fs::write(
             dir.join("requirement.yml"),
-            format!("id: {requirement}\nlabel: {requirement}\naxis: [{axis_line}]\n"),
+            format!(
+                "id: {requirement}\nsource: native\nlabel: {requirement}\naxis: [{axis_line}]\n"
+            ),
         )
         .unwrap();
     }

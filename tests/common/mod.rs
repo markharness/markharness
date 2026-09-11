@@ -25,7 +25,7 @@ pub fn write_full_tree(root: &Path, feature_id: &str) {
     std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/req-todo")).unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/requirements/req-todo/requirement.yml"),
-        "id: req-todo\nlabel: req-todo\naxis: []\n",
+        "id: req-todo\nsource: native\nlabel: req-todo\naxis: []\n",
     )
     .unwrap();
     std::fs::write(
