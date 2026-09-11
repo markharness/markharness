@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (design agreed, implementation pending). Based on the redesign grilling session (2026-09-11) for [markharness-v2-design.md](../design/markharness-v2-design.md).
+Accepted (implemented 2026-09-12; see `checklist-v2-core.md`). Based on the redesign grilling session (2026-09-11) for [markharness-v2-design.md](../design/markharness-v2-design.md).
 
 ## Context
 

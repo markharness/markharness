@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(2026-09-11、設計合意済み・未実装)。[0017](0017-scenario-case-revision-and-execution-evidence.md)§1・§3が定めるnative Requirement(Feature⇄Requirementの多対多関連、Feature側が関係の正本)を維持したうえで、正本を外部仕様書に置くモードを追加する。
+Accepted(2026-09-11決定、2026-09-12実装完了。`checklist-v2-core.md`参照)。[0017](0017-scenario-case-revision-and-execution-evidence.md)§1・§3が定めるnative Requirement(Feature⇄Requirementの多対多関連、Feature側が関係の正本)を維持したうえで、正本を外部仕様書に置くモードを追加する。
 
 ## 背景
 

@@ -1,7 +1,7 @@
 # markharness v2 Design
 
 Written: 2026-09-11 (original). Corrected the same day against the existing implementation under `src/` (§5.2.1, §6.1, §9.1). Rewritten in full the same day after a redesign session (grilling) deliberately not anchored to the existing design or vocabulary. Contracts that preserve an evolution path after real StrictDoc → markharness → Playwright operation were then added in §9.2 and [ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md).
-Status: design proposal. The types, CLI, and MVP scope below are a v2 proposal, not an implemented spec.
+Status: **the MVP (M0–M2) is implemented** (2026-09-12; see `checklist-v2-core.md`). The types, CLI, and decision rules this document specifies exist in the code. M3 and M4 are not started, so anything about them remains a proposal.
 
 ## 1. Conclusion and Product Thesis
 
@@ -332,13 +332,13 @@ V2 remains extensible by keeping each current type's meaning narrow and allowing
 
 | Stage | Builds | Exit criteria |
 |---|---|---|
-| M0 | The new `Requirement` schema (native/external modes) and `ExecutionBinding` schema, linking via `feature.requirement_uids`, the CLI (§7), automatic Alignment-check detection (§5.3), and the updated interactive authoring flow (§5.2.1) | Both native operation (no StrictDoc) and external operation complete Feature↔Requirement linking and TestCase `ExecutionBinding` recording end-to-end via Git/CLI, and a `requirement.yml` mixing the two modes is rejected |
-| M1 | Change Impact (§6.1) | Between a PR's base and head, affected Features, Requirements, and unconfirmed alignment checks can be listed (no dependency on `.sdoc` parsing = M3) |
-| M2 | Release Coverage (§6.2) and `ReleaseScope` (§5.2) | Coverage gaps across a given set of Requirements can be listed, and for a release with a selection list, the selected set, candidate omissions, and missing Case UIDs are listed alongside |
+| M0 ✅ | The new `Requirement` schema (native/external modes) and `ExecutionBinding` schema, linking via `feature.requirement_uids`, the CLI (§7), automatic Alignment-check detection (§5.3), and the updated interactive authoring flow (§5.2.1) | Both native operation (no StrictDoc) and external operation complete Feature↔Requirement linking and TestCase `ExecutionBinding` recording end-to-end via Git/CLI, and a `requirement.yml` mixing the two modes is rejected |
+| M1 ✅ | Change Impact (§6.1) | Between a PR's base and head, affected Features, Requirements, and unconfirmed alignment checks can be listed (no dependency on `.sdoc` parsing = M3) |
+| M2 ✅ | Release Coverage (§6.2) and `ReleaseScope` (§5.2) | Coverage gaps across a given set of Requirements can be listed, and for a release with a selection list, the selected set, candidate omissions, and missing Case UIDs are listed alongside |
 | M3 (future) | StrictDoc `.sdoc` ingestion (reflecting the actual Git-managed requirement content) | Started once demand is confirmed; whether a custom parser is needed is designed separately at that time |
 | M4 (future) | Real-use validation of Playwright integration | Started once a concrete request exists. First connect by Case UID and `ExecutionBinding` and observe external reports; whether results become persistent Execution Facts is decided in a separate ADR after the observations in §9.2 |
 
-The MVP is M0–M2. M3 and M4 are not committed to as of this document.
+The MVP is M0–M2, and M0–M2 were completed on 2026-09-12 (✅). M3 and M4 are not committed to as of this document.
 
 ## 11. Acceptance Criteria
 

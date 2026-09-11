@@ -1,7 +1,7 @@
 # markharness v2 設計書
 
 作成日：2026-09-11(初版)。2026-09-11、既存の設計・概念に引っ張られない再検討(grillingセッション)により全面書き直し。同日、既存実装(`src/`)との突合結果を反映して§5.2.1・§6.1・§9.1等を訂正。さらに、StrictDoc→markharness→Playwrightの実運用後に完全モデルへ進めるための契約を§9.2と[ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md)へ追加した。
-状態：設計提案。以下の型、CLI、MVP仕様はv2への提案であり、実装済み仕様ではない。
+状態：**MVP(M0〜M2)実装済み**(2026-09-12、`checklist-v2-core.md`参照)。本書が定める型・CLI・判定規則は実装されている。M3・M4は未着手であり、これらに関する記述は引き続き提案である。
 
 ## 1. 結論と製品の命題
 
@@ -332,13 +332,13 @@ V2の拡張容易性は、未来のフィールドを予約することではな
 
 | 段階 | 作るもの | 完了条件 |
 |---|---|---|
-| M0 | `Requirement`の新schema(native/externalの二モード)・`ExecutionBinding`のschema、`feature.requirement_uids`による関連付け、CLI(§7)、Alignment check(§5.3)の自動判定、対話作成フローの更新(§5.2.1) | native運用(StrictDocなし)とexternal運用の双方でFeature⇄Requirementの対応とTestCaseの`ExecutionBinding`記録がGit/CLI経路で完結し、モードの混在した`requirement.yml`が拒否される |
-| M1 | Change Impact(§6.1) | PR base/head間で影響Feature・Requirement・未確認Alignment checkを一覧できる(`.sdoc`解析=M3に依存しない) |
-| M2 | Release Coverage(§6.2)と`ReleaseScope`(§5.2) | 指定Requirement集合全体のcoverage gapを一覧でき、選定リストを記録したリリースでは選定・選定漏れ・不在Case UIDを併せて一覧できる |
+| M0 ✅ | `Requirement`の新schema(native/externalの二モード)・`ExecutionBinding`のschema、`feature.requirement_uids`による関連付け、CLI(§7)、Alignment check(§5.3)の自動判定、対話作成フローの更新(§5.2.1) | native運用(StrictDocなし)とexternal運用の双方でFeature⇄Requirementの対応とTestCaseの`ExecutionBinding`記録がGit/CLI経路で完結し、モードの混在した`requirement.yml`が拒否される |
+| M1 ✅ | Change Impact(§6.1) | PR base/head間で影響Feature・Requirement・未確認Alignment checkを一覧できる(`.sdoc`解析=M3に依存しない) |
+| M2 ✅ | Release Coverage(§6.2)と`ReleaseScope`(§5.2) | 指定Requirement集合全体のcoverage gapを一覧でき、選定リストを記録したリリースでは選定・選定漏れ・不在Case UIDを併せて一覧できる |
 | M3(将来) | StrictDoc `.sdoc`取込(Git管理された要件の実体反映) | 需要確認後に着手。自前パーサの要否を含め別途設計する |
 | M4(将来) | Playwright連携の実運用検証 | 要望が出た時点で着手。まずCase UIDと`ExecutionBinding`による接続・外部reportの観測を行い、結果を永続的なExecution Factとして取り込むかは§9.2の観測後に別ADRで決める |
 
-MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない。
+MVPはM0〜M2とする。M0〜M2は2026-09-12に実装完了した(✅)。M3・M4は本書の時点では着手を約束しない。
 
 ## 11. 受け入れ条件
 

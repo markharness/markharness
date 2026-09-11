@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-11, design agreed, implementation pending). V2 will first exercise the StrictDoc → markharness → Playwright vertical flow in real use, and only the full-model capabilities justified by those observations will then be added. This decision renames [0020](0020-execution-status-lightweight-model.md)'s record to `ExecutionBinding` without changing the information it carries or the MVP responsibility boundary.
+Accepted (decided 2026-09-11, implemented 2026-09-12; see `checklist-v2-core.md`). V2 will first exercise the StrictDoc → markharness → Playwright vertical flow in real use, and only the full-model capabilities justified by those observations will then be added. This decision renames [0020](0020-execution-status-lightweight-model.md)'s record to `ExecutionBinding` without changing the information it carries or the MVP responsibility boundary.
 
 ## Context
 

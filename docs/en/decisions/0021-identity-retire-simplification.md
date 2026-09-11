@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (design agreed, implementation pending). Based on the redesign grilling session (2026-09-11) for [markharness-v2-design.md](../design/markharness-v2-design.md). Supersedes the retire, restore, release, and reissue portions of [0013](0013-immutable-identity-model.md) (explicit restore under the same UID, releasing a retired human-readable id). Everything else in [0013](0013-immutable-identity-model.md) — UID issuance, the id/UID split, preserving UID across rename — remains in effect. [0025](0025-v2-forward-compatible-evolution.md) adds the cutover rule for any future reintroduction of a complete lifecycle.
+Accepted (implemented 2026-09-12; see `checklist-v2-core.md`). Based on the redesign grilling session (2026-09-11) for [markharness-v2-design.md](../design/markharness-v2-design.md). Supersedes the retire, restore, release, and reissue portions of [0013](0013-immutable-identity-model.md) (explicit restore under the same UID, releasing a retired human-readable id). Everything else in [0013](0013-immutable-identity-model.md) — UID issuance, the id/UID split, preserving UID across rename — remains in effect. [0025](0025-v2-forward-compatible-evolution.md) adds the cutover rule for any future reintroduction of a complete lifecycle.
 
 ## Context
 
