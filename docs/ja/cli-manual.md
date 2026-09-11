@@ -1096,7 +1096,7 @@ markharness impact --base <git-ref> --head <git-ref> [--format json] [--fail-on-
 Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-required
 ```
 
-- 変更のコミット本文の末尾に書き添える。**1組につき1行**。複数組を確認した場合は行を複数書く(1行カンマ区切りは、片方だけが後から無効化される状況を表現できないため採らない)。
+- 変更のコミット本文の末尾に、**行頭から**書き添える。**1組につき1行**。インデントされた行は採用しない — コードブロックや引用の中で書式を説明しているだけの行を宣言と取り違えないため(gitのtrailer解釈と同じ立場)。行末の空白は無視する。複数組を確認した場合は行を複数書く(1行カンマ区切りは、片方だけが後から無効化される状況を表現できないため採らない)。
 - `requirement=` と `case=` の**両方が必須**。片方だけ、あるいは対象を書かないtrailerは採用しない。1つのコミットが複数のRequirement/TestCaseに触れる場合、どの対応確認が済んだのか判定できないため(AC12・AC16)。
 - 識別子は**表示ID**で書く。そのtrailerを含むコミット時点のKnowledgeでUIDへ解決する。解決できない場合は採用せず、`rejected_trailers` に理由付きで出力する。
 - `reason` は省略可(既定 `no-change-required`)。未知の値は採用しない。

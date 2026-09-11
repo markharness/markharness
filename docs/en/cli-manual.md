@@ -1096,7 +1096,7 @@ markharness impact --base <git-ref> --head <git-ref> [--format json] [--fail-on-
 Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-required
 ```
 
-- Written at the end of the commit body, **one line per pair**. Several confirmations are several lines; a single comma-separated line is not used, because it could not express one pair being invalidated while another still stands.
+- Written at the end of the commit body, **starting at column 0**, **one line per pair**. An indented line is not counted: a fenced code block or a quotation explaining the syntax must not be mistaken for a declaration (the same position git's own trailer parsing takes). Trailing whitespace is ignored. Several confirmations are several lines; a single comma-separated line is not used, because it could not express one pair being invalidated while another still stands.
 - Both `requirement=` and `case=` are **required**. A one-sided trailer, or one with no target at all, is not counted: when a commit touches several Requirements or TestCases, there would be no way to tell which pair was confirmed (AC12, AC16).
 - The identifiers are **display ids**, resolved to UIDs against the Knowledge as it stood at the commit carrying the trailer. One that cannot be resolved is not counted and appears in `rejected_trailers` with the reason.
 - `reason` may be omitted (defaults to `no-change-required`). An unrecognized value is not counted.

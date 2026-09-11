@@ -75,7 +75,11 @@ pub fn parse_trailers(message: &str) -> (Vec<ParsedTrailer>, Vec<RejectedTrailer
     let mut accepted = Vec::new();
     let mut rejected = Vec::new();
     for raw_line in message.lines() {
-        let line = raw_line.trim();
+        // The key must start the line, with no leading whitespace. An
+        // indented mention is prose or a fenced code block quoting the
+        // syntax — documentation about a trailer, not a declaration of one.
+        // Git's own trailer parsing takes the same position.
+        let line = raw_line.trim_end();
         let Some(value) = line.strip_prefix(TRAILER_KEY) else {
             continue;
         };
@@ -232,6 +236,50 @@ mod tests {
             rejected[0].reason,
             TrailerRejection::UnknownReason("looks-fine".to_string())
         );
+    }
+
+    /// A trailer must begin the line. An indented copy is documentation
+    /// about the syntax — a code block in a commit body explaining how to
+    /// write one, or a quoted reply — not a declaration that a human
+    /// confirmed anything.
+    #[test]
+    fn ignores_an_indented_mention_of_the_trailer() {
+        let (accepted, rejected) = parse_trailers(
+            "docs: explain the trailer
+
+Write it like this:
+
+    Spec-Reviewed: requirement=r1 case=c1
+",
+        );
+        assert!(accepted.is_empty(), "{accepted:?}");
+        assert!(rejected.is_empty(), "{rejected:?}");
+    }
+
+    #[test]
+    fn ignores_a_trailer_inside_a_fenced_code_block_that_is_indented() {
+        let (accepted, _) = parse_trailers(
+            "docs: document the syntax
+
+```text
+	Spec-Reviewed: requirement=r1 case=c1
+```
+",
+        );
+        assert!(accepted.is_empty(), "{accepted:?}");
+    }
+
+    /// Trailing whitespace is invisible to the author, so it must not be
+    /// what decides whether a confirmation counts.
+    #[test]
+    fn accepts_a_trailer_with_trailing_whitespace() {
+        let (accepted, _) = parse_trailers(
+            "fix: x
+
+Spec-Reviewed: requirement=r1 case=c1   
+",
+        );
+        assert_eq!(accepted.len(), 1);
     }
 
     #[test]
