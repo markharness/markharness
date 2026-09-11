@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted（設計合意済み、未実装）。[Issue #40](https://github.com/markharness/markharness/issues/40) と[合意記録](https://github.com/markharness/markharness/issues/40#issuecomment-5554681808)に基づく。
+Accepted（設計合意済み、未実装）。[Issue #40](https://github.com/markharness/markharness/issues/40) と[合意記録](https://github.com/markharness/markharness/issues/40#issuecomment-5554681808)に基づく。§5「実行証跡と適用可能性」は[0020](0020-execution-status-lightweight-model.md)により置き換えられた。§1〜4（所属・共通手順・Case revision・分割統合）はそのまま有効。
 
 この ADR は将来の契約を記録する。現在のコード・スキーマが対応済みであること、Issue #40 の受け入れ条件がすべて完了したことを意味しない。
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-08-22. Implementation complete; see `checklist-immutable-identity-model.md`). The `schema_version = 2` value specified in the "Migration" section below is corrected to `schema_version = 1` by [0018](./0018-identity-schema-version-freeze.md); the rest of this ADR remains in effect as written.
+Accepted (2026-08-22. Implementation complete; see `checklist-immutable-identity-model.md`). The `schema_version = 2` value specified in the "Migration" section below is corrected to `schema_version = 1` by [0018](./0018-identity-schema-version-freeze.md). The decisions on retire, restore, release, and reissue are superseded by [0021](./0021-identity-retire-simplification.md). The rest of this ADR — UID issuance, the id/UID split, and preserving UID across rename — remains in effect as written.
 
 ## Background
 

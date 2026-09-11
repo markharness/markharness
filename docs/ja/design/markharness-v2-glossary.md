@@ -1,54 +1,35 @@
 # markharness v2 の用語
 
-markharnessは、外部で定義されたテストケースの版を比較し、要件・テスト・証跡のつながりを追跡する。
+markharnessは、Gitネイティブなテスト知識(`knowledge/`)と、外部の仕様(StrictDoc)との対応関係・修正漏れ・実行実績を軽量に追跡する。用語の一次情報は[CONTEXT.md](../../../CONTEXT.md)であり、本書はその抜粋・補足である。定義が食い違う場合はCONTEXT.mdを正とする。
 
 ## Language
 
-**Artifact**：要件、テストケース、実行可能テストなど、版を越えて同じ対象として追跡するもの。
+**Feature**：利用者に提供する能力を表す、`knowledge/`配下で管理する仕様上の概念。複数のRequirementへ`contributes_to`で関連付けられる。
 
-**ArtifactVersion**：あるArtifactの比較対象となる内容を固定した版。
+**Behavior**：特定条件下で観測可能な振る舞い。一つのFeatureに所属する。
 
-**Case revision**：テストケースの検証内容の版。対象製品の版やテスト実装の版とは異なる。
-_Avoid_：Git commitを無条件にケース版と呼ぶこと。
+**Scenario**：前提・操作・期待結果が具体化された一つの検証例。一つのBehaviorに所属し、一つのTestCaseと1対1で対応する。
 
-**Implementation revision**：実行可能テストと、その動作に必要な依存物を固定した版。
+**TestCase**：Scenarioから決定的に生成される、検証すべき対象の単位。
 
-**VerificationTarget**：どのケース版を、どの実行方式・対象製品・環境・要件との関係で（自動実行では実装版も指定して）検証すべきかを固定した検証単位。
+**Case revision**：TestCaseの検証内容の版。対象ビルドや実行環境の版とは別。
 
-**Verification context**：ケースが検証する要件の版と、それに至る関係を固定した文脈。
+**Axis**：Feature・TestCase等を横断して分類・検索する固定された観点。
 
-**Verification Plan**：比較した版の間で必要になる検証と、追跡上の不足を示す計画。
+**ChangeEvent**：base/head間のFeature版比較から導出する変更記録。
 
-**Execution Contract**：外部実行ツールと交換する、検証対象および返却証跡の取り決め。
+**Requirement**：検証対象の要件。`source: native`ではmarkharnessが`label`/`description`の正本を持ち、`source: external`ではStrictDocが正本で、markharnessは固定参照(id・版)だけを保持し本文を複製・編集しない([0023](../decisions/0023-requirement-native-and-external-source.md)、設計書§5.2.1)。現行実装は`knowledge/requirements/`にnative実体として`label`/`description`まで保持しているため、v2では固定参照へ移す変更になる(設計書§5.2.1)。
 
-**Evidence**：外部実行ツールが報告した結果と、その結果が何を検証したかを示す不変の記録。
+**Contributes-to関連**：FeatureからRequirementへの多対多の関連。「実現に寄与する」ことを示すのみで、検証済みの証明ではない。実体は現行の`feature.requirement_uids`であり、新しい型・格納先は作らない。実体は現行の`feature.requirement_uids`であり、新しい型・格納先は作らない。
 
-**Evidence Applicability**：証跡が、指定されたVerificationTargetに適用できるかという判定。合否とは独立する。
+**対応確認(Alignment check)**：仕様(Requirement)またはTestCaseの一方が変更されたとき、他方が追随したか、追随不要と確認されたかを検出する機能。両方向を対象とする。
 
-**Coverage gap**：検証が必要な要件や変更について、ケースまたは実装への追跡が成立していない状態。
+**Spec-Reviewedトレーラー**：対応確認で「変更不要」と判断したことを記録するcommit trailer。変更のコミットと同時に書き添える。
 
-**Evidence Selection**：計画の各検証単位に採用する証跡を明示した記録。
+**Execution status**：TestCaseに付与する軽量な記録で、**検証手段(`automated`／`manual`)とその参照先**を表す。pass/fail等の詳細・実行日時・証跡本体・実行環境は持たないため、値の存在は「最新版で実行済み」を意味しない。
 
-**構造プロファイル（Structure profile）**：プロジェクトで使用する対象の種類、関係、必須性、多重度を固定した規則。内容の正規化や実行環境のprofileとは区別する。
+**Change Impact**：base/head間の差分から算出する、影響を受けるFeature・Requirement・TestCaseの一覧。PR単位の確認に使う。
 
-**作成規則（Authoring rules）**：入力元のデータを作成・改訂する際の用語、粒度、分割基準、同一性維持の取り決め。AIと人間に同じ規則を適用する。
+**Release Coverage**：指定したRequirement/Feature集合全体について、TestCaseとの対応関係およびExecution statusの有無を一覧化したもの。リリース判断の補助情報。
 
-**Feature**：利用者に提供する能力。階層プロファイルではBehaviorをまとめ、複数の要件に関連できる。
-
-**Behavior**：特定条件下で観測可能な振る舞い。階層プロファイルでは一つのFeatureに所属する。
-
-**Scenario**：前提・操作・期待結果が具体化された一つの検証例。階層プロファイルでは一つのBehaviorに所属し、TestCaseとの具体的な粒度（具体ケース／variant展開前の論理ケース）は別途議論中である。
-
-**Step**：検証の操作、または共通手順への明示参照。Phase内の順序を持つ。
-
-**Phase**：順序付きの操作と、それに対応する期待結果のまとまり。Scenarioの一部である。
-
-**共通手順（Procedure）**：複数Scenarioが明示参照する操作列。参照先の実効内容の変更は、それを使うケースへ伝わる。
-
-**Axis**：要件・機能・ケースなどを横断して分類・検索する固定された観点。実行条件とは区別する。
-
-**対応確認義務（Alignment obligation）**：変更後の要件・機能・ケース・実装の版の組合せについて、対応の確認を必要とする事項。
-
-**対応確認記録（Alignment decision）**：対象版の組合せについて、更新済み、変更不要、変更が必要の判断と理由を残した記録。実行証跡とは別である。
-
-**手動検証（Manual）**：固定されたケース定義を実行者が確認し、結果と観測根拠を記録する検証方式。テストコードや実装版を必須としない。
+**Retire(退役)**：TestCaseまたはFeatureを現在の対象から外すこと。UIDの再利用保証や、同一UIDでの明示的な復元・ID予約解除の仕組みは持たない。

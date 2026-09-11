@@ -95,7 +95,7 @@ implementation_note: |
 
 **`expected/*.yml`のファイル分割規約**: 同じ操作の後に確認する独立した複数の観測結果は、別ファイルに分割せず同じ`expected_result.results`配列内に複数行として書く。別ファイル(`002.yml`等)を作るのは、新しい操作(`additional_steps`)を挟んでから確認する新しいphaseを表現する場合に限る。この規約を執筆時のレビューだけに委ねず機械的に強制するため、Condition内で2番目以降(ファイル名順)の`expected_result`は`additional_steps`が非空でなければならない(先頭の`expected_result`のみ省略可、または空でよい)。
 
-この制約は`expected_result.schema.json`単体のJSON Schemaでは表現できない——`validate.rs`の`validate_file`は`expected/*.yml`を1ファイルずつ独立に検証しており、あるファイルが同じConditionディレクトリ内で何番目かをJSON Schemaは知り得ない。したがって本制約は、`axis`タグの参照整合性や`forked_from`の参照先実在チェックと同じく、`validate.rs`側のクロスリファレンスチェック(Conditionディレクトリ配下の`expected/*.yml`をファイル名順に列挙し、2番目以降で`additional_steps`が空の場合にエラーとする)として実装する。これにより「追加操作なしに新しいファイルを作る」こと自体がKnowledge検証エラーとなり、[Standards/Specレビュー(2026-09-01)](./0016-review-2026-09-01.md)が指摘した「002が独立した観測結果なのか、操作を再実行するのか、状態を保持したまま追加操作だけ行うのか」という曖昧さを構造的に排除する。
+この制約は`expected_result.schema.json`単体のJSON Schemaでは表現できない——`validate.rs`の`validate_file`は`expected/*.yml`を1ファイルずつ独立に検証しており、あるファイルが同じConditionディレクトリ内で何番目かをJSON Schemaは知り得ない。したがって本制約は、`axis`タグの参照整合性や`forked_from`の参照先実在チェックと同じく、`validate.rs`側のクロスリファレンスチェック(Conditionディレクトリ配下の`expected/*.yml`をファイル名順に列挙し、2番目以降で`additional_steps`が空の場合にエラーとする)として実装する。これにより「追加操作なしに新しいファイルを作る」こと自体がKnowledge検証エラーとなり、2026-09-01のStandards/Specレビューが指摘した「002が独立した観測結果なのか、操作を再実行するのか、状態を保持したまま追加操作だけ行うのか」という曖昧さを構造的に排除する。
 
 ### 2. `TestCase`構造の変更(`generate.rs`)
 
