@@ -29,16 +29,8 @@ pub const DEFAULT_SCHEMA_FILES: &[(&str, &str)] = &[
         include_str!("../schema/axis.schema.json"),
     ),
     (
-        "execution_result.schema.json",
-        include_str!("../schema/execution_result.schema.json"),
-    ),
-    (
         "canonical_snapshot.schema.json",
         include_str!("../schema/canonical_snapshot.schema.json"),
-    ),
-    (
-        "verification_plan.schema.json",
-        include_str!("../schema/verification_plan.schema.json"),
     ),
 ];
 

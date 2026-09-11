@@ -771,8 +771,6 @@ $ markharness cache rebuild
 removed .markharness-cache/ under /path/to/project
 ```
 
-読み取り最適化用の派生索引は`markharness cache index [--ref <git-ref>] [-d, --dir <path>]`で再構築できる。既定の`HEAD`を対象に`.markharness-cache/index/`へFeature、ChangeEvent、ExecutionのJSON索引を生成する。索引は正準データではなく、削除後も同じ入力から決定的に再生成できる。
-
 **ユースケース対応**: UC7「idキャッシュを破棄・再構築する」(`docs/product-operation.md`)。id解決の不整合が疑われる場合のフェイルセーフ。
 
 **Featureの`id:`を変更した場合の注意(利用者向け、論文§3.3)**: Feature idは各`feature.yml`の`id:`フィールドを正準ソースとして追跡する。`id:`の値そのものを書き換えると、ツールから見て「元のFeatureが削除され、新しいidのFeatureが追加された」扱いになり、`changes compute`は過去のマイルストーンとの`derived_from`関係を復元できない(版履歴が断絶する)。Featureディレクトリの**リネーム**(パス変更)は`id:`が変わらない限り追跡対象内だが、`id:`自体の変更に対する移行手順(旧id→新idのエイリアス記録等)は本CLIには無く、現状は「`id:`を変更しない」運用を利用者側で徹底する必要がある。検討状況は[decisions/0004](./decisions/0004-feature-id-change-migration.md)を参照。
@@ -977,68 +975,61 @@ $ echo $?
 
 ---
 
-### 1.15 `markharness execution record` — TestCase実行結果の記録(UC4: 実行結果の記録先)
+### 1.15 `markharness binding set` / `list` — TestCaseの検証手段の宣言(ADR 0020・ADR 0025)
 
 ```text
-markharness execution record <case_id> --milestone <name> --result <pass|fail|skip> --executor <name> [--note <text>] [--json] [-d, --dir <path>]
+markharness binding set --case-uid <case-uid> --mode <automated|manual> [--reference <text>] [--json] [-d, --dir <path>]
+markharness binding list [--json] [-d, --dir <path>]
 ```
 
-**用途**: `.markharness/generated/testcases/` 内のいずれかの `TestCase`(`case_id` で識別)について、あるマイルストームでの実行結果1件を `.markharness/executions/<milestone>/results.yml` に追記する。CIによる自動テスト実行・QAによる手動テストのいずれからも同じインターフェースで呼び出す想定(書き込み先・スキーマは共通)。
+**用途**: あるTestCaseが「自動テストで検証されるのか、手動で検証されるのか」と「その検証実体がどこにあるか」を宣言する。`.markharness/bindings/<case-uid>.yml` に1 Case 1ファイルで保存する。
+
+**`ExecutionBinding`は実行の記録ではない**。実行日時・結果(pass/fail)・Case revision・対象ビルド・実行環境・試行回数・証跡のいずれも持たず、**その存在を「実行済み」「合格」と読んではならない**(ADR 0025 §1・§2)。詳細な実行証跡の管理はmarkharnessの責務外であり、`reference` が指す先(テストコード、別ツール)に委ねる。
 
 **オプション**
 
-| オプション                | 説明                                                                 |
-| -------------------- | ------------------------------------------------------------------ |
-| `<case_id>`          | (必須)対象TestCaseの `case_id`(`.markharness/generated/testcases/*.yml` のいずれかに含まれる値) |
-| `--milestone <name>` | (必須)記録先のマイルストーム名。対応する `.markharness/executions/<name>/milestone.yml` が必要        |
-| `--result <value>`   | (必須)`pass` / `fail` / `skip` のいずれか                                 |
-| `--executor <name>`  | (必須)実行者の自由記述(人名、または `ci-github-actions` のようなCI識別子)                 |
-| `--note <text>`      | 任意の自由記述メモ                                                          |
-| `-d, --dir <path>`   | 対象プロジェクトディレクトリ。省略時はプロジェクトルート(cwdから上位探索で自動検出)                                      |
-| `--json`             | 結果を1行のJSONで出力する。省略時は人間可読なテキストを出力する                                 |
+| オプション | 説明 |
+| --- | --- |
+| `--case-uid <case-uid>` | (必須)対象TestCaseのCase UID。表示idではない(ADR 0013。表示idのrenameで記録が切れないようにするため) |
+| `--mode <value>` | (必須)`automated` / `manual` のいずれか |
+| `--reference <text>` | 検証実体への自由記述の参照(テストファイルパス、URL等)。markharnessは内容を解釈しない |
+| `-d, --dir <path>` | 対象プロジェクトディレクトリ。省略時はプロジェクトルート(cwdから上位探索で自動検出) |
+| `--json` | 結果をJSONで出力する |
 
 **動作**
 
-- `.markharness/executions/<milestone>/milestone.yml` が存在しなければ、`markharness milestone init <milestone>` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する。
-- `case_id` が現在の(HEAD時点の)`.markharness/generated/testcases/*.yml` のいずれにも見つからなければ、`markharness generate` を先に実行するよう促すエラーメッセージを出して終了コード `2` で終了する。`.markharness/generated/testcases/` のファイル名は `condition.id` であり `case_id` とは異なる([1.5節](#15-markharness-generate--testcase-の決定的生成uc2-testcaseを決定的生成する))ため、この検証は各ファイルの中身(`case_id` フィールド)を読んで行う。過去マイルストーン時点の内容までは遡らず、常に現在のHEADに対して検証する。
-- 検証を通過すると、`case_id` / `result` / `executor` / `note`(省略時は出力しない)/ `executed_at`(ISO8601, UTC)を1エントリとして `.markharness/executions/<milestone>/results.yml` に追記する。既存のエントリは変更せず、末尾に追加する(過去の実行履歴・再実行の記録も保持する)。
-- 書き込みは `knowledge apply`(1.4節)と同じ「一時ファイル+リネーム」のアトミック方式(全エントリを読み直してまとめて書く)。
-- `verified_feature_tree_shas`(1.17節付近参照)の算出は `changes compute` と同じFeature tree SHA解決処理を経由するため、対象プロジェクトディレクトリがgitリポジトリのサブディレクトリの場合の制約は同様に解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
+- `set` は同じCase UIDの既存bindingを**置換**する。bindingは現時点の宣言であって追記型のログではないため、1 Case 1ファイルで上書きする。
+- 保存形式は `schema_version: 1`・`record_kind: execution_binding`・`case_uid`・`mode`・`reference`(任意)のみ。`schema_version` は全レコード種別で `1` に固定し、今後も上げない(ADR 0026 §7)。
+- 未知のフィールドを持つbindingファイルは**読み取り時に拒否**する。`result`・`executed_at`・`build`・`environment` 等の実行事実フィールドを手で書き足しても、黙って無視されることはない(ADR 0025 §2)。
+- Case UIDはファイル名の唯一の構成要素になるため、空文字・`.`・`..`・先頭ドット・パス区切り(`/`・`\`)・ドライブ指定を含む値は**ファイルを作る前に**拒否する。`generate` が `id:` に課す検証と同じ扱い。
+- 書き込みは `src/fs_safety.rs` の原子的置換経路を用いる。
 
 **終了コード**
 
-| コード | 意味                                     |
-| --- | -------------------------------------- |
-| 0   | 成功(エントリを追記)                            |
-| 2   | 指定したマイルストームが未初期化、または `case_id` が見つからない |
-| 3   | ファイルシステムエラー                            |
+| コード | 意味 |
+| --- | --- |
+| 0 | 成功 |
+| 2 | Case UIDがファイル名として不正、または保存済みbindingが壊れている(未知フィールドを含む等) |
+| 3 | ファイルシステムエラー |
 
 **使用例**
 
 ```console
-$ markharness execution record tc-ground-001 --milestone 2026-08-release --result pass --executor yamada
-recorded pass for tc-ground-001 into .markharness/executions/2026-08-release/results.yml
+$ markharness binding set --case-uid 01ARZ3NDEKTSV4RRFFQ69G5FAV --mode automated --reference tests/login.spec.ts
+bound 01ARZ3NDEKTSV4RRFFQ69G5FAV as automated in .markharness/bindings/01ARZ3NDEKTSV4RRFFQ69G5FAV.yml
 ```
 
-`.markharness/executions/2026-08-release/results.yml`:
+`.markharness/bindings/01ARZ3NDEKTSV4RRFFQ69G5FAV.yml`:
 
 ```yaml
-- case_id: tc-ground-001
-  result: pass
-  executor: yamada
-  executed_at: 2026-08-08T03:15:00Z
+schema_version: 1
+record_kind: execution_binding
+case_uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+mode: automated
+reference: tests/login.spec.ts
 ```
 
-**使用例(未初期化のマイルストームを指定してエラー)**
-
-```console
-$ markharness execution record tc-ground-001 --milestone 2099-01-01 --result pass --executor yamada
-error: milestone '2099-01-01' not found. Run `markharness milestone init 2099-01-01` first.
-$ echo $?
-2
-```
-
-**ユースケース対応**: UC4「マイルストーンをタグ付けする、実行結果の記録先」(`docs/cli-manual.md` の `.markharness/executions/` ディレクトリ対応表、および `docs/テスト知識管理のGit-nativeモデル_統合版.md` §3.1の `TESTEXECUTION`)。結果の集計・レポート表示、CIテストレポート形式からの一括投入(`--from-report`)、過去マイルストーン時点の `.markharness/generated/testcases/` に対する検証は未実装(将来課題)。
+**ユースケース対応**: [markharness v2設計書](./design/markharness-v2-design.md)§5.2の`ExecutionBinding`。リリースごとの検証スコープは`ReleaseScope`(別コマンド)が持つ。
 
 ---
 
@@ -1104,7 +1095,7 @@ markharness validate [--json] [-d, --dir <path>]
 
 **用途**: `.markharness/knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `.markharness/axes/*.yml`、および `.markharness/executions/<milestone>/results.yml` を、対応する `.markharness/schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `.markharness/axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか。
 
-**`.markharness/executions/*/results.yml`のスキーマ**: `execution_result.schema.json` は `case_id` / `result`(`pass`/`fail`/`skip`) / `executor` / `executed_at` を必須、`note` / `verified_feature_tree_shas` を任意フィールドとする(1.15節)。`verified_feature_tree_shas` は本仕様導入前に書かれた実行記録には存在しないが、任意フィールドとして定義しているため過去の記録もそのままスキーマ検証を通る。この場合、`verify trace`/`verify pending`(change-event-verification-tracking-spec.md §6)は当該レコードを遡及的に補完せず「不明」として扱う。
+**bindingの検証**: `.markharness/bindings/*.yml` は `ExecutionBinding` として読み取り可能であることを検証する(1.15節)。`result`・`executed_at`・`build`・`environment` のような実行事実フィールドを持つbindingは、未知フィールドとして拒否される(ADR 0025 §2)。
 
 **UID modeでの追加検証(ADR 0013、design doc §13 Phase 5)**: `.markharness/config.toml`の`[identity]`markerが`mode = "uid"`(1.26節`identity migrate`が全種類の移行完了時に書き込む)であるプロジェクトでは、Requirement/Feature/Behavior/Condition/ExpectedResultのいずれかが`uid:`を持たない場合、そのファイルパスと`markharness identity migrate`の実行を促すメッセージを検証issueとして報告する。copy/import/手編集でcutover後にuidなし要素が紛れ込んだことを検出するためのガードであり、cutover前(markerなし)のプロジェクトでは適用されない。
 
@@ -1223,27 +1214,7 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
-### 1.23 `markharness plan` — PR Verification Planの生成
-
-```text
-markharness plan --base <git-ref> --head <git-ref> --format json [--evidence <canonical.json>]... [--output <path>] [-d, --dir <path>]
-```
-
-任意のbase/head間でFeature tree SHAを比較し、変更Feature、stored/derived traceから得た影響Test、version binding済みevidenceの`passed`/`failed`/`pending`/`stale`、traceが無い変更Featureへのrule-based proposalを出力する。`--evidence`には`import`が出力したcanonical snapshotを複数指定できる。JSON契約は`.markharness/schema/verification_plan.schema.json`の`schema_version: 1`。failedがあれば終了コード1、pending/stale/未承認proposalがあれば2、すべて検証済みなら0を返す。
-
----
-
-### 1.24 `markharness serve` — Release Verification Dashboard
-
-```text
-markharness serve [--base <git-ref>] [--head <git-ref>] [--port <port>] [-d, --dir <path>]
-```
-
-`127.0.0.1`だけでread-only dashboardを配信する。既定範囲は`HEAD~1`→`HEAD`、既定portは`8787`。画面はStage 2と同じDomain Engineが返すVerification Planのsummary、影響Testのstatus/reason/origin、rule-based proposalを表示し、Feature History APIはGit tree SHAと既存ChangeEventを返す。GUI独自のstatus計算やGit管理ファイルの編集は行わない。frontend assetsはRustバイナリに同梱されるため、利用時にNode.jsは不要。
-
----
-
-### 1.25 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
+### 1.23 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
 
 ```text
 markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
@@ -1270,7 +1241,7 @@ renamed Feature 'todo' to 'todo-v2' (uid preserved)
 
 ---
 
-### 1.26 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
+### 1.24 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
 
 ```text
 markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
@@ -1320,7 +1291,7 @@ $ markharness identity migrate --json
 
 ---
 
-### 1.27 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
+### 1.25 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
 
 ```text
 markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
@@ -1340,7 +1311,7 @@ markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
 
 ---
 
-### 1.28 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
+### 1.26 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
 
 ```text
 markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
@@ -1381,7 +1352,7 @@ $ echo $?
 
 ---
 
-### 1.29 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
+### 1.27 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
 
 ```text
 markharness identity sync <KIND> <UID> [-d, --dir <path>]

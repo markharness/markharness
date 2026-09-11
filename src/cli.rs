@@ -10,9 +10,8 @@ use crate::application;
 use crate::audit_scope;
 use crate::axes;
 use crate::backfill;
+use crate::binding;
 use crate::changes;
-use crate::derived_index;
-use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
 use crate::id_cache;
 use crate::identity::{self, MigrateError, RenameError, ResolveError, SyncError};
 use crate::init;
@@ -24,7 +23,6 @@ use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::presentation::{self, HumanPresenter, JsonPresenter, Presenter};
 use crate::project_root;
-use crate::server;
 use crate::validate;
 use crate::verify;
 
@@ -64,47 +62,6 @@ pub enum Command {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Build a reviewable verification plan for an arbitrary Git base/head range
-    Plan {
-        /// Earlier Git revision (for example a PR base)
-        #[arg(long)]
-        base: String,
-        /// Later Git revision (for example a PR head)
-        #[arg(long)]
-        head: String,
-        /// Stable output representation
-        #[arg(long, value_enum, default_value = "json")]
-        format: ImportFormatArg,
-        /// Write the JSON plan to a file instead of standard output
-        #[arg(long)]
-        output: Option<PathBuf>,
-        /// Canonical snapshot containing imported stored traces/evidence (repeatable)
-        #[arg(long, value_name = "CANONICAL_JSON")]
-        evidence: Vec<PathBuf>,
-        /// The environment execution evidence must have run in to be
-        /// considered applicable (ADR 0017 §5). Omit to require evidence
-        /// recorded with no environment at all.
-        #[arg(long)]
-        environment: Option<String>,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-    /// Open a localhost-only, read-only release verification dashboard
-    Serve {
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-        /// Earlier Git revision shown when the dashboard opens
-        #[arg(long, default_value = "HEAD~1")]
-        base: String,
-        /// Later Git revision shown when the dashboard opens
-        #[arg(long, default_value = "HEAD")]
-        head: String,
-        /// Localhost TCP port
-        #[arg(long, default_value_t = 8787)]
-        port: u16,
-    },
     /// Manage test knowledge under knowledge/
     #[command(subcommand)]
     Knowledge(KnowledgeCommand),
@@ -134,9 +91,9 @@ pub enum Command {
     /// Manage executions/<tag>/milestone.yml (UC4 support)
     #[command(subcommand)]
     Milestone(MilestoneCommand),
-    /// Record test execution results under executions/<milestone>/results.yml
+    /// Declare how a TestCase is verified (ADR 0020, ADR 0025)
     #[command(subcommand)]
-    Execution(ExecutionCommand),
+    Binding(BindingCommand),
     /// Validate knowledge/ and axes/ against schema/*.schema.json plus axis/forked_from cross-references (§3.5/§3.6)
     Validate {
         /// Target project directory. Defaults to the current directory.
@@ -266,48 +223,22 @@ pub enum MilestoneCommand {
     },
 }
 
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResultArg {
-    Pass,
-    Fail,
-    Skip,
-}
-
-impl From<ResultArg> for ExecutionResult {
-    fn from(value: ResultArg) -> Self {
-        match value {
-            ResultArg::Pass => ExecutionResult::Pass,
-            ResultArg::Fail => ExecutionResult::Fail,
-            ResultArg::Skip => ExecutionResult::Skip,
-        }
-    }
-}
-
 #[derive(Subcommand)]
-pub enum ExecutionCommand {
-    /// Record one TestCase execution result (ADR 0017 §5), one file per
-    /// execution under executions/records/
-    Record {
-        /// The TestCase's case_id (as generated into generated/testcases/*.yml)
-        case_id: String,
-        /// An opaque, non-empty identifier of the build/commit under test
-        /// (a commit OID, a CI build number, a release tag — never a
-        /// project milestone name; never inferred).
+pub enum BindingCommand {
+    /// Record (or replace) the verification means for one TestCase, keyed by
+    /// Case UID. A binding is a declaration, not an execution fact: it has no
+    /// result, timestamp, build, or environment (ADR 0025 §1).
+    Set {
+        /// The TestCase's Case UID (never its display id — ADR 0013)
         #[arg(long)]
-        target_revision: String,
-        /// Free-text environment identifier. Omit to record explicitly no
-        /// environment (never inferred).
-        #[arg(long)]
-        environment: Option<String>,
-        /// The outcome of this execution
+        case_uid: String,
+        /// Whether this case is verified by automated or manual means
         #[arg(long, value_enum)]
-        result: ResultArg,
-        /// Free-text identifier of who or what ran this (a person's name, or e.g. "ci-github-actions")
+        mode: BindingModeArg,
+        /// Free-text pointer to where the verification lives (a test file
+        /// path, a URL). Never interpreted by markharness.
         #[arg(long)]
-        executor: String,
-        /// Optional free-text note
-        #[arg(long)]
-        note: Option<String>,
+        reference: Option<String>,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -315,6 +246,30 @@ pub enum ExecutionCommand {
         #[arg(long)]
         json: bool,
     },
+    /// List every recorded binding
+    List {
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+pub enum BindingModeArg {
+    Automated,
+    Manual,
+}
+
+impl From<BindingModeArg> for binding::BindingMode {
+    fn from(value: BindingModeArg) -> Self {
+        match value {
+            BindingModeArg::Automated => binding::BindingMode::Automated,
+            BindingModeArg::Manual => binding::BindingMode::Manual,
+        }
+    }
 }
 
 #[derive(clap::Args)]
@@ -441,15 +396,6 @@ pub enum CacheCommand {
     /// Discard .markharness-cache/ (next `changes compute` recomputes lazily)
     Rebuild {
         /// Target project directory containing .markharness-cache/. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-    /// Rebuild read-optimized indexes from canonical Git and repository data
-    Index {
-        /// Git revision used to index Features
-        #[arg(long = "ref", default_value = "HEAD")]
-        git_ref: String,
-        /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
@@ -641,56 +587,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
             presentation::emit(JsonPresenter.present(&outcome))?;
             Ok(())
         }
-        Command::Plan {
-            base,
-            head,
-            format: ImportFormatArg::Json,
-            output,
-            evidence,
-            environment,
-            dir,
-        } => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            let canonical_inputs = evidence
-                .iter()
-                .map(|path| {
-                    serde_json::from_str(&fs::read_to_string(path)?)
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-                })
-                .collect::<io::Result<Vec<_>>>()?;
-            let outcome = application::build_verification_plan(
-                &root,
-                &base,
-                &head,
-                environment.as_deref(),
-                &canonical_inputs,
-            )?;
-            let presented = JsonPresenter.present(&outcome);
-            if let Some(output) = output {
-                let output = if output.is_absolute() {
-                    output
-                } else {
-                    root.join(output)
-                };
-                crate::fs_safety::replace_file(&root, &output, presented.stdout.as_bytes())?;
-                presentation::emit(presentation::PresentedResult {
-                    stdout: String::new(),
-                    stderr: presented.stderr,
-                    exit_code: presented.exit_code,
-                })
-            } else {
-                presentation::emit(presented)
-            }
-        }
-        Command::Serve {
-            dir,
-            base,
-            head,
-            port,
-        } => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            server::serve(&root, port, server::DashboardConfig { base, head })
-        }
         Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {
             Some(out) => match knowledge_edit::write_scaffold(&out) {
                 Ok(()) => Ok(()),
@@ -874,14 +770,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
             println!("removed .markharness-cache/ under {}", root.display());
             Ok(())
         }
-        Command::Cache(CacheCommand::Index { dir, git_ref }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            let paths = derived_index::rebuild_indexes(&root, &git_ref)?;
-            println!("rebuilt {}", paths.features.display());
-            println!("rebuilt {}", paths.change_events.display());
-            println!("rebuilt {}", paths.executions.display());
-            Ok(())
-        }
         Command::Changes(ChangesCommand::Compute {
             from,
             to,
@@ -1043,78 +931,86 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Execution(ExecutionCommand::Record {
-            case_id,
-            target_revision,
-            environment,
-            result,
-            executor,
-            note,
+        Command::Binding(BindingCommand::Set {
+            case_uid,
+            mode,
+            reference,
             dir,
             json,
         }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
-            let args = RecordArgs {
-                case_id: &case_id,
-                target_revision: &target_revision,
-                environment: environment.as_deref(),
-                result: ExecutionResult::from(result),
-                executor: &executor,
-                note: note.as_deref(),
-            };
-            match execution::record_execution(&root, &args) {
-                Ok(entry) => {
+            match binding::set_binding(&root, &case_uid, mode.into(), reference) {
+                Ok(recorded) => {
                     if json {
                         println!(
-                            "{{\"ok\":true,\"execution_uid\":{:?}}}",
-                            entry.execution_uid.as_str()
+                            "{}",
+                            serde_json::json!({
+                                "schema_version": 1,
+                                "outcome": "binding_set",
+                                "ok": true,
+                                "case_uid": recorded.case_uid.as_str(),
+                                "mode": recorded.mode.as_str(),
+                                "reference": recorded.reference,
+                            })
                         );
                     } else {
                         println!(
-                            "recorded {} for {case_id} into .markharness/executions/records/{}.yml",
-                            args.result.as_str(),
-                            entry.execution_uid
+                            "bound {} as {} in .markharness/bindings/{}.yml",
+                            recorded.case_uid,
+                            recorded.mode.as_str(),
+                            recorded.case_uid
                         );
                     }
                     Ok(())
                 }
-                Err(RecordError::CaseNotFound) => {
-                    eprintln!(
-                        "error: case_id '{case_id}' not found in .markharness/generated/testcases/. Run `markharness generate` first."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RecordError::CaseNotMigrated) => {
-                    eprintln!(
-                        "error: case_id '{case_id}' has no case_uid yet. Run `markharness identity migrate` first."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RecordError::EmptyTargetRevision) => {
-                    eprintln!("error: --target-revision must not be empty or whitespace-only.");
-                    std::process::exit(2);
-                }
-                Err(RecordError::EmptyEnvironment) => {
-                    eprintln!(
-                        "error: --environment must not be empty or whitespace-only. Omit it instead to record no environment."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RecordError::CaseDefinitionMissing) => {
-                    eprintln!(
-                        "error: no immutable case definition is stored for case_id '{case_id}'. Run `markharness generate` again to (re-)populate .markharness/case-definitions/."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RecordError::CaseDefinitionMismatch) => {
-                    eprintln!(
-                        "error: the generated test case for '{case_id}' no longer matches the immutable case definition stored under its case_uid/case_revision. Run `markharness generate` again to refresh it."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RecordError::Io(e)) => {
+                Err(binding::BindingError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Binding(BindingCommand::List { dir, json }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match binding::read_all(&root) {
+                Ok(bindings) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "schema_version": 1,
+                                "outcome": "bindings_listed",
+                                "bindings": bindings,
+                            })
+                        );
+                    } else if bindings.is_empty() {
+                        println!("no bindings recorded under .markharness/bindings/");
+                    } else {
+                        for recorded in &bindings {
+                            match &recorded.reference {
+                                Some(reference) => println!(
+                                    "{}	{}	{reference}",
+                                    recorded.case_uid,
+                                    recorded.mode.as_str()
+                                ),
+                                None => {
+                                    println!("{}	{}", recorded.case_uid, recorded.mode.as_str())
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Err(binding::BindingError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
                 }
             }
         }
@@ -2280,58 +2176,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_serve_with_local_dashboard_options() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "serve",
-            "--dir",
-            "sample",
-            "--base",
-            "main",
-            "--head",
-            "feature",
-            "--port",
-            "9000",
-        ]);
-
-        match cli.command {
-            Command::Serve {
-                dir,
-                base,
-                head,
-                port,
-            } => {
-                assert_eq!(dir, Some(PathBuf::from("sample")));
-                assert_eq!(base, "main");
-                assert_eq!(head, "feature");
-                assert_eq!(port, 9000);
-            }
-            _ => panic!("expected Serve command"),
-        }
-    }
-
-    #[test]
-    fn parses_cache_index_with_git_ref() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "cache",
-            "index",
-            "--ref",
-            "v2",
-            "--dir",
-            "sample",
-        ]);
-
-        match cli.command {
-            Command::Cache(CacheCommand::Index { dir, git_ref }) => {
-                assert_eq!(dir, Some(PathBuf::from("sample")));
-                assert_eq!(git_ref, "v2");
-            }
-            _ => panic!("expected Cache Index command"),
-        }
-    }
-
-    #[test]
     fn cache_rebuild_is_a_no_op_when_cache_dir_missing() {
         let dir = tempfile::tempdir().unwrap();
         crate::init::run_init(dir.path()).unwrap();
@@ -2415,52 +2259,6 @@ mod tests {
                 assert!(json);
             }
             _ => panic!("expected Milestone Init command"),
-        }
-    }
-
-    #[test]
-    fn parses_execution_record_with_all_options() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "execution",
-            "record",
-            "tc-ground-001",
-            "--target-revision",
-            "abc123",
-            "--environment",
-            "staging",
-            "--result",
-            "pass",
-            "--executor",
-            "yamada",
-            "--note",
-            "looked fine",
-            "--dir",
-            "sample",
-            "--json",
-        ]);
-
-        match cli.command {
-            Command::Execution(ExecutionCommand::Record {
-                case_id,
-                target_revision,
-                environment,
-                result,
-                executor,
-                note,
-                dir,
-                json,
-            }) => {
-                assert_eq!(case_id, "tc-ground-001");
-                assert_eq!(target_revision, "abc123");
-                assert_eq!(environment, Some("staging".to_string()));
-                assert_eq!(result, ResultArg::Pass);
-                assert_eq!(executor, "yamada");
-                assert_eq!(note, Some("looked fine".to_string()));
-                assert_eq!(dir, Some(PathBuf::from("sample")));
-                assert!(json);
-            }
-            _ => panic!("expected Execution Record command"),
         }
     }
 
@@ -2584,81 +2382,6 @@ mod tests {
                 .unwrap();
         assert!(content.starts_with("id: m1\ncommit_oid: "));
         assert!(content.contains("knowledge_schema_version: 1\n"));
-    }
-
-    fn write_generated_testcase_for_test(
-        root: &std::path::Path,
-        condition_id: &str,
-        case_id: &str,
-        feature_id: &str,
-    ) {
-        // `case_revision` is defined as a hash of `phases`
-        // (`generate::compute_case_revision`); `execution record` now
-        // verifies the stored case definition's `phases` actually hash to
-        // it, so this must be the real hash of the `phases: []` written
-        // below rather than an arbitrary placeholder string.
-        let case_revision = crate::generate::compute_case_revision(&[]);
-        let dir = root.join(".markharness/generated/testcases");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(format!("{condition_id}.yml")),
-            format!(
-                "case_id: {case_id}\ncase_uid: case-uid-1\ncase_revision: {case_revision}\ngenerated_from:\n  requirement_ids: []\n  feature: {feature_id}\nphases: []\n"
-            ),
-        )
-        .unwrap();
-        // `execution record` requires the immutable case definition (ADR
-        // 0017 §5) to already be stored under the same key `generate` would
-        // have populated it at.
-        let definitions_dir = root.join(".markharness/case-definitions/case-uid-1");
-        fs::create_dir_all(&definitions_dir).unwrap();
-        fs::write(
-            definitions_dir.join(format!("{case_revision}.yml")),
-            format!("case_uid: case-uid-1\ncase_revision: {case_revision}\nphases: []\n"),
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn execution_record_writes_one_file_under_executions_records_when_case_exists() {
-        let dir = init_git_repo_for_test();
-        fs::create_dir_all(
-            dir.path()
-                .join(".markharness/knowledge/features/player-jump"),
-        )
-        .unwrap();
-        fs::write(
-            dir.path()
-                .join(".markharness/knowledge/features/player-jump/feature.yml"),
-            "id: player-jump\nrequirement_uids: [controls]\nlabel: player-jump\naxis: []\n",
-        )
-        .unwrap();
-        run_git_for_test(dir.path(), &["add", "-A"]);
-        run_git_for_test(dir.path(), &["commit", "-q", "-m", "add feature"]);
-        write_generated_testcase_for_test(dir.path(), "ground", "tc-ground-001", "player-jump");
-        let cli = Cli::parse_from([
-            "markharness",
-            "execution",
-            "record",
-            "tc-ground-001",
-            "--target-revision",
-            "abc123",
-            "--result",
-            "pass",
-            "--executor",
-            "yamada",
-            "--dir",
-            dir.path().to_str().unwrap(),
-        ]);
-
-        run(cli).unwrap();
-
-        let records_dir = dir.path().join(".markharness/executions/records");
-        let entries: Vec<_> = fs::read_dir(&records_dir).unwrap().collect();
-        assert_eq!(entries.len(), 1, "expected exactly one execution record");
-        let content = fs::read_to_string(entries[0].as_ref().unwrap().path()).unwrap();
-        assert!(content.contains("case_id: tc-ground-001"));
-        assert!(content.contains("target_revision: abc123"));
     }
 
     #[test]

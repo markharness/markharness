@@ -771,8 +771,6 @@ $ markharness cache rebuild
 removed .markharness-cache/ under /path/to/project
 ```
 
-Read-optimized derivative indexes can be rebuilt with `markharness cache index [--ref <git-ref>] [-d, --dir <path>]`. It generates Feature, ChangeEvent, and Execution JSON indexes under `.markharness-cache/index/`, using `HEAD` by default. They are not canonical data and can be deterministically regenerated after deletion.
-
 **Use case mapping**: UC7 "discard/rebuild the id cache" (`docs/product-operation.md`). A fail-safe for cases where id-resolution inconsistency is suspected.
 
 **Note when changing a Feature's `id:` (for users, paper §3.3)**: The Feature id is tracked using the `id:` field of each `feature.yml` as the canonical source. If the value of `id:` itself is rewritten, the tool treats this as "the original Feature was deleted and a Feature with a new id was added," and `changes compute` cannot recover the `derived_from` relationship with past milestones (the version history is broken). **Renaming** a Feature directory (a path change) remains trackable as long as `id:` does not change, but this CLI has no migration procedure for a change to `id:` itself (such as recording an old-id→new-id alias); currently, users must strictly follow the practice of "never change `id:`." See [decisions/0004](./decisions/0004-feature-id-change-migration.md) for the status of consideration.
@@ -977,68 +975,61 @@ $ echo $?
 
 ---
 
-### 1.15 `markharness execution record` — Recording a TestCase execution result (UC4: destination for recording execution results)
+### 1.15 `markharness binding set` / `list` — Declare how a TestCase is verified (ADR 0020, ADR 0025)
 
 ```text
-markharness execution record <case_id> --milestone <name> --result <pass|fail|skip> --executor <name> [--note <text>] [--json] [-d, --dir <path>]
+markharness binding set --case-uid <case-uid> --mode <automated|manual> [--reference <text>] [--json] [-d, --dir <path>]
+markharness binding list [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: Appends one execution result, for a given milestone, for one of the `TestCase`s (identified by `case_id`) in `.markharness/generated/testcases/`, to `.markharness/executions/<milestone>/results.yml`. Intended to be invokable via the same interface for both automated test execution by CI and manual testing by QA (the write destination and schema are shared).
+**Purpose**: Declares whether a TestCase is verified by automated or manual means, and where that verification lives. Stored one file per Case at `.markharness/bindings/<case-uid>.yml`.
+
+**An `ExecutionBinding` is not a record of an execution.** It carries no timestamp, result (pass/fail), Case revision, target build, environment, attempt count, or evidence, and **its presence must never be read as "executed" or "passed"** (ADR 0025 §1 and §2). Detailed execution evidence is outside markharness's responsibility; it belongs to whatever `reference` points at (the test code, or a separate tool).
 
 **Options**
 
-| Option                | Description                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------------------- |
-| `<case_id>`           | (required) The `case_id` of the target TestCase (a value contained in one of `.markharness/generated/testcases/*.yml`) |
-| `--milestone <name>` | (required) The name of the destination milestone. The corresponding `.markharness/executions/<name>/milestone.yml` must exist. |
-| `--result <value>`    | (required) One of `pass` / `fail` / `skip`                                                               |
-| `--executor <name>`  | (required) A free-text description of the executor (a person's name, or a CI identifier like `ci-github-actions`) |
-| `--note <text>`       | An optional free-text note                                                                                |
-| `-d, --dir <path>`   | Target project directory. Defaults to the project root (auto-detected by searching upward from cwd).                                              |
-| `--json`              | Prints the result as single-line JSON. If omitted, prints human-readable text.                            |
+| Option | Description |
+| --- | --- |
+| `--case-uid <case-uid>` | (required) The TestCase's Case UID, never its display id (ADR 0013 — so renaming a display id cannot break the record) |
+| `--mode <value>` | (required) `automated` or `manual` |
+| `--reference <text>` | Free-text pointer to the verification itself (a test file path, a URL). markharness never interprets it |
+| `-d, --dir <path>` | Target project directory. Defaults to the project root (auto-detected upward from cwd) |
+| `--json` | Emit JSON instead of human-readable text |
 
 **Behavior**
 
-- If `.markharness/executions/<milestone>/milestone.yml` does not exist, prints an error message prompting the user to first run `markharness milestone init <milestone>`, and exits with code `2`.
-- If `case_id` is not found in any of the current (HEAD's) `.markharness/generated/testcases/*.yml`, prints an error message prompting the user to first run `markharness generate`, and exits with code `2`. Since the file name under `.markharness/generated/testcases/` is the `condition.id`, which differs from `case_id` ([section 1.5](#15-markharness-generate--deterministic-generation-of-testcase-uc2-deterministically-generate-testcase)), this check is done by reading the contents of each file (the `case_id` field). It does not go back to the content as of a past milestone; it always validates against the current HEAD.
-- Once validation passes, one entry consisting of `case_id` / `result` / `executor` / `note` (not output if omitted) / `executed_at` (ISO8601, UTC) is appended to `.markharness/executions/<milestone>/results.yml`. Existing entries are left unchanged and the new one is appended at the end (past execution history and records of re-execution are also preserved).
-- The write uses the same "temp file + rename" atomic method as `knowledge apply` (section 1.4) (all entries are re-read and written together).
-- Since the computation of `verified_feature_tree_shas` (see near section 1.17) goes through the same Feature tree SHA resolution process as `changes compute`, the constraint for when the target project directory is a subdirectory of a git repository is likewise resolved ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
+- `set` **replaces** any existing binding for the same Case UID. A binding is a current declaration, not an append-only log, so there is one file per Case and it is overwritten.
+- The stored form is exactly `schema_version: 1`, `record_kind: execution_binding`, `case_uid`, `mode`, and an optional `reference`. `schema_version` is fixed at `1` for every record kind and is never bumped (ADR 0026 §7).
+- A binding file carrying unknown fields is **rejected when read**. Hand-adding execution-fact fields such as `result`, `executed_at`, `build`, or `environment` is never silently ignored (ADR 0025 §2).
+- A Case UID is the sole component of the file's path, so an empty value, `.`, `..`, a leading dot, a path separator (`/`, `\`), or a drive specifier is refused **before any file is created** — the same rule `generate` applies to `id:`.
+- Writes go through the atomic replacement path in `src/fs_safety.rs`.
 
 **Exit codes**
 
-| Code | Meaning                                                                       |
-| ---- | -------------------------------------------------------------------------------- |
-| 0    | Success (entry appended)                                                        |
-| 2    | The specified milestone is uninitialized, or `case_id` was not found            |
-| 3    | Filesystem error                                                                 |
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 2 | The Case UID is unusable as a file name, or a stored binding is malformed (e.g. carries unknown fields) |
+| 3 | Filesystem error |
 
 **Example**
 
 ```console
-$ markharness execution record tc-ground-001 --milestone 2026-08-release --result pass --executor yamada
-recorded pass for tc-ground-001 into .markharness/executions/2026-08-release/results.yml
+$ markharness binding set --case-uid 01ARZ3NDEKTSV4RRFFQ69G5FAV --mode automated --reference tests/login.spec.ts
+bound 01ARZ3NDEKTSV4RRFFQ69G5FAV as automated in .markharness/bindings/01ARZ3NDEKTSV4RRFFQ69G5FAV.yml
 ```
 
-`.markharness/executions/2026-08-release/results.yml`:
+`.markharness/bindings/01ARZ3NDEKTSV4RRFFQ69G5FAV.yml`:
 
 ```yaml
-- case_id: tc-ground-001
-  result: pass
-  executor: yamada
-  executed_at: 2026-08-08T03:15:00Z
+schema_version: 1
+record_kind: execution_binding
+case_uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+mode: automated
+reference: tests/login.spec.ts
 ```
 
-**Example (error when specifying an uninitialized milestone)**
-
-```console
-$ markharness execution record tc-ground-001 --milestone 2099-01-01 --result pass --executor yamada
-error: milestone '2099-01-01' not found. Run `markharness milestone init 2099-01-01` first.
-$ echo $?
-2
-```
-
-**Use case mapping**: UC4 "tag a milestone, destination for recording execution results" (the `.markharness/executions/` directory correspondence table in `docs/cli-manual.md`, and the `TESTEXECUTION` in §3.1 of `docs/git-native-model-for-test-knowledge-management.md`). Aggregating/reporting results, bulk ingestion from CI test report formats (`--from-report`), and validation against `.markharness/generated/testcases/` as of a past milestone are not implemented (future work).
+**Use case mapping**: `ExecutionBinding` in [the markharness v2 design](./design/markharness-v2-design.md) §5.2. Per-release verification scope lives in `ReleaseScope` (a separate command).
 
 ---
 
@@ -1104,7 +1095,7 @@ markharness validate [--json] [-d, --dir <path>]
 
 **Purpose**: Performs JSON Schema validation of all YAML under `.markharness/knowledge/` (`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`), `.markharness/axes/*.yml`, and `.markharness/executions/<milestone>/results.yml`, against the corresponding `.markharness/schema/*.schema.json` (a default set placed by `markharness init`; section 1.1). In addition, it validates cross-reference constraints that cannot be expressed by JSON Schema alone: whether `axis` tags are registered in `.markharness/axes/*.yml`, and whether `feature.yml`'s `forked_from` points to an actually existing Feature id.
 
-**Schema of `.markharness/executions/*/results.yml`**: `execution_result.schema.json` requires `case_id` / `result` (`pass`/`fail`/`skip`) / `executor` / `executed_at`, and treats `note` / `verified_feature_tree_shas` as optional fields (section 1.15). `verified_feature_tree_shas` is absent from execution records written before this specification was introduced, but since it is defined as an optional field, such past records still pass schema validation as-is. In this case, `verify trace`/`verify pending` (change-event-verification-tracking-spec.md §6) does not retroactively backfill the record, and treats it as "unknown."
+**Binding validation**: `.markharness/bindings/*.yml` is checked for being readable as an `ExecutionBinding` (section 1.15). A binding carrying execution-fact fields such as `result`, `executed_at`, `build`, or `environment` is rejected as having unknown fields (ADR 0025 §2).
 
 **Additional validation in UID mode (ADR 0013, design doc §13 Phase 5)**: For a project whose `.markharness/config.toml` `[identity]` marker is `mode = "uid"` (written by `identity migrate`, section 1.26, once every kind has finished migrating), any Requirement/Feature/Behavior/Condition/ExpectedResult that lacks a `uid:` is reported as a validation issue, naming the file and prompting a run of `markharness identity migrate`. This guards against a uid-less element being introduced after cutover (via copy/import/hand-editing); it does not apply to a project that hasn't cut over yet (no marker).
 
@@ -1223,27 +1214,7 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
-### 1.23 `markharness plan` — Build a PR Verification Plan
-
-```text
-markharness plan --base <git-ref> --head <git-ref> --format json [--evidence <canonical.json>]... [--output <path>] [-d, --dir <path>]
-```
-
-Compares Feature tree SHAs across arbitrary base/head refs and emits changed Features, affected tests from stored/derived traces, `passed`/`failed`/`pending`/`stale` status from version-bound evidence, and rule-based proposals for changed Features without traces. Repeat `--evidence` for canonical snapshots emitted by `import`. The JSON contract is `schema_version: 1` under `.markharness/schema/verification_plan.schema.json`. Exit code is 1 for failures, 2 for pending/stale/unreviewed proposals, and 0 when all required tests are verified.
-
----
-
-### 1.24 `markharness serve` — Release Verification Dashboard
-
-```text
-markharness serve [--base <git-ref>] [--head <git-ref>] [--port <port>] [-d, --dir <path>]
-```
-
-Serves a read-only dashboard on `127.0.0.1` only. The default range is `HEAD~1`→`HEAD` and the default port is `8787`. The UI displays the Verification Plan summary, affected-test status/reason/origin, and rule-based proposals returned by the same Stage 2 Domain Engine. Its Feature History API returns Git tree SHAs and existing ChangeEvents. It neither computes a separate GUI status nor edits Git-managed files. Frontend assets are embedded in the Rust binary, so Node.js is not required at runtime.
-
----
-
-### 1.25 `markharness feature rename-id` — Rename a Feature's id while preserving its uid (ADR 0013)
+### 1.23 `markharness feature rename-id` — Rename a Feature's id while preserving its uid (ADR 0013)
 
 ```text
 markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
@@ -1270,7 +1241,7 @@ renamed Feature 'todo' to 'todo-v2' (uid preserved)
 
 ---
 
-### 1.26 `markharness identity migrate` — Bulk-issue uids for every Knowledge element kind (ADR 0013, design doc §12 and §13 Phase 4/5)
+### 1.24 `markharness identity migrate` — Bulk-issue uids for every Knowledge element kind (ADR 0013, design doc §12 and §13 Phase 4/5)
 
 ```text
 markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
@@ -1320,7 +1291,7 @@ $ markharness identity migrate --json
 
 ---
 
-### 1.27 `markharness identity resolve` — Explicitly resolve a branch divergence (ADR 0013, design doc §7)
+### 1.25 `markharness identity resolve` — Explicitly resolve a branch divergence (ADR 0013, design doc §7)
 
 ```text
 markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
@@ -1340,7 +1311,7 @@ markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
 
 ---
 
-### 1.28 `markharness identity audit` — Full commit-history identity audit (IdentityAuditor, ADR 0013, design doc §11)
+### 1.26 `markharness identity audit` — Full commit-history identity audit (IdentityAuditor, ADR 0013, design doc §11)
 
 ```text
 markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
@@ -1381,7 +1352,7 @@ $ echo $?
 
 ---
 
-### 1.29 `markharness identity sync` — Re-derive a Knowledge file's id:/uid: from its identity event log
+### 1.27 `markharness identity sync` — Re-derive a Knowledge file's id:/uid: from its identity event log
 
 ```text
 markharness identity sync <KIND> <UID> [-d, --dir <path>]

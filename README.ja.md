@@ -48,18 +48,15 @@ markharness milestone init v2
 markharness changes compute v1 v2
 cat .markharness/changes/v2.yaml
 
-# 同じ変更区間をレビュー可能なversioned Verification Planとして生成
-markharness plan --base v1 --head v2 --format json
-
-# 7. 実行結果を記録してから、未再検証のTestCaseを確認する
-markharness execution record tc-todo-management-add-todo-add-task-empty-title --milestone v2 --result pass --executor <your-name>
-markharness execution record tc-todo-management-add-todo-add-task-max-length --milestone v2 --result pass --executor <your-name>
-markharness verify pending --from v1 --to v2
+# 7. 各TestCaseの検証手段を宣言する(ADR 0020・ADR 0025)
+markharness binding set --case-uid <case-uid> --mode automated --reference tests/empty-title.spec.ts
+markharness binding set --case-uid <case-uid> --mode manual
+markharness binding list
 ```
 
-上記の `case_id` は生成規則 `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` に従います。`generate` 後の正確なIDが分からない場合は、生成されたファイル(例: `.markharness/generated/testcases/todo-management/add-todo/add-task/empty-title.yml`)を直接読んで確認してください。
+`case_id` は生成規則 `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` に従います。`generate` 後の正確なIDが分からない場合は、生成されたファイル(例: `.markharness/generated/testcases/todo-management/add-todo/add-task/empty-title.yml`)を直接読んで確認してください。bindingはこの表示上の `case_id` ではなく、同じファイルの `case_uid` を鍵にします。
 
-最後の `verify pending` は、`v1..v2` で影響を受けた2件のTestCaseがいずれも `v2` 時点で実行記録済みであることを検出し、`pending`(未再実行)を0件と報告します。両方のステップを省略して直接 `verify pending` を実行すると、逆にこの2件が pending として出力されます(実際に上のコマンド列で手元確認済み)。
+bindingは「そのTestCaseがどう検証されるか」と「検証実体がどこにあるか」を宣言するものです。実行の記録ではありません — 結果・日時・対象ビルド・実行環境のいずれも持たず、その存在を「実行済み」「合格」と読んではなりません(ADR 0025)。
 
 各コマンドの詳細なオプション・出力形式は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md) を参照してください。
 
@@ -76,7 +73,7 @@ markharness verify pending --from v1 --to v2
 - 既存TMS(TestRail/Xray等)からのインポータ(UC8) — 未実装。
 - id解決キャッシュの `canonicalization_rule_version` / `id_index_schema_version` — 現状固定値で、実際の改訂運用は未検証。
 - ADR 0013の「UID modeへの公開cutover後にuidなし要素が追加された場合は通常コマンドを拒否する」検証規則は `markharness validate` にのみ実装されており、`knowledge apply`/`interactive add` 等の生成系コマンドへの拡張は未定。
-- `verify trace` / `verify pending` — 導入前の既存実行記録(`verified_feature_tree_shas`を持たない)には遡及適用されない(「不明」扱い)。`.markharness/executions/*/results.yml` はJSON Schema検証済み(`.markharness/schema/execution_result.schema.json`)。
+- `ExecutionBinding` が持つのは検証手段(`automated`/`manual`)と自由記述の `reference` だけ。詳細な実行証跡(結果・日時・対象ビルド・実行環境)はmarkharnessの責務外で、`reference` が指す先に委ねる(ADR 0020)。
 - `markharness backfill run` — 常駐デーモンではなく、呼び出しごとに未処理ペアを1パス処理して終了する設計(CI等からの反復呼び出しを前提とする)。
 
 ## 開発
