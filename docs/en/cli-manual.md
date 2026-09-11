@@ -1001,6 +1001,8 @@ markharness binding list [--json] [-d, --dir <path>]
 - `set` **replaces** any existing binding for the same Case UID. A binding is a current declaration, not an append-only log, so there is one file per Case and it is overwritten.
 - The stored form is exactly `schema_version: 1`, `record_kind: execution_binding`, `case_uid`, `mode`, and an optional `reference`. `schema_version` is fixed at `1` for every record kind and is never bumped (ADR 0026 §7).
 - A binding file carrying unknown fields is **rejected when read**. Hand-adding execution-fact fields such as `result`, `executed_at`, `build`, or `environment` is never silently ignored (ADR 0025 §2).
+- A file whose `case_uid` disagrees with the Case UID its name encodes is **also rejected when read**. Once the one-file-per-Case invariant breaks, one Case's verification declaration would be read as another's.
+- A binding whose `schema_version` is not `1` is rejected too. The version is fixed, so any other value means a hand-edit or a record kind this reader does not know.
 - A Case UID is the sole component of the file's path, so an empty value, `.`, `..`, a leading dot, a path separator (`/`, `\`), or a drive specifier is refused **before any file is created** — the same rule `generate` applies to `id:`.
 - Writes go through the atomic replacement path in `src/fs_safety.rs`.
 

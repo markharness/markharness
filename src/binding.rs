@@ -77,6 +77,15 @@ pub enum BindingError {
         path: PathBuf,
         message: String,
     },
+    /// The file's `case_uid` disagrees with the Case UID its name encodes.
+    /// One file per Case UID is the identity invariant `set_binding` writes
+    /// under; accepting a mismatch would attach a verification declaration
+    /// to a Case that never had it.
+    CaseUidMismatch {
+        path: PathBuf,
+        file_name_uid: String,
+        content_uid: String,
+    },
     Io(io::Error),
 }
 
@@ -96,6 +105,15 @@ impl std::fmt::Display for BindingError {
             BindingError::Malformed { path, message } => {
                 write!(f, "{}: {message}", path.display())
             }
+            BindingError::CaseUidMismatch {
+                path,
+                file_name_uid,
+                content_uid,
+            } => write!(
+                f,
+                "{}: file name says case_uid \"{file_name_uid}\" but the record says \"{content_uid}\"",
+                path.display()
+            ),
             BindingError::Io(e) => write!(f, "filesystem error: {e}"),
         }
     }
@@ -181,6 +199,29 @@ pub fn read_all(root: &Path) -> Result<Vec<ExecutionBinding>, BindingError> {
                 ),
             });
         }
+        // Fixed at 1 and never bumped (ADR 0026 §7), so any other value is a
+        // hand-edit or a record from a type this reader does not know —
+        // never something to interpret optimistically.
+        if binding.schema_version != SCHEMA_VERSION {
+            return Err(BindingError::Malformed {
+                path,
+                message: format!(
+                    "schema_version is {}, expected {SCHEMA_VERSION}",
+                    binding.schema_version
+                ),
+            });
+        }
+        let file_name_uid = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
+        if file_name_uid != binding.case_uid.as_str() {
+            return Err(BindingError::CaseUidMismatch {
+                file_name_uid: file_name_uid.to_string(),
+                content_uid: binding.case_uid.as_str().to_string(),
+                path,
+            });
+        }
         bindings.push(binding);
     }
     Ok(bindings)
@@ -254,6 +295,47 @@ mod tests {
                 assert!(message.contains("result"), "{message}");
             }
             other => panic!("expected a malformed-binding error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_binding_whose_case_uid_disagrees_with_its_file_name_is_rejected() {
+        let dir = project();
+        set_binding(dir.path(), "case-a", BindingMode::Manual, None).unwrap();
+        let path = bindings_dir(dir.path()).join("case-a.yml");
+        let content = fs::read_to_string(&path)
+            .unwrap()
+            .replace("case_uid: case-a", "case_uid: case-b");
+        fs::write(&path, content).unwrap();
+
+        match read_all(dir.path()) {
+            Err(BindingError::CaseUidMismatch {
+                file_name_uid,
+                content_uid,
+                ..
+            }) => {
+                assert_eq!(file_name_uid, "case-a");
+                assert_eq!(content_uid, "case-b");
+            }
+            other => panic!("expected a case-uid mismatch error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_binding_with_an_unexpected_schema_version_is_rejected() {
+        let dir = project();
+        set_binding(dir.path(), "case-a", BindingMode::Manual, None).unwrap();
+        let path = bindings_dir(dir.path()).join("case-a.yml");
+        let content = fs::read_to_string(&path)
+            .unwrap()
+            .replace("schema_version: 1", "schema_version: 2");
+        fs::write(&path, content).unwrap();
+
+        match read_all(dir.path()) {
+            Err(BindingError::Malformed { message, .. }) => {
+                assert!(message.contains("schema_version"), "{message}");
+            }
+            other => panic!("expected a schema_version error, got {other:?}"),
         }
     }
 

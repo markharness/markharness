@@ -1001,6 +1001,8 @@ markharness binding list [--json] [-d, --dir <path>]
 - `set` は同じCase UIDの既存bindingを**置換**する。bindingは現時点の宣言であって追記型のログではないため、1 Case 1ファイルで上書きする。
 - 保存形式は `schema_version: 1`・`record_kind: execution_binding`・`case_uid`・`mode`・`reference`(任意)のみ。`schema_version` は全レコード種別で `1` に固定し、今後も上げない(ADR 0026 §7)。
 - 未知のフィールドを持つbindingファイルは**読み取り時に拒否**する。`result`・`executed_at`・`build`・`environment` 等の実行事実フィールドを手で書き足しても、黙って無視されることはない(ADR 0025 §2)。
+- ファイル名が示すCase UIDと、ファイル内の `case_uid` が食い違う場合も**読み取り時に拒否**する。1 Case 1ファイルという同一性の前提が崩れると、あるCaseの検証宣言が別のCaseのものとして読まれるため。
+- `schema_version` が `1` でないbindingファイルも拒否する。版は固定であり、別の値は手編集かこのreaderが知らないレコード種別を意味する。
 - Case UIDはファイル名の唯一の構成要素になるため、空文字・`.`・`..`・先頭ドット・パス区切り(`/`・`\`)・ドライブ指定を含む値は**ファイルを作る前に**拒否する。`generate` が `id:` に課す検証と同じ扱い。
 - 書き込みは `src/fs_safety.rs` の原子的置換経路を用いる。
 
