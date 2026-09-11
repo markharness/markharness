@@ -5,8 +5,8 @@ use crate::identity::EntityKind;
 /// A single identity-lifecycle declaration (design doc §4.2), Git-tracked
 /// under `.markharness/identity-events/<kind>/<entity_uid>/<event_uid>.yml`.
 /// Ordinary Knowledge edits never produce one of these — only issuance,
-/// rename, retirement, restoration, release, reissue, and explicit
-/// branch-divergence resolution do (design doc §2, Background).
+/// rename, and explicit branch-divergence resolution do (ADR 0021 §4:
+/// retire/restore/release/reissue are not recorded as identity events).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityEvent {
     pub identity_event_uid: String,
@@ -28,9 +28,10 @@ pub struct IdentityEvent {
     pub mutation: IdentityMutation,
 }
 
-/// The seven identity-lifecycle mutation kinds (design doc §4.2 table).
-/// Closed by design, matching `EntityKind`'s closed-enum-dispatch style
-/// (design doc §3.1) — no trait objects, no per-kind subtyping.
+/// The identity-lifecycle mutation kinds (ADR 0021 §4: UID issuance,
+/// rename, and branch-divergence resolution only). Closed by design,
+/// matching `EntityKind`'s closed-enum-dispatch style (design doc §3.1) —
+/// no trait objects, no per-kind subtyping.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IdentityMutation {
@@ -41,23 +42,6 @@ pub enum IdentityMutation {
     Issued { id: String },
     /// An `id:` change (`markharness feature rename-id` and equivalents).
     Renamed { from_id: String, to_id: String },
-    /// UID retirement triggered by deleting the Knowledge element.
-    Retired,
-    /// Restoration of a previously retired UID.
-    Restored,
-    /// Explicit lift of the reuse reservation on a retired id
-    /// (`markharness identity release`, design doc §9).
-    Released { released_id: String },
-    /// New UID issuance during copy/import as a distinct element, carrying
-    /// the entity's initial `id` in the importing project. Like `Issued`,
-    /// this is always a root (no predecessor); `source_uid` optionally
-    /// records provenance in the source project, for audit purposes only
-    /// (it is never resolved as an entity in this project).
-    Reissued {
-        id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        source_uid: Option<String>,
-    },
     /// Explicit resolution of a branch divergence
     /// (`markharness identity resolve`, design doc §7).
     /// `previous_identity_event_uids` on the containing `IdentityEvent`
@@ -69,10 +53,7 @@ pub enum IdentityMutation {
 impl IdentityMutation {
     /// Roots are the only mutations with no predecessor (design doc §4.2).
     pub fn can_be_root(&self) -> bool {
-        matches!(
-            self,
-            IdentityMutation::Issued { .. } | IdentityMutation::Reissued { .. }
-        )
+        matches!(self, IdentityMutation::Issued { .. })
     }
 }
 
@@ -161,22 +142,13 @@ mod tests {
     }
 
     #[test]
-    fn only_issued_and_reissued_can_be_roots() {
+    fn only_issued_can_be_a_root() {
         assert!(
             IdentityMutation::Issued {
                 id: "x".to_string()
             }
             .can_be_root()
         );
-        assert!(
-            IdentityMutation::Reissued {
-                id: "x".to_string(),
-                source_uid: None
-            }
-            .can_be_root()
-        );
-        assert!(!IdentityMutation::Retired.can_be_root());
-        assert!(!IdentityMutation::Restored.can_be_root());
         assert!(
             !IdentityMutation::Renamed {
                 from_id: "a".to_string(),
@@ -196,19 +168,6 @@ mod tests {
             IdentityMutation::Renamed {
                 from_id: "a".to_string(),
                 to_id: "b".to_string(),
-            },
-            IdentityMutation::Retired,
-            IdentityMutation::Restored,
-            IdentityMutation::Released {
-                released_id: "a".to_string(),
-            },
-            IdentityMutation::Reissued {
-                id: "imported-feature".to_string(),
-                source_uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
-            },
-            IdentityMutation::Reissued {
-                id: "imported-feature".to_string(),
-                source_uid: None,
             },
             IdentityMutation::Resolved {
                 winning_event_uid: "01ARZ3NDEKTSV4RRFFQ69G5FE1".to_string(),

@@ -21,14 +21,12 @@ pub mod registry;
 pub mod typed_uid;
 
 pub use audit::{AuditReport, AuditViolation, run_audit};
-pub use engine::{IdHistoryEntry, ReplayError, ReplayResult, Status, replay};
+pub use engine::{IdHistoryEntry, ReplayError, ReplayResult, replay};
 pub use entity_kind::{EntityDescriptor, EntityKind, descriptor};
 pub use event::{IdentityEvent, IdentityMutation};
 pub use feature_ops::{
-    MigrateError, MigrateReport, MigratedEntity, ReissueError, ReissuedEntity, ReleaseError,
-    RenameError, ResolveError, RestoreError, RetireError, SyncError, migrate_entities,
-    plan_migration, reissue_entity, release_id, rename_id, resolve_divergence, restore_entity,
-    retire_entity, sync_entity,
+    MigrateError, MigrateReport, MigratedEntity, RenameError, ResolveError, SyncError,
+    migrate_entities, plan_migration, rename_id, resolve_divergence, sync_entity,
 };
 pub use marker::{IDENTITY_SCHEMA_VERSION, is_uid_mode};
 pub use migration_manifest::{
