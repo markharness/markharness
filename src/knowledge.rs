@@ -12,7 +12,7 @@ pub enum RequirementSource {
     External,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Requirement {
     pub id: String,
     /// Which side owns this Requirement's content (ADR 0023). Required, with

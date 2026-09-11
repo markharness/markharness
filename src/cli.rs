@@ -97,6 +97,31 @@ pub enum Command {
     /// Relate Features to Requirements, and re-pin an external Requirement (ADR 0023)
     #[command(subcommand)]
     Requirement(RequirementCommand),
+    /// Record what a release chose to verify (ADR 0024)
+    #[command(subcommand)]
+    Release(ReleaseCommand),
+    /// Report what exists to verify a set of Requirements, and what a release
+    /// selected (v2 design §6.2)
+    Coverage {
+        /// `all`, or a comma-separated list of Requirement display ids. This
+        /// is what bounds the missed-selection candidates: deriving the bound
+        /// from the selection itself would hide a Requirement left out whole.
+        #[arg(long)]
+        requirements: String,
+        /// Report a release's selection as well. A release with no recorded
+        /// scope yields the registered state only.
+        #[arg(long)]
+        release: Option<String>,
+        /// Git revision to read the Knowledge and the release scope at
+        #[arg(long, default_value = "HEAD")]
+        at: String,
+        /// Stable output representation
+        #[arg(long, value_enum, default_value = "json")]
+        format: ImportFormatArg,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
     /// Report which Requirements a base..head range touched, and whether the
     /// corresponding TestCases were confirmed (ADR 0019, v2 design §6.1)
     Impact {
@@ -247,6 +272,46 @@ pub enum MilestoneCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ReleaseCommand {
+    /// Manage a release's verification scope
+    #[command(subcommand)]
+    Scope(ReleaseScopeCommand),
+}
+
+#[derive(Subcommand)]
+pub enum ReleaseScopeCommand {
+    /// Replace the list of TestCases a release selected for verification.
+    /// A selection is a declaration, never evidence that anything ran
+    /// (ADR 0024 §5).
+    Set {
+        /// The release's display name; a Git tag name is the natural choice
+        #[arg(long)]
+        release: String,
+        /// A selected TestCase's Case UID. Repeatable.
+        #[arg(long = "case-uid")]
+        case_uids: Vec<String>,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+    /// Show a release's recorded selection
+    Show {
+        /// The release's display name
+        #[arg(long)]
+        release: String,
+        /// Git revision to read the scope at
+        #[arg(long, default_value = "HEAD")]
+        at: String,
+        /// Stable output representation
+        #[arg(long, value_enum, default_value = "json")]
+        format: ImportFormatArg,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -1178,6 +1243,84 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     Ok(())
                 }
                 Err(crate::impact::ImpactError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Release(ReleaseCommand::Scope(ReleaseScopeCommand::Set {
+            release,
+            case_uids,
+            dir,
+        })) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::release::set_scope(&root, &release, &case_uids) {
+                Ok(scope) => {
+                    println!(
+                        "recorded {} case(s) for {release} in .markharness/releases/{release}.yml",
+                        scope.case_uids.len()
+                    );
+                    Ok(())
+                }
+                Err(crate::release::ReleaseError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Release(ReleaseCommand::Scope(ReleaseScopeCommand::Show {
+            release,
+            at,
+            format: ImportFormatArg::Json,
+            dir,
+        })) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::release::read_scope_at(&root, &at, &release) {
+                Ok(scope) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&scope)
+                            .expect("release scope serialization is infallible")
+                    );
+                    Ok(())
+                }
+                Err(crate::release::ReleaseError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Coverage {
+            requirements,
+            release,
+            at,
+            format: ImportFormatArg::Json,
+            dir,
+        } => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            let selector = crate::coverage::RequirementSelector::parse(&requirements);
+            match crate::coverage::compute(&root, &at, &selector, release.as_deref()) {
+                Ok(coverage) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&coverage)
+                            .expect("release coverage serialization is infallible")
+                    );
+                    Ok(())
+                }
+                Err(crate::coverage::CoverageError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }
