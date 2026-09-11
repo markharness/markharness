@@ -22,7 +22,7 @@ markharness lightly tracks Git-native test knowledge (`knowledge/`) against its 
 
 **Contributes-to relation**: A many-to-many relation from Feature to Requirement. Means only "contributes to realization" — not proof of verification. It is carried by the existing `feature.requirement_uids` field; no new type or store is introduced.
 
-**Alignment check**: Detects, when either a Requirement or a TestCase changes, whether the other side followed up or was explicitly confirmed as not needing a change. Bidirectional.
+**Alignment check**: When either a Requirement or a TestCase changes, reports the other side's state as one of three values — followed / confirmed / unconfirmed. Bidirectional, and a mere simultaneous change ("followed") is never equated with "confirmed" (design §5.3).
 
 **Spec-Reviewed trailer**: A commit trailer recording that an alignment check concluded "no change required." Added alongside the change's own commit.
 
@@ -30,6 +30,8 @@ markharness lightly tracks Git-native test knowledge (`knowledge/`) against its 
 
 **Change Impact**: The list of affected Features, Requirements, and TestCases computed from the diff between base and head. Used for per-PR review.
 
-**Release Coverage**: A listing, over a given set of Requirements/Features, of their correspondence to TestCases and whether an Execution status exists. Supporting information for release decisions.
+**Release scope**: The list of TestCases chosen for verification in a given release (`ReleaseScope`). It holds only a `release_id` and an array of Case UIDs — no timestamp, owner, approval state, or result. A human records it through the CLI; it is a declaration of choice, not evidence of a run ([0024](../decisions/0024-release-scope-selection-list.md)).
+
+**Release Coverage**: A listing of the TestCases and verification methods registered as of a given Git ref, including coverage gaps across the chosen set of Requirements/Features. It is not evidence of what was selected or executed — supporting information for release decisions (design §6.2).
 
 **Retire**: Removing a TestCase or Feature from the current target set. Carries no guarantee of UID reuse, nor any mechanism for explicit restore or id reservation under the same UID.

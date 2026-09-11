@@ -35,6 +35,9 @@ _Avoid_：Evidence、Verification Target、Environment matrix（証跡管理・�
 **Change Impact**：base/head間の差分から算出する、影響を受けるFeature・Requirement・TestCaseの一覧。PR単位の日常的な確認に使う。
 _Avoid_：Verification Plan（重量級の契約オブジェクトという誤解を招くため使わない）。
 
+**Release scope(選定スコープ)**：あるリリースで検証対象に選んだTestCaseの一覧。`release_id`とCase UIDの配列だけを持ち、日時・担当者・承認状態・合否は持たない。人が記録する「選んだ」という宣言であり、実行証跡ではない(ADR 0024)。
+_Avoid_：Verification Plan、Evidence Selection(重量級の契約・証跡選択という誤解を招くため使わない)。
+
 **Release Coverage**：指定したRequirement/Feature集合全体について、TestCaseとの対応関係およびExecution statusの有無を一覧化したもの。リリース判断時の補助情報として、Change Impactと併用する。
 
 **Retire（退役）**：TestCaseまたはFeatureを現在の対象から外すこと。UIDの再利用保証や、同一UIDでの明示的な復元・ID予約解除の仕組みは持たない。退役後に同じ内容が再登場した場合は新規の別要素として扱う。

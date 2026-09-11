@@ -24,7 +24,9 @@ FeatureまたはTestCaseが`knowledge/`から削除された場合、それは�
 
 ### 2. 同一UIDでの復元は保証しない
 
-削除した要素と同じ内容のFeature/TestCaseが再度追加された場合、それは新規の別要素として扱う。過去のUIDを引き継ぐ明示的な`restore` operationは提供しない。過去の対応関係(`feature.requirement_uids`等)を新しい要素で必要とする場合は、人が新しい要素に対して設定し直す。削除前のUIDを引き継ぐ判定ロジックは持たない(内容一致による自動復元は、本節冒頭の「新規の別要素として扱う」と矛盾するため導入しない)。rename(削除を伴わないid変更)時のUID維持は[0013](0013-immutable-identity-model.md)のまま有効であり、本ADRの対象外である。
+削除した要素と同じ内容のFeature/TestCaseが再度追加された場合、それは新規の別要素として扱う。過去のUIDを引き継ぐ明示的な`restore` operationは提供しない。過去の対応関係(`feature.requirement_uids`等)を新しい要素で必要とする場合は、人が新しい要素に対して設定し直す。削除前のUIDを引き継ぐ判定ロジックは持たない(内容一致による自動復元は、本節冒頭の「新規の別要素として扱う」と矛盾するため導入しない)。
+
+本決定が保証するのは**新規作成操作の側**である。すなわち、CLIで新しい要素を作れば新しいUIDが発行され、内容が過去の要素と一致することを理由に旧UIDを推定することはない。一方、削除したKnowledgeファイルをGit履歴からそのまま復元した場合、ファイル内の`uid:`が戻るため当時のUID(およびScenario UIDから決定的に導出されるCase UID、[0017](0017-scenario-case-revision-and-execution-evidence.md)§3)が復活する。これはmarkharnessの機能としての復元ではなくGit履歴操作であり、本ADRはこれを禁止も検出もしない。「同じ内容を再度追加すれば必ず別UIDになる」という、より強い主張はしない。rename(削除を伴わないid変更)時のUID維持は[0013](0013-immutable-identity-model.md)のまま有効であり、本ADRの対象外である。
 
 ### 3. `release` event・ID予約解除の仕組みは廃止する
 

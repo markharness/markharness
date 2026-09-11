@@ -28,7 +28,11 @@ markharness自身が`backfill run`の進捗管理にgit notesを使っている�
 Spec-Reviewed: no-change-required
 ```
 
-変更が不要と判断した場合は`no-change-required`、対応する変更を別コミットで行った場合はその変更自体がtrailer不要の直接的な証跡になる(変更した側のファイル自体が更新されているため)。trailerが必要になるのは「見て、あえて変更しなかった」ことを明示する場合に限る。
+変更が不要と判断した場合は`no-change-required`を書く。trailerが必要になるのは「見て、あえて変更しなかった」ことを明示する場合に限る。
+
+対応する変更を別コミットで行った場合、その変更自体は「関連側も変更されている」という事実を示すにとどまり、意味の整合を人が確認した証拠にはならない(本ADR背景の前提)。したがってCoreの出力は**追随変更あり／確認済み／未確認**の三値とし、同時更新を「確認済み」と同一視しない([markharness-v2-design.md](../design/markharness-v2-design.md)§5.3)。
+
+trailerの有効範囲は、それを含むコミット時点の対象内容に限る。同じbase/head区間内で、そのコミットより後に同じ対象の実効内容(TestCaseはCase revision、Requirementは`requirement.yml`または`.sdoc` blob)が再び変更された場合、確認は無効となり「未確認」へ戻る。対象の版をtrailerに書かせるのではなく区間内のコミット順序で判定するのは、記述負担を増やさずに「古い確認記録が新しい変更を覆い隠す」ことを防ぐためである。
 
 trailerのvalueは**対象要素を識別できる形**にする(例: `Spec-Reviewed: no-change-required (req-login-01)`)。1つのコミットが複数のRequirement/TestCaseに触れる場合、対象を持たないtrailerではどの対応確認が済んだのか判定できず、自動判定が「未確認」を落とす。
 

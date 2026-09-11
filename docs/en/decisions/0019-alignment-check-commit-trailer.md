@@ -28,7 +28,11 @@ A commit that includes a Requirement change or a test-case change carries a trai
 Spec-Reviewed: no-change-required
 ```
 
-When a change is needed, making the corresponding edit in another commit *is* the record — no trailer is required for that direction. The trailer is only needed to make explicit that someone looked and deliberately chose not to change anything.
+Write `no-change-required` when no change is needed. A trailer is only required to make explicit that someone looked and deliberately chose not to change anything.
+
+When the corresponding edit is made in another commit, that edit only establishes that the other side *also changed* — not that a human checked semantic agreement (the premise this ADR starts from). The Core therefore reports **followed / confirmed / unconfirmed** as three distinct states and never equates a simultaneous update with a confirmation ([markharness-v2-design.md](../design/markharness-v2-design.md) §5.3).
+
+A trailer's validity is scoped to the target's content as of the commit carrying it. If, within the same base/head range, the target's effective content (Case revision for a TestCase; `requirement.yml` or the `.sdoc` blob for a Requirement) changes again in a later commit, the confirmation becomes void and the item returns to "unconfirmed." Deciding this by commit order rather than by making authors write a revision into the trailer keeps the authoring burden low while preventing a stale confirmation from masking a newer change.
 
 The trailer's value must **identify the element it refers to** (e.g. `Spec-Reviewed: no-change-required (req-login-01)`). When one commit touches several Requirements or TestCases, a trailer without a target makes it impossible to tell which alignment check was actually done, and the automatic check would drop a genuinely unconfirmed item.
 

@@ -24,7 +24,9 @@ When a Feature or TestCase is removed from `knowledge/`, it is simply gone from 
 
 ### 2. Restoring under the same UID is not guaranteed
 
-If a Feature/TestCase with the same content as a deleted one is added again, it is treated as a new, distinct element. No explicit `restore` operation carries the old UID forward. If a past relationship (e.g. `feature.requirement_uids`) is needed on the new element, a human sets it again on that element. There is no logic that carries the pre-deletion UID forward: content-match-based automatic restoration would contradict the "new, distinct element" rule stated above. Preserving a UID across a rename (an id change without deletion) remains in effect per [0013](0013-immutable-identity-model.md) and is out of this ADR's scope.
+If a Feature/TestCase with the same content as a deleted one is added again, it is treated as a new, distinct element. No explicit `restore` operation carries the old UID forward. If a past relationship (e.g. `feature.requirement_uids`) is needed on the new element, a human sets it again on that element. There is no logic that carries the pre-deletion UID forward: content-match-based automatic restoration would contradict the "new, distinct element" rule stated above.
+
+What this decision guarantees is **the creation side**: creating an element through the CLI issues a new UID, and matching content never implies the old UID. Restoring a deleted Knowledge file straight from Git history is different — the file's `uid:` comes back, so the original UID returns, and with it the Case UID deterministically derived from the Scenario UID ([0017](0017-scenario-case-revision-and-execution-evidence.md) §3). That is a Git history operation rather than a markharness restore feature; this ADR neither prevents nor detects it, and makes no stronger claim that re-adding the same content always yields a different UID. Preserving a UID across a rename (an id change without deletion) remains in effect per [0013](0013-immutable-identity-model.md) and is out of this ADR's scope.
 
 ### 3. The `release` event and id-reservation mechanism are dropped
 

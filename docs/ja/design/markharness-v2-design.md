@@ -12,7 +12,7 @@
 3. 前回リリースにおいて、どのテストが検証スコープに入っていたかを確認し、判断の一助とする。
 4. 今回のリリースにおいて、どの機能が影響するかの判断に使う。
 
-これがv2のNorth Starであり、以下すべての設計判断はこの4点に照らして評価する(用語集は[markharness-v2-glossary.md](markharness-v2-glossary.md)、確定した用語の一次情報は[CONTEXT.md](../../../CONTEXT.md)を参照)。
+問い3についてmarkharnessが答えるのは、そのリリースの`ReleaseScope`(選定リスト)が記録されていれば「何を検証対象に選んだか」まで、無ければ「その時点で登録されていたTestCaseと検証手段」までである。いずれの場合も実行された事実は扱わない(§6.2)。これがv2のNorth Starであり、以下すべての設計判断はこの4点に照らして評価する(用語集は[markharness-v2-glossary.md](markharness-v2-glossary.md)、確定した用語の一次情報は[CONTEXT.md](../../../CONTEXT.md)を参照)。
 
 成功の判定基準は次の3点。
 
@@ -105,11 +105,18 @@ ExecutionStatus {
   mode: automated | manual,
   reference: string,     // optional。テストコードへのパスやURL
 }
+
+ReleaseScope {
+  release_id,            // リリースの表示名(Git tag名を推奨)。安全な単一パス構成要素に限る(下記)
+  case_uids: [case_uid], // そのリリースで検証対象に選んだTestCase
+}
 ```
 
 `source: external`の`Requirement`はStrictDoc側の内容を複製しない。markharnessが保持するのは固定参照だけであり、本文・受け入れ条件等はStrictDoc側を都度参照する(P1)。`source: native`では従来どおりmarkharnessが`label`/`description`の正本を持つ。両方のフィールドを併せ持つ、あるいはどちらも欠く`requirement.yml`は`validate`で拒否する([0023](../decisions/0023-requirement-native-and-external-source.md))。
 
 FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型・格納先を作らず、現行の`feature.requirement_uids`をそのまま用いる(正本はFeature側、逆方向一覧は派生。[0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md)§1・§3)。「実現に寄与する」ことを示すのみで、検証済みの証明ではない。既存フィールドで足りるため新規型を作らないのはP6(YAGNI)に従う判断である。
+
+`ReleaseScope`は「そのリリースで何を検証対象に選んだか」だけを記録する([0024](../decisions/0024-release-scope-selection-list.md))。選定日時・担当者・承認状態・合否は持たず、内容は人がCLIで記録する。`.markharness/releases/<release_id>.yml`としてGit管理下に置くため、`--at <ref>`で過去時点の選定も再現できる。`release_id`はこのパスの**単一の構成要素**になるため、現行`generate.rs`の`require_valid_slug`が`id:`に課しているのと同じ理由で文字集合を制限する：ASCII小文字英数字・ハイフン・ドットのみを許し、空文字、`.`と`..`そのもの、先頭がドットの値、パス区切り(`/`・`\`)やドライブ指定を含む値は書き込み前に拒否する(`v1.2.0`のようなtag名は通り、`../../etc/passwd`は通らない)。書き込み自体も`fs_safety`の原子的置換経路を通す。選定リストが無いリリースについては、Release Coverageは従来どおり登録状態の一覧だけを返す(§6.2)。
 
 `ExecutionStatus`は§1.1・[0020](../decisions/0020-execution-status-lightweight-model.md)の通りTestCase単位の最小限の記録である。これは「実行された事実」ではなく**検証手段(自動/手動)とその参照先**を表す。合否・日時・実行回数を持たないため、値の存在を「最新版で実行済み」と読んではならない。
 
@@ -129,9 +136,23 @@ FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型�
 
 ### 5.3 対応確認(Alignment check)
 
-Requirementの意味変更、またはTestCaseの実効内容変更を検知した際、関連する他方(TestCaseまたはRequirement)が同じGit差分区間内で更新されたか、あるいは`Spec-Reviewed: no-change-required`のようなcommit trailerで「変更不要」と明示的に確認されたかを判定する([0019](../decisions/0019-alignment-check-commit-trailer.md))。いずれでもない場合は「未確認」として一覧に含める。独立した承認ワークフローは作らない。
+Requirementの意味変更、またはTestCaseの実効内容変更を検知した際、関連する他方(TestCaseまたはRequirement)の状態を次の**三値**で出力する([0019](../decisions/0019-alignment-check-commit-trailer.md))。独立した承認ワークフローは作らない。
 
-trailerは対象要素を識別できる形にする(例: `Spec-Reviewed: no-change-required (req-login-01)`)。1つのコミットが複数のRequirement/TestCaseに触れる場合、対象を持たないtrailerではどの対応確認が済んだのか判定できない(具体的な書式は[0019](../decisions/0019-alignment-check-commit-trailer.md)の通り実装設計で確定する)。またsquash mergeされたPRではtrailer行がmerge commit本文の途中に埋め込まれ得るため、判定は`git log base..head`の各コミット本文を走査する実装とし、末尾行だけを見る実装にしない。
+| 状態 | 条件 |
+|---|---|
+| 追随変更あり | 同じbase/head区間内で関連する他方の実効内容も変更されている。意味の整合を人が確認した証拠ではない |
+| 確認済み | 有効な`Spec-Reviewed`トレーラーが対象を特定して存在する |
+| 未確認 | 上記いずれでもない |
+
+「追随変更あり」と「確認済み」を同じ状態にまとめない。両方のファイルがたまたま同じPRで変わっただけでは意味の整合を確認したことにならない、という[0019](../decisions/0019-alignment-check-commit-trailer.md)の前提をそのまま出力に反映する。
+
+トレーラーの扱いは次の規則による。
+
+1. **対象を特定できないトレーラーは採用しない。** `Spec-Reviewed: no-change-required (req-login-01)`のように対象を書く。対象のないトレーラーで複数のRequirement/TestCaseをまとめて確認済みにはしない(未確認のまま残す)。
+2. **有効範囲はそのコミット時点の対象内容に限る。** 同一区間内でトレーラーのコミットより後に同じ対象の実効内容(TestCaseはCase revision、Requirementは`requirement.yml`または`.sdoc` blob)が再び変更された場合、その確認は無効になり「未確認」へ戻す。トレーラーに版文字列を書かせるのではなく、区間内のコミット順序で判定する(記述負担を増やさないため)。
+3. **記法を限定する。** コミット本文中の、行頭から始まる`Spec-Reviewed: <value>`形式の行のみをトレーラーとして解釈する。引用行・インデントされた行・コードブロック内の同名文字列は対象外とし、本文中の言及を宣言と誤認しない。
+4. **squash mergeに対応する。** 判定は`git log base..head`の各コミット本文を走査する実装とし、末尾行だけを見る実装にしない。有効範囲(規則2)を解決できない記録は採用しない。
+5. **履歴を入力として明示する。** Change Impactの入力にはKnowledge/`.sdoc`のtreeに加えて`base..head`のコミット履歴が含まれる(P3の再現性契約に含める)。shallow cloneやfilterで履歴が取得できない場合は診断付きで失敗させ、履歴不足を「確認済み」として扱わない。
 
 ## 6. Change ImpactとRelease Coverage
 
@@ -139,14 +160,15 @@ trailerは対象要素を識別できる形にする(例: `Spec-Reviewed: no-cha
 
 base/head間のFeature版比較(現行`changes.rs`の`ChangeEvent`計算を流用)に加え、次を行う。
 
-1. 変更されたFeatureに`contributes_to`するRequirementを特定する。
-2. 仕様側が変更されたかを、Requirementのモードに応じて判定する。
-   - `source: native`：`requirement.yml`自体のbase/head差分で判定する。粒度はRequirement単位で、外部ツールを必要としない。
-   - `source: external`：固定参照`source_revision`とhead時点の`source_locator`のblob OIDを比較する。`.sdoc`が**markharnessと同一のGitリポジトリで管理されている**ことを前提とし、`.sdoc`の構文解析を必要としない。粒度はファイル単位であり、同一ファイル内の別Requirementの変更でも「変更あり」と判定される(偽陽性を許容する。Requirement単位の粒度が必要になった時点でM3の`.sdoc`解析へ引き上げる)。
-3. 変更されたTestCase・Requirementそれぞれについて、Alignment checkの状態(確認済み/未確認)を算出する。
-4. 影響を受けるTestCase一覧、関連Requirement一覧、未確認のAlignment checkを出力する。
+1. **双方向に変更集合を求める。** Featureの変更起点(変更されたFeature→`contributes_to`するRequirement)と、Requirementの変更起点(変更されたRequirement→関連するFeature・TestCase)の両方を辿る。Featureが変更されていないPRでもRequirementの変更を見落とさないため、探索をFeature変更の有無に依存させない。
+2. **仕様側の変更は base/head 間の差分で判定する。** モードごとの判定対象は次の通りで、いずれも「base時点の内容」と「head時点の内容」を比較する。
+   - `source: native`：`requirement.yml`自体のbase/head差分。粒度はRequirement単位で、外部ツールを必要としない。
+   - `source: external`：`source_locator`が指す`.sdoc` blobのbase/head差分。`.sdoc`が**markharnessと同一のGitリポジトリで管理されている**ことを前提とし、`.sdoc`の構文解析を必要としない。粒度はファイル単位であり、同一ファイル内の別Requirementの変更でも「変更あり」と判定される(偽陽性を許容する。Requirement単位の粒度が必要になった時点でM3の`.sdoc`解析へ引き上げる)。
+3. **固定参照の古さ(stale pin)は別項目として算出する。** externalモードで`source_revision`がhead時点のblob OIDと一致しない場合、「固定参照が古い」として出力する。これは2の変更検知とは独立した項目であり、`requirement repin`による参照更新が仕様変更の検知を打ち消してはならない(同一PR内で`.sdoc`を変更しrepinしても、2の差分は成立する)。
+4. 変更されたTestCase・Requirementそれぞれについて、Alignment checkの状態(§5.3の三値)を算出する。
+5. 影響を受けるTestCase一覧、関連Requirement一覧、Alignment checkの状態別一覧、stale pin一覧を出力する。
 
-この方式により、Change Impact(M1)は`.sdoc`パーサ(M3)にも、StrictDocの導入有無にも依存しない。externalモードでは、確認後に固定参照を新しいblob OIDへ更新する操作(§7の`requirement repin`)が必要であり、これを行わない限り同じRequirementが以降の差分でも「変更あり」と報告され続ける。
+この方式により、Change Impact(M1)は`.sdoc`パーサ(M3)にも、StrictDocの導入有無にも依存しない。`repin`は固定参照を現在値へ進める操作にすぎず、対応確認の代替ではない(確認の記録は§5.3のトレーラーだけが担う)。repin後の無変更PRでは、base/head間に差分がないため新たな仕様変更としては報告されない。
 
 ### 6.2 Release Coverage(リリース単位)
 
@@ -154,10 +176,19 @@ base/head間のFeature版比較(現行`changes.rs`の`ChangeEvent`計算を流�
 
 - 各TestCaseに`ExecutionStatus`が存在するか、`mode`は何か。
 - 各Requirementに`contributes_to`するFeatureが存在するか(coverage gap)。
+- 対象Featureに具体的なScenario/TestCaseが一つも存在しないか(coverage gap)。Featureが関連付けられていても検証例がゼロなら、不足を示すTestCase行自体が出力されないため、Feature単位で明示する。
 
 Change Impactが「今回の差分で何が変わったか」を示すのに対し、Release Coverageは「リリース対象全体を取りこぼしなく見渡せるか」を示す補助情報であり、リリース判断時にChange Impactと併用する。
 
-Release Coverageは指定したGit ref(既定はHEAD)の内容で評価する。§1の問い3(前回リリースでどのテストが検証スコープに入っていたか)は、リリースtagを`--at`に渡して当時のKnowledgeと`ExecutionStatus`を評価することで答える。`ExecutionStatus`自体は日時・リリース番号を持たないため、時点の指定はGit refに委ねる(P3)。
+Release Coverageは指定したGit ref(既定はHEAD)の内容で評価する。`--release`を指定しない場合、出力の意味は**「その時点でKnowledgeに登録されていたTestCaseと検証手段の一覧」**であり、実行された事実ではない。`mode`の存在を「実行済み」と表示しない(§5.2)。
+
+`--release <release-id>`を指定した場合は、当該`ReleaseScope`(§5.2、[0024](../decisions/0024-release-scope-selection-list.md))を読み、次を追加で示す。
+
+- 選定された各TestCaseに`ExecutionStatus`があるか、`mode`は何か。
+- 対象Requirement/Feature配下にありながら選定リストに入っていないTestCase(選定漏れ候補)。
+- 選定リストにあるが、その時点のKnowledgeに存在しないCase UID(削除・未生成)。
+
+§1の問い3(前回リリースでどのテストが検証スコープに入っていたか)は、リリースtagを`--at`に、そのリリースの`release_id`を`--release`に渡して答える。`ReleaseScope`が記録されていないリリースについては、答えられるのは登録状態の再現までである。`ExecutionStatus`も`ReleaseScope`も日時を持たないため、時点の指定はGit refに委ねる(P3)。選定リストは人が記録した「選んだ」という宣言であり、実行された証跡ではない。
 
 ## 7. CLI案
 
@@ -167,8 +198,10 @@ markharness requirement unlink --feature <feature-id> --requirement <requirement
 markharness requirement repin --requirement <requirement-id>   # externalのみ。source_revisionをhead時点のblob OIDへ更新
 markharness execution set --case-uid <case-uid> --mode automated --reference src/tests/login.spec.ts
 markharness execution set --case-uid <case-uid> --mode manual
+markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...]   # 選定リストを置換
+markharness release scope show --release <release-id> [--at <ref>] --format json
 markharness impact --base <ref> --head <ref> --format json
-markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format json
+markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref> --format json
 ```
 
 `requirement link`/`unlink`は`feature.yml`の`requirement_uids`を編集するコマンドであり、新しい格納先は作らない(§5.2)。出力はCLI/JSONのみとし、ローカルサーバーやダッシュボードはMVPに含めない(§8)。終了コード・JSON schemaのversioning方針は実装時に確定する。廃止するCLIは§9.1で扱う。
@@ -177,7 +210,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 
 - StrictDoc要件編集UI、独自要件承認workflow。
 - テストケースCRUDの新規UI(現行`knowledge/`編集フローを維持するのみ)。
-- 実行結果の詳細管理(pass/fail・証跡本体・実行環境matrix)。別ツールの責務とする。
+- 実行結果の詳細管理(pass/fail・証跡本体・実行環境matrix)。別ツールの責務とする。`ReleaseScope`は「選んだ」という宣言のみを記録し、実行結果は扱わない([0024](../decisions/0024-release-scope-selection-list.md))。
 - Playwrightコード生成、実行エンジン、CI連携の自動化。要望が出た時点で改めて設計する。
 - StrictDoc `.sdoc`の自前パーサ・JSON export取込の自動化(ロードマップ扱い、§2)。
 - 退役後の厳密な同一性保証(復元・ID予約解除)([0021](../decisions/0021-identity-retire-simplification.md))。
@@ -196,7 +229,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 | `src/identity/`(UID発行/rename部分) | 維持 | [0021](../decisions/0021-identity-retire-simplification.md)の対象外 |
 | `src/git.rs`・`fs_safety.rs` | 維持 | 不変ref読出し・原子的操作は今回の変更と独立 |
 | `src/canonical.rs`(ImportSourceArg等) | 見直し | StrictDoc取込は将来別Adapterとして再設計。現行のNative/Junit importerとの関係は着手時に整理 |
-| `knowledge/requirements/`(native Requirement実体) | 縮小・意味変更 | 本文相当(`label`/`description`)を廃止し固定参照へ。§5.2.1 |
+| `knowledge/requirements/`(native Requirement実体) | 維持・拡張 | nativeは`label`/`description`を含めそのまま維持する。`source: external`を選んだRequirementでのみ本文相当を持たず固定参照になる([0023](../decisions/0023-requirement-native-and-external-source.md)、§5.2.1) |
 | `src/traceability.rs`(Requirement索引) | 維持 | Requirement⇄TestCaseの逆引きは既存実装をそのまま使う |
 | `src/server.rs`・`ui/`・`markharness serve`(ADR 0008 Stage 3のdashboard) | 廃止 | 現行UIは`plan`/evidence出力に依存し、plan縮小と同時に壊れる([0022](../decisions/0022-remove-stage3-dashboard.md))。§9.1 |
 | `src/milestone.rs`・`src/backfill.rs` | 要判断 | base/head指定のChange Impactへ統合できるかを着手時に判定する。§9.1 |
@@ -206,7 +239,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 ### 9.1 既存CLI・既存データ・既存UIの扱い
 
 - **廃止するCLI**：`identity retire`/`restore`/`release`/`reissue`([0021](../decisions/0021-identity-retire-simplification.md))と、`plan`・`execution record`のEvidence系オプション([0020](../decisions/0020-execution-status-lightweight-model.md))。削除範囲は実装時のチェックリストで確定する。
-- **既存データ**：`.markharness/executions/`配下の既存実行記録と、`retire`/`release` eventを含む`.markharness/identity-events/`は自動変換しない(§2)。replay時は廃止したevent種別を警告付きで無視する方針とし、旧eventの存在だけで実行を失敗させない。
+- **既存データ**：`.markharness/executions/`配下の既存実行記録と、`retire`/`restore`/`release`/`reissue` eventを含む`.markharness/identity-events/`は自動変換しない(§2)。廃止したevent種別を含むログは、**該当eventを特定する診断付きで拒否する**。警告して無視する方式は採らない——`IdentityEvent`は`previous_identity_event_uid`による単一の因果連鎖で順序が決まり(`src/identity/event.rs`)、`Released`はid⇄UIDの割当そのものを変えるため、途中のeventを飛ばしたreplayは先行参照の欠落や、記録と異なる状態からの評価を招く。拒否時にはログ・Knowledge・生成物のいずれも変更しない。互換replayや自動変換は新設せず、人が新形式の入力を用意できるよう原因だけを示す。
 - **既存dashboard**：`src/server.rs`・`ui/`・`markharness serve`・frontendのbinary同梱を削除する([0022](../decisions/0022-remove-stage3-dashboard.md))。削除は`plan`縮小と同じタイミングで行い、`tests/server.rs`等の関連テストも同時に削除する。リポジトリ外のviewerが`plan`出力を参照している場合は、Change Impact/Release Coverage出力への切替が必要になる。
 
 ## 10. ロードマップ
@@ -215,7 +248,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 |---|---|---|
 | M0 | `Requirement`の新schema(native/externalの二モード)・`ExecutionStatus`のschema、`feature.requirement_uids`による関連付け、CLI(§7)、Alignment check(§5.3)の自動判定、対話作成フローの更新(§5.2.1) | native運用(StrictDocなし)とexternal運用の双方でFeature⇄Requirementの対応とTestCaseのExecutionStatus記録がGit/CLI経路で完結し、モードの混在した`requirement.yml`が拒否される |
 | M1 | Change Impact(§6.1) | PR base/head間で影響Feature・Requirement・未確認Alignment checkを一覧できる(`.sdoc`解析=M3に依存しない) |
-| M2 | Release Coverage(§6.2) | 指定Requirement集合全体のcoverage gapを一覧できる |
+| M2 | Release Coverage(§6.2)と`ReleaseScope`(§5.2) | 指定Requirement集合全体のcoverage gapを一覧でき、選定リストを記録したリリースでは選定・選定漏れ・不在Case UIDを併せて一覧できる |
 | M3(将来) | StrictDoc `.sdoc`取込(Git管理された要件の実体反映) | 需要確認後に着手。自前パーサの要否を含め別途設計する |
 | M4(将来) | Playwright連携(自動実行結果の取込) | 要望が出た時点で着手。§9の`ExecutionStatus`データ構造を前提に設計する |
 
@@ -226,12 +259,14 @@ MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない
 | ID | シナリオ | 期待結果 |
 |---|---|---|
 | AC01 | FeatureをRequirementへ`contributes_to`で関連付ける | 関連はFeature側が正本を持ち、逆引き一覧は派生する |
-| AC02 | Requirementの内容をmarkharnessから編集しようとする | 拒否する。markharnessはRequirementの固定参照のみ保持する |
+| AC02 | `source: external`のRequirementの本文(`label`/`description`)をmarkharnessから編集しようとする | 拒否する。externalではmarkharnessは固定参照のみ保持する([0023](../decisions/0023-requirement-native-and-external-source.md)) |
+| AC02b | `source: native`のRequirementの`label`/`description`を編集する | 成功する。nativeではmarkharnessが本文の正本を持つ |
 | AC03 | Requirementが変更されたのに関連TestCaseが更新されていない | Change Impactの出力で「未確認」として明示する |
-| AC04 | TestCase変更コミットに`Spec-Reviewed: no-change-required`が付与されている | Alignment checkは「確認済み」と判定する |
+| AC04 | TestCase変更コミットに、対象を特定した`Spec-Reviewed: no-change-required (req-xxx)`が付与されている | Alignment checkは当該対象について「確認済み」と判定する(§5.3) |
 | AC05 | TestCaseに`ExecutionStatus(mode=manual)`を記録し、日時や実行者は渡さない | 記録が成立する。日時・実行者フィールドは存在しない |
 | AC06 | 同一入力から複数回Change Impact/Release Coverageを計算する | 同じ出力を再現する(P3) |
-| AC07 | 退役(削除)したTestCaseと同内容のTestCaseを再度追加する | 新規の別TestCaseとして扱われ、旧UIDは引き継がれない([0021](../decisions/0021-identity-retire-simplification.md)) |
+| AC07 | 削除したTestCaseと同じ内容のScenarioをCLIで新規作成する | 新しいScenario UIDが発行され、そこから導出されるCase UIDも別値になる。内容の一致を理由に旧UIDを推定しない([0021](../decisions/0021-identity-retire-simplification.md)) |
+| AC07b | 削除したScenarioのファイルをGit履歴から復元する(`git checkout <ref> -- <path>`等) | ファイル内の`uid:`が戻るため、当時のScenario UID・Case UIDが復活する。これはmarkharnessの`restore`機能ではなくGit履歴操作であり、markharnessはこれを禁止も検出もしない([0021](../decisions/0021-identity-retire-simplification.md)§2) |
 | AC08 | Requirementに`contributes_to`するFeatureが一つもない | Release Coverageでcoverage gapとして一覧される |
 | AC09 | `source: external`なのに`source_locator`/`source_revision`を持たない`requirement.yml`を置く | `validate`が拒否する(§5.2.1) |
 | AC09b | `source`を省略した既存の`requirement.yml`(`label`あり)をそのまま置く | nativeとして有効。StrictDocなしでChange Impact/Release Coverageが動作する([0023](../decisions/0023-requirement-native-and-external-source.md)) |
@@ -241,3 +276,18 @@ MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない
 | AC11 | 過去のリリースtagを`--at`に指定してRelease Coverageを算出する | 当時のKnowledge・ExecutionStatusに基づく一覧を再現する(§6.2) |
 | AC12 | 1コミットで複数のRequirementに触れ、対象を書かないtrailerを付与する | どの対応確認が済んだか判定できないため「未確認」のまま残る(§5.3) |
 | AC13 | Scenarioの表示idをrenameする | `ExecutionStatus`はCase UID参照のため維持される(§5.2) |
+| AC14 | C1でRequirement Rを変更し`Spec-Reviewed`を付与、同一PRのC2でRをさらに変更する | C1の確認は無効になり、Rは「未確認」として出力される(§5.3規則2) |
+| AC15 | RequirementとTestCaseが同一PRで変更されているが、`Spec-Reviewed`が無い | 「追随変更あり」として出力し、「確認済み」とはしない(§5.3) |
+| AC16 | 対象を書かない`Spec-Reviewed`トレーラーを、複数Requirementに触れるコミットに付与する | どのRequirementも確認済みにならない(§5.3規則1) |
+| AC17 | shallow cloneなどで`base..head`のコミット履歴を取得できない | 診断付きで失敗する。履歴不足を「確認済み」として出力しない(§5.3規則5) |
+| AC18 | 同一PRで`.sdoc`を変更し、同じPR内で`requirement repin`も実行する | 仕様変更として検出される。repinは検知を打ち消さない(§6.1手順3) |
+| AC19 | repin後、内容を変更しない次のPRを評価する | 新たな仕様変更としては報告されない。固定参照が古い場合のみstale pinとして出力する(§6.1手順3) |
+| AC20 | Requirementのみが変更され、関連Featureは変更されていない | 関連Feature・TestCaseを逆引きし、影響とAlignment checkを出力する(§6.1手順1) |
+| AC21 | RequirementにFeatureは関連付いているが、そのFeature配下にScenarioが一つもない | Release Coverageが当該Featureをcoverage gapとして明示する(§6.2) |
+| AC22 | `retire`/`release` eventを含む既存の`identity-events`を読み込む | 該当eventを特定する診断付きで拒否し、ログ・Knowledge・生成物を変更しない(§9.1) |
+| AC23 | 発行(`issued`)とrenameのみで構成された`identity-events`を読み込む | 決定的にreplayでき、UIDとidの対応を再現する(§9.1) |
+| AC24 | `ReleaseScope`を記録し、過去のリリースtagを`--at`、`release_id`を`--release`に渡してRelease Coverageを算出する | 当時選定されたTestCaseと、その検証手段の有無を再現する(§6.2) |
+| AC25 | 対象Requirement配下にあるが選定リストに入っていないTestCaseがある | 選定漏れ候補として一覧される(§6.2) |
+| AC26 | 選定リストに、その時点のKnowledgeに存在しないCase UIDが含まれる | 不在のCase UIDとして明示する。選定リストを自動的に書き換えない(§6.2) |
+| AC27 | `ReleaseScope`に選定日時・担当者・合否を渡そうとする | フィールドが存在せず記録できない([0024](../decisions/0024-release-scope-selection-list.md)) |
+| AC28 | `release_id`に`../../etc/passwd`、`..`、`/abs/path`、先頭ドットなどを渡す | 書き込み前に拒否し、`.markharness/releases/`の外にも中にもファイルを作らない(§5.2) |

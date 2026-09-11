@@ -12,7 +12,7 @@ When a developer changes a feature, a Requirement, or a test case, the team gets
 3. For the previous release, which tests were in the verification scope — as a decision aid.
 4. For the current release, which features are affected — as a decision aid.
 
-This is v2's North Star, and every design decision below is evaluated against these four points (glossary: [markharness-v2-glossary.md](markharness-v2-glossary.md); the canonical source of confirmed terms is [CONTEXT.md](../../../CONTEXT.md)).
+For question 3, markharness answers "what was chosen for verification" when that release has a recorded `ReleaseScope` (a selection list), and otherwise "which TestCases and verification methods were registered at that point". Neither answers whether anything actually ran (§6.2). This is v2's North Star, and every design decision below is evaluated against these four points (glossary: [markharness-v2-glossary.md](markharness-v2-glossary.md); the canonical source of confirmed terms is [CONTEXT.md](../../../CONTEXT.md)).
 
 Success is judged by three signals:
 
@@ -105,11 +105,18 @@ ExecutionStatus {
   mode: automated | manual,
   reference: string,     // optional — a path to the test code, or a URL
 }
+
+ReleaseScope {
+  release_id,            // the release's display name (a Git tag name is recommended); must be a safe single path component (below)
+  case_uids: [case_uid], // the TestCases chosen for verification in that release
+}
 ```
 
 A `source: external` Requirement never duplicates StrictDoc's own content: markharness keeps only a fixed reference, and the body/acceptance criteria are always looked up from StrictDoc itself (P1). In `source: native` mode markharness continues to own `label`/`description`. A `requirement.yml` carrying both sets of fields, or neither, is rejected by `validate` ([0023](../decisions/0023-requirement-native-and-external-source.md)).
 
 The many-to-many relation from Feature to Requirement reuses the existing `feature.requirement_uids` field as-is; no new `ContributesTo` type or store is introduced (the Feature side owns it, the reverse listing is derived — [0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md) §1/§3). It means "contributes to realization" only — not proof of verification. Not introducing a new type when an existing field suffices follows P6 (YAGNI).
+
+`ReleaseScope` records only "what was chosen for verification in this release" ([0024](../decisions/0024-release-scope-selection-list.md)). It carries no selection timestamp, owner, approval state, or result, and a human records it through the CLI. It lives in Git at `.markharness/releases/<release_id>.yml`, so `--at <ref>` reproduces a past selection as well. Because `release_id` becomes a **single component** of that path, its character set is constrained for the same reason `generate.rs`'s `require_valid_slug` constrains `id:` today: ASCII lowercase alphanumerics, hyphen, and dot only, rejecting — before any write — the empty string, `.` and `..` themselves, values starting with a dot, and anything containing a path separator (`/`, `\`) or a drive specifier (so `v1.2.0` passes and `../../etc/passwd` does not). The write itself goes through `fs_safety`'s atomic replacement path. For a release with no selection list, Release Coverage returns the registered-state listing exactly as before (§6.2).
 
 `ExecutionStatus` is the minimal per-TestCase record described in §1.1 / [0020](../decisions/0020-execution-status-lightweight-model.md). It records **the verification method (automated or manual) and where to look**, not the fact that an execution happened. Because it carries no result, timestamp, or run count, the presence of a value must not be read as "executed against the latest revision."
 
@@ -129,9 +136,23 @@ Existing `requirement.yml` files stay valid as native (`source` omitted) and nee
 
 ### 5.3 Alignment check
 
-When a Requirement's meaning changes, or a TestCase's effective content changes, markharness checks whether the other side (TestCase or Requirement) was updated within the same Git diff range, or was explicitly confirmed as not needing a change via a commit trailer like `Spec-Reviewed: no-change-required` ([0019](../decisions/0019-alignment-check-commit-trailer.md)). If neither holds, it is listed as "unconfirmed." No dedicated approval workflow is introduced.
+When a Requirement's meaning changes, or a TestCase's effective content changes, markharness reports the state of the other side as one of **three values** ([0019](../decisions/0019-alignment-check-commit-trailer.md)). No dedicated approval workflow is introduced.
 
-The trailer must identify its target (e.g. `Spec-Reviewed: no-change-required (req-login-01)`). When one commit touches several Requirements or TestCases, a trailer without a target cannot say which alignment check was actually done (the exact format is settled in implementation design, per [0019](../decisions/0019-alignment-check-commit-trailer.md)). Also, in a squash-merged PR the trailer line can end up in the middle of the merge commit body, so the check must scan every commit body in `git log base..head` rather than only the last line.
+| State | Condition |
+|---|---|
+| Followed | The other side's effective content also changed within the same base/head range. This is not evidence that a human checked semantic agreement |
+| Confirmed | A valid `Spec-Reviewed` trailer names the target |
+| Unconfirmed | Neither of the above |
+
+"Followed" and "Confirmed" are never collapsed into one state: two files happening to change in the same PR does not establish semantic agreement — exactly the premise [0019](../decisions/0019-alignment-check-commit-trailer.md) starts from, now carried into the output.
+
+Trailers are governed by the following rules.
+
+1. **A trailer whose target cannot be resolved is not accepted.** Write the target, as in `Spec-Reviewed: no-change-required (req-login-01)`. A targetless trailer never clears several Requirements/TestCases at once; they stay unconfirmed.
+2. **Validity is scoped to the target's content as of that commit.** If, within the same range, the target's effective content (Case revision for a TestCase; `requirement.yml` or the `.sdoc` blob for a Requirement) changes again in a commit *after* the trailer's commit, the confirmation is void and the item returns to "unconfirmed." This is decided by commit order within the range rather than by making authors write a revision string into the trailer (keeping the authoring burden low).
+3. **The syntax is narrow.** Only a line of the form `Spec-Reviewed: <value>` starting at the beginning of a line in a commit body is read as a trailer. Quoted lines, indented lines, and the same text inside a code block are ignored, so a mention in prose is never mistaken for a declaration.
+4. **Squash merges are handled.** The check scans every commit body in `git log base..head` rather than only the last line, and a record whose validity scope (rule 2) cannot be resolved is not accepted.
+5. **History is a declared input.** Change Impact's inputs are the Knowledge/`.sdoc` trees *and* the `base..head` commit history (this belongs to P3's reproducibility contract). If the history is unavailable (shallow clone, filtered clone), the run fails with a diagnostic; missing history is never reported as "confirmed".
 
 ## 6. Change Impact and Release Coverage
 
@@ -139,14 +160,15 @@ The trailer must identify its target (e.g. `Spec-Reviewed: no-change-required (r
 
 On top of the Feature-revision comparison between base and head (reusing the current `changes.rs` `ChangeEvent` computation), markharness:
 
-1. Identifies the Requirements that changed Features `contributes_to`.
-2. Decides whether the spec side changed, according to the Requirement's mode.
-   - `source: native`: from the base/head diff of `requirement.yml` itself. Granularity is per Requirement and no external tool is involved.
-   - `source: external`: by comparing the pinned `source_revision` against the blob OID of `source_locator` at head. This assumes the `.sdoc` file is **managed in the same Git repository as markharness**, and requires no `.sdoc` parsing. Granularity is per file: a change to another Requirement in the same file also reads as "changed" (false positives are accepted; per-Requirement granularity waits for M3's `.sdoc` parsing).
-3. Computes the Alignment-check state (confirmed/unconfirmed) for each changed TestCase and Requirement.
-4. Outputs the affected TestCase list, the related Requirement list, and any unconfirmed alignment checks.
+1. **Builds the changed set in both directions.** It walks from changed Features to the Requirements they `contributes_to`, *and* from changed Requirements to their related Features and TestCases. The search never depends on a Feature having changed, so a PR that touches only a Requirement is not missed.
+2. **Detects spec-side change from the base/head diff.** In both modes the comparison is "content at base" versus "content at head".
+   - `source: native`: the base/head diff of `requirement.yml` itself. Granularity is per Requirement and no external tool is involved.
+   - `source: external`: the base/head diff of the `.sdoc` blob named by `source_locator`. This assumes the `.sdoc` file is **managed in the same Git repository as markharness**, and requires no `.sdoc` parsing. Granularity is per file: a change to another Requirement in the same file also reads as "changed" (false positives are accepted; per-Requirement granularity waits for M3's `.sdoc` parsing).
+3. **Reports a stale pin as its own item.** In external mode, when `source_revision` does not match the blob OID at head, that is output as "pinned reference is stale." It is independent of step 2: advancing the pin with `requirement repin` must never cancel out detection of a spec change (changing the `.sdoc` and repinning inside the same PR still leaves the step-2 diff intact).
+4. Computes the Alignment-check state (the three values of §5.3) for each changed TestCase and Requirement.
+5. Outputs the affected TestCase list, the related Requirement list, the alignment states, and the stale-pin list.
 
-With this mechanism, Change Impact (M1) depends neither on the `.sdoc` parser (M3) nor on whether StrictDoc is adopted at all. In external mode, the pinned reference must be advanced to the new blob OID once the change is reviewed (`requirement repin`, §7); until then the same Requirement keeps being reported as changed in later diffs.
+With this mechanism, Change Impact (M1) depends neither on the `.sdoc` parser (M3) nor on whether StrictDoc is adopted at all. `repin` merely advances a pinned reference to its current value; it is not a substitute for an alignment check (only the §5.3 trailer records that). In the next, unchanged PR there is no base/head diff, so nothing is reported as a new spec change.
 
 ### 6.2 Release Coverage (per release)
 
@@ -154,10 +176,19 @@ For a given set of Requirements/Features, markharness lists:
 
 - Whether each TestCase has an `ExecutionStatus`, and its `mode`.
 - Whether each Requirement has any Feature `contributes_to` it (a coverage gap).
+- Whether a Feature in scope has no Scenario/TestCase at all (a coverage gap). A Requirement with a related Feature but zero verification examples produces no TestCase rows to show as missing, so the gap is stated per Feature.
 
 Where Change Impact shows "what changed in this diff," Release Coverage is supporting information showing "can we see the whole release target without missing anything" — used alongside Change Impact when making a release decision.
 
-Release Coverage is evaluated at a given Git ref (HEAD by default). Question 3 in §1 (which tests were in the verification scope of the previous release) is answered by passing that release tag to `--at` and evaluating the Knowledge and `ExecutionStatus` as they stood then. `ExecutionStatus` itself carries no timestamp or release number, so the point in time is delegated to the Git ref (P3).
+Release Coverage is evaluated at a given Git ref (HEAD by default). Without `--release`, the output means **"the TestCases and verification methods registered in Knowledge at that point"** — not evidence that anything ran. The presence of a `mode` is never displayed as "executed" (§5.2).
+
+With `--release <release-id>`, markharness reads that `ReleaseScope` (§5.2, [0024](../decisions/0024-release-scope-selection-list.md)) and additionally shows:
+
+- Whether each selected TestCase has an `ExecutionStatus`, and its `mode`.
+- TestCases under the target Requirements/Features that are *not* in the selection list (candidate omissions).
+- Case UIDs in the selection list that do not exist in the Knowledge at that ref (deleted or not generated).
+
+Question 3 in §1 (which tests were in the verification scope of the previous release) is answered by passing the release tag to `--at` and that release's `release_id` to `--release`. For a release with no recorded `ReleaseScope`, the answer stops at reproducing registered state. Neither `ExecutionStatus` nor `ReleaseScope` carries a timestamp, so the point in time is delegated to the Git ref (P3). A selection list is a human's declaration that something was *chosen* — never evidence that it ran.
 
 ## 7. CLI Proposal
 
@@ -167,8 +198,10 @@ markharness requirement unlink --feature <feature-id> --requirement <requirement
 markharness requirement repin --requirement <requirement-id>   # external mode only; advance source_revision to the blob OID at head
 markharness execution set --case-uid <case-uid> --mode automated --reference src/tests/login.spec.ts
 markharness execution set --case-uid <case-uid> --mode manual
+markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...]   # replaces the selection list
+markharness release scope show --release <release-id> [--at <ref>] --format json
 markharness impact --base <ref> --head <ref> --format json
-markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format json
+markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref> --format json
 ```
 
 `requirement link`/`unlink` edit `feature.yml`'s `requirement_uids`; they introduce no new store (§5.2). Output is CLI/JSON only; no local server or dashboard is in the MVP (§8). Exit codes and JSON schema versioning policy are settled at implementation time. Commands that are removed are covered in §9.1.
@@ -177,7 +210,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 
 - A StrictDoc requirement-editing UI, or a bespoke requirement-approval workflow.
 - Any new test-case CRUD UI (the existing `knowledge/` editing flow is kept, unchanged).
-- Detailed execution-result management (pass/fail, evidence artifacts, an environment matrix) — a separate tool's job.
+- Detailed execution-result management (pass/fail, evidence artifacts, an environment matrix) — a separate tool's job. `ReleaseScope` records only the declaration that something was chosen, never a result ([0024](../decisions/0024-release-scope-selection-list.md)).
 - Playwright code generation, an execution engine, or automated CI wiring. Designed later, once a concrete request exists.
 - A custom `.sdoc` parser or automated JSON-export ingestion for StrictDoc (a roadmap item, §2).
 - A strict post-retirement identity guarantee (restore, id reservation) ([0021](../decisions/0021-identity-retire-simplification.md)).
@@ -196,7 +229,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 | `src/identity/` (UID issuance/rename portions) | Kept | Out of scope for [0021](../decisions/0021-identity-retire-simplification.md) |
 | `src/git.rs`, `fs_safety.rs` | Kept | Immutable-ref reads and atomic file operations are independent of this redesign |
 | `src/canonical.rs` (ImportSourceArg, etc.) | Revisit | StrictDoc ingestion is redesigned as a future, separate Adapter; its relationship with the current Native/JUnit importers is sorted out when work begins |
-| `knowledge/requirements/` (the native Requirement entity) | Reduced / meaning changed | Body-equivalent fields (`label`/`description`) are dropped in favor of a fixed reference. §5.2.1 |
+| `knowledge/requirements/` (the native Requirement entity) | Kept and extended | Native Requirements keep `label`/`description` unchanged; only a Requirement set to `source: external` drops body-equivalent fields in favor of a fixed reference ([0023](../decisions/0023-requirement-native-and-external-source.md), §5.2.1) |
 | `src/traceability.rs` (Requirement index) | Kept | The existing Requirement↔TestCase reverse lookup is used as-is |
 | `src/server.rs`, `ui/`, `markharness serve` (the ADR 0008 Stage 3 dashboard) | Removed | The current UI depends on `plan`/evidence output and breaks when `plan` is reduced ([0022](../decisions/0022-remove-stage3-dashboard.md)). §9.1 |
 | `src/milestone.rs`, `src/backfill.rs` | Decision needed | Whether they fold into base/head Change Impact is decided when work begins. §9.1 |
@@ -206,7 +239,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 ### 9.1 Existing CLI, data, and UI
 
 - **Commands removed**: `identity retire`/`restore`/`release`/`reissue` ([0021](../decisions/0021-identity-retire-simplification.md)), and the evidence-related options of `plan` and `execution record` ([0020](../decisions/0020-execution-status-lightweight-model.md)). The exact removal scope is settled in the implementation checklist.
-- **Existing data**: the execution records under `.markharness/executions/` and any `.markharness/identity-events/` log containing `retire`/`release` events are not converted automatically (§2). On replay, removed event kinds are ignored with a warning; their mere presence must not fail the run.
+- **Existing data**: the execution records under `.markharness/executions/` and any `.markharness/identity-events/` log containing `retire`/`restore`/`release`/`reissue` events are not converted automatically (§2). A log containing a removed event kind is **rejected, with a diagnostic naming the offending events**. Ignoring them with a warning is not an option: `IdentityEvent` ordering is decided by a single causal chain of `previous_identity_event_uid` (`src/identity/event.rs`), and `Released` changes the id↔UID allocation itself, so skipping events mid-chain leaves dangling predecessors or evaluates from a state the log never recorded. A rejected run modifies nothing — not the event log, not Knowledge, not generated output. No compatibility replay or automatic conversion is built; the diagnostic only points at the cause so a human can prepare input in the new form.
 - **The existing dashboard**: `src/server.rs`, `ui/`, `markharness serve`, and the embedded frontend assets are deleted ([0022](../decisions/0022-remove-stage3-dashboard.md)). The removal happens at the same time as the `plan` reduction, together with the related tests (`tests/server.rs` and friends). A viewer outside this repository that reads `plan` output has to switch to Change Impact / Release Coverage output.
 
 ## 10. Roadmap
@@ -215,7 +248,7 @@ markharness coverage --requirements <requirement-ids-or-all> --at <ref> --format
 |---|---|---|
 | M0 | The new `Requirement` schema (native/external modes) and `ExecutionStatus` schema, linking via `feature.requirement_uids`, the CLI (§7), automatic Alignment-check detection (§5.3), and the updated interactive authoring flow (§5.2.1) | Both native operation (no StrictDoc) and external operation complete Feature↔Requirement linking and TestCase ExecutionStatus recording end-to-end via Git/CLI, and a `requirement.yml` mixing the two modes is rejected |
 | M1 | Change Impact (§6.1) | Between a PR's base and head, affected Features, Requirements, and unconfirmed alignment checks can be listed (no dependency on `.sdoc` parsing = M3) |
-| M2 | Release Coverage (§6.2) | Coverage gaps across a given set of Requirements can be listed |
+| M2 | Release Coverage (§6.2) and `ReleaseScope` (§5.2) | Coverage gaps across a given set of Requirements can be listed, and for a release with a selection list, the selected set, candidate omissions, and missing Case UIDs are listed alongside |
 | M3 (future) | StrictDoc `.sdoc` ingestion (reflecting the actual Git-managed requirement content) | Started once demand is confirmed; whether a custom parser is needed is designed separately at that time |
 | M4 (future) | Playwright integration (ingesting automated execution results) | Started once a concrete request exists; designed against the `ExecutionStatus` shape from §9 |
 
@@ -226,12 +259,14 @@ The MVP is M0–M2. M3 and M4 are not committed to as of this document.
 | ID | Scenario | Expected result |
 |---|---|---|
 | AC01 | Link a Feature to a Requirement via `contributes_to` | The Feature side owns the relation; the reverse listing is derived |
-| AC02 | Attempt to edit a Requirement's content from markharness | Rejected. markharness keeps only a fixed reference to a Requirement |
+| AC02 | Attempt to edit the body (`label`/`description`) of a `source: external` Requirement from markharness | Rejected. In external mode markharness keeps only a fixed reference ([0023](../decisions/0023-requirement-native-and-external-source.md)) |
+| AC02b | Edit the `label`/`description` of a `source: native` Requirement | Succeeds. In native mode markharness owns the body |
 | AC03 | A Requirement changes but its related TestCase is not updated | Change Impact's output marks it "unconfirmed" |
-| AC04 | A TestCase-change commit carries `Spec-Reviewed: no-change-required` | The Alignment check is judged "confirmed" |
+| AC04 | A TestCase-change commit carries a targeted `Spec-Reviewed: no-change-required (req-xxx)` | The Alignment check is judged "confirmed" for that target (§5.3) |
 | AC05 | Record `ExecutionStatus(mode=manual)` on a TestCase without a timestamp or executor | The record succeeds; there are no timestamp/executor fields to omit |
 | AC06 | Compute Change Impact / Release Coverage multiple times from the same input | The same output is reproduced (P3) |
-| AC07 | Re-add a TestCase with the same content as one that was retired (deleted) | Treated as a new, distinct TestCase; the old UID is not carried over ([0021](../decisions/0021-identity-retire-simplification.md)) |
+| AC07 | Create, via the CLI, a Scenario with the same content as a deleted one | A new Scenario UID is issued, so the Case UID derived from it differs too. Matching content never implies the old UID ([0021](../decisions/0021-identity-retire-simplification.md)) |
+| AC07b | Restore a deleted Scenario's file from Git history (`git checkout <ref> -- <path>`) | The file's `uid:` comes back, so the original Scenario UID and Case UID return. That is a Git history operation, not markharness's `restore`; markharness neither prevents nor detects it ([0021](../decisions/0021-identity-retire-simplification.md) §2) |
 | AC08 | A Requirement has no Feature `contributes_to` it | Listed as a coverage gap in Release Coverage |
 | AC09 | A `source: external` `requirement.yml` without `source_locator`/`source_revision` | `validate` rejects it (§5.2.1) |
 | AC09b | An existing `requirement.yml` with `label` and no `source` field | Valid as native; Change Impact and Release Coverage work with no StrictDoc present ([0023](../decisions/0023-requirement-native-and-external-source.md)) |
@@ -241,3 +276,18 @@ The MVP is M0–M2. M3 and M4 are not committed to as of this document.
 | AC11 | Compute Release Coverage with a past release tag passed to `--at` | The listing reproduces the Knowledge and ExecutionStatus as of that ref (§6.2) |
 | AC12 | One commit touches several Requirements and carries a trailer without a target | It stays "unconfirmed", because which check was done cannot be determined (§5.3) |
 | AC13 | Rename a Scenario's display id | `ExecutionStatus` survives, because it references the Case UID (§5.2) |
+| AC14 | C1 changes Requirement R and carries `Spec-Reviewed`; C2 in the same PR changes R again | C1's confirmation is void and R is reported as "unconfirmed" (§5.3 rule 2) |
+| AC15 | A Requirement and a TestCase both change in the same PR, with no `Spec-Reviewed` | Reported as "followed", never as "confirmed" (§5.3) |
+| AC16 | A targetless `Spec-Reviewed` trailer on a commit touching several Requirements | None of those Requirements becomes confirmed (§5.3 rule 1) |
+| AC17 | The `base..head` commit history is unavailable (shallow clone) | The run fails with a diagnostic; missing history is never reported as "confirmed" (§5.3 rule 5) |
+| AC18 | A PR changes a `.sdoc` and also runs `requirement repin` in the same PR | The spec change is still detected; repin does not cancel detection (§6.1 step 3) |
+| AC19 | Evaluate the next PR, which changes nothing, after that repin | Nothing is reported as a new spec change; only a stale pin, if the reference is behind (§6.1 step 3) |
+| AC20 | Only a Requirement changed; no related Feature changed | Related Features and TestCases are found by reverse lookup, and impact plus alignment state is reported (§6.1 step 1) |
+| AC21 | A Requirement has a related Feature, but that Feature has no Scenario at all | Release Coverage names that Feature as a coverage gap (§6.2) |
+| AC22 | Read an existing `identity-events` log containing `retire`/`release` events | Rejected with a diagnostic naming those events; the log, Knowledge, and generated output are left untouched (§9.1) |
+| AC23 | Read an `identity-events` log made up of `issued` and rename events only | Replays deterministically and reproduces the id↔UID mapping (§9.1) |
+| AC24 | Record a `ReleaseScope`, then compute Release Coverage with the past release tag in `--at` and its `release_id` in `--release` | Reproduces the TestCases selected then, and whether each had a verification method (§6.2) |
+| AC25 | A TestCase under a target Requirement is absent from the selection list | It is listed as a candidate omission (§6.2) |
+| AC26 | The selection list contains a Case UID that does not exist in the Knowledge at that ref | It is reported as a missing Case UID; the list is never rewritten automatically (§6.2) |
+| AC27 | Attempt to record a selection timestamp, owner, or result on a `ReleaseScope` | No such fields exist, so it cannot be recorded ([0024](../decisions/0024-release-scope-selection-list.md)) |
+| AC28 | Pass `../../etc/passwd`, `..`, `/abs/path`, or a dot-leading value as `release_id` | Rejected before any write; no file is created inside or outside `.markharness/releases/` (§5.2) |
