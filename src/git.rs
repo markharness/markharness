@@ -411,6 +411,65 @@ pub fn diff_name_status(
     Ok(entries)
 }
 
+/// One commit's full message (subject plus body), exactly as recorded.
+///
+/// ADR 0019 requires scanning the whole body rather than just the last
+/// line: a squash merge embeds the original commits' trailers partway
+/// through the merge commit's message, so a "trailers are the final lines"
+/// reader would miss them.
+pub fn commit_message(root: &Path, commit: &str) -> io::Result<String> {
+    reject_option_like(commit)?;
+    run_git(root, &["log", "-1", "--format=%B", commit])
+}
+
+/// Every commit reachable from `head` but not from `base`, oldest first —
+/// the commits a `base..head` range introduces, in the order they were made.
+///
+/// Errors rather than returning an empty range when either endpoint is
+/// unreachable (a shallow clone, a missing ref). ADR 0019's alignment check
+/// must never read "no history available" as "nothing to confirm" (v2 design
+/// §5.3 rule 5, AC17).
+pub fn commits_in_range(root: &Path, base: &str, head: &str) -> io::Result<Vec<String>> {
+    reject_option_like(base)?;
+    reject_option_like(head)?;
+    let range = format!("{base}..{head}");
+    let raw = run_git(root, &["rev-list", "--reverse", &range])?;
+    Ok(raw
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect())
+}
+
+/// Whether `git_ref` resolves to a commit whose history is complete here.
+/// A shallow clone truncates history, so a `base..head` walk over it would
+/// silently cover fewer commits than the range names.
+pub fn is_shallow(root: &Path) -> bool {
+    run_git(root, &["rev-parse", "--is-shallow-repository"])
+        .map(|raw| raw.trim() == "true")
+        .unwrap_or(false)
+}
+
+/// The blob OID recorded at `path_in_repo` in `git_ref`'s tree, or `None`
+/// when that ref has no such file. Unlike [`hash_object`], this reads what a
+/// commit actually recorded rather than the working tree.
+pub fn blob_sha_at(root: &Path, git_ref: &str, path_in_repo: &str) -> io::Result<Option<String>> {
+    reject_option_like(git_ref)?;
+    let raw = run_git(root, &["ls-tree", git_ref, "--", path_in_repo])?;
+    let Some(line) = raw.lines().next() else {
+        return Ok(None);
+    };
+    let Some((meta, _path)) = line.split_once('\t') else {
+        return Ok(None);
+    };
+    let mut fields = meta.split_whitespace();
+    let _mode = fields.next();
+    if fields.next() != Some("blob") {
+        return Ok(None);
+    }
+    Ok(fields.next().map(|sha| sha.to_string()))
+}
+
 /// Every commit from the repository root up to `git_ref`, following only
 /// first parents (i.e. skipping commits that only ever existed on a
 /// branch that was merged in), oldest first. Used by `identity::audit` to
