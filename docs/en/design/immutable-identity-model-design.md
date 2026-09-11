@@ -1,6 +1,6 @@
 # Immutable Identity Model: Implementation Design Specification
 
-**Status**: Implemented (Phases 1–5 complete. ADR 0013 is Accepted; see `checklist-immutable-identity-model.md`)
+**Status**: Partly superseded (Phases 1–5 were implemented; ADR 0013 is Accepted). [0021](../decisions/0021-identity-retire-simplification.md) and [0026](../decisions/0026-module-inventory-and-plan-removal.md) removed `retire`/`restore`/`release`/`reissue` and the retired status (`Status`) from the implementation. The parts of this document covering them — the `retired`/`restored`/`released`/`reissued` rows in §4's event-kind table, §9, and scattered mentions — are a historical record of a design **no longer present in the code**. Everything on UID issuance, rename, branch-divergence resolution, crash recovery, and migration remains in force.
 **Related documents**: [decisions/0013-immutable-identity-model.md](../decisions/0013-immutable-identity-model.md) ("ADR 0013" below), [git-native-model-for-test-knowledge-management.md](../git-native-model-for-test-knowledge-management.md)
 **Audience**: `markharness` implementers
 
@@ -134,13 +134,9 @@ Rationale: replay's primary access pattern is "fetch all events for one entity."
 |---|---|---|
 | `issued` | New UID issuance | (root; no predecessor) |
 | `renamed` | `id` change | `from_id`, `to_id` |
-| `retired` | UID retirement on deletion | - |
-| `restored` | Restoration of a retired UID | - |
-| `released` | Lift the reuse reservation on a retired id | `released_id` |
-| `reissued` | New UID issuance on copy/import | `source_uid` (optional) |
 | `resolved` | Explicit resolution of a branch divergence | `previous_identity_event_uids` (plural), `winning_event_uid` |
 
-`issued` and `reissued` are both roots (no predecessor): both issue a **new** UID, so both satisfy the same root condition — `reissued` issues a distinct new UID at copy/import time rather than extending an existing UID's own event chain (the implementation treats both as roots identically, via `IdentityMutation::can_be_root`). Every other ordinary event carries a single `previous_identity_event_uid` pointing at that entity's current head. Only `resolved` carries `previous_identity_event_uids` (plural), joining every divergent head it resolves.
+`issued` is the only root (no predecessor). Every other ordinary event carries a single `previous_identity_event_uid` pointing at that entity's current head. Only `resolved` carries `previous_identity_event_uids` (plural), joining every divergent head it resolves.
 
 ```yaml
 identity_event_uid: 01ARZ3NDEKTSV4RRFFQ69G5FE1
@@ -267,7 +263,9 @@ Both use standard UUIDv5 (RFC 4122, SHA-1-based). The `uuid` crate's v5 generati
 - `case_uid`: derived from a namespace UUID plus a name built from the set `{requirement_uid, feature_uid, behavior_uid, condition_uid, expected_result_uid}`, sorted into canonical order and concatenated.
 - `change_event_uid`: derived from a namespace UUID plus a name built by canonically encoding and concatenating a domain separator, the identity canonicalization/algorithm version, the from/to snapshot identities, `feature_uid`, the canonical change payload, and any explicit, result-affecting options.
 
-## 9. Friction level for the `release` event
+## 9. Friction level for the `release` event (superseded)
+
+> [0021](../decisions/0021-identity-retire-simplification.md) removed `markharness identity release`. This section records the reasoning at the time.
 
 `markharness identity release <uid> <old-id>` runs directly with no confirmation flag, matching `rename-id`. This project consistently relies on the command's execution itself, plus the resulting Git diff and identity event, as the audit trail for identity-affecting operations, so `release` is not singled out for extra friction. It is also reversible in effect (issuing a new UID again effectively undoes it).
 

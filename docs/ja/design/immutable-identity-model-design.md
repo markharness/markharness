@@ -1,6 +1,6 @@
 # 不変Identityモデル：実装設計仕様
 
-**Status**: Implemented(Phase 1〜5完了。ADR 0013はAccepted。`checklist-immutable-identity-model.md`参照)
+**Status**: 一部Superseded(Phase 1〜5は実装完了。ADR 0013はAccepted)。[0021](../decisions/0021-identity-retire-simplification.md)・[0026](../decisions/0026-module-inventory-and-plan-removal.md)により、`retire`/`restore`/`release`/`reissue`と退役状態(`Status`)は実装から削除された。本書のうちそれらを扱う記述(§4のevent種別表の`retired`/`restored`/`released`/`reissued`行、§9、および各所の言及)は**現行実装には存在しない**歴史的記録である。UID発行・rename・branch divergence解決・crash recovery・migrationに関する記述は引き続き有効。
 **関連ドキュメント**: [decisions/0013-immutable-identity-model.md](../decisions/0013-immutable-identity-model.md)(以下「ADR 0013」)、[テスト知識管理のGit-nativeモデル_統合版.md](../テスト知識管理のGit-nativeモデル_統合版.md)
 **対象読者**：`markharness`の実装者
 
@@ -134,13 +134,9 @@ const DESCRIPTORS: [EntityDescriptor; 5] = [ /* Requirement, Feature, Behavior, 
 |---|---|---|
 | `issued` | 新規UID発行 | (root。先行eventなし) |
 | `renamed` | `id`変更 | `from_id`, `to_id` |
-| `retired` | 削除に伴うUID退役 | - |
-| `restored` | 削除済みUIDの復元 | - |
-| `released` | 退役idの再利用予約解除 | `released_id` |
-| `reissued` | copy/import時の新規UID発行 | `source_uid`(任意) |
 | `resolved` | branch divergenceの明示的解決 | `previous_identity_event_uids`(複数)、`winning_event_uid` |
 
-`issued`・`reissued`はroot(先行eventなし)。両者とも新規UID発行という点で同じroot条件を満たす — `reissued`はcopy/import時に**別の**新規UIDを発行するのであって、既存UIDの後続eventではない(実装は`IdentityMutation::can_be_root`で両者を等しくrootとして扱う)。それ以外の通常eventは`previous_identity_event_uid`(単数)で直前の自entity内headを参照する。`resolved`だけは`previous_identity_event_uids`(複数)で解決対象の全divergent headをjoinする。
+`issued`だけがroot(先行eventなし)である。それ以外の通常eventは`previous_identity_event_uid`(単数)で直前の自entity内headを参照する。`resolved`だけは`previous_identity_event_uids`(複数)で解決対象の全divergent headをjoinする。
 
 ```yaml
 identity_event_uid: 01ARZ3NDEKTSV4RRFFQ69G5FE1
@@ -267,7 +263,9 @@ merge driverを使わない理由:各開発者のローカル環境ごとの個�
 - `case_uid`:namespace UUID + `requirement_uid`・`feature_uid`・`behavior_uid`・`condition_uid`・`expected_result_uid`の集合(canonical順に整列・連結)をnameとして導出。
 - `change_event_uid`:namespace UUID + domain separator・identity canonicalization/algorithm version・from/to snapshot identity・`feature_uid`・canonical change payload・明示optionsをcanonical encodingで連結したものをnameとして導出。
 
-## 9. release eventの実行摩擦
+## 9. release eventの実行摩擦(Superseded)
+
+> [0021](../decisions/0021-identity-retire-simplification.md)により`markharness identity release`は廃止された。本節は当時の設計判断の記録である。
 
 `markharness identity release <uid> <old-id>`は、`rename-id`と同様に確認フラグなしでそのまま実行できるコマンドとする。本プロジェクトは同一性に関わる操作の監査証跡をコマンド実行自体とGit差分・identity eventに委ねる方針で一貫しており、`release`だけを特別扱いしない。取り消し可能な操作(再度別のUIDへ発行し直せば実質的に取り消せる)である点も踏まえた。
 
