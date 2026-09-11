@@ -224,22 +224,24 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 | `changes.rs`(ChangeEvent計算) | 維持・拡張 | Change Impactの基盤としてそのまま使う。§6.1 |
 | `case_definition.rs`(Case revision固定保存) | 維持 | 既に[0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md)§1〜4相当を実装済み |
 | `execution.rs`(target_revision/environment等) | 縮小 | [0020](../decisions/0020-execution-status-lightweight-model.md)・[0025](../decisions/0025-v2-forward-compatible-evolution.md)の`ExecutionBinding`へ置き換え |
-| `plan.rs`(Evidence適用可能性判定) | 縮小・置換 | 厳密な突合ロジックは不要。`ExecutionBinding`の有無参照へ簡略化 |
-| `src/identity/`(retire/restore/release/reissue部分) | 縮小 | [0021](../decisions/0021-identity-retire-simplification.md) |
+| `plan.rs`(Evidence適用可能性判定)・`markharness plan` | 廃止 | 厳密な突合ロジックは[0020](../decisions/0020-execution-status-lightweight-model.md)で不要になり、残る「`ExecutionBinding`の有無を返す」機能は`coverage`と重複する([0026](../decisions/0026-module-inventory-and-plan-removal.md))。`application.rs`・`presentation.rs`のplan経路も同時に削除する |
+| `src/identity/feature_ops.rs`の`retire_entity`/`restore_entity`/`release_id`/`reissue_entity`とそのエラー型(約524行)、`event.rs`の`IdentityMutation::{Retired, Restored, Released, Reissued}`、`engine.rs`の該当status遷移と`Status::Retired`、`migration_manifest.rs`のreissue依存部 | 縮小 | [0021](../decisions/0021-identity-retire-simplification.md)。2026-09-11の実測により対象ファイルを特定した(`recovery.rs`・`lock.rs`に現れる`release`は`IdentityLock`のファイルロック解放であり本件と無関係、`audit.rs`には該当語の出現が無い)。[0026](../decisions/0026-module-inventory-and-plan-removal.md) |
 | `src/identity/`(UID発行/rename部分) | 維持 | [0021](../decisions/0021-identity-retire-simplification.md)の対象外 |
 | `src/git.rs`・`fs_safety.rs` | 維持 | 不変ref読出し・原子的操作は今回の変更と独立 |
-| `src/canonical.rs`(ImportSourceArg等) | 見直し | StrictDoc取込は将来別Adapterとして再設計。現行のNative/Junit importerとの関係は着手時に整理 |
+| `src/canonical.rs`(ImportSourceArg等) | 縮小 | `markharness import`(native/junit)専用に縮小する。`plan`廃止に伴い`CanonicalEvidence`/`EvidenceResult`等のplan専用型を削除。StrictDoc取込は将来別Adapterとして再設計([0026](../decisions/0026-module-inventory-and-plan-removal.md)) |
 | `knowledge/requirements/`(native Requirement実体) | 維持・拡張 | nativeは`label`/`description`を含めそのまま維持する。`source: external`を選んだRequirementでのみ本文相当を持たず固定参照になる([0023](../decisions/0023-requirement-native-and-external-source.md)、§5.2.1) |
 | `src/traceability.rs`(Requirement索引) | 維持 | Requirement⇄TestCaseの逆引きは既存実装をそのまま使う |
 | `src/server.rs`・`ui/`・`markharness serve`(ADR 0008 Stage 3のdashboard) | 廃止 | 現行UIは`plan`/evidence出力に依存し、plan縮小と同時に壊れる([0022](../decisions/0022-remove-stage3-dashboard.md))。§9.1 |
-| `src/milestone.rs`・`src/backfill.rs` | 要判断 | base/head指定のChange Impactへ統合できるかを着手時に判定する。§9.1 |
-| `src/verify.rs`・`audit_scope.rs`・`derived_index.rs`・`lineage.rs` | 棚卸し対象 | 本書では未分類。M0着手時に維持/縮小/廃止を確定する |
+| `src/milestone.rs`・`src/lineage.rs` | 維持 | `src/changes.rs`が`milestone::verify_audit_matches_tag`(fail-closedゲート)と`lineage::classify`(merge分類)を内部利用しており、削除すると`changes compute`がコンパイル不能になる([0026](../decisions/0026-module-inventory-and-plan-removal.md)) |
+| `src/backfill.rs`・`src/verify.rs` | 維持 | 逆依存ゼロだが[0020](../decisions/0020-execution-status-lightweight-model.md)〜[0025](../decisions/0025-v2-forward-compatible-evolution.md)のいずれとも衝突せず、廃止する積極的な理由が無い([0026](../decisions/0026-module-inventory-and-plan-removal.md)) |
+| `src/derived_index.rs`・`markharness cache index` | 廃止 | 入力である`plan::BoundVersions`と`execution::read_all_results`が廃止・置換される。派生キャッシュはChange Impact/Release Coverageの設計に登場せず、CLI統合テストも無い([0026](../decisions/0026-module-inventory-and-plan-removal.md)) |
+| `src/audit_scope.rs` | 維持 | `identity migrate --json`・`identity audit --json`・`changes compute --json`の出力契約([0013](../decisions/0013-immutable-identity-model.md)検証規則)に含まれる |
 | `identity` CLIの`retire`/`restore`/`release`/`reissue` | 廃止 | [0021](../decisions/0021-identity-retire-simplification.md)。既存イベントログの扱いは§9.1 |
 
 ### 9.1 既存CLI・既存データ・既存UIの扱い
 
-- **廃止するCLI**：`identity retire`/`restore`/`release`/`reissue`([0021](../decisions/0021-identity-retire-simplification.md))と、`plan`・`execution record`のEvidence系オプション([0020](../decisions/0020-execution-status-lightweight-model.md))。削除範囲は実装時のチェックリストで確定する。
-- **既存データ**：`.markharness/executions/`配下の既存実行記録と、`retire`/`restore`/`release`/`reissue` eventを含む`.markharness/identity-events/`は自動変換しない(§2)。廃止したevent種別を含むログは、**該当eventを特定する診断付きで拒否する**。警告して無視する方式は採らない——`IdentityEvent`は`previous_identity_event_uid`による単一の因果連鎖で順序が決まり(`src/identity/event.rs`)、`Released`はid⇄UIDの割当そのものを変えるため、途中のeventを飛ばしたreplayは先行参照の欠落や、記録と異なる状態からの評価を招く。拒否時にはログ・Knowledge・生成物のいずれも変更しない。互換replayや自動変換は新設せず、人が新形式の入力を用意できるよう原因だけを示す。
+- **廃止するCLI**：`identity retire`/`restore`/`release`/`reissue`([0021](../decisions/0021-identity-retire-simplification.md))、`plan`([0026](../decisions/0026-module-inventory-and-plan-removal.md))、`execution record`(`binding set`へ置換、[0020](../decisions/0020-execution-status-lightweight-model.md)・[0025](../decisions/0025-v2-forward-compatible-evolution.md))、`serve`([0022](../decisions/0022-remove-stage3-dashboard.md))、`cache index`([0026](../decisions/0026-module-inventory-and-plan-removal.md))。削除範囲は実装時のチェックリストで確定する。
+- **既存データ**：**過去のスキーマ・データは最初から存在しなかったものとして扱う**([CLAUDE.md](../../../CLAUDE.md)の後方互換を想定しない設計ルール)。`ExecutionBinding`は新しい保存先`.markharness/bindings/`のみを読み、旧`.markharness/executions/`配下の実行記録は参照しない。廃止したevent種別は`IdentityMutation`から削除されるため、それを含むログは読み取り経路に存在しない。自動変換も、互換replayも、旧データを名指しする診断も実装しない——いずれも互換コードであり、本方針の排除対象である。旧ディレクトリがworktreeに残っていても新コードのどの経路も読まないため、動作には影響しない。
 - **既存dashboard**：`src/server.rs`・`ui/`・`markharness serve`・frontendのbinary同梱を削除する([0022](../decisions/0022-remove-stage3-dashboard.md))。削除は`plan`縮小と同じタイミングで行い、`tests/server.rs`等の関連テストも同時に削除する。リポジトリ外のviewerが`plan`出力を参照している場合は、Change Impact/Release Coverage出力への切替が必要になる。
 
 ### 9.2 将来拡張性としてV2に残す契約
@@ -270,7 +272,7 @@ V2と将来モデルの関係を次のように固定する。
 | `Spec-Reviewed` trailer | commit時点で対象の対応確認を記録した | `ImpactDecision`、`HumanAttestation` | 欠落しているLink・policy digestや承認を補完する |
 | Git上の削除・再登場 | その時点でファイルが無い、または再び存在する | `retire`、`restore` event | 削除意図や同一Identityとしての復元を推測する |
 
-永続レコードには`schema_version`を持たせる。複数種類のレコードを同じ保存領域または出力に載せる場合は`record_kind`等で種類を明示する。将来の型に必要そうなフィールドをすべてoptionalとしてV2へ足さない。完全モデルは別の型・保存契約として追加し、V2に存在しない情報は`unknown`または`legacy`とする。
+永続レコードには`schema_version`を持たせる。複数種類のレコードを同じ保存領域または出力に載せる場合は`record_kind`等で種類を明示する。ただし`schema_version`は**全種別で`1`に固定し、今後も上げない**。これは過去のレコードを読むための互換機構ではなく、将来別種のレコードを追加したときに種類を取り違えないための前方向の契約だからである。旧版を読む必要が生じた場合も版で分岐せず、新しい型として追加する(§9.1の既存データ方針)。`record_kind`の値は`execution_binding`・`release_scope`・`requirement`・`change_impact`・`release_coverage`とする。将来の型に必要そうなフィールドをすべてoptionalとしてV2へ足さない。完全モデルは別の型・保存契約として追加し、V2に存在しない情報は`unknown`または`legacy`とする。
 
 #### 9.2.3 Adapterと読み取りの発展方法
 
@@ -353,7 +355,7 @@ MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない
 | AC07b | 削除したScenarioのファイルをGit履歴から復元する(`git checkout <ref> -- <path>`等) | ファイル内の`uid:`が戻るため、当時のScenario UID・Case UIDが復活する。これはmarkharnessの`restore`機能ではなくGit履歴操作であり、markharnessはこれを禁止も検出もしない([0021](../decisions/0021-identity-retire-simplification.md)§2) |
 | AC08 | Requirementに`contributes_to`するFeatureが一つもない | Release Coverageでcoverage gapとして一覧される |
 | AC09 | `source: external`なのに`source_locator`/`source_revision`を持たない`requirement.yml`を置く | `validate`が拒否する(§5.2.1) |
-| AC09b | `source`を省略した既存の`requirement.yml`(`label`あり)をそのまま置く | nativeとして有効。StrictDocなしでChange Impact/Release Coverageが動作する([0023](../decisions/0023-requirement-native-and-external-source.md)) |
+| AC09b | `source`を省略した`requirement.yml`(`label`あり)を置く | `validate`が拒否する。モード判定を暗黙のdefaultに委ねない(§9.1) |
 | AC09c | `label`と`source_locator`を両方持つ`requirement.yml`を置く | `validate`が拒否する(モード混在) |
 | AC10 | `source: external`のRequirementで、`source_locator`が指す`.sdoc` blobがbaseとheadで異なる | Change Impactが仕様側変更として検出する。`.sdoc`の構文解析は行わない(§6.1手順2) |
 | AC10b | `source: native`のRequirementの`label`/`description`をbase/head間で変更する | Change Impactが仕様側変更として検出する(§6.1) |
@@ -369,7 +371,6 @@ MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない
 | AC19 | repin後、内容を変更しない次のPRを評価する | 新たな仕様変更としては報告されない。固定参照が古い場合のみstale pinとして出力する(§6.1手順3) |
 | AC20 | Requirementのみが変更され、関連Featureは変更されていない | 関連Feature・TestCaseを逆引きし、影響とAlignment checkを出力する(§6.1手順1) |
 | AC21 | RequirementにFeatureは関連付いているが、そのFeature配下にScenarioが一つもない | Release Coverageが当該Featureをcoverage gapとして明示する(§6.2) |
-| AC22 | `retire`/`release` eventを含む既存の`identity-events`を読み込む | 該当eventを特定する診断付きで拒否し、ログ・Knowledge・生成物を変更しない(§9.1) |
 | AC23 | 発行(`issued`)とrenameのみで構成された`identity-events`を読み込む | 決定的にreplayでき、UIDとidの対応を再現する(§9.1) |
 | AC24 | `ReleaseScope`を記録し、過去のリリースtagを`--at`、`release_id`を`--release`に渡してRelease Coverageを算出する | 当時選定されたTestCaseと、その検証手段の有無を再現する(§6.2) |
 | AC25 | 対象Requirement配下にあるが選定リストに入っていないTestCaseがある | 選定漏れ候補として一覧される(§6.2) |
