@@ -24,7 +24,7 @@ markharness owns `label` (required) and `description` (optional). `source_locato
 
 ### 3. External mode
 
-`source_locator` (a `.sdoc` path inside the same Git repository as markharness) and `source_revision` (a pinned Git blob OID) are required. `label` / `description` are not allowed (no duplication of external content — P1 in [markharness-v2-design.md](../design/markharness-v2-design.md)). A spec-side change is detected by comparing the pinned reference against the blob OID at head (§6.1 of that design).
+`source_locator` (a `.sdoc` path inside the same Git repository as markharness) and `source_revision` (a pinned Git blob OID) are required. `label` / `description` are not allowed (no duplication of external content — P1 in [markharness-v2-design.md](../design/markharness-v2-design.md)). Detect spec-side changes by comparing the `.sdoc` blobs referenced by `source_locator` at base and head. Compute a mismatch between the pin and the head blob separately as stale pin. Repinning neither cancels a source change nor confirms alignment (§6.1 of that design). The 2026-09-11 review correction replaces the previous pin-versus-head change-detection rule with this rule.
 
 ### 4. Mixing is rejected
 

@@ -148,8 +148,8 @@ Requirementの意味変更、またはTestCaseの実効内容変更を検知し�
 
 トレーラーの扱いは次の規則による。
 
-1. **対象を特定できないトレーラーは採用しない。** `Spec-Reviewed: no-change-required (req-login-01)`のように対象を書く。対象のないトレーラーで複数のRequirement/TestCaseをまとめて確認済みにはしない(未確認のまま残す)。
-2. **有効範囲はそのコミット時点の対象内容に限る。** 同一区間内でトレーラーのコミットより後に同じ対象の実効内容(TestCaseはCase revision、Requirementは`requirement.yml`または`.sdoc` blob)が再び変更された場合、その確認は無効になり「未確認」へ戻す。トレーラーに版文字列を書かせるのではなく、区間内のコミット順序で判定する(記述負担を増やさないため)。
+1. **対象を特定できないトレーラーは採用しない。** `Spec-Reviewed: no-change-required (req-login-01)`のように対象を書く。対象のないトレーラーで複数のRequirement/TestCaseをまとめて確認済みにはしない(未確認のまま残す)。片側指定から相手を一意に解決できない場合は、`Spec-Reviewed: no-change-required (req-login-01, <case-uid>)`のように両側を明示する(規則2)。
+2. **有効範囲はコミット時点の要件・ケースの組に限る。** 確認は、トレーラーを含むコミット時点のRequirement UIDとCase UIDの組に結び付ける。対象IDは当該コミットで解決し、片側だけの指定から変更内容・関連を用いて相手を一意に特定できない場合は採用しない。その場合は両側を明示する。版はGitから解決し、手入力の版文字列や独立した保存型は要求しない。同一区間内の後続コミットで、組のどちらかの実効内容(TestCaseはCase revision、Requirementは`requirement.yml`または`.sdoc` blob)が変更された場合、その組の確認を無効化する。別の組への確認の流用や、後から追加されたケースへの拡張はしない。無効な記録は「確認済み」の根拠にせず、有効な別記録がなければ§5.3の規則に従い「追随変更あり」または「未確認」を出力する。
 3. **記法を限定する。** コミット本文中の、行頭から始まる`Spec-Reviewed: <value>`形式の行のみをトレーラーとして解釈する。引用行・インデントされた行・コードブロック内の同名文字列は対象外とし、本文中の言及を宣言と誤認しない。
 4. **squash mergeに対応する。** 判定は`git log base..head`の各コミット本文を走査する実装とし、末尾行だけを見る実装にしない。有効範囲(規則2)を解決できない記録は採用しない。
 5. **履歴を入力として明示する。** Change Impactの入力にはKnowledge/`.sdoc`のtreeに加えて`base..head`のコミット履歴が含まれる(P3の再現性契約に含める)。shallow cloneやfilterで履歴が取得できない場合は診断付きで失敗させ、履歴不足を「確認済み」として扱わない。
@@ -224,7 +224,7 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 | `changes.rs`(ChangeEvent計算) | 維持・拡張 | Change Impactの基盤としてそのまま使う。§6.1 |
 | `case_definition.rs`(Case revision固定保存) | 維持 | 既に[0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md)§1〜4相当を実装済み |
 | `execution.rs`(target_revision/environment等) | 縮小 | [0020](../decisions/0020-execution-status-lightweight-model.md)の`ExecutionStatus`へ置き換え |
-| `plan.rs`(Evidence適用可能性判定) | 縮小・置換 | 厳密な突合ロジックは不要。ExecutionStatusの有無参照へ簡略化 |
+| `plan.rs`(Evidence適用可能性判定) | 縮小・置換 | 厳密な突合ロジックは不要。`ExecutionStatus`の有無参照へ簡略化 |
 | `src/identity/`(retire/restore/release/reissue部分) | 縮小 | [0021](../decisions/0021-identity-retire-simplification.md) |
 | `src/identity/`(UID発行/rename部分) | 維持 | [0021](../decisions/0021-identity-retire-simplification.md)の対象外 |
 | `src/git.rs`・`fs_safety.rs` | 維持 | 不変ref読出し・原子的操作は今回の変更と独立 |
@@ -246,7 +246,7 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 
 | 段階 | 作るもの | 完了条件 |
 |---|---|---|
-| M0 | `Requirement`の新schema(native/externalの二モード)・`ExecutionStatus`のschema、`feature.requirement_uids`による関連付け、CLI(§7)、Alignment check(§5.3)の自動判定、対話作成フローの更新(§5.2.1) | native運用(StrictDocなし)とexternal運用の双方でFeature⇄Requirementの対応とTestCaseのExecutionStatus記録がGit/CLI経路で完結し、モードの混在した`requirement.yml`が拒否される |
+| M0 | `Requirement`の新schema(native/externalの二モード)・`ExecutionStatus`のschema、`feature.requirement_uids`による関連付け、CLI(§7)、Alignment check(§5.3)の自動判定、対話作成フローの更新(§5.2.1) | native運用(StrictDocなし)とexternal運用の双方でFeature⇄Requirementの対応とTestCaseの`ExecutionStatus`記録がGit/CLI経路で完結し、モードの混在した`requirement.yml`が拒否される |
 | M1 | Change Impact(§6.1) | PR base/head間で影響Feature・Requirement・未確認Alignment checkを一覧できる(`.sdoc`解析=M3に依存しない) |
 | M2 | Release Coverage(§6.2)と`ReleaseScope`(§5.2) | 指定Requirement集合全体のcoverage gapを一覧でき、選定リストを記録したリリースでは選定・選定漏れ・不在Case UIDを併せて一覧できる |
 | M3(将来) | StrictDoc `.sdoc`取込(Git管理された要件の実体反映) | 需要確認後に着手。自前パーサの要否を含め別途設計する |
@@ -262,7 +262,7 @@ MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない
 | AC02 | `source: external`のRequirementの本文(`label`/`description`)をmarkharnessから編集しようとする | 拒否する。externalではmarkharnessは固定参照のみ保持する([0023](../decisions/0023-requirement-native-and-external-source.md)) |
 | AC02b | `source: native`のRequirementの`label`/`description`を編集する | 成功する。nativeではmarkharnessが本文の正本を持つ |
 | AC03 | Requirementが変更されたのに関連TestCaseが更新されていない | Change Impactの出力で「未確認」として明示する |
-| AC04 | TestCase変更コミットに、対象を特定した`Spec-Reviewed: no-change-required (req-xxx)`が付与されている | Alignment checkは当該対象について「確認済み」と判定する(§5.3) |
+| AC04 | TestCase変更コミットに、対象を特定した`Spec-Reviewed: no-change-required (req-xxx)`が付与され、相手側のCase UIDが一意に解決できる | Alignment checkは当該の組について「確認済み」と判定する(§5.3) |
 | AC05 | TestCaseに`ExecutionStatus(mode=manual)`を記録し、日時や実行者は渡さない | 記録が成立する。日時・実行者フィールドは存在しない |
 | AC06 | 同一入力から複数回Change Impact/Release Coverageを計算する | 同じ出力を再現する(P3) |
 | AC07 | 削除したTestCaseと同じ内容のScenarioをCLIで新規作成する | 新しいScenario UIDが発行され、そこから導出されるCase UIDも別値になる。内容の一致を理由に旧UIDを推定しない([0021](../decisions/0021-identity-retire-simplification.md)) |
@@ -271,9 +271,10 @@ MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない
 | AC09 | `source: external`なのに`source_locator`/`source_revision`を持たない`requirement.yml`を置く | `validate`が拒否する(§5.2.1) |
 | AC09b | `source`を省略した既存の`requirement.yml`(`label`あり)をそのまま置く | nativeとして有効。StrictDocなしでChange Impact/Release Coverageが動作する([0023](../decisions/0023-requirement-native-and-external-source.md)) |
 | AC09c | `label`と`source_locator`を両方持つ`requirement.yml`を置く | `validate`が拒否する(モード混在) |
-| AC10 | `source: external`のRequirementで、`.sdoc`のblobがhead時点で固定参照と異なる | Change Impactが仕様側変更として検出する。`.sdoc`の構文解析は行わない(§6.1) |
+| AC10 | `source: external`のRequirementで、`source_locator`が指す`.sdoc` blobがbaseとheadで異なる | Change Impactが仕様側変更として検出する。`.sdoc`の構文解析は行わない(§6.1手順2) |
 | AC10b | `source: native`のRequirementの`label`/`description`をbase/head間で変更する | Change Impactが仕様側変更として検出する(§6.1) |
-| AC11 | 過去のリリースtagを`--at`に指定してRelease Coverageを算出する | 当時のKnowledge・ExecutionStatusに基づく一覧を再現する(§6.2) |
+| AC10c | `.sdoc`はbase/head間で変更されていないが、`source_revision`がhead時点のblob OIDと一致しない | stale pinとしてのみ出力する。仕様側変更としては報告しない(§6.1手順3) |
+| AC11 | 過去のリリースtagを`--at`に指定してRelease Coverageを算出する | 当時のKnowledge・`ExecutionStatus`に基づく一覧を再現する(§6.2) |
 | AC12 | 1コミットで複数のRequirementに触れ、対象を書かないtrailerを付与する | どの対応確認が済んだか判定できないため「未確認」のまま残る(§5.3) |
 | AC13 | Scenarioの表示idをrenameする | `ExecutionStatus`はCase UID参照のため維持される(§5.2) |
 | AC14 | C1でRequirement Rを変更し`Spec-Reviewed`を付与、同一PRのC2でRをさらに変更する | C1の確認は無効になり、Rは「未確認」として出力される(§5.3規則2) |
@@ -291,3 +292,6 @@ MVPはM0〜M2とする。M3・M4は本書の時点では着手を約束しない
 | AC26 | 選定リストに、その時点のKnowledgeに存在しないCase UIDが含まれる | 不在のCase UIDとして明示する。選定リストを自動的に書き換えない(§6.2) |
 | AC27 | `ReleaseScope`に選定日時・担当者・合否を渡そうとする | フィールドが存在せず記録できない([0024](../decisions/0024-release-scope-selection-list.md)) |
 | AC28 | `release_id`に`../../etc/passwd`、`..`、`/abs/path`、先頭ドットなどを渡す | 書き込み前に拒否し、`.markharness/releases/`の外にも中にもファイルを作らない(§5.2) |
+| AC29 | C1でケースAを変更し要件Rの変更不要を確認、C2でAだけを再変更する | Rが不変でも組(R,A)の確認は無効。確認済みとはせず、この例では未確認を出力する |
+| AC30 | 片側指定のトレーラーから複数の相手ケースが候補になる | 一括確認しない。両側を明示して組を一意に解決できる記録だけ採用する |
+| AC31 | 組(R,A)の確認後、別ケースBが追加される | Bへ確認を流用しない。元の組の内容が不変ならその確認は維持する |

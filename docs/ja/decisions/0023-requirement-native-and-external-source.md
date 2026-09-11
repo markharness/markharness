@@ -24,7 +24,7 @@ Accepted(2026-09-11、設計合意済み・未実装)。[0017](0017-scenario-cas
 
 ### 3. externalモード
 
-`source_locator`(markharnessと同一Gitリポジトリ内の`.sdoc`パス)と`source_revision`(固定したGit blob OID)が必須。`label`/`description`は持てない(外部正本の複製禁止、[markharness-v2-design.md](../design/markharness-v2-design.md)のP1)。仕様側の変更検知は固定参照と head時点のblob OIDの比較で行う(同設計書§6.1)。
+`source_locator`(markharnessと同一Gitリポジトリ内の`.sdoc`パス)と`source_revision`(固定したGit blob OID)が必須。`label`/`description`は持てない(外部正本の複製禁止、[markharness-v2-design.md](../design/markharness-v2-design.md)のP1)。仕様側の変更検知は`source_locator`が指す`.sdoc` blobのbase/head差分で行う。固定参照とheadのblob OIDの不一致はstale pinとして別に算出する。repinは仕様変更を打ち消さず、対応確認の代替にもならない(同設計書§6.1)。2026-09-11のレビュー修正により、従来の固定参照対headを変更検知に用いる規則を本規則へ訂正する。
 
 ### 4. 混在は拒否する
 

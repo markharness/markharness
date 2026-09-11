@@ -148,8 +148,8 @@ When a Requirement's meaning changes, or a TestCase's effective content changes,
 
 Trailers are governed by the following rules.
 
-1. **A trailer whose target cannot be resolved is not accepted.** Write the target, as in `Spec-Reviewed: no-change-required (req-login-01)`. A targetless trailer never clears several Requirements/TestCases at once; they stay unconfirmed.
-2. **Validity is scoped to the target's content as of that commit.** If, within the same range, the target's effective content (Case revision for a TestCase; `requirement.yml` or the `.sdoc` blob for a Requirement) changes again in a commit *after* the trailer's commit, the confirmation is void and the item returns to "unconfirmed." This is decided by commit order within the range rather than by making authors write a revision string into the trailer (keeping the authoring burden low).
+1. **A trailer whose target cannot be resolved is not accepted.** Write the target, as in `Spec-Reviewed: no-change-required (req-login-01)`. A targetless trailer never clears several Requirements/TestCases at once; they stay unconfirmed. When a one-sided target does not resolve its counterpart uniquely, name both endpoints, as in `Spec-Reviewed: no-change-required (req-login-01, <case-uid>)` (rule 2).
+2. **Validity is scoped to the requirement/case pair at the commit.** Bind each confirmation to a Requirement UID / Case UID pair resolved at the commit carrying the trailer. Resolve display IDs at that commit. If a one-sided target plus the changes and relations cannot identify the other endpoint uniquely, do not accept it; require both endpoints to be specified. Resolve revisions from Git without manually entered revision strings or a separate persistent type. If either endpoint changes effectively in a subsequent commit in the range (Case revision for the TestCase; `requirement.yml` or the `.sdoc` blob for the Requirement), invalidate confirmation for that pair. Do not reuse it for another pair or extend it to cases added later. An invalid record cannot establish confirmed status; absent another valid record, report followed or unconfirmed under the rules in design §5.3.
 3. **The syntax is narrow.** Only a line of the form `Spec-Reviewed: <value>` starting at the beginning of a line in a commit body is read as a trailer. Quoted lines, indented lines, and the same text inside a code block are ignored, so a mention in prose is never mistaken for a declaration.
 4. **Squash merges are handled.** The check scans every commit body in `git log base..head` rather than only the last line, and a record whose validity scope (rule 2) cannot be resolved is not accepted.
 5. **History is a declared input.** Change Impact's inputs are the Knowledge/`.sdoc` trees *and* the `base..head` commit history (this belongs to P3's reproducibility contract). If the history is unavailable (shallow clone, filtered clone), the run fails with a diagnostic; missing history is never reported as "confirmed".
@@ -246,7 +246,7 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 
 | Stage | Builds | Exit criteria |
 |---|---|---|
-| M0 | The new `Requirement` schema (native/external modes) and `ExecutionStatus` schema, linking via `feature.requirement_uids`, the CLI (§7), automatic Alignment-check detection (§5.3), and the updated interactive authoring flow (§5.2.1) | Both native operation (no StrictDoc) and external operation complete Feature↔Requirement linking and TestCase ExecutionStatus recording end-to-end via Git/CLI, and a `requirement.yml` mixing the two modes is rejected |
+| M0 | The new `Requirement` schema (native/external modes) and `ExecutionStatus` schema, linking via `feature.requirement_uids`, the CLI (§7), automatic Alignment-check detection (§5.3), and the updated interactive authoring flow (§5.2.1) | Both native operation (no StrictDoc) and external operation complete Feature↔Requirement linking and TestCase `ExecutionStatus` recording end-to-end via Git/CLI, and a `requirement.yml` mixing the two modes is rejected |
 | M1 | Change Impact (§6.1) | Between a PR's base and head, affected Features, Requirements, and unconfirmed alignment checks can be listed (no dependency on `.sdoc` parsing = M3) |
 | M2 | Release Coverage (§6.2) and `ReleaseScope` (§5.2) | Coverage gaps across a given set of Requirements can be listed, and for a release with a selection list, the selected set, candidate omissions, and missing Case UIDs are listed alongside |
 | M3 (future) | StrictDoc `.sdoc` ingestion (reflecting the actual Git-managed requirement content) | Started once demand is confirmed; whether a custom parser is needed is designed separately at that time |
@@ -262,7 +262,7 @@ The MVP is M0–M2. M3 and M4 are not committed to as of this document.
 | AC02 | Attempt to edit the body (`label`/`description`) of a `source: external` Requirement from markharness | Rejected. In external mode markharness keeps only a fixed reference ([0023](../decisions/0023-requirement-native-and-external-source.md)) |
 | AC02b | Edit the `label`/`description` of a `source: native` Requirement | Succeeds. In native mode markharness owns the body |
 | AC03 | A Requirement changes but its related TestCase is not updated | Change Impact's output marks it "unconfirmed" |
-| AC04 | A TestCase-change commit carries a targeted `Spec-Reviewed: no-change-required (req-xxx)` | The Alignment check is judged "confirmed" for that target (§5.3) |
+| AC04 | A TestCase-change commit carries a targeted `Spec-Reviewed: no-change-required (req-xxx)` whose counterpart Case UID resolves uniquely | The Alignment check is judged "confirmed" for that pair (§5.3) |
 | AC05 | Record `ExecutionStatus(mode=manual)` on a TestCase without a timestamp or executor | The record succeeds; there are no timestamp/executor fields to omit |
 | AC06 | Compute Change Impact / Release Coverage multiple times from the same input | The same output is reproduced (P3) |
 | AC07 | Create, via the CLI, a Scenario with the same content as a deleted one | A new Scenario UID is issued, so the Case UID derived from it differs too. Matching content never implies the old UID ([0021](../decisions/0021-identity-retire-simplification.md)) |
@@ -271,9 +271,10 @@ The MVP is M0–M2. M3 and M4 are not committed to as of this document.
 | AC09 | A `source: external` `requirement.yml` without `source_locator`/`source_revision` | `validate` rejects it (§5.2.1) |
 | AC09b | An existing `requirement.yml` with `label` and no `source` field | Valid as native; Change Impact and Release Coverage work with no StrictDoc present ([0023](../decisions/0023-requirement-native-and-external-source.md)) |
 | AC09c | A `requirement.yml` carrying both `label` and `source_locator` | `validate` rejects it (mixed modes) |
-| AC10 | For a `source: external` Requirement, the `.sdoc` blob at head differs from the pinned reference | Change Impact reports a spec-side change, without parsing the `.sdoc` (§6.1) |
+| AC10 | For a `source: external` Requirement, the `.sdoc` blob named by `source_locator` differs between base and head | Change Impact reports a spec-side change, without parsing the `.sdoc` (§6.1 step 2) |
 | AC10b | A `source: native` Requirement's `label`/`description` changes between base and head | Change Impact reports a spec-side change (§6.1) |
-| AC11 | Compute Release Coverage with a past release tag passed to `--at` | The listing reproduces the Knowledge and ExecutionStatus as of that ref (§6.2) |
+| AC10c | The `.sdoc` is unchanged between base and head, but `source_revision` does not match the blob OID at head | Reported as a stale pin only, never as a spec-side change (§6.1 step 3) |
+| AC11 | Compute Release Coverage with a past release tag passed to `--at` | The listing reproduces the Knowledge and `ExecutionStatus` as of that ref (§6.2) |
 | AC12 | One commit touches several Requirements and carries a trailer without a target | It stays "unconfirmed", because which check was done cannot be determined (§5.3) |
 | AC13 | Rename a Scenario's display id | `ExecutionStatus` survives, because it references the Case UID (§5.2) |
 | AC14 | C1 changes Requirement R and carries `Spec-Reviewed`; C2 in the same PR changes R again | C1's confirmation is void and R is reported as "unconfirmed" (§5.3 rule 2) |
@@ -291,3 +292,6 @@ The MVP is M0–M2. M3 and M4 are not committed to as of this document.
 | AC26 | The selection list contains a Case UID that does not exist in the Knowledge at that ref | It is reported as a missing Case UID; the list is never rewritten automatically (§6.2) |
 | AC27 | Attempt to record a selection timestamp, owner, or result on a `ReleaseScope` | No such fields exist, so it cannot be recorded ([0024](../decisions/0024-release-scope-selection-list.md)) |
 | AC28 | Pass `../../etc/passwd`, `..`, `/abs/path`, or a dot-leading value as `release_id` | Rejected before any write; no file is created inside or outside `.markharness/releases/` (§5.2) |
+| AC29 | C1 changes Case A and confirms no change needed to R; C2 changes only A again | Confirmation for (R,A) is invalid even though R is unchanged. It is not confirmed; this example is unconfirmed |
+| AC30 | A one-sided trailer resolves to multiple candidate cases | Do not confirm all candidates. Accept only records explicitly identifying both endpoints and resolving the pair uniquely |
+| AC31 | Case B is added after confirmation of (R,A) | Do not transfer confirmation to B. Keep the original confirmation if that pair remains unchanged |
