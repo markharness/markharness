@@ -29,7 +29,8 @@ _Avoid_：Alignment Obligation／Alignment Decision(独立したDomain型・承�
 
 **Spec-Reviewedトレーラー**：対応確認の結果、「変更不要」と判断したことをコミットメッセージの末尾に記録するcommit trailer(例：`Spec-Reviewed: no-change-required`)。変更を加える本人が、変更のコミットと同時に書き添える運用を前提とする。git notesは使わない(push/fetchのデフォルト対象外、GitHub上で不可視、rebase非追随という理由で不採用)。
 
-**Execution status**：TestCaseに付与する軽量な記録で、**検証手段(`automated`／`manual`)とその参照先(テストコードへのパスやURL)**を表す。値の存在は「最新版で実行済み」を意味しない。pass/fail等の詳細結果・実行日時・実行者・証跡本体・実行環境(ブラウザ/OS等)は持たない。
+**Execution Binding**：TestCaseと検証手段(`automated`／`manual`)およびその参照先(テストコードへのパスやURL)の対応宣言。値の存在は「最新版で実行済み」を意味しない。pass/fail等の詳細結果・実行日時・実行者・証跡本体・実行環境(ブラウザ/OS等)は持たない。
+_Avoid_：Execution Status(実行された状態と誤解されるため使わない)、Execution FactをExecution Bindingの同義語として使うこと(将来追加し得る実行事実とは別概念)。
 _Avoid_：Evidence、Verification Target、Environment matrix(証跡管理・環境ごとの区別は別ツールの責務であり、markharnessのドメインに含めない)。
 
 **Change Impact**：base/head間の差分から算出する、影響を受けるFeature・Requirement・TestCaseの一覧。PR単位の日常的な確認に使う。
@@ -38,7 +39,7 @@ _Avoid_：Verification Plan(重量級の契約オブジェクトという誤解�
 **Release scope(選定スコープ)**：あるリリースで検証対象に選んだTestCaseの一覧。`release_id`とCase UIDの配列だけを持ち、日時・担当者・承認状態・合否は持たない。人が記録する「選んだ」という宣言であり、実行証跡ではない(ADR 0024)。
 _Avoid_：Verification Plan、Evidence Selection(重量級の契約・証跡選択という誤解を招くため使わない)。
 
-**Release Coverage**：指定したRequirement/Feature集合全体について、TestCaseとの対応関係およびExecution statusの有無を一覧化したもの。リリース判断時の補助情報として、Change Impactと併用する。
+**Release Coverage**：指定したRequirement/Feature集合全体について、TestCaseとの対応関係およびExecution Bindingの有無を一覧化したもの。リリース判断時の補助情報として、Change Impactと併用する。
 
 **Retire(退役)**：TestCaseまたはFeatureを現在の対象から外すこと。UIDの再利用保証や、同一UIDでの明示的な復元・ID予約解除の仕組みは持たない。CLIによる新規作成では新UIDを発行し、内容一致から旧UIDを推定しない。Git履歴からUIDを含むファイルを復元した場合は元UIDが戻るため、すべての再登場が別要素になるとは保証しない。
 _Avoid_：Restore／Release(ID予約解除)(厳密な同一性保証の仕組みとしては導入しないため、退役に統合する)。

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-11; design agreed, implementation pending). It keeps [0020](0020-execution-status-lightweight-model.md)'s stance — execution results and evidence stay outside markharness — and adds the smallest type that records only *what was chosen for verification* in a release.
+Accepted (2026-09-11; design agreed, implementation pending). It keeps [0020](0020-execution-status-lightweight-model.md)'s stance — execution results and evidence stay outside markharness — and adds the smallest type that records only *what was chosen for verification* in a release. [0025](0025-v2-forward-compatible-evolution.md) keeps it as a record kind distinct from any future `ReleasePlan`; it is never reinterpreted as a complete plan.
 
 ## Background
 

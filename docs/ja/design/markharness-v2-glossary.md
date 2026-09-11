@@ -26,12 +26,12 @@ markharnessは、Gitネイティブなテスト知識(`knowledge/`)と、外部�
 
 **Spec-Reviewedトレーラー**：対応確認で「変更不要」と判断したことを記録するcommit trailer。変更のコミットと同時に書き添える。
 
-**Execution status**：TestCaseに付与する軽量な記録で、**検証手段(`automated`／`manual`)とその参照先**を表す。pass/fail等の詳細・実行日時・証跡本体・実行環境は持たないため、値の存在は「最新版で実行済み」を意味しない。
+**Execution Binding**：TestCaseと**検証手段(`automated`／`manual`)およびその参照先**の対応宣言。pass/fail等の詳細・実行日時・証跡本体・実行環境は持たないため、値の存在は「最新版で実行済み」を意味しない。将来のExecution Factとは別の型・record kindとして扱う([0025](../decisions/0025-v2-forward-compatible-evolution.md))。
 
 **Change Impact**：base/head間の差分から算出する、影響を受けるFeature・Requirement・TestCaseの一覧。PR単位の確認に使う。
 
 **Release scope(選定スコープ)**：あるリリースで検証対象に選んだTestCaseの一覧(`ReleaseScope`)。`release_id`とCase UIDの配列だけを持ち、日時・担当者・承認状態・合否は持たない。人がCLIで記録する宣言であり、実行された証跡ではない([0024](../decisions/0024-release-scope-selection-list.md))。
 
-**Release Coverage**：指定したGit ref時点で登録されていたTestCaseと検証手段の一覧。Requirement/Feature集合全体に対する対応関係の欠落(coverage gap)も示す。実際に選定・実行された事実ではなく、リリース判断の補助情報である(設計書§6.2)。
+**Release Coverage**：指定したGit ref時点で登録されていたTestCaseとExecution Bindingの一覧。Requirement/Feature集合全体に対する対応関係の欠落(coverage gap)も示す。実際に選定・実行された事実ではなく、リリース判断の補助情報である(設計書§6.2)。
 
 **Retire(退役)**：TestCaseまたはFeatureを現在の対象から外すこと。UIDの再利用保証や、同一UIDでの明示的な復元・ID予約解除の仕組みは持たない。

@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(設計合意済み、未実装)。[markharness-v2-design.md](../design/markharness-v2-design.md)の再設計grillingセッション(2026-09-11)に基づく。[0013](0013-immutable-identity-model.md)のうち、retire・restore・release・reissue(同一UIDでの明示的な復元、旧idの予約解除)に関する部分を置き換える。UID発行、UIDとidの分離、rename時のUID維持など、それ以外の決定内容はそのまま有効。
+Accepted(設計合意済み、未実装)。[markharness-v2-design.md](../design/markharness-v2-design.md)の再設計grillingセッション(2026-09-11)に基づく。[0013](0013-immutable-identity-model.md)のうち、retire・restore・release・reissue(同一UIDでの明示的な復元、旧idの予約解除)に関する部分を置き換える。UID発行、UIDとidの分離、rename時のUID維持など、それ以外の決定内容はそのまま有効。将来完全なlifecycleを再導入する場合のcutover原則は[0025](0025-v2-forward-compatible-evolution.md)で補足する。
 
 ## 背景
 

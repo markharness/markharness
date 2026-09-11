@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(設計合意済み、未実装)。[markharness-v2-design.md](../design/markharness-v2-design.md)の再設計grillingセッション(2026-09-11)に基づく。[0017](0017-scenario-case-revision-and-execution-evidence.md)§5「実行証跡と適用可能性」が定めるEvidence適用可能性モデルを、本ADRの範囲(TestCaseに付与する実行実績の記録)について置き換える。§1〜4(Scenario/共通手順/Case revision/分割・統合)は本ADRの対象外であり、そのまま有効。
+Accepted(設計合意済み、未実装)。[markharness-v2-design.md](../design/markharness-v2-design.md)の再設計grillingセッション(2026-09-11)に基づく。[0017](0017-scenario-case-revision-and-execution-evidence.md)§5「実行証跡と適用可能性」が定めるEvidence適用可能性モデルを、本ADRの範囲(TestCaseに付与する実行実績の記録)について置き換える。§1〜4(Scenario/共通手順/Case revision/分割・統合)は本ADRの対象外であり、そのまま有効。[0025](0025-v2-forward-compatible-evolution.md)により型名は`ExecutionBinding`へ変更されたが、本ADRの軽量化判断と保持情報は有効である。
 
 ## 背景
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (design agreed, implementation pending). Based on the redesign grilling session (2026-09-11) for [markharness-v2-design.md](../design/markharness-v2-design.md). Supersedes, within its own scope (execution records attached to a TestCase), the Evidence Applicability model in [0017](0017-scenario-case-revision-and-execution-evidence.md) §5 ("Execution evidence and applicability"). §1–4 (Scenarios, shared procedures, Case revision, split/merge) are out of scope for this ADR and remain in effect.
+Accepted (design agreed, implementation pending). Based on the redesign grilling session (2026-09-11) for [markharness-v2-design.md](../design/markharness-v2-design.md). Supersedes, within its own scope (execution records attached to a TestCase), the Evidence Applicability model in [0017](0017-scenario-case-revision-and-execution-evidence.md) §5 ("Execution evidence and applicability"). §1–4 (Scenarios, shared procedures, Case revision, split/merge) are out of scope for this ADR and remain in effect. [0025](0025-v2-forward-compatible-evolution.md) renames the type to `ExecutionBinding`; this ADR's lightweight scope and retained information remain in force.
 
 ## Context
 

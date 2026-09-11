@@ -26,12 +26,12 @@ markharness lightly tracks Git-native test knowledge (`knowledge/`) against its 
 
 **Spec-Reviewed trailer**: A commit trailer recording that an alignment check concluded "no change required." Added alongside the change's own commit.
 
-**Execution status**: A lightweight record attached to a TestCase that states **the verification method (`automated` / `manual`) and where to look**. It holds no pass/fail detail, timestamp, evidence artifact, or execution environment, so the presence of a value does not mean "executed against the latest revision".
+**Execution Binding**: A declaration relating a TestCase to **a verification method (`automated` / `manual`) and where to look**. It holds no pass/fail detail, timestamp, evidence artifact, or execution environment, so the presence of a value does not mean "executed against the latest revision." It remains a type and record kind distinct from any future Execution Fact ([0025](../decisions/0025-v2-forward-compatible-evolution.md)).
 
 **Change Impact**: The list of affected Features, Requirements, and TestCases computed from the diff between base and head. Used for per-PR review.
 
 **Release scope**: The list of TestCases chosen for verification in a given release (`ReleaseScope`). It holds only a `release_id` and an array of Case UIDs — no timestamp, owner, approval state, or result. A human records it through the CLI; it is a declaration of choice, not evidence of a run ([0024](../decisions/0024-release-scope-selection-list.md)).
 
-**Release Coverage**: A listing of the TestCases and verification methods registered as of a given Git ref, including coverage gaps across the chosen set of Requirements/Features. It is not evidence of what was selected or executed — supporting information for release decisions (design §6.2).
+**Release Coverage**: A listing of the TestCases and Execution Bindings registered as of a given Git ref, including coverage gaps across the chosen set of Requirements/Features. It is not evidence of what was selected or executed — supporting information for release decisions (design §6.2).
 
 **Retire**: Removing a TestCase or Feature from the current target set. Carries no guarantee of UID reuse, nor any mechanism for explicit restore or id reservation under the same UID.
