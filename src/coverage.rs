@@ -254,11 +254,12 @@ pub fn compute(
     };
 
     let cases = cases_at(root, &at_commit)?;
-    let bindings: BTreeMap<String, ExecutionBinding> = binding::read_all(root)
+    // Read at the same ref as the Knowledge and the scope: a question about a
+    // past ref must be answered from what that ref recorded, not from today's
+    // working tree (design principle P3, AC11).
+    let bindings: BTreeMap<String, ExecutionBinding> = binding::read_all_at(root, &at_commit)
         .map_err(|e| CoverageError::Malformed {
-            path: binding::bindings_dir(root)
-                .to_string_lossy()
-                .replace('\\', "/"),
+            path: format!("{}/bindings", crate::project_root::MARKHARNESS_DIR),
             message: e.to_string(),
         })?
         .into_iter()

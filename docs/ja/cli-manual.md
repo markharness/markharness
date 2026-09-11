@@ -1144,6 +1144,8 @@ markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at 
 
 **保存場所**: `.markharness/releases/<release-id>.yml`。Git管理下に置くことで `--at <ref>` による過去時点の再現(設計書P3)が成り立つ。`release-id` はこのパスの唯一の構成要素になるため、**ASCII小文字英数字・ハイフン・ドットのみ**を許し、空文字・`.`・`..`・先頭ドット・パス区切り・大文字を含む値は**ファイルを作る前に**拒否する。`v1.2.0` や `2026-08-release` のような一般的なtag名は通る。
 
+**`coverage` が読むものはすべて `--at` の時点**: Knowledge・選定リスト・binding のいずれも指定refのコミットから読む。未コミットの変更は反映されない(既定の `--at HEAD` でも同様)。片方だけを working tree から読むと、過去refへの問い合わせが今日の作業内容で変わってしまい、算出の再現性(設計書P3、AC11)が成り立たないため。
+
 **`--requirements` が判定範囲を決める**: 選定漏れ候補(`unselected_case_uids`)は「指定したRequirement集合から辿れるTestCaseのうち、選定リストに無いもの」である。選定リストの中身から範囲を逆算する方式は採らない — Requirementをまるごと選定し忘れた場合に、その最も危険な漏れを検出できなくなるため。全件を見たい場合は `--requirements all` を渡す。
 
 **出力**

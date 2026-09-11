@@ -1144,6 +1144,8 @@ markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at 
 
 **Storage**: `.markharness/releases/<release-id>.yml`. Keeping it under Git is what makes `--at <ref>` reproduce a past point in time (design principle P3). The `release-id` becomes the sole component of that path, so only **ASCII lowercase letters, digits, hyphens, and dots** are allowed; an empty value, `.`, `..`, a leading dot, a path separator, or an uppercase letter is refused **before any file is created**. Ordinary tag names such as `v1.2.0` or `2026-08-release` pass.
 
+**Everything `coverage` reads comes from `--at`**: the Knowledge, the selection list, and the bindings are all read from that ref's commit, so uncommitted changes are not reflected (including under the default `--at HEAD`). Reading any one of them from the working tree instead would let a query about a past ref change with today's work, breaking reproducibility (design principle P3, AC11).
+
 **`--requirements` is what bounds the answer**: missed-selection candidates (`unselected_case_uids`) are the TestCases reachable from the requested Requirements that the selection does not include. The bound is deliberately not derived from the selection itself — doing so would hide a Requirement that was left out whole, which is the most dangerous omission. Pass `--requirements all` to look at everything.
 
 **Output**

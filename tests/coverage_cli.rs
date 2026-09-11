@@ -157,6 +157,9 @@ fn coverage_reports_the_verification_means_when_a_binding_exists() {
         .status
         .success()
     );
+    // Everything `coverage` reads — Knowledge, selection, bindings — comes
+    // from the ref, so an uncommitted binding is not yet part of HEAD.
+    commit(dir.path(), "chore: record the binding");
 
     let value = coverage_json(dir.path(), &["--requirements", "all"]);
     let case = &value["requirements"][0]["cases"][0];
@@ -444,6 +447,49 @@ fn release_scope_show_exposes_only_the_selected_case_uids() {
         keys,
         vec!["case_uids", "record_kind", "release_id", "schema_version"],
         "{value}"
+    );
+}
+
+/// AC11 / AC06: a binding recorded after a tag must not leak into that
+/// tag's answer. Bindings are read at the same ref as the Knowledge and the
+/// selection, so a past-ref query cannot change when today's bindings do.
+#[test]
+fn a_binding_recorded_after_a_tag_does_not_appear_in_that_tags_coverage() {
+    let dir = project();
+    let case_uid = case_uid_of(dir.path());
+    assert!(git(dir.path(), &["tag", "before-binding"]).status.success());
+
+    assert!(
+        run(&[
+            "binding",
+            "set",
+            "--case-uid",
+            &case_uid,
+            "--mode",
+            "automated",
+            "--reference",
+            "tests/jump.spec.ts",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ])
+        .status
+        .success()
+    );
+    commit(dir.path(), "chore: record a binding after the tag");
+
+    let at_tag = coverage_json(
+        dir.path(),
+        &["--requirements", "all", "--at", "before-binding"],
+    );
+    assert!(
+        at_tag["requirements"][0]["cases"][0]["binding_mode"].is_null(),
+        "a binding made after the tag must not appear at that tag: {at_tag}"
+    );
+
+    let at_head = coverage_json(dir.path(), &["--requirements", "all"]);
+    assert_eq!(
+        at_head["requirements"][0]["cases"][0]["binding_mode"],
+        "automated"
     );
 }
 

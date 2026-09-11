@@ -185,44 +185,77 @@ pub fn read_all(root: &Path) -> Result<Vec<ExecutionBinding>, BindingError> {
     let mut bindings = Vec::with_capacity(paths.len());
     for path in paths {
         let content = fs::read_to_string(&path)?;
-        let binding: ExecutionBinding =
-            serde_yaml_ng::from_str(&content).map_err(|e| BindingError::Malformed {
-                path: path.clone(),
-                message: e.to_string(),
-            })?;
-        if binding.record_kind != RECORD_KIND {
-            return Err(BindingError::Malformed {
-                path,
-                message: format!(
-                    "record_kind is \"{}\", expected \"{RECORD_KIND}\"",
-                    binding.record_kind
-                ),
-            });
-        }
-        // Fixed at 1 and never bumped (ADR 0026 §7), so any other value is a
-        // hand-edit or a record from a type this reader does not know —
-        // never something to interpret optimistically.
-        if binding.schema_version != SCHEMA_VERSION {
-            return Err(BindingError::Malformed {
-                path,
-                message: format!(
-                    "schema_version is {}, expected {SCHEMA_VERSION}",
-                    binding.schema_version
-                ),
-            });
-        }
-        let file_name_uid = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or_default();
-        if file_name_uid != binding.case_uid.as_str() {
-            return Err(BindingError::CaseUidMismatch {
-                file_name_uid: file_name_uid.to_string(),
-                content_uid: binding.case_uid.as_str().to_string(),
-                path,
-            });
-        }
-        bindings.push(binding);
+        bindings.push(parse_binding(&path, &content)?);
+    }
+    Ok(bindings)
+}
+
+/// Parses one stored binding and enforces every invariant `set_binding`
+/// writes under, so a working-tree read and a Git-ref read can never differ
+/// in what they accept.
+fn parse_binding(path: &Path, content: &str) -> Result<ExecutionBinding, BindingError> {
+    let binding: ExecutionBinding =
+        serde_yaml_ng::from_str(content).map_err(|e| BindingError::Malformed {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })?;
+    if binding.record_kind != RECORD_KIND {
+        return Err(BindingError::Malformed {
+            path: path.to_path_buf(),
+            message: format!(
+                "record_kind is \"{}\", expected \"{RECORD_KIND}\"",
+                binding.record_kind
+            ),
+        });
+    }
+    // Fixed at 1 and never bumped (ADR 0026 §7), so any other value is a
+    // hand-edit or a record from a type this reader does not know — never
+    // something to interpret optimistically.
+    if binding.schema_version != SCHEMA_VERSION {
+        return Err(BindingError::Malformed {
+            path: path.to_path_buf(),
+            message: format!(
+                "schema_version is {}, expected {SCHEMA_VERSION}",
+                binding.schema_version
+            ),
+        });
+    }
+    let file_name_uid = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    if file_name_uid != binding.case_uid.as_str() {
+        return Err(BindingError::CaseUidMismatch {
+            file_name_uid: file_name_uid.to_string(),
+            content_uid: binding.case_uid.as_str().to_string(),
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(binding)
+}
+
+/// Every binding recorded at `git_ref`, ordered by Case UID.
+///
+/// Kept distinct from [`read_all`] on purpose: a question asked about a past
+/// ref must be answered from what that ref recorded. Reading the working
+/// tree instead would make the same `--at <tag>` query change whenever
+/// today's bindings change.
+pub fn read_all_at(root: &Path, git_ref: &str) -> Result<Vec<ExecutionBinding>, BindingError> {
+    let mut entries: Vec<crate::git::TreeEntry> = crate::git::ls_tree_recursive(
+        root,
+        git_ref,
+        &format!("{}/bindings", crate::project_root::MARKHARNESS_DIR),
+    )?
+    .into_iter()
+    .filter(|entry| entry.kind == crate::git::ObjectKind::Blob && entry.path.ends_with(".yml"))
+    .collect();
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut bindings = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let content = crate::git::show_blob_by_sha(root, &entry.sha)?;
+        let path = PathBuf::from(&entry.path);
+        bindings.push(parse_binding(&path, &content)?);
     }
     Ok(bindings)
 }
