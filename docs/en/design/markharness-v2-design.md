@@ -88,7 +88,7 @@ Note that the current implementation also holds Requirement as a *native* entity
 Requirement {
   id,                    // display id (the current `requirement.yml` `id`); in external mode it equals StrictDoc's UID
   uid,                   // the current Requirement UID (ADR 0013) is preserved
-  source: native | external,   // defaults to native
+  source: native | external,   // required; there is no default (0026 §7)
   axis,                  // kept in both modes: markharness's own classification, not a copy of external content
 
   // required when source = native; not allowed in external mode
@@ -124,7 +124,7 @@ The many-to-many relation from Feature to Requirement reuses the existing `featu
 
 | Item | Current | This edition |
 |---|---|---|
-| `source` | Absent | Added; absent means `native` |
+| `source` | Absent | Added and **required**: a `requirement.yml` without it is rejected by `validate` ([0026](../decisions/0026-module-inventory-and-plan-removal.md) §7, AC09b) |
 | `requirement.yml`'s `label`/`description` | markharness holds body-equivalent content | Kept in native mode. Not allowed in external mode (P1 — when a display name is needed, the M3 StrictDoc Adapter fetches it on demand) |
 | `source_locator`/`source_revision` | Absent | Required in external mode, not allowed in native mode. Missing or mixed fields are rejected by `validate` |
 | `axis` | Held | Kept in both modes (markharness's own classification, not a copy of external content) |
@@ -132,7 +132,7 @@ The many-to-many relation from Feature to Requirement reuses the existing `featu
 | The interactive authoring flow's Requirement prompts (`src/interactive.rs`, `knowledge_draft.rs`) | Prompt for `label`/`axis` | Unchanged for native; only when external is chosen does it switch to a `source_locator` prompt (to stay consistent with AC02) |
 | `traceability.rs`'s Requirement index and `GeneratedFrom.requirement_ids`/`requirement_uids` | Implemented | Kept |
 
-Existing `requirement.yml` files stay valid as native (`source` omitted) and need no conversion. Moving one to external mode is a human rewrite; no automatic conversion is built (§2, no backward compatibility).
+`source` is required and has no default. [0023](../decisions/0023-requirement-native-and-external-source.md) §1's "omitted means native" existed to let existing files pass unchanged, so it does not apply under the rule that treats the past as never having existed ([0026](../decisions/0026-module-inventory-and-plan-removal.md) §7). Moving a Requirement to external mode is a human rewrite; no automatic conversion is built (§2, no backward compatibility).
 
 ### 5.3 Alignment check
 
@@ -241,7 +241,7 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 ### 9.1 Existing CLI, data, and UI
 
 - **Commands removed**: `identity retire`/`restore`/`release`/`reissue` ([0021](../decisions/0021-identity-retire-simplification.md)), `plan` ([0026](../decisions/0026-module-inventory-and-plan-removal.md)), `execution record` (replaced by `binding set`; [0020](../decisions/0020-execution-status-lightweight-model.md), [0025](../decisions/0025-v2-forward-compatible-evolution.md)), `serve` ([0022](../decisions/0022-remove-stage3-dashboard.md)), and `cache index` ([0026](../decisions/0026-module-inventory-and-plan-removal.md)). The exact removal scope is settled in the implementation checklist.
-- **Existing data**: **earlier schemas and data are treated as never having existed** (the no-backward-compatibility design rule in [CLAUDE.md](../../../CLAUDE.md)). `ExecutionBinding` reads only the new location `.markharness/bindings/`; the execution records under the old `.markharness/executions/` are never consulted. The removed event kinds are deleted from `IdentityMutation`, so a log containing them has no read path at all. No automatic conversion, no compatibility replay, and no diagnostic that names old data is built — each of those is compatibility code, which this rule excludes. An old directory left in the worktree changes nothing, because no code path reads it.
+- **Existing data**: **earlier schemas and data are treated as never having existed** (the no-backward-compatibility design rule in [CLAUDE.md](../../../CLAUDE.md)). `ExecutionBinding` reads only the new location `.markharness/bindings/`; the execution records under the old `.markharness/executions/` are never consulted. The removed event kinds are deleted from `IdentityMutation`, so a log containing them has no read path at all. No automatic conversion, no compatibility replay, and no diagnostic that names old data is built — each of those is compatibility code, which this rule excludes. An old directory left in the worktree changes nothing, because no code path reads it. For the same reason `requirement.yml`'s `source` is required and has no default (§5.2.1, AC09b).
 - **The existing dashboard**: `src/server.rs`, `ui/`, `markharness serve`, and the embedded frontend assets are deleted ([0022](../decisions/0022-remove-stage3-dashboard.md)). The removal happens at the same time as the `plan` reduction, together with the related tests (`tests/server.rs` and friends). A viewer outside this repository that reads `plan` output has to switch to Change Impact / Release Coverage output.
 
 ### 9.2 Contracts V2 preserves for future evolution
