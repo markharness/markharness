@@ -5,6 +5,7 @@
 #![warn(clippy::disallowed_methods)]
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
+pub mod alignment;
 pub mod application;
 pub mod audit_scope;
 pub mod axes;
@@ -19,6 +20,7 @@ pub mod generate;
 pub mod git;
 pub mod id_cache;
 pub mod identity;
+pub mod impact;
 pub mod init;
 pub mod interactive;
 pub mod knowledge;

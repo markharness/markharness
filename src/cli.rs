@@ -97,6 +97,30 @@ pub enum Command {
     /// Relate Features to Requirements, and re-pin an external Requirement (ADR 0023)
     #[command(subcommand)]
     Requirement(RequirementCommand),
+    /// Report which Requirements a base..head range touched, and whether the
+    /// corresponding TestCases were confirmed (ADR 0019, v2 design §6.1)
+    Impact {
+        /// Earlier Git revision. Required: inferring it from the local
+        /// branch layout would make the same range produce different results
+        /// on different machines (design principle P3, AC37).
+        #[arg(long)]
+        base: String,
+        /// Later Git revision
+        #[arg(long)]
+        head: String,
+        /// Stable output representation
+        #[arg(long, value_enum, default_value = "json")]
+        format: ImportFormatArg,
+        /// Exit with code 2 when anything needs attention (an unconfirmed or
+        /// followed-up pair, a stale pin, a rejected trailer). Off by default:
+        /// whether a finding should fail CI is the team's policy, not this
+        /// tool's.
+        #[arg(long)]
+        fail_on_findings: bool,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
     /// Validate knowledge/ and axes/ against schema/*.schema.json plus axis/forked_from cross-references (§3.5/§3.6)
     Validate {
         /// Target project directory. Defaults to the current directory.
@@ -1124,6 +1148,36 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     Ok(())
                 }
                 Err(crate::requirement::RequirementOpError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Impact {
+            base,
+            head,
+            format: ImportFormatArg::Json,
+            fail_on_findings,
+            dir,
+        } => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::impact::compute(&root, &base, &head) {
+                Ok(impact) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&impact)
+                            .expect("change impact serialization is infallible")
+                    );
+                    if fail_on_findings && impact.has_findings() {
+                        std::process::exit(2);
+                    }
+                    Ok(())
+                }
+                Err(crate::impact::ImpactError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }
