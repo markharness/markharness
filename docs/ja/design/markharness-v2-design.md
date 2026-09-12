@@ -88,7 +88,7 @@ Feature・Behavior・Scenario・TestCase・Axis・Case revision・ChangeEventは
 Requirement {
   id,                    // 表示ID(現行`requirement.yml`の`id`)。externalではStrictDoc側UIDと一致させる
   uid,                   // 現行のRequirement UID(ADR 0013)を維持する
-  source: native | external,   // 既定はnative
+  source: native | external,   // 必須。省略時のdefaultは持たない(0026 §7)
   axis,                  // 両モードで保持する。markharness自身の分類であり外部正本の複製ではない
 
   // source = native のとき必須、externalでは書けない
@@ -124,7 +124,7 @@ FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型�
 
 | 項目 | 現行 | 本版 |
 |---|---|---|
-| `source` | 無し | 追加。省略時は`native`とみなす |
+| `source` | 無し | 追加。**必須**とし、省略した`requirement.yml`は`validate`で拒否する([0026](../decisions/0026-module-inventory-and-plan-removal.md)§7、AC09b) |
 | `requirement.yml`の`label`/`description` | markharnessが本文相当を保持 | nativeでは維持。externalでは書けない(P1。表示名が必要になった時点でM3のStrictDoc Adapterが都度取得する) |
 | `source_locator`/`source_revision` | 無し | externalで必須、nativeでは書けない。欠落・混在は`validate`で拒否する |
 | `axis` | 保持 | 両モードで保持(markharness自身の分類であり外部正本の複製ではない) |
@@ -132,7 +132,7 @@ FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型�
 | 対話作成フロー(`src/interactive.rs`・`knowledge_draft.rs`)のRequirement入力 | `label`/`axis`を入力 | nativeはそのまま。externalを選んだ場合のみ`source_locator`入力へ切り替える(AC02と整合させるため) |
 | `traceability.rs`のRequirement索引・`GeneratedFrom.requirement_ids`/`requirement_uids` | 実装済み | 維持 |
 
-既存`requirement.yml`は`source`省略=nativeとしてそのまま有効であり、変換は不要である。externalへ移す場合は人が書き直す(§2の後方互換不要方針により自動変換は作らない)。
+`source`は必須であり、省略時のdefaultは持たない。[0023](../decisions/0023-requirement-native-and-external-source.md)§1の「省略時はnative」は既存ファイルを無変更で通すための互換規定であったため、過去を無かったものとして扱う方針([0026](../decisions/0026-module-inventory-and-plan-removal.md)§7)の下では適用しない。externalへ移す場合は人が書き直す(§2の後方互換不要方針により自動変換は作らない)。
 
 ### 5.3 対応確認(Alignment check)
 
@@ -241,7 +241,7 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 ### 9.1 既存CLI・既存データ・既存UIの扱い
 
 - **廃止するCLI**：`identity retire`/`restore`/`release`/`reissue`([0021](../decisions/0021-identity-retire-simplification.md))、`plan`([0026](../decisions/0026-module-inventory-and-plan-removal.md))、`execution record`(`binding set`へ置換、[0020](../decisions/0020-execution-status-lightweight-model.md)・[0025](../decisions/0025-v2-forward-compatible-evolution.md))、`serve`([0022](../decisions/0022-remove-stage3-dashboard.md))、`cache index`([0026](../decisions/0026-module-inventory-and-plan-removal.md))。削除範囲は実装時のチェックリストで確定する。
-- **既存データ**：**過去のスキーマ・データは最初から存在しなかったものとして扱う**([CLAUDE.md](../../../CLAUDE.md)の後方互換を想定しない設計ルール)。`ExecutionBinding`は新しい保存先`.markharness/bindings/`のみを読み、旧`.markharness/executions/`配下の実行記録は参照しない。廃止したevent種別は`IdentityMutation`から削除されるため、それを含むログは読み取り経路に存在しない。自動変換も、互換replayも、旧データを名指しする診断も実装しない——いずれも互換コードであり、本方針の排除対象である。旧ディレクトリがworktreeに残っていても新コードのどの経路も読まないため、動作には影響しない。
+- **既存データ**：**過去のスキーマ・データは最初から存在しなかったものとして扱う**([CLAUDE.md](../../../CLAUDE.md)の後方互換を想定しない設計ルール)。`ExecutionBinding`は新しい保存先`.markharness/bindings/`のみを読み、旧`.markharness/executions/`配下の実行記録は参照しない。廃止したevent種別は`IdentityMutation`から削除されるため、それを含むログは読み取り経路に存在しない。自動変換も、互換replayも、旧データを名指しする診断も実装しない——いずれも互換コードであり、本方針の排除対象である。旧ディレクトリがworktreeに残っていても新コードのどの経路も読まないため、動作には影響しない。同じ理由で`requirement.yml`の`source`は必須とし、省略時のdefaultを持たない(§5.2.1、AC09b)。
 - **既存dashboard**：`src/server.rs`・`ui/`・`markharness serve`・frontendのbinary同梱を削除する([0022](../decisions/0022-remove-stage3-dashboard.md))。削除は`plan`縮小と同じタイミングで行い、`tests/server.rs`等の関連テストも同時に削除する。リポジトリ外のviewerが`plan`出力を参照している場合は、Change Impact/Release Coverage出力への切替が必要になる。
 
 ### 9.2 将来拡張性としてV2に残す契約
