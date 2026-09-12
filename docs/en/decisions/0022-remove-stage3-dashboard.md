@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-11; design agreed, implementation pending). This removes the Release Verification Dashboard built in [0008](0008-verification-plan-product-roadmap.md) Stage 3. The rest of [0008](0008-verification-plan-product-roadmap.md) — the record of Stages 0–2 and the modular-monolith stance — remains in effect.
+Accepted (decided 2026-09-11, implemented 2026-09-12; see `checklist-v2-core.md`). This removes the Release Verification Dashboard built in [0008](0008-verification-plan-product-roadmap.md) Stage 3. The rest of [0008](0008-verification-plan-product-roadmap.md) — the record of Stages 0–2 and the modular-monolith stance — remains in effect.
 
 ## Background
 

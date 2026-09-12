@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(2026-09-11、設計合意済み・未実装)。[0020](0020-execution-status-lightweight-model.md)が定める「実行結果・証跡をmarkharnessの責務から外す」方針は維持したまま、「そのリリースで何を検証対象に選んだか」だけを記録する最小の型を追加する。[0025](0025-v2-forward-compatible-evolution.md)により、将来の`ReleasePlan`とは別のrecord kindとして維持し、完全な計画へ読み替えない。
+Accepted(2026-09-11決定、2026-09-12実装完了。`checklist-v2-core.md`参照)。[0020](0020-execution-status-lightweight-model.md)が定める「実行結果・証跡をmarkharnessの責務から外す」方針は維持したまま、「そのリリースで何を検証対象に選んだか」だけを記録する最小の型を追加する。[0025](0025-v2-forward-compatible-evolution.md)により、将来の`ReleasePlan`とは別のrecord kindとして維持し、完全な計画へ読み替えない。
 
 ## 背景
 

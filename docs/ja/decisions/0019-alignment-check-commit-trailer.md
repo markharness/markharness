@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(設計合意済み、未実装)。[markharness-v2-design.md](../design/markharness-v2-design.md)の再設計grillingセッション(2026-09-11)に基づく。
+Accepted(2026-09-12実装完了。`checklist-v2-core.md`参照)。[markharness-v2-design.md](../design/markharness-v2-design.md)の再設計grillingセッション(2026-09-11)に基づく。
 
 ## 背景
 

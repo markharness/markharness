@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted（2026-09-11、設計合意済み、未実装）。V2でStrictDoc→markharness→Playwrightの縦方向の流れを実運用し、その観測結果から必要な完全モデルだけを追加する方針を定める。[0020](0020-execution-status-lightweight-model.md)の記録名を`ExecutionBinding`へ改めるが、保持する情報とMVPの責務境界は変更しない。
+Accepted（2026-09-11決定、2026-09-12実装完了。`checklist-v2-core.md`参照）。V2でStrictDoc→markharness→Playwrightの縦方向の流れを実運用し、その観測結果から必要な完全モデルだけを追加する方針を定める。[0020](0020-execution-status-lightweight-model.md)の記録名を`ExecutionBinding`へ改めるが、保持する情報とMVPの責務境界は変更しない。
 
 ## 背景
 

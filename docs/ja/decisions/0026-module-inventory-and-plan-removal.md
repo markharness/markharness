@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(2026-09-11、設計合意済み・未実装)。[markharness-v2-design.md](../design/markharness-v2-design.md)§9が「棚卸し対象」「要判断」として保留していたモジュールの帰結を確定する。あわせて[0019](0019-alignment-check-commit-trailer.md)〜[0025](0025-v2-forward-compatible-evolution.md)の実装にあたり、後方互換を一切考えないことを明文化する。
+Accepted(2026-09-11決定、2026-09-12実装完了。`checklist-v2-core.md`参照)。[markharness-v2-design.md](../design/markharness-v2-design.md)§9が「棚卸し対象」「要判断」として保留していたモジュールの帰結を確定する。あわせて[0019](0019-alignment-check-commit-trailer.md)〜[0025](0025-v2-forward-compatible-evolution.md)の実装にあたり、後方互換を一切考えないことを明文化する。
 
 ## 背景
 

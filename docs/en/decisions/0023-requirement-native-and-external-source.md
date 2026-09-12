@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-11; design agreed, implementation pending). It keeps the native Requirement defined by [0017](0017-scenario-case-revision-and-execution-evidence.md) §1/§3 (many-to-many Feature↔Requirement, with the Feature side owning the relation) and adds a mode in which an external spec document owns the content.
+Accepted (decided 2026-09-11, implemented 2026-09-12; see `checklist-v2-core.md`). It keeps the native Requirement defined by [0017](0017-scenario-case-revision-and-execution-evidence.md) §1/§3 (many-to-many Feature↔Requirement, with the Feature side owning the relation) and adds a mode in which an external spec document owns the content.
 
 ## Background
 

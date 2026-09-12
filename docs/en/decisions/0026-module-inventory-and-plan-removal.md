@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-09-11, agreed in design, not yet implemented). Settles the modules that [markharness-v2-design.md](../design/markharness-v2-design.md) §9 had deferred as "to be inventoried" or "decision needed", and states explicitly that the implementation of [0019](0019-alignment-check-commit-trailer.md)–[0025](0025-v2-forward-compatible-evolution.md) considers no backward compatibility at all.
+Accepted (decided 2026-09-11, implemented 2026-09-12; see `checklist-v2-core.md`). Settles the modules that [markharness-v2-design.md](../design/markharness-v2-design.md) §9 had deferred as "to be inventoried" or "decision needed", and states explicitly that the implementation of [0019](0019-alignment-check-commit-trailer.md)–[0025](0025-v2-forward-compatible-evolution.md) considers no backward compatibility at all.
 
 ## Context
 

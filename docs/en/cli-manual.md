@@ -805,11 +805,11 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   - `behavior`/`condition` do not affect Feature-level change *detection* itself (which Feature gets a `ChangeEvent`, rename tracking, `true_divergences`) — only the narrowing of `impacted_testcases`.
   - **Caveat (false-negative risk)**: The Behavior/Condition schema has no field expressing dependencies between siblings, and this command does not detect or infer any. A Feature boundary may encode an author's implicit coupling (shared setup, preconditions, etc.) that `behavior`/`condition` deliberately ignores in exchange for precision over recall. Since the tool cannot guarantee this trade-off is safe for any given project, the choice is left to the user's judgment of their own project.
   - The chosen granularity, and the evidence for the narrowing, are recorded on each computed `ChangeEvent`'s `impact_reason` field (`granularity` and `changed_paths`; see the output examples below). `changed_paths` is only populated for `behavior`/`condition`: the marker-file paths (`behavior.yml`/`condition.yml`) of the Behaviors/Conditions whose tree SHA actually changed (or was added/removed). It is empty for `feature`, since that granularity doesn't resolve individual Behaviors/Conditions.
-- `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.18) (§3.5).
+- `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.19) (§3.5).
 - Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.11), keyed by content-addressing.
 - On success, human output appends one `warning: ...` line per side that fell back to legacy schema version 1; `--json` output includes the same messages as a `"warnings"` array in the existing JSON envelope. Neither appears when both refs have a recorded `[knowledge].schema_version` — the JSON `"warnings"` key is omitted entirely rather than emitted as `[]`, since only optional field additions are allowed within one `schema_version` (§5 of [verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)).
 - If either `from-milestone` or `to-milestone` has a `.markharness/executions/<name>/milestone.yml` whose recorded `commit_oid`/`knowledge_schema_version` disagrees with what that tag now resolves to, the command errors out before computing anything (a moved tag, or a hand-edited file — [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)). A `milestone.yml` predating those fields is not checked.
-- The `from-milestone..to-milestone` interval is traversed with `git rev-list --ancestry-path`, and for every two-parent merge commit present within the interval, the section 1.19 `lineage` determination logic is internally run using `git merge-base` (oldest first). If a target Feature is judged a `true_divergence` (true divergence) at any of the merges, an entry consisting of `merge_commit` (the merge commit SHA, for auditing) and `parent_tree_shas: [P1, P2]` is appended to the `true_divergences` field, in the order they occurred (§3.2). If the same Feature undergoes true divergence multiple times within the interval, all of them are recorded. For a normal linear history, or when there is no merge within the interval, it remains an empty array.
+- The `from-milestone..to-milestone` interval is traversed with `git rev-list --ancestry-path`, and for every two-parent merge commit present within the interval, the section 1.20 `lineage` determination logic is internally run using `git merge-base` (oldest first). If a target Feature is judged a `true_divergence` (true divergence) at any of the merges, an entry consisting of `merge_commit` (the merge commit SHA, for auditing) and `parent_tree_shas: [P1, P2]` is appended to the `true_divergences` field, in the order they occurred (§3.2). If the same Feature undergoes true divergence multiple times within the interval, all of them are recorded. For a normal linear history, or when there is no merge within the interval, it remains an empty array.
 - **Note on branch-strategy dependence**: The `from_tree_sha`/`to_tree_sha` diff detection itself does not depend on the branch strategy (merge/squash/rebase/fast-forward), but `true_divergences` presupposes that a two-parent merge commit actually remains within the milestone interval; with squash merges, rebases, or fast-forward merges, the divergence relationship of the original branch is lost from the commit graph, so it is not detected (remains an empty array; paper §3.4 Table 2).
 
 **Output example** (`.markharness/changes/m2.yaml`, linear history case)
@@ -1130,7 +1130,60 @@ Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-requ
 
 ---
 
-### 1.18 `markharness changes annotate` — Post-hoc entry of change_type / related_events (§3.5)
+### 1.18 `markharness release scope` / `markharness coverage` — Release selection lists and Release Coverage (ADR 0024, design §6.2)
+
+```text
+markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...] [-d, --dir <path>]
+markharness release scope show --release <release-id> [--at <ref>] [--format json] [-d, --dir <path>]
+markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at <ref>] [--format json] [-d, --dir <path>]
+```
+
+**Purpose**: Records what a release chose to verify, and lists — for a chosen set of Requirements — whether a means of verification exists and whether anything looks left out of the selection.
+
+**What `ReleaseScope` does not carry** (ADR 0024 §2): selection timestamp, chooser, approval state, pass/fail, execution result, target build, environment, or a structured reason. The Git history of the file records how the selection came about. **Being in a selection is a declaration that it was chosen — never that it ran, and never that it passed** (ADR 0024 §5). The output never conflates "selected" with "executed".
+
+**Storage**: `.markharness/releases/<release-id>.yml`. Keeping it under Git is what makes `--at <ref>` reproduce a past point in time (design principle P3). The `release-id` becomes the sole component of that path, so only **ASCII lowercase letters, digits, hyphens, and dots** are allowed; an empty value, `.`, `..`, a leading dot, a path separator, or an uppercase letter is refused **before any file is created**. Ordinary tag names such as `v1.2.0` or `2026-08-release` pass.
+
+**Everything `coverage` reads comes from `--at`**: the Knowledge, the selection list, and the bindings are all read from that ref's commit, so uncommitted changes are not reflected (including under the default `--at HEAD`). Reading any one of them from the working tree instead would let a query about a past ref change with today's work, breaking reproducibility (design principle P3, AC11).
+
+**`--requirements` is what bounds the answer**: missed-selection candidates (`unselected_case_uids`) are the TestCases reachable from the requested Requirements that the selection does not include. The bound is deliberately not derived from the selection itself — doing so would hide a Requirement that was left out whole, which is the most dangerous omission. Pass `--requirements all` to look at everything.
+
+**Output**
+
+| Field | Meaning |
+| --- | --- |
+| `requirements[].cases[].binding_mode` / `binding_reference` | That TestCase's verification means (section 1.15). **Its presence does not mean anything ran** |
+| `requirements[].cases[].selected` | Only with `--release`: whether the selection includes it |
+| `gaps[].kind = requirement_has_no_feature` | No Feature contributes to this Requirement (AC08) |
+| `gaps[].kind = feature_has_no_case` | A Feature contributes, but nothing underneath it produces a TestCase (AC21) |
+| `release.selected_case_uids` | Selected, and present in the Knowledge at that ref |
+| `release.unselected_case_uids` | In scope of the requested Requirements but not selected (missed-selection candidates, AC25) |
+| `release.absent_case_uids` | Selected, but absent from the Knowledge at that ref (AC26). The selection is never rewritten automatically |
+
+**A release with no recorded selection**: if the release passed to `--release` has no scope on record, the `release` field is omitted and only the registered state is returned. A selection that was never recorded is never inferred (ADR 0024 §4).
+
+**Exit codes**
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 2 | The `release-id` is unusable as a file name, a requested Requirement does not exist, or a stored record is malformed |
+| 3 | Filesystem error |
+
+**Example**
+
+```console
+$ markharness release scope set --release v1.2.0 --case-uid 01ARZ... --case-uid 01BRZ...
+recorded 2 case(s) for v1.2.0 in .markharness/releases/v1.2.0.yml
+
+$ markharness coverage --requirements all --release v1.2.0 --at v1.2.0
+```
+
+**Use case mapping**: design §1's question 3, "which tests were in the verification scope of the last release". Only a release that recorded a selection can be answered down to *what was chosen*; for one that did not, the answer reaches the registered state at that point and stops.
+
+---
+
+### 1.19 `markharness changes annotate` — Post-hoc entry of change_type / related_events (§3.5)
 
 ```text
 markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
@@ -1160,7 +1213,7 @@ set related_events on player-jump--m2--m3
 
 ---
 
-### 1.19 `markharness changes lineage` — Lineage audit via merge-base ancestor search (§3.2, secondary feature)
+### 1.20 `markharness changes lineage` — Lineage audit via merge-base ancestor search (§3.2, secondary feature)
 
 ```text
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
@@ -1184,7 +1237,7 @@ player-jump: linear
 
 ---
 
-### 1.20 `markharness validate` — Structural validation of .markharness/knowledge/, .markharness/axes/, .markharness/bindings/ (§3.5/§3.6)
+### 1.21 `markharness validate` — Structural validation of .markharness/knowledge/, .markharness/axes/, .markharness/bindings/ (§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
@@ -1214,7 +1267,7 @@ $ echo $?
 
 ---
 
-### 1.21 `markharness --version` / `-V` — Display version
+### 1.22 `markharness --version` / `-V` — Display version
 
 ```text
 markharness --version
@@ -1232,7 +1285,7 @@ markharness 0.3.1
 
 ---
 
-### 1.22 `markharness axes prune` — Detect/delete unused axes
+### 1.23 `markharness axes prune` — Detect/delete unused axes
 
 ```text
 markharness axes prune [--delete] [--json] [-d, --dir <path>]
@@ -1267,7 +1320,7 @@ $ markharness axes list --dir tmp/todo-sample --json
 
 ---
 
-### 1.23 `markharness knowledge scaffold` — Print a blank draft YAML template
+### 1.24 `markharness knowledge scaffold` — Print a blank draft YAML template
 
 ```text
 markharness knowledge scaffold [--out <path>]
@@ -1301,7 +1354,7 @@ $ echo $?
 
 ---
 
-### 1.24 `markharness import` — Emit a canonical snapshot
+### 1.25 `markharness import` — Emit a canonical snapshot
 
 ```text
 markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
@@ -1311,7 +1364,7 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
-### 1.25 `markharness feature rename-id` — Rename a Feature's id while preserving its uid (ADR 0013)
+### 1.26 `markharness feature rename-id` — Rename a Feature's id while preserving its uid (ADR 0013)
 
 ```text
 markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
@@ -1338,7 +1391,7 @@ renamed Feature 'todo' to 'todo-v2' (uid preserved)
 
 ---
 
-### 1.26 `markharness identity migrate` — Bulk-issue uids for every Knowledge element kind (ADR 0013, design doc §12 and §13 Phase 4/5)
+### 1.27 `markharness identity migrate` — Bulk-issue uids for every Knowledge element kind (ADR 0013, design doc §12 and §13 Phase 4/5)
 
 ```text
 markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
@@ -1346,7 +1399,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 
 **Purpose**: Issues a fresh uid, and records a root `Issued` identity event, for every Requirement/Feature/Behavior/Condition/ExpectedResult under `.markharness/knowledge/` that doesn't have one yet. Idempotent — safe to re-run after copy/import/hand-editing introduces new uid-less elements. Also records TestCase `case_id` → `case_uid` mappings (the migration manifest, `.markharness/identity-migration-manifest.yml`).
 
-Once every one of the five kinds has zero uid-less elements left, writes `schema_version = 1` / `mode = "uid"` into `.markharness/config.toml`'s `[identity]` marker, completing the public cutover to UID mode (design doc §13 Phase 5). Cutover completion is determined by `mode` alone, not `schema_version` (ADR 0018). After cutover, `markharness validate` (section 1.20) starts reporting any newly introduced uid-less element as a validation issue.
+Once every one of the five kinds has zero uid-less elements left, writes `schema_version = 1` / `mode = "uid"` into `.markharness/config.toml`'s `[identity]` marker, completing the public cutover to UID mode (design doc §13 Phase 5). Cutover completion is determined by `mode` alone, not `schema_version` (ADR 0018). After cutover, `markharness validate` (section 1.21) starts reporting any newly introduced uid-less element as a validation issue.
 
 **Precondition**: The target directory must already be a Git repository. To record the legacy snapshot identity (the tree SHA of `.markharness/knowledge`) into the migration manifest, this internally performs a `git write-tree`-equivalent operation against a disposable temporary index (the repository's real staging area is never touched).
 
@@ -1388,7 +1441,7 @@ $ markharness identity migrate --json
 
 ---
 
-### 1.27 `markharness identity resolve` — Explicitly resolve a branch divergence (ADR 0013, design doc §7)
+### 1.28 `markharness identity resolve` — Explicitly resolve a branch divergence (ADR 0013, design doc §7)
 
 ```text
 markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
@@ -1408,7 +1461,7 @@ markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
 
 ---
 
-### 1.28 `markharness identity audit` — Full commit-history identity audit (IdentityAuditor, ADR 0013, design doc §11)
+### 1.29 `markharness identity audit` — Full commit-history identity audit (IdentityAuditor, ADR 0013, design doc §11)
 
 ```text
 markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
@@ -1449,7 +1502,7 @@ $ echo $?
 
 ---
 
-### 1.29 `markharness identity sync` — Re-derive a Knowledge file's id:/uid: from its identity event log
+### 1.30 `markharness identity sync` — Re-derive a Knowledge file's id:/uid: from its identity event log
 
 ```text
 markharness identity sync <KIND> <UID> [-d, --dir <path>]

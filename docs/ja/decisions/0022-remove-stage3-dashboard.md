@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(2026-09-11、設計合意済み・未実装)。[0008](0008-verification-plan-product-roadmap.md) Stage 3で実装したRelease Verification Dashboardを廃止する決定であり、[0008](0008-verification-plan-product-roadmap.md)のその他の内容(Stage 0〜2の実装記録、モジュラーモノリス方針)はそのまま有効。
+Accepted(2026-09-11決定、2026-09-12実装完了。`checklist-v2-core.md`参照)。[0008](0008-verification-plan-product-roadmap.md) Stage 3で実装したRelease Verification Dashboardを廃止する決定であり、[0008](0008-verification-plan-product-roadmap.md)のその他の内容(Stage 0〜2の実装記録、モジュラーモノリス方針)はそのまま有効。
 
 ## 背景
 

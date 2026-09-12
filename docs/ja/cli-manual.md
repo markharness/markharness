@@ -805,11 +805,11 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
   - `behavior`/`condition`はFeature単位の変更検出そのもの(どのFeatureに`ChangeEvent`を1件生成するか、rename追跡、`true_divergences`判定)には影響しない。影響するのは`impacted_testcases`の絞り込みのみ。
   - **注意(false negativeのリスク)**: Behavior/Conditionのスキーマには兄弟間の依存関係を表すフィールドが存在せず、本コマンドはそれを検出・推論しない。Feature境界には著者が暗黙に込めた関連性(共有のセットアップ、前提条件等)が含まれている可能性があり、`behavior`/`condition`はその関連性を意図的に無視した上で再現率(recall)を精度(precision)と引き換える機能である。この判断はツール側では保証できないため、利用者が個々のプロジェクトの実情に応じて選択する必要がある。
   - 選択した粒度と、絞り込みの根拠は算出された各`ChangeEvent`の`impact_reason`フィールド(`granularity`と`changed_paths`)に記録される(後述の出力例を参照)。`changed_paths`は`behavior`/`condition`のときのみ、実際にtree SHAが変化した(または追加/削除された)Behavior/Conditionのマーカーファイルパス(`behavior.yml`/`condition.yml`)の一覧であり、`feature`のときは空配列になる(Feature単位では個々のBehavior/Conditionを解決しないため)。
-- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.18節)で事後入力する運用(§3.5)。
+- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.19節)で事後入力する運用(§3.5)。
 - `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.11節)。
 - 成功時、人間向け出力にはlegacyスキーマバージョン1へフォールバックした側ごとに`warning: ...`行が追加される。`--json`出力では同じメッセージが既存のJSON envelope内の`"warnings"`配列として含まれる。両refが`[knowledge].schema_version`を記録している場合はどちらも出力されない — JSON側の`"warnings"`キーは`[]`としてではなく、キー自体を省略する。同一`schema_version`内での追加はoptionalなフィールドに限られるため([verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)§5)。
 - `from-milestone`・`to-milestone`のいずれかに`.markharness/executions/<name>/milestone.yml`が存在し、その記録された`commit_oid`/`knowledge_schema_version`がそのtagの現在の解決結果と食い違っている場合(tagの移動、または手編集)、何も計算せずエラー終了する([decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))。これらのフィールドを持たない`milestone.yml`は検証対象外。
-- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.19節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
+- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.20節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
 - **ブランチ戦略への依存に注意**：`from_tree_sha`/`to_tree_sha`の差分検出そのものはブランチ戦略(merge/squash/rebase/fast-forward)に依存しないが、`true_divergences`はマイルストーン区間内に2親を持つマージコミットが実際に残っていることが前提であり、squash mergeやrebase・fast-forward mergeでは元ブランチの分岐関係がコミットグラフから失われるため検出されない(空配列のまま。論文§3.4表2)。
 
 **出力例**(`.markharness/changes/m2.yaml`、線形履歴の場合)
@@ -1130,7 +1130,60 @@ Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-requ
 
 ---
 
-### 1.18 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
+### 1.18 `markharness release scope` / `markharness coverage` — リリース選定リストとRelease Coverage(ADR 0024、設計書§6.2)
+
+```text
+markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...] [-d, --dir <path>]
+markharness release scope show --release <release-id> [--at <ref>] [--format json] [-d, --dir <path>]
+markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at <ref>] [--format json] [-d, --dir <path>]
+```
+
+**用途**: 「そのリリースで何を検証対象に選んだか」を記録し、指定したRequirement集合について「検証する手段が存在するか」「選定漏れは無いか」を一覧する。
+
+**`ReleaseScope` が持たないもの**(ADR 0024 §2): 選定日時、選定者、承認状態、合否、実行結果、対象ビルド、実行環境、選定理由の構造化フィールド。選定の経緯はGit履歴が記録する。**選定リストに入っていることは「選んだ」という宣言であり、実行された事実でも合格した事実でもない**(ADR 0024 §5)。出力でも「選定済み」と「実行済み」を同一視しない。
+
+**保存場所**: `.markharness/releases/<release-id>.yml`。Git管理下に置くことで `--at <ref>` による過去時点の再現(設計書P3)が成り立つ。`release-id` はこのパスの唯一の構成要素になるため、**ASCII小文字英数字・ハイフン・ドットのみ**を許し、空文字・`.`・`..`・先頭ドット・パス区切り・大文字を含む値は**ファイルを作る前に**拒否する。`v1.2.0` や `2026-08-release` のような一般的なtag名は通る。
+
+**`coverage` が読むものはすべて `--at` の時点**: Knowledge・選定リスト・binding のいずれも指定refのコミットから読む。未コミットの変更は反映されない(既定の `--at HEAD` でも同様)。片方だけを working tree から読むと、過去refへの問い合わせが今日の作業内容で変わってしまい、算出の再現性(設計書P3、AC11)が成り立たないため。
+
+**`--requirements` が判定範囲を決める**: 選定漏れ候補(`unselected_case_uids`)は「指定したRequirement集合から辿れるTestCaseのうち、選定リストに無いもの」である。選定リストの中身から範囲を逆算する方式は採らない — Requirementをまるごと選定し忘れた場合に、その最も危険な漏れを検出できなくなるため。全件を見たい場合は `--requirements all` を渡す。
+
+**出力**
+
+| フィールド | 意味 |
+| --- | --- |
+| `requirements[].cases[].binding_mode` / `binding_reference` | そのTestCaseの検証手段(1.15節)。**存在することは「実行済み」を意味しない** |
+| `requirements[].cases[].selected` | `--release` 指定時のみ。選定リストに含まれるか |
+| `gaps[].kind = requirement_has_no_feature` | `contributes_to` するFeatureが1つも無い(AC08) |
+| `gaps[].kind = feature_has_no_case` | Featureは関連付いているが、その配下にScenarioが1つも無い(AC21) |
+| `release.selected_case_uids` | 選定されており、その時点のKnowledgeにも存在するCase UID |
+| `release.unselected_case_uids` | 対象範囲にあるが選定リストに無い(選定漏れ候補、AC25) |
+| `release.absent_case_uids` | 選定リストにあるが、その時点のKnowledgeに存在しない(AC26)。選定リストを自動的に書き換えない |
+
+**選定リストが無いリリース**: `--release` に渡したリリースの選定リストが記録されていない場合、`release` フィールドは出力されず、登録状態の一覧だけを返す。存在しない選定を推測しない(ADR 0024 §4)。
+
+**終了コード**
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 成功 |
+| 2 | `release-id` がファイル名として不正、指定したRequirementが存在しない、保存済みレコードが壊れている |
+| 3 | ファイルシステムエラー |
+
+**使用例**
+
+```console
+$ markharness release scope set --release v1.2.0 --case-uid 01ARZ... --case-uid 01BRZ...
+recorded 2 case(s) for v1.2.0 in .markharness/releases/v1.2.0.yml
+
+$ markharness coverage --requirements all --release v1.2.0 --at v1.2.0
+```
+
+**ユースケース対応**: 設計書§1の問い3「前回リリースにおいて、どのテストが検証スコープに入っていたか」。選定リストが記録されているリリースについてのみ「何を選んだか」まで答えられる。記録の無いリリースでは、その時点の登録状態の再現までである。
+
+---
+
+### 1.19 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
 
 ```text
 markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
@@ -1160,7 +1213,7 @@ set related_events on player-jump--m2--m3
 
 ---
 
-### 1.19 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
+### 1.20 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
 
 ```text
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
@@ -1184,7 +1237,7 @@ player-jump: linear
 
 ---
 
-### 1.20 `markharness validate` — .markharness/knowledge/・.markharness/axes/・.markharness/bindings/ の構造検証(§3.5/§3.6)
+### 1.21 `markharness validate` — .markharness/knowledge/・.markharness/axes/・.markharness/bindings/ の構造検証(§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
@@ -1214,7 +1267,7 @@ $ echo $?
 
 ---
 
-### 1.21 `markharness --version` / `-V` — バージョン表示
+### 1.22 `markharness --version` / `-V` — バージョン表示
 
 ```text
 markharness --version
@@ -1232,7 +1285,7 @@ markharness 0.3.1
 
 ---
 
-### 1.22 `markharness axes prune` — 未使用axisの検出・削除
+### 1.23 `markharness axes prune` — 未使用axisの検出・削除
 
 ```text
 markharness axes prune [--delete] [--json] [-d, --dir <path>]
@@ -1267,7 +1320,7 @@ $ markharness axes list --dir tmp/todo-sample --json
 
 ---
 
-### 1.23 `markharness knowledge scaffold` — 空のドラフトYAML雛形の出力
+### 1.24 `markharness knowledge scaffold` — 空のドラフトYAML雛形の出力
 
 ```text
 markharness knowledge scaffold [--out <path>]
@@ -1301,7 +1354,7 @@ $ echo $?
 
 ---
 
-### 1.24 `markharness import` — canonical snapshotの生成
+### 1.25 `markharness import` — canonical snapshotの生成
 
 ```text
 markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
@@ -1311,7 +1364,7 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
-### 1.25 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
+### 1.26 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
 
 ```text
 markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
@@ -1338,7 +1391,7 @@ renamed Feature 'todo' to 'todo-v2' (uid preserved)
 
 ---
 
-### 1.26 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
+### 1.27 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
 
 ```text
 markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
@@ -1346,7 +1399,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 
 **用途**: `.markharness/knowledge/`配下のRequirement/Feature/Behavior/Condition/ExpectedResultのうち、まだ`uid:`を持たない要素全てへ新規UIDを発行し、root `Issued` identity eventを記録する。冪等な操作であり、copy/import/手編集で後からuidなし要素が混入した場合も安全に再実行できる。TestCaseの`case_id`→`case_uid`対応(migration manifest、`.markharness/identity-migration-manifest.yml`)もあわせて記録する。
 
-5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 1`・`mode = "uid"`を書き込み、UID modeへの公開cutoverを完了する(design doc §13 Phase 5)。cutover完了の判定は`schema_version`ではなく`mode`のみで行う(ADR 0018)。cutover後は`markharness validate`(1.20節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
+5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 1`・`mode = "uid"`を書き込み、UID modeへの公開cutoverを完了する(design doc §13 Phase 5)。cutover完了の判定は`schema_version`ではなく`mode`のみで行う(ADR 0018)。cutover後は`markharness validate`(1.21節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
 
 **前提条件**: 対象ディレクトリがgitリポジトリであること。legacy snapshot identityとして`.markharness/knowledge`のtree SHAをmigration manifestへ記録するため、内部で一時indexを使った`git write-tree`相当の処理を行う(実リポジトリのstaging areaは変更しない)。
 
@@ -1388,7 +1441,7 @@ $ markharness identity migrate --json
 
 ---
 
-### 1.27 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
+### 1.28 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
 
 ```text
 markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
@@ -1408,7 +1461,7 @@ markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
 
 ---
 
-### 1.28 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
+### 1.29 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
 
 ```text
 markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
@@ -1449,7 +1502,7 @@ $ echo $?
 
 ---
 
-### 1.29 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
+### 1.30 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
 
 ```text
 markharness identity sync <KIND> <UID> [-d, --dir <path>]
