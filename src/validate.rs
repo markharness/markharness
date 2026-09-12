@@ -111,27 +111,25 @@ fn check_axis_tags(
         .collect()
 }
 
-/// Validates every `executions/records/*.yml` against
-/// `execution_result.schema.json` (ADR 0017 §5: one execution per file,
-/// each carrying its own `case_uid`/`case_revision`/`target_revision`).
-fn validate_executions(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Result<()> {
-    let records_dir = root
-        .join(crate::project_root::MARKHARNESS_DIR)
-        .join("executions")
-        .join("records");
-    if !records_dir.is_dir() {
-        return Ok(());
+/// Surfaces malformed `bindings/*.yml` (ADR 0020, ADR 0025). Validation
+/// lives in `ExecutionBinding`'s own `deny_unknown_fields` parse rather than
+/// a JSON Schema: the point is that an execution-fact field such as `result`
+/// must be an error, which a schema check alone would not guarantee for a
+/// type this small.
+fn validate_bindings(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Result<()> {
+    match crate::binding::read_all(root) {
+        Ok(_) => Ok(()),
+        Err(crate::binding::BindingError::Io(e)) => Err(e),
+        Err(e) => {
+            issues.push(ValidationIssue {
+                path: crate::binding::bindings_dir(root)
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                message: e.to_string(),
+            });
+            Ok(())
+        }
     }
-    let mut paths: Vec<_> = fs::read_dir(&records_dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("yml"))
-        .collect();
-    paths.sort();
-    for path in paths {
-        validate_file(root, "execution_result.schema.json", &path, issues)?;
-    }
-    Ok(())
 }
 
 /// Validates every `knowledge/` YAML file against its `schema/*.schema.json`
@@ -139,7 +137,7 @@ fn validate_executions(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Re
 /// cross-reference rules that JSON Schema alone can't express: `axis` tags
 /// must exist in the `axes/` registry, and `forked_from` must name an
 /// existing Feature id (§3.1). Also validates `axes/*.yml` themselves, and
-/// `executions/records/*.yml` against `execution_result.schema.json`.
+/// surfaces malformed `bindings/*.yml`.
 /// Returns every issue found; an empty result means the tree is valid.
 pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
     let mut issues = Vec::new();
@@ -259,7 +257,7 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
         }
     }
 
-    validate_executions(root, &mut issues)?;
+    validate_bindings(root, &mut issues)?;
     validate_uid_mode_invariant(root, &mut issues)?;
 
     Ok(issues)
@@ -567,65 +565,6 @@ mod tests {
         assert!(
             issues.iter().any(|i| i.message.contains("forked_from")),
             "expected a forked_from issue, got: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn accepts_a_valid_execution_record_including_environment() {
-        let dir = tempfile::tempdir().unwrap();
-        init_project(dir.path());
-        write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join(".markharness/executions/records")).unwrap();
-        fs::write(
-            dir.path()
-                .join(".markharness/executions/records/exec-1.yml"),
-            "execution_uid: exec-1\ncase_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\ntarget_revision: abc123\nenvironment: staging\nresult: pass\nexecutor: yamada\nexecuted_at: 2026-08-08T03:15:00Z\n",
-        )
-        .unwrap();
-
-        let issues = validate_all(dir.path()).unwrap();
-
-        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
-    }
-
-    #[test]
-    fn accepts_a_valid_execution_record_without_environment() {
-        let dir = tempfile::tempdir().unwrap();
-        init_project(dir.path());
-        write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join(".markharness/executions/records")).unwrap();
-        fs::write(
-            dir.path()
-                .join(".markharness/executions/records/exec-1.yml"),
-            "execution_uid: exec-1\ncase_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\ntarget_revision: abc123\nresult: pass\nexecutor: yamada\nexecuted_at: 2026-08-08T03:15:00Z\n",
-        )
-        .unwrap();
-
-        let issues = validate_all(dir.path()).unwrap();
-
-        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
-    }
-
-    #[test]
-    fn reports_an_invalid_result_value_in_an_execution_record() {
-        let dir = tempfile::tempdir().unwrap();
-        init_project(dir.path());
-        write_valid_tree(dir.path());
-        fs::create_dir_all(dir.path().join(".markharness/executions/records")).unwrap();
-        fs::write(
-            dir.path()
-                .join(".markharness/executions/records/exec-1.yml"),
-            "execution_uid: exec-1\ncase_id: tc-ground-001\ncase_uid: case-uid-1\ncase_revision: rev-1\ntarget_revision: abc123\nresult: bogus\nexecutor: yamada\nexecuted_at: 2026-08-08T03:15:00Z\n",
-        )
-        .unwrap();
-
-        let issues = validate_all(dir.path()).unwrap();
-
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.path.contains("exec-1.yml") && i.message.contains("bogus")),
-            "expected an execution record schema issue, got: {issues:?}"
         );
     }
 

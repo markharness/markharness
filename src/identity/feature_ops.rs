@@ -2,12 +2,12 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::execution::iso8601_utc_now;
 use crate::identity::{
     EntityKind, IdentityEvent, IdentityMutation, engine, knowledge_walk, marker,
     migration_manifest, recovery, registry,
 };
 use crate::knowledge;
+use crate::time::iso8601_utc_now;
 
 /// Why `rename_id` refused to run, or failed partway (design doc §3, §9).
 #[derive(Debug)]

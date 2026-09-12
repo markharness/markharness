@@ -1,12 +1,10 @@
 use crate::canonical::CanonicalSnapshot;
-use crate::plan::VerificationPlan;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Debug, PartialEq)]
 pub enum CommandOutcome {
     CanonicalImported(CanonicalSnapshot),
-    PlanBuilt(VerificationPlan),
     Generated {
         count: usize,
         written: Vec<PathBuf>,
@@ -53,25 +51,6 @@ pub fn error(message: String, exit_code: i32) -> io::Result<()> {
 pub struct HumanPresenter;
 pub struct JsonPresenter;
 
-fn plan_exit_code(plan: &VerificationPlan) -> i32 {
-    // ADR 0017 §5: unresolved (mutually conflicting) evidence must never be
-    // treated as a clean plan — it needs the same human attention as an
-    // outright failure, not silent success.
-    if plan.summary.failed > 0 || plan.summary.unresolved > 0 {
-        1
-    } else if plan.summary.pending > 0
-        || plan.summary.stale_evidence > 0
-        || plan
-            .new_required_tests
-            .iter()
-            .any(|proposal| proposal.decision == crate::plan::ProposalDecision::Proposed)
-    {
-        2
-    } else {
-        0
-    }
-}
-
 impl Presenter for HumanPresenter {
     fn present(&self, outcome: &CommandOutcome) -> PresentedResult {
         match outcome {
@@ -84,16 +63,6 @@ impl Presenter for HumanPresenter {
                 ),
                 stderr: String::new(),
                 exit_code: 0,
-            },
-            CommandOutcome::PlanBuilt(plan) => PresentedResult {
-                stdout: format!(
-                    "verification plan: {} changed feature(s), {} affected test(s), {} proposal(s)\n",
-                    plan.summary.changed_features,
-                    plan.summary.affected_tests,
-                    plan.summary.new_tests
-                ),
-                stderr: String::new(),
-                exit_code: plan_exit_code(plan),
             },
             CommandOutcome::Generated { count, .. } => PresentedResult {
                 stdout: format!(
@@ -134,15 +103,6 @@ impl Presenter for JsonPresenter {
                 ),
                 stderr: String::new(),
                 exit_code: 0,
-            },
-            CommandOutcome::PlanBuilt(plan) => PresentedResult {
-                stdout: format!(
-                    "{}\n",
-                    serde_json::to_string_pretty(plan)
-                        .expect("verification plan serialization is infallible")
-                ),
-                stderr: String::new(),
-                exit_code: plan_exit_code(plan),
             },
             CommandOutcome::Generated { count, written } => {
                 let written: Vec<String> = written

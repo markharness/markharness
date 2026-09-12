@@ -48,21 +48,15 @@ markharness milestone init v2
 markharness changes compute v1 v2
 cat .markharness/changes/v2.yaml
 
-# Build the same range as a reviewable, versioned Verification Plan
-markharness plan --base v1 --head v2 --format json
-
-# View the same plan and Feature History in a localhost-only read-only dashboard
-markharness serve --base v1 --head v2
-
-# 7. Record execution results, then check for TestCases still pending re-verification
-markharness execution record tc-todo-management-add-todo-add-task-empty-title --milestone v2 --result pass --executor <your-name>
-markharness execution record tc-todo-management-add-todo-add-task-max-length --milestone v2 --result pass --executor <your-name>
-markharness verify pending --from v1 --to v2
+# 7. Declare how each TestCase is verified (ADR 0020 / ADR 0025)
+markharness binding set --case-uid <case-uid> --mode automated --reference tests/empty-title.spec.ts
+markharness binding set --case-uid <case-uid> --mode manual
+markharness binding list
 ```
 
-The `case_id`s above follow the generator's `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` rule; if you're unsure of the exact id after `generate`, read it from the generated file directly (e.g. `.markharness/generated/testcases/todo-management/add-todo/add-task/empty-title.yml`).
+The `case_id`s follow the generator's `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` rule; if you're unsure of the exact id after `generate`, read it from the generated file directly (e.g. `.markharness/generated/testcases/todo-management/add-todo/add-task/empty-title.yml`). A binding is keyed by the file's `case_uid`, not that display `case_id`.
 
-The final `verify pending` detects that both TestCases affected by `v1..v2` already have execution records as of `v2`, and reports 0 `pending` (not-yet-re-executed) items. If you skip both recording steps and run `verify pending` directly, these same two TestCases are instead reported as pending (verified hands-on with the command sequence above).
+A binding declares *how* a TestCase is verified and *where* that verification lives. It is deliberately not a record of an execution: it holds no result, timestamp, build, or environment, and its presence must never be read as "executed" or "passed" (ADR 0025).
 
 See [docs/en/cli-manual.md](./docs/en/cli-manual.md) for the detailed options and output format of each command.
 
@@ -79,7 +73,7 @@ See [docs/en/git-native-model-for-test-knowledge-management.md §3.6 Summary of 
 - An importer from an existing TMS (TestRail/Xray, etc.) (UC8) — not implemented.
 - The id-resolution cache's `canonicalization_rule_version` / `id_index_schema_version` — currently fixed values; an actual revision workflow is unverified.
 - ADR 0013's rule that ordinary commands reject a uid-less element introduced after the schema-version-2 cutover is implemented only in `markharness validate`; extending it to generation-side commands (`knowledge apply`/`interactive add`) is undecided.
-- `verify trace` / `verify pending` are not applied retroactively to existing execution records predating their introduction (those without `verified_feature_tree_shas`) — treated as "unknown". `.markharness/executions/*/results.yml` is JSON-Schema-validated (`.markharness/schema/execution_result.schema.json`).
+- An `ExecutionBinding` records only the verification means (`automated`/`manual`) and a free-text `reference`. Detailed execution evidence — results, timestamps, builds, environments — is outside markharness's responsibility and belongs to whatever the `reference` points at (ADR 0020).
 - `markharness backfill run` — not a resident daemon; designed to process one pass of unprocessed pairs per invocation and then exit (intended to be invoked repeatedly, e.g. from CI).
 
 ## Development
