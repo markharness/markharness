@@ -100,7 +100,7 @@ fn write_migrated_controls_requirement(dir: &Path) {
     fs::write(
         dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
         format!(
-            "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+            "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
         ),
     )
     .unwrap();

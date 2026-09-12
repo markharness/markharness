@@ -295,12 +295,17 @@ pub fn run_add<R: BufRead, W: Write>(
             writer,
             "Requirement axis (comma separated, e.g. ui, validation): ",
         )?;
+        // The interactive flow only creates native Requirements: an external
+        // one is a pinned reference into a `.sdoc`, which is a
+        // non-interactive decision (ADR 0023, v2 design §5.2.1).
         let requirement = Requirement {
             id: requirement_id.clone(),
-            label: requirement_label,
+            source: crate::knowledge::RequirementSource::Native,
+            label: Some(requirement_label),
             axis,
             description: None,
-            source: None,
+            source_locator: None,
+            source_revision: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -491,7 +496,7 @@ mod tests {
         fs::write(
             dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             ),
         )
         .unwrap();
@@ -604,7 +609,7 @@ mod tests {
             .join(".markharness/knowledge/requirements/controls/requirement.yml");
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n"
+            "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n"
         );
         assert!(
             !dir.path().join(".markharness/knowledge/features").exists(),
@@ -972,7 +977,7 @@ mod tests {
             .join(".markharness/knowledge/requirements/pureiyaagajanpusuru/requirement.yml");
         assert_eq!(
             fs::read_to_string(&requirement_path).unwrap(),
-            "id: pureiyaagajanpusuru\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\n"
+            "id: pureiyaagajanpusuru\nsource: native\nlabel: プレイヤーがジャンプする\naxis: [gameplay]\n"
         );
         assert!(!dir.path().join(".markharness/knowledge/features").exists());
 
@@ -1017,7 +1022,7 @@ mod tests {
         assert_eq!(
             fs::read_to_string(requirement_path).unwrap(),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             )
         );
         let feature_path = dir

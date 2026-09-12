@@ -749,7 +749,7 @@ mod tests {
             // `migrate_entities`/`plan_migration` see only the Feature(s)
             // they set up themselves — multi-kind migration itself is
             // covered separately below.
-            "id: controls\nlabel: controls\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FR0\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FR0\n",
         )
         .unwrap();
         dir
@@ -1279,7 +1279,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/req/requirement.yml"),
-            "id: req\nlabel: req\naxis: []\n",
+            "id: req\nsource: native\nlabel: req\naxis: []\n",
         )
         .unwrap();
         fs::write(

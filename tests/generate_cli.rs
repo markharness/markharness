@@ -62,7 +62,7 @@ fn write_chain(root: &Path, requirement: &str, feature: &str, behavior: &str, sc
             .join("knowledge/requirements")
             .join(requirement)
             .join("requirement.yml"),
-        format!("id: {requirement}\nlabel: {requirement}\naxis: [ui]\nuid: {requirement_uid}\n"),
+        format!("id: {requirement}\nsource: native\nlabel: {requirement}\naxis: [ui]\nuid: {requirement_uid}\n"),
     )
     .unwrap();
     std::fs::write(

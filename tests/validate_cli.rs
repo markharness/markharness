@@ -28,7 +28,7 @@ fn write_valid_tree(root: &Path) {
     .unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
-        "id: controls\nlabel: controls\naxis: [gameplay]\n",
+        "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n",
     )
     .unwrap();
     std::fs::write(
@@ -66,14 +66,14 @@ fn validate_exits_zero_and_reports_ok_for_a_valid_tree() {
 }
 
 #[test]
-fn validate_accepts_a_requirement_with_source_and_related_issues() {
+fn validate_accepts_a_native_requirement_with_related_issues() {
     let dir = tempfile::tempdir().unwrap();
     let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
     assert!(init_output.status.success());
     write_valid_tree(dir.path());
     std::fs::write(
         dir.path().join(".markharness/knowledge/requirements/controls/requirement.yml"),
-        "id: controls\nlabel: controls\naxis: [gameplay]\nsource: PRD-42\nrelated_issues: [JIRA-123, JIRA-456]\n",
+        "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nrelated_issues: [JIRA-123, JIRA-456]\n",
     )
     .unwrap();
 
@@ -96,7 +96,7 @@ fn validate_rejects_a_requirement_with_a_non_string_related_issues_item() {
     std::fs::write(
         dir.path()
             .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-        "id: controls\nlabel: controls\naxis: [gameplay]\nrelated_issues: [123]\n",
+        "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nrelated_issues: [123]\n",
     )
     .unwrap();
 

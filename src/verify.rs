@@ -123,7 +123,7 @@ mod tests {
         fs::create_dir_all(root.join(".markharness/knowledge/requirements/req-todo")).unwrap();
         fs::write(
             root.join(".markharness/knowledge/requirements/req-todo/requirement.yml"),
-            "id: req-todo\nlabel: req-todo\naxis: [ui]\n",
+            "id: req-todo\nsource: native\nlabel: req-todo\naxis: [ui]\n",
         )
         .unwrap();
         fs::write(

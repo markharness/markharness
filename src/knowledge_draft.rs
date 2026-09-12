@@ -759,7 +759,12 @@ pub fn validate_draft(
     {
         requirement_uid = existing.uid.clone();
         if let Some(label) = &draft.requirement.label {
-            push_conflicting_value(&mut errors, "requirement.label", label, &existing.label);
+            push_conflicting_value(
+                &mut errors,
+                "requirement.label",
+                label,
+                existing.label.as_deref().unwrap_or(""),
+            );
         }
         if let Some(axis) = &draft.requirement.axis {
             push_conflicting_axis(&mut errors, "requirement.axis", axis, &existing.axis);
@@ -1076,7 +1081,7 @@ scenario:
         fs::write(
             dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             ),
         )
         .unwrap();
@@ -1492,7 +1497,7 @@ scenario:
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             ),
         )
         .unwrap();
@@ -1556,7 +1561,7 @@ scenario:
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             ),
         )
         .unwrap();
@@ -1614,7 +1619,7 @@ scenario:
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             ),
         )
         .unwrap();
@@ -1650,7 +1655,7 @@ scenario:
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
 
@@ -1680,7 +1685,7 @@ scenario:
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             ),
         )
         .unwrap();

@@ -280,7 +280,7 @@ mod tests {
         fs::write(
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
         )
         .unwrap();
         dir

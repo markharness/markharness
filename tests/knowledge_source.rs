@@ -25,7 +25,7 @@ fn write_chain(root: &Path, step: &str) {
     std::fs::create_dir_all(root.join(".markharness/knowledge/requirements/shop")).unwrap();
     std::fs::write(
         root.join(".markharness/knowledge/requirements/shop/requirement.yml"),
-        "id: shop\nlabel: Shop\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        "id: shop\nsource: native\nlabel: Shop\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
     )
     .unwrap();
     std::fs::write(

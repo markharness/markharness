@@ -2,15 +2,38 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Who owns a Requirement's content (ADR 0023). The two modes are exclusive
+/// so that no rule is ever needed to decide which side wins when both carry
+/// text.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementSource {
+    Native,
+    External,
+}
+
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Requirement {
     pub id: String,
-    pub label: String,
+    /// Which side owns this Requirement's content (ADR 0023). Required, with
+    /// no default: deciding the mode from an absent field would make the
+    /// content owner depend on an omission.
+    pub source: RequirementSource,
+    /// Present only for `source: native`. An external Requirement holds a
+    /// fixed reference instead, never a copy of the owner's text.
+    #[serde(default)]
+    pub label: Option<String>,
     pub axis: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Present only for `source: external`: the `.sdoc` path, inside this
+    /// same Git repository.
     #[serde(default)]
-    pub source: Option<String>,
+    pub source_locator: Option<String>,
+    /// Present only for `source: external`: the pinned Git blob OID of the
+    /// `.sdoc` the locator names.
+    #[serde(default)]
+    pub source_revision: Option<String>,
     #[serde(default)]
     pub related_issues: Vec<String>,
     /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
@@ -179,14 +202,25 @@ fn indent_block_scalar(text: &str, indent: &str) -> String {
 }
 
 pub fn serialize_requirement(requirement: &Requirement) -> String {
-    let mut out = format!(
-        // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
-        // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
-        "id: {}\nlabel: {}\naxis: {}\n",
-        requirement.id,
-        requirement.label,
-        yaml_flow_array(&requirement.axis)
-    );
+    let mut out = format!("id: {}\n", requirement.id);
+    match requirement.source {
+        RequirementSource::Native => out.push_str("source: native\n"),
+        RequirementSource::External => out.push_str("source: external\n"),
+    }
+    // ADR 0023: each mode writes only the fields it owns, so a serialized
+    // Requirement can never come back as a mixed-mode file.
+    if let Some(locator) = &requirement.source_locator {
+        out.push_str(&format!("source_locator: {locator}\n"));
+    }
+    if let Some(revision) = &requirement.source_revision {
+        out.push_str(&format!("source_revision: {revision}\n"));
+    }
+    // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
+    // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
+    if let Some(label) = &requirement.label {
+        out.push_str(&format!("label: {label}\n"));
+    }
+    out.push_str(&format!("axis: {}\n", yaml_flow_array(&requirement.axis)));
     if let Some(description) = &requirement.description {
         out.push_str("description: |\n");
         out.push_str(&indent_block_scalar(description, "  "));
@@ -366,12 +400,13 @@ mod tests {
 
     #[test]
     fn parses_requirement_yaml() {
-        let yaml = "id: account-management\nlabel: account-management\naxis: [security]\n";
+        let yaml =
+            "id: account-management\nsource: native\nlabel: account-management\naxis: [security]\n";
 
         let requirement: Requirement = parse_requirement(yaml).unwrap();
 
         assert_eq!(requirement.id, "account-management");
-        assert_eq!(requirement.label, "account-management");
+        assert_eq!(requirement.label.as_deref(), Some("account-management"));
         assert_eq!(requirement.axis, vec!["security"]);
         assert_eq!(requirement.description, None);
     }
@@ -380,10 +415,12 @@ mod tests {
     fn serializes_requirement_to_deterministic_yaml() {
         let requirement = Requirement {
             id: "account-management".to_string(),
-            label: "account-management".to_string(),
+            source: RequirementSource::Native,
+            label: Some("account-management".to_string()),
             axis: vec!["security".to_string()],
             description: None,
-            source: None,
+            source_locator: None,
+            source_revision: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -392,7 +429,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: account-management\nlabel: account-management\naxis: [security]\n"
+            "id: account-management\nsource: native\nlabel: account-management\naxis: [security]\n"
         );
     }
 
@@ -400,10 +437,12 @@ mod tests {
     fn serializes_requirement_with_description_when_present() {
         let requirement = Requirement {
             id: "account-management".to_string(),
-            label: "アカウント管理".to_string(),
+            source: RequirementSource::Native,
+            label: Some("アカウント管理".to_string()),
             axis: vec!["security".to_string()],
             description: Some("Account related requirements.".to_string()),
-            source: None,
+            source_locator: None,
+            source_revision: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -412,7 +451,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: account-management\nlabel: アカウント管理\naxis: [security]\ndescription: |\n  Account related requirements.\n"
+            "id: account-management\nsource: native\nlabel: アカウント管理\naxis: [security]\ndescription: |\n  Account related requirements.\n"
         );
     }
 
@@ -420,12 +459,14 @@ mod tests {
     fn serializes_requirement_with_multiline_description_as_valid_yaml() {
         let requirement = Requirement {
             id: "account-management".to_string(),
-            label: "account-management".to_string(),
+            source: RequirementSource::Native,
+            label: Some("account-management".to_string()),
             axis: vec!["security".to_string()],
             description: Some(
                 "line one about foo.js: bar()\nline two about baz.js: qux()\n".to_string(),
             ),
-            source: None,
+            source_locator: None,
+            source_revision: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -441,7 +482,8 @@ mod tests {
     /// not an error, and not confused with an empty string.
     #[test]
     fn parses_requirement_yaml_without_uid_as_none() {
-        let yaml = "id: account-management\nlabel: account-management\naxis: [security]\n";
+        let yaml =
+            "id: account-management\nsource: native\nlabel: account-management\naxis: [security]\n";
 
         let requirement: Requirement = parse_requirement(yaml).unwrap();
 
@@ -450,7 +492,7 @@ mod tests {
 
     #[test]
     fn parses_requirement_yaml_with_uid() {
-        let yaml = "id: account-management\nlabel: account-management\naxis: [security]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n";
+        let yaml = "id: account-management\nsource: native\nlabel: account-management\naxis: [security]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n";
 
         let requirement: Requirement = parse_requirement(yaml).unwrap();
 
@@ -464,10 +506,12 @@ mod tests {
     fn serializes_requirement_with_uid_when_present() {
         let requirement = Requirement {
             id: "account-management".to_string(),
-            label: "account-management".to_string(),
+            source: RequirementSource::Native,
+            label: Some("account-management".to_string()),
             axis: vec!["security".to_string()],
             description: None,
-            source: None,
+            source_locator: None,
+            source_revision: None,
             related_issues: Vec::new(),
             uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
         };
@@ -476,7 +520,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "id: account-management\nlabel: account-management\naxis: [security]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
+            "id: account-management\nsource: native\nlabel: account-management\naxis: [security]\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n"
         );
         let reparsed: Requirement = parse_requirement(&yaml).unwrap();
         assert_eq!(reparsed, requirement);

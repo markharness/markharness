@@ -138,7 +138,7 @@ mod tests {
         fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
             root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: []\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: []\n",
         )
         .unwrap();
         fs::write(
@@ -245,7 +245,7 @@ mod tests {
         fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
             root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: []\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: []\n",
         )
         .unwrap();
         fs::write(

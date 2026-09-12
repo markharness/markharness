@@ -132,6 +132,73 @@ fn validate_bindings(root: &Path, issues: &mut Vec<ValidationIssue>) -> io::Resu
     }
 }
 
+/// ADR 0023 §2-§4: each mode owns a disjoint set of fields, and a file that
+/// is neither cleanly native nor cleanly external is refused — which is what
+/// makes a "which side wins" rule unnecessary. Checked here rather than as a
+/// JSON Schema `oneOf` because `oneOf` can only report that nothing matched,
+/// naming neither the mode nor the offending field.
+fn check_requirement_source_mode(
+    root: &Path,
+    path: &Path,
+    requirement: &knowledge::Requirement,
+) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    let mut report = |message: String| {
+        issues.push(ValidationIssue {
+            path: rel(root, path),
+            message,
+        });
+    };
+    match requirement.source {
+        knowledge::RequirementSource::Native => {
+            if requirement.label.is_none() {
+                report(
+                    "source: native requires `label` (markharness owns the content)".to_string(),
+                );
+            }
+            if requirement.source_locator.is_some() {
+                report(
+                    "source: native must not carry `source_locator` (that belongs to source: external)"
+                        .to_string(),
+                );
+            }
+            if requirement.source_revision.is_some() {
+                report(
+                    "source: native must not carry `source_revision` (that belongs to source: external)"
+                        .to_string(),
+                );
+            }
+        }
+        knowledge::RequirementSource::External => {
+            if requirement.source_locator.is_none() {
+                report(
+                    "source: external requires `source_locator` (the .sdoc path in this repository)"
+                        .to_string(),
+                );
+            }
+            if requirement.source_revision.is_none() {
+                report(
+                    "source: external requires `source_revision` (the pinned blob OID of that .sdoc)"
+                        .to_string(),
+                );
+            }
+            if requirement.label.is_some() {
+                report(
+                    "source: external must not carry `label` — the external document owns the content"
+                        .to_string(),
+                );
+            }
+            if requirement.description.is_some() {
+                report(
+                    "source: external must not carry `description` — the external document owns the content"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    issues
+}
+
 /// Validates every `knowledge/` YAML file against its `schema/*.schema.json`
 /// (§3.5 structural validation) and, for files that pass structurally,
 /// cross-reference rules that JSON Schema alone can't express: `axis` tags
@@ -193,6 +260,11 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
                 &requirement_path,
                 &requirement.axis,
                 &known_axes,
+            ));
+            issues.extend(check_requirement_source_mode(
+                root,
+                &requirement_path,
+                &requirement,
             ));
         }
     }
@@ -311,7 +383,7 @@ mod tests {
         fs::create_dir_all(root.join(".markharness/knowledge/requirements/controls")).unwrap();
         fs::write(
             root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
-            "id: controls\nlabel: controls\naxis: [gameplay]\n",
+            "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\n",
         )
         .unwrap();
         fs::write(

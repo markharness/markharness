@@ -633,7 +633,7 @@ mod tests {
             root.join(crate::project_root::MARKHARNESS_DIR)
                 .join("knowledge/requirements/req-todo/requirement.yml"),
             format!(
-                "id: req-todo\nlabel: req-todo\naxis: []\n{}",
+                "id: req-todo\nsource: native\nlabel: req-todo\naxis: []\n{}",
                 uid_line("01ARZ3NDEKTSV4RRFFQ69G5FR0")
             ),
         )

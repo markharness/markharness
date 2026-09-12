@@ -75,16 +75,23 @@ pub fn apply_draft(
     let mut pending: Vec<(PathBuf, String)> = Vec::new();
 
     if !requirement_exists {
+        // Drafts describe native Requirements only (ADR 0023, v2 design
+        // §5.2.1): an external one carries a pinned `.sdoc` reference rather
+        // than the text a draft collects.
         let requirement = Requirement {
             id: draft.requirement.id.clone(),
-            label: draft
-                .requirement
-                .label
-                .clone()
-                .unwrap_or_else(|| draft.requirement.id.clone()),
+            source: crate::knowledge::RequirementSource::Native,
+            label: Some(
+                draft
+                    .requirement
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| draft.requirement.id.clone()),
+            ),
             axis: draft.requirement.axis.clone().unwrap_or_default(),
             description: draft.requirement.description.clone(),
-            source: None,
+            source_locator: None,
+            source_revision: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -522,7 +529,7 @@ scenario:
         fs::write(
             dir.join(".markharness/knowledge/requirements/controls/requirement.yml"),
             format!(
-                "id: controls\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
+                "id: controls\nsource: native\nlabel: controls\naxis: [gameplay]\nuid: {CONTROLS_REQUIREMENT_UID}\n"
             ),
         )
         .unwrap();
