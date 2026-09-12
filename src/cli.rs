@@ -14,10 +14,7 @@ use crate::changes;
 use crate::derived_index;
 use crate::execution::{self, ExecutionResult, RecordArgs, RecordError};
 use crate::id_cache;
-use crate::identity::{
-    self, MigrateError, ReissueError, ReleaseError, RenameError, ResolveError, RestoreError,
-    RetireError, SyncError,
-};
+use crate::identity::{self, MigrateError, RenameError, ResolveError, SyncError};
 use crate::init;
 use crate::interactive;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, DraftValidation};
@@ -192,19 +189,6 @@ pub enum IdentityCommand {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Lift the reuse reservation on a retired entity's former id (design doc §9)
-    Release {
-        /// The kind of the retired entity
-        #[arg(value_enum)]
-        kind: EntityKindArg,
-        /// The retired entity's uid
-        uid: String,
-        /// The former id to release for reuse by a different entity
-        old_id: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
     /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Scenario) that doesn't have one yet (design doc §12). Idempotent.
     Migrate {
         /// Target project directory. Defaults to the current directory.
@@ -229,29 +213,7 @@ pub enum IdentityCommand {
         #[arg(long, default_value = "HEAD")]
         r#ref: String,
     },
-    /// Record that a Knowledge element you have already deleted from the working tree is retired (design doc §2, §4.2). Never deletes a file itself.
-    Retire {
-        /// The kind of entity to retire
-        #[arg(value_enum)]
-        kind: EntityKindArg,
-        /// The entity's uid
-        uid: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-    /// Reverse a previous `identity retire`, flipping a retired entity's status back to active (design doc §2)
-    Restore {
-        /// The kind of the retired entity
-        #[arg(value_enum)]
-        kind: EntityKindArg,
-        /// The retired entity's uid
-        uid: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-    /// Re-derive a Knowledge file's id:/uid: from its identity event log, filling in a missing uid: or correcting a stale id: (e.g. after recreating a file restored via `identity restore`)
+    /// Re-derive a Knowledge file's id:/uid: from its identity event log, filling in a missing uid: or correcting a stale id:
     Sync {
         /// The kind of entity to sync
         #[arg(value_enum)]
@@ -261,20 +223,6 @@ pub enum IdentityCommand {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
-    },
-    /// Assign a brand-new uid to a Knowledge element, deliberately not continuing whatever identity its current uid (if any) names (ADR 0013's copy/import/repository-integration rules)
-    Reissue {
-        /// The kind of entity to reissue
-        #[arg(value_enum)]
-        kind: EntityKindArg,
-        /// The element's current id
-        id: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-        /// Emit machine-readable JSON instead of human-readable text
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -1274,44 +1222,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Identity(IdentityCommand::Release {
-            kind,
-            uid,
-            old_id,
-            dir,
-        }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match identity::release_id(&root, kind.into(), &uid, &old_id) {
-                Ok(()) => {
-                    println!("released '{old_id}' for reuse (was held by {uid})");
-                    Ok(())
-                }
-                Err(ReleaseError::NotRetired) => {
-                    eprintln!(
-                        "error: '{uid}' is not retired; only a retired entity's former ids can be released"
-                    );
-                    std::process::exit(2);
-                }
-                Err(ReleaseError::IdNeverUsedByThisEntity { released_id }) => {
-                    eprintln!("error: '{released_id}' was never an id held by '{uid}'");
-                    std::process::exit(2);
-                }
-                Err(ReleaseError::OperationInProgress) => {
-                    eprintln!(
-                        "error: another identity operation is already in progress. Retry shortly."
-                    );
-                    std::process::exit(2);
-                }
-                Err(ReleaseError::ReplayFailed(e)) => {
-                    eprintln!("error: could not resolve the entity's current identity: {e:?}");
-                    std::process::exit(2);
-                }
-                Err(ReleaseError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-            }
-        }
         Command::Identity(IdentityCommand::Migrate { dir, json, dry_run }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let outcome = if dry_run {
@@ -1429,74 +1339,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 std::process::exit(1);
             }
         }
-        Command::Identity(IdentityCommand::Retire { kind, uid, dir }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match identity::retire_entity(&root, kind.into(), &uid) {
-                Ok(()) => {
-                    println!("retired {uid}");
-                    Ok(())
-                }
-                Err(RetireError::NotFound) => {
-                    eprintln!("error: '{uid}' has no uid on record");
-                    std::process::exit(2);
-                }
-                Err(RetireError::StillPresent) => {
-                    eprintln!(
-                        "error: '{uid}' still has a Knowledge element in the working tree; delete it before retiring"
-                    );
-                    std::process::exit(2);
-                }
-                Err(RetireError::AlreadyRetired) => {
-                    eprintln!("error: '{uid}' is already retired");
-                    std::process::exit(2);
-                }
-                Err(RetireError::OperationInProgress) => {
-                    eprintln!(
-                        "error: another identity operation is already in progress. Retry shortly."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RetireError::ReplayFailed(e)) => {
-                    eprintln!("error: could not resolve the entity's current identity: {e:?}");
-                    std::process::exit(2);
-                }
-                Err(RetireError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-            }
-        }
-        Command::Identity(IdentityCommand::Restore { kind, uid, dir }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match identity::restore_entity(&root, kind.into(), &uid) {
-                Ok(()) => {
-                    println!("restored {uid}");
-                    Ok(())
-                }
-                Err(RestoreError::NotFound) => {
-                    eprintln!("error: '{uid}' has no uid on record");
-                    std::process::exit(2);
-                }
-                Err(RestoreError::NotRetired) => {
-                    eprintln!("error: '{uid}' is not retired; nothing to restore");
-                    std::process::exit(2);
-                }
-                Err(RestoreError::OperationInProgress) => {
-                    eprintln!(
-                        "error: another identity operation is already in progress. Retry shortly."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RestoreError::ReplayFailed(e)) => {
-                    eprintln!("error: could not resolve the entity's current identity: {e:?}");
-                    std::process::exit(2);
-                }
-                Err(RestoreError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-            }
-        }
         Command::Identity(IdentityCommand::Sync { kind, uid, dir }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             match identity::sync_entity(&root, kind.into(), &uid) {
@@ -1506,12 +1348,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
                 Err(SyncError::NotFound) => {
                     eprintln!("error: '{uid}' has no uid on record");
-                    std::process::exit(2);
-                }
-                Err(SyncError::NotActive(status)) => {
-                    eprintln!(
-                        "error: '{uid}' is not active (status: {status:?}); run `markharness identity restore` first if it should be"
-                    );
                     std::process::exit(2);
                 }
                 Err(SyncError::OperationInProgress) => {
@@ -1525,77 +1361,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     std::process::exit(2);
                 }
                 Err(SyncError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-            }
-        }
-        Command::Identity(IdentityCommand::Reissue {
-            kind,
-            id,
-            dir,
-            json,
-        }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match identity::reissue_entity(&root, kind.into(), &id) {
-                Ok(reissued) => {
-                    if json {
-                        println!(
-                            "{}",
-                            serde_json::to_string(&serde_json::json!({
-                                "uid": reissued.uid,
-                                "source_uid": reissued.source_uid,
-                            }))
-                            .expect("reissue result serialization is infallible")
-                        );
-                    } else {
-                        match &reissued.source_uid {
-                            Some(source_uid) => println!(
-                                "reissued '{id}' -> uid {} (source_uid: {source_uid})",
-                                reissued.uid
-                            ),
-                            None => println!("reissued '{id}' -> uid {}", reissued.uid),
-                        }
-                    }
-                    Ok(())
-                }
-                Err(ReissueError::NotFound(id)) => {
-                    let kind: identity::EntityKind = kind.into();
-                    eprintln!(
-                        "error: no {} with id '{id}' found under .markharness/knowledge/",
-                        kind.as_str()
-                    );
-                    std::process::exit(2);
-                }
-                Err(ReissueError::SourceIdNotReleased { source_uid, id }) => {
-                    let kind: identity::EntityKind = kind.into();
-                    let kind = kind.as_str();
-                    eprintln!(
-                        "error: '{id}' has not been released from '{source_uid}'; run `markharness identity retire {kind} {source_uid}` then `markharness identity release {kind} {source_uid} {id}` first"
-                    );
-                    std::process::exit(2);
-                }
-                Err(ReissueError::IdReservedByAnotherUid { holder_uid, id }) => {
-                    let kind: identity::EntityKind = kind.into();
-                    let kind = kind.as_str();
-                    eprintln!(
-                        "error: '{id}' is still reserved by '{holder_uid}'; run `markharness identity retire {kind} {holder_uid}` then `markharness identity release {kind} {holder_uid} {id}` first"
-                    );
-                    std::process::exit(2);
-                }
-                Err(ReissueError::OperationInProgress) => {
-                    eprintln!(
-                        "error: another identity operation is already in progress. Retry shortly."
-                    );
-                    std::process::exit(2);
-                }
-                Err(ReissueError::ReplayFailed(e)) => {
-                    eprintln!(
-                        "error: could not resolve an existing entity's current identity: {e:?}"
-                    );
-                    std::process::exit(2);
-                }
-                Err(ReissueError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }

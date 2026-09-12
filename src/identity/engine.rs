@@ -12,7 +12,7 @@ pub enum ReplayError {
     /// More than one event has an empty predecessor set — every entity
     /// has exactly one issuance/reissuance root.
     MultipleRootEvents(Vec<String>),
-    /// The one root event's mutation is not `Issued`/`Reissued`.
+    /// The one root event's mutation is not `Issued`.
     RootIsNotAnIssuance(String),
     /// An event references a predecessor UID absent from the input set.
     DanglingPredecessor {
@@ -35,13 +35,6 @@ pub enum ReplayError {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    Active,
-    Retired,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdHistoryEntry {
     pub id: String,
@@ -55,7 +48,6 @@ pub struct ReplayResult {
     pub entity_uid: String,
     pub entity_kind: EntityKind,
     pub current_head_event_uid: String,
-    pub status: Status,
     pub current_id: String,
     pub id_history: Vec<IdHistoryEntry>,
 }
@@ -231,11 +223,10 @@ fn apply_chain(entity_uid: &str, chain: &[&IdentityEvent]) -> Result<ReplayResul
         .expect("winning_chain always returns at least the root");
     let mut current_id: Option<String> = None;
     let mut id_history = Vec::new();
-    let mut status = Status::Active;
 
     for event in chain {
         match &event.mutation {
-            IdentityMutation::Issued { id } | IdentityMutation::Reissued { id, .. } => {
+            IdentityMutation::Issued { id } => {
                 current_id = Some(id.clone());
                 id_history.push(IdHistoryEntry {
                     id: id.clone(),
@@ -257,9 +248,7 @@ fn apply_chain(entity_uid: &str, chain: &[&IdentityEvent]) -> Result<ReplayResul
                     from_identity_event_uid: event.identity_event_uid.clone(),
                 });
             }
-            IdentityMutation::Retired => status = Status::Retired,
-            IdentityMutation::Restored => status = Status::Active,
-            IdentityMutation::Released { .. } | IdentityMutation::Resolved { .. } => {}
+            IdentityMutation::Resolved { .. } => {}
         }
     }
 
@@ -267,8 +256,7 @@ fn apply_chain(entity_uid: &str, chain: &[&IdentityEvent]) -> Result<ReplayResul
         entity_uid: entity_uid.to_string(),
         entity_kind: head.entity_kind,
         current_head_event_uid: head.identity_event_uid.clone(),
-        status,
-        current_id: current_id.expect("winning_chain always starts at an Issued/Reissued root"),
+        current_id: current_id.expect("winning_chain always starts at an Issued root"),
         id_history,
     })
 }
@@ -300,7 +288,6 @@ mod tests {
         );
         let result = replay("uid-1", &[issued]).unwrap();
         assert_eq!(result.current_id, "todo-management");
-        assert_eq!(result.status, Status::Active);
         assert_eq!(result.id_history.len(), 1);
         assert_eq!(result.current_head_event_uid, "e0");
     }
@@ -328,21 +315,6 @@ mod tests {
         assert_eq!(result.id_history[0].id, "todo-management");
         assert_eq!(result.id_history[1].id, "task-management");
         assert_eq!(result.current_head_event_uid, "e1");
-    }
-
-    #[test]
-    fn retire_then_restore_ends_active() {
-        let issued = event(
-            "e0",
-            None,
-            IdentityMutation::Issued {
-                id: "todo-management".to_string(),
-            },
-        );
-        let retired = event("e1", Some("e0"), IdentityMutation::Retired);
-        let restored = event("e2", Some("e1"), IdentityMutation::Restored);
-        let result = replay("uid-1", &[issued, retired, restored]).unwrap();
-        assert_eq!(result.status, Status::Active);
     }
 
     #[test]
