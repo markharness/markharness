@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (design agreed, implementation pending). Based on [Issue #40](https://github.com/markharness/markharness/issues/40) and the [decision record](https://github.com/markharness/markharness/issues/40#issuecomment-5554681808).
+Accepted (design agreed, implementation pending). Based on [Issue #40](https://github.com/markharness/markharness/issues/40) and the [decision record](https://github.com/markharness/markharness/issues/40#issuecomment-5554681808). §5 ("Execution evidence and applicability") is superseded by [0020](0020-execution-status-lightweight-model.md). §1–4 (ownership, shared procedures, case revision, split/merge) remain in effect.
 
 This ADR records the intended contract. It does not claim that current code or schemas implement it, or that every acceptance criterion of Issue #40 is complete.
 

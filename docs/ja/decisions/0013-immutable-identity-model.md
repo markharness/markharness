@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(2026-08-22。実装完了・`checklist-immutable-identity-model.md`参照)。下記「移行」節の`schema_version = 2`という値は[0018](./0018-identity-schema-version-freeze.md)により`schema_version = 1`へ訂正されている。本ADRのその他の内容はそのまま有効。
+Accepted(2026-08-22。実装完了・`checklist-immutable-identity-model.md`参照)。下記「移行」節の`schema_version = 2`という値は[0018](./0018-identity-schema-version-freeze.md)により`schema_version = 1`へ訂正されている。retire・restore・release・reissueに関する決定は[0021](./0021-identity-retire-simplification.md)により置き換えられた。UID発行・UIDとidの分離・rename時のUID維持を含む本ADRのその他の内容はそのまま有効。
 
 ## 背景
 

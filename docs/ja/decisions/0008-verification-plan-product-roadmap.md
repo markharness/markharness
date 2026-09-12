@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(Stage 0〜3は2026-08-18に実行済み。Stage 3ではlocalhost限定のread-only Release Verification Dashboard、Feature History、Rustバイナリへのfrontend同梱を実装)。
+Accepted(Stage 0〜3は2026-08-18に実行済み。Stage 3ではlocalhost限定のread-only Release Verification Dashboard、Feature History、Rustバイナリへのfrontend同梱を実装)。本ADRが中心に据えた`Verification Plan`という枠組みは、[0020](0020-execution-status-lightweight-model.md)および[markharness-v2-design.md](../design/markharness-v2-design.md)のChange Impact/Release Coverageへ置き換えられた(Stage 3で実装したdashboardは[0022](0022-remove-stage3-dashboard.md)により廃止)。Stage 0〜3の実装記録およびモジュラーモノリス方針としては有効。
 
 ## コンテキスト
 

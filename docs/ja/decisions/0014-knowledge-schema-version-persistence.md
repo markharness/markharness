@@ -75,7 +75,7 @@ knowledge_schema_version: 1
 
 ### 11. プロトタイプ段階(0.x)では本ADRのバージョニング契約を適用しない(2026-09-01追記、[decisions/0016](./0016-behavior-condition-precondition-step-result-model.md)の検討過程での追記)
 
-本プロジェクトは`Cargo.toml`のversionが0.xのプロトタイプ段階であり、[release-and-license instructions](../../.github/instructions/release-and-license.instructions.md)は「0.xバージョンはマイナー間で互換性を破ってよい」「1.0の基準は`PROJECT.md`で管理し、現在の基準はUC8インポータの実装とスキーマの安定化」と定めている。つまりKnowledgeスキーマ自体が1.0に向けて安定化する前提のものであり、プロトタイプ期の設計検討のたびに`[knowledge].schema_version`を刻むと、正式リリース後に本ADRの履歴を読んだ開発者が「どのバージョン境界が実際に議論を経た破壊的変更で、どれが単なる試行錯誤か」を区別できなくなる。
+本プロジェクトは`Cargo.toml`のversionが0.xのプロトタイプ段階であり、[release-and-license instructions](../../../.github/instructions/release-and-license.instructions.md)は「0.xバージョンはマイナー間で互換性を破ってよい」「1.0の基準は`PROJECT.md`で管理し、現在の基準はUC8インポータの実装とスキーマの安定化」と定めている。つまりKnowledgeスキーマ自体が1.0に向けて安定化する前提のものであり、プロトタイプ期の設計検討のたびに`[knowledge].schema_version`を刻むと、正式リリース後に本ADRの履歴を読んだ開発者が「どのバージョン境界が実際に議論を経た破壊的変更で、どれが単なる試行錯誤か」を区別できなくなる。
 
 そのため、`[knowledge].schema_version`はスキーマが安定した後(`PROJECT.md`が定める1.0の基準を満たした後)に初めて本ADRの契約(§1〜10)が適用され始める運用とし、プロトタイプ期の破壊的変更(Behavior/Condition/ExpectedResultのフィールド追加・改名を含む)では上げない。将来、実データが存在する状態で1.0後にスキーマ破壊的変更が入る場合は、通常通り本ADRの契約に従いバージョンを上げる。この判断は、実データが存在せず旧形式との誤比較リスクが今この時点では発生しないという事実(schema変更を行う各ADR自身が個別に確認する)と併せて適用される。
 

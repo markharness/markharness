@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Stages 0–3 were completed on 2026-08-18. Stage 3 implemented a localhost-only read-only Release Verification Dashboard, Feature History, and frontend assets embedded in the Rust binary).
+Accepted (Stages 0–3 were completed on 2026-08-18. Stage 3 implemented a localhost-only read-only Release Verification Dashboard, Feature History, and frontend assets embedded in the Rust binary). The `Verification Plan` framing this ADR put at the center is superseded by [0020](0020-execution-status-lightweight-model.md) and by Change Impact / Release Coverage in [markharness-v2-design.md](../design/markharness-v2-design.md) (the Stage 3 dashboard itself is removed by [0022](0022-remove-stage3-dashboard.md)). This ADR remains in effect as the record of Stages 0–3 and of the modular-monolith stance.
 
 ## Context
 

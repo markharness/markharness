@@ -63,5 +63,6 @@ checklist-*.md
 # One-off review reports for the current task (docs/review-policy.md). These
 # are working notes, not a permanent artifact; archive or delete them when
 # done rather than committing them.
+docs/reviews/
 review-*.md
 !review-policy.md
