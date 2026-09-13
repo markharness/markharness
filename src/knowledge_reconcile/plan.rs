@@ -40,6 +40,7 @@ pub enum RequirementOutcome {
     Unchanged {
         uid: String,
         id: String,
+        path: PathBuf,
     },
     Updated {
         uid: String,
@@ -86,12 +87,31 @@ pub enum ScenarioOutcome {
     Unchanged {
         uid: String,
         id: String,
+        path: PathBuf,
     },
     Updated {
         uid: String,
         canonical: Box<Scenario>,
         existing_path: PathBuf,
         new_path: PathBuf,
+    },
+}
+
+/// An existing Behavior reached by UID while walking a UID-selected
+/// Feature's `behaviors` (ADR 0027 §5): the fields the Intent names
+/// replace the current ones, omitted fields keep them. `id` is not
+/// patchable here — see [`apply_behavior_patch`].
+#[derive(Debug)]
+pub enum BehaviorOutcome {
+    Unchanged {
+        uid: String,
+        id: String,
+        path: PathBuf,
+    },
+    Updated {
+        uid: String,
+        canonical: Box<Behavior>,
+        existing_path: PathBuf,
     },
 }
 
@@ -105,6 +125,7 @@ pub enum FeatureOutcome {
     Unchanged {
         uid: String,
         id: String,
+        path: PathBuf,
     },
     Updated {
         uid: String,
@@ -124,6 +145,10 @@ pub struct Plan {
     /// are not new elements of the Feature/Behavior tree being built, but
     /// edits to Scenarios that already exist elsewhere in the tree.
     pub scenario_updates: Vec<ScenarioOutcome>,
+    /// Existing Behaviors reached by UID under a UID-selected Feature,
+    /// patched in place (see [`BehaviorOutcome`]). Separate from
+    /// `features` for the same reason as `scenario_updates`.
+    pub behavior_updates: Vec<BehaviorOutcome>,
     /// A snapshot of `.markharness/knowledge`'s on-disk content taken as
     /// [`build_plan`] started reading it (ADR 0027 §6's `stale_plan`).
     /// `None` for a `Plan` no caller built with [`build_plan`] (e.g.
@@ -210,6 +235,7 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
 
     let mut feature_outcomes = Vec::new();
     let mut scenario_updates = Vec::new();
+    let mut behavior_updates = Vec::new();
     for (i, feature) in doc.features.iter().enumerate() {
         if let Some(outcome) = plan_feature(
             root,
@@ -218,6 +244,7 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
             &requirement_uid_by_key,
             &mut diagnostics,
             &mut scenario_updates,
+            &mut behavior_updates,
         )? {
             feature_outcomes.push(outcome);
         }
@@ -230,6 +257,7 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
         requirements: requirement_outcomes,
         features: feature_outcomes,
         scenario_updates,
+        behavior_updates,
         state_fingerprint: Some(fingerprint),
     })
 }
@@ -242,6 +270,26 @@ fn parse_requirement_file(path: &Path) -> io::Result<Requirement> {
 fn parse_feature_file(path: &Path) -> io::Result<Feature> {
     let content = fs::read_to_string(path)?;
     knowledge::parse_feature(&content).map_err(io::Error::other)
+}
+
+/// Normalizes an Intent-supplied `description` into the exact form the
+/// canonical serializer round-trips to. Every `serialize_*` writes
+/// `description` as a literal block scalar, which YAML clips to end in
+/// exactly one newline, so a description read back from disk always ends
+/// in one — while a description written inline in an Intent does not.
+/// Comparing the two forms directly would mean an Intent that sets a
+/// description never settles: a re-run would find its own value different
+/// from the stored one and report a change forever, contradicting ADR
+/// 0027 §3's unchanged rule and §6's "same state and Intent produce the
+/// same plan".
+fn canonical_description(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n");
+    let trimmed = normalized.trim_end_matches('\n');
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("{trimmed}\n")
+    }
 }
 
 /// Builds a Requirement's full content using creation-time defaulting
@@ -263,7 +311,7 @@ fn build_requirement_content(
         source,
         label: Some(intent.label.clone().unwrap_or_else(|| id.to_string())),
         axis: intent.axis.clone().unwrap_or_default(),
-        description: intent.description.clone(),
+        description: intent.description.as_deref().map(canonical_description),
         source_locator: intent.source_locator.clone(),
         source_revision: None,
         related_issues: intent.related_issues.clone().unwrap_or_default(),
@@ -292,7 +340,8 @@ fn apply_requirement_patch(
         axis: intent.axis.clone().unwrap_or_else(|| current.axis.clone()),
         description: intent
             .description
-            .clone()
+            .as_deref()
+            .map(canonical_description)
             .or_else(|| current.description.clone()),
         source_locator: intent
             .source_locator
@@ -423,6 +472,7 @@ fn plan_requirement(
             return Ok(Some(RequirementOutcome::Unchanged {
                 uid: uid.clone(),
                 id: current.id,
+                path: found.path,
             }));
         }
         return Ok(Some(RequirementOutcome::Updated {
@@ -495,6 +545,7 @@ fn plan_requirement(
                 Ok(Some(RequirementOutcome::Unchanged {
                     uid: existing_uid,
                     id: id.clone(),
+                    path: found.path,
                 }))
             } else {
                 diagnostics.push(Diagnostic::new(
@@ -546,7 +597,7 @@ fn build_feature_content(
         requirement_uids,
         label: intent.label.clone().unwrap_or_else(|| id.to_string()),
         axis: intent.axis.clone().unwrap_or_default(),
-        description: intent.description.clone(),
+        description: intent.description.as_deref().map(canonical_description),
         forked_from: None,
         uid: Some(uid.to_string()),
     }
@@ -568,7 +619,8 @@ fn apply_feature_patch(
         axis: intent.axis.clone().unwrap_or_else(|| current.axis.clone()),
         description: intent
             .description
-            .clone()
+            .as_deref()
+            .map(canonical_description)
             .or_else(|| current.description.clone()),
         forked_from: current.forked_from.clone(),
         uid: current.uid.clone(),
@@ -582,6 +634,7 @@ fn plan_feature(
     requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     scenario_updates: &mut Vec<ScenarioOutcome>,
+    behavior_updates: &mut Vec<BehaviorOutcome>,
 ) -> Result<Option<FeatureOutcome>, PlanError> {
     let location = format!("features[{i}]");
 
@@ -596,12 +649,13 @@ fn plan_feature(
         };
         let current = parse_feature_file(&found.path)?;
         if !feature.behaviors.is_empty() {
-            scenario_updates.extend(plan_scenario_reparents(
+            scenario_updates.extend(plan_existing_behaviors(
                 root,
                 &location,
                 &current.id,
                 &feature.behaviors,
                 diagnostics,
+                behavior_updates,
             )?);
         }
         let resolved_requirement_uids = match &feature.contributes_to {
@@ -619,6 +673,7 @@ fn plan_feature(
             return Ok(Some(FeatureOutcome::Unchanged {
                 uid: uid.clone(),
                 id: current.id,
+                path: found.path,
             }));
         }
         return Ok(Some(FeatureOutcome::Updated {
@@ -712,6 +767,7 @@ fn plan_feature(
                 Ok(Some(FeatureOutcome::Unchanged {
                     uid: existing_uid,
                     id: id.clone(),
+                    path: found.path,
                 }))
             } else {
                 diagnostics.push(Diagnostic::new(
@@ -787,7 +843,7 @@ fn plan_new_behaviors(
             feature: feature_id.to_string(),
             label: behavior.label.clone().unwrap_or_else(|| id.clone()),
             axis: behavior.axis.clone().unwrap_or_default(),
-            description: description.clone(),
+            description: canonical_description(description),
             procedures: procedures.clone(),
             uid: Some(uid.clone()),
         };
@@ -862,7 +918,7 @@ fn plan_new_scenarios(
             id: id.clone(),
             behavior: behavior_id.to_string(),
             label: scenario.label.clone().unwrap_or_else(|| id.clone()),
-            description: description.clone(),
+            description: canonical_description(description),
             phases: converted_phases,
             implementation_note: None,
             generated_by: None,
@@ -872,6 +928,46 @@ fn plan_new_scenarios(
         planned.push(NewScenario { uid, canonical });
     }
     Ok(planned)
+}
+
+/// Builds a UID-selected Behavior's patched content (ADR 0027 §5: present
+/// replaces, omitted keeps current). `axis` and `procedures` are value
+/// collections, so an explicit empty one clears them while omitting keeps
+/// them. `id` is never taken from `intent` — the caller refuses an `id`
+/// change outright, because renaming needs an identity event this path
+/// does not record — and `feature` is not patchable at all, since moving a
+/// Behavior to another Feature is the reparent ADR 0027 §3 reserves for
+/// Scenarios.
+fn apply_behavior_patch(current: &Behavior, intent: &BehaviorIntent) -> Behavior {
+    Behavior {
+        id: current.id.clone(),
+        feature: current.feature.clone(),
+        label: intent
+            .label
+            .clone()
+            .unwrap_or_else(|| current.label.clone()),
+        axis: intent.axis.clone().unwrap_or_else(|| current.axis.clone()),
+        description: intent
+            .description
+            .as_deref()
+            .map(canonical_description)
+            .unwrap_or_else(|| current.description.clone()),
+        procedures: match &intent.procedures {
+            Some(procedures) => procedures
+                .iter()
+                .map(|p| {
+                    (
+                        p.name.clone(),
+                        knowledge::Procedure {
+                            steps: p.steps.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            None => current.procedures.clone(),
+        },
+        uid: current.uid.clone(),
+    }
 }
 
 fn parse_behavior_file(path: &Path) -> io::Result<Behavior> {
@@ -884,20 +980,20 @@ fn parse_scenario_file(path: &Path) -> io::Result<Scenario> {
     knowledge::parse_scenario(&content).map_err(io::Error::other)
 }
 
-/// Walks `behaviors` (a UID-selected Feature's `behaviors` list, ADR 0027
-/// §3) looking for existing Scenarios to update or reparent. Each
-/// `BehaviorIntent` here must itself carry a `uid` naming a Behavior that
-/// *already belongs to* `feature_current_id` — it identifies an existing
-/// Behavior to use as reparent-target context, not a new one to create
-/// (creating new Behaviors under an existing Feature remains unsupported,
-/// same as before this function existed). A `BehaviorIntent` without a
-/// `uid` here is rejected as not-yet-supported for the same reason.
-fn plan_scenario_reparents(
+/// Walks `behaviors` (a UID-selected Feature's `behaviors` list) and plans
+/// both the Behaviors' own patches (ADR 0027 §5) and any existing
+/// Scenarios listed under them, which may be updated in place or
+/// reparented (ADR 0027 §3). Each `BehaviorIntent` here must itself carry
+/// a `uid` naming a Behavior that *already belongs to*
+/// `feature_current_id`; creating a new Behavior under an existing Feature
+/// remains unsupported, so a `BehaviorIntent` without a `uid` is rejected.
+fn plan_existing_behaviors(
     root: &Path,
     feature_location: &str,
     feature_current_id: &str,
     behaviors: &[BehaviorIntent],
     diagnostics: &mut Vec<Diagnostic>,
+    behavior_updates: &mut Vec<BehaviorOutcome>,
 ) -> Result<Vec<ScenarioOutcome>, PlanError> {
     let mut outcomes = Vec::new();
     for (j, behavior) in behaviors.iter().enumerate() {
@@ -929,6 +1025,35 @@ fn plan_scenario_reparents(
             ));
             continue;
         }
+        if let Some(new_id) = &behavior.id
+            && new_id != &current_behavior.id
+        {
+            // Same reason `plan_existing_scenario` refuses a Scenario
+            // rename: changing `id` needs an `IdentityMutation::Renamed`
+            // event plus a directory move, neither of which this path
+            // performs. Refusing beats silently keeping the old id.
+            return Err(PlanError::NotYetSupported(format!(
+                "{location}.id: renaming a Behavior is not supported yet"
+            )));
+        }
+        let patched_behavior = apply_behavior_patch(&current_behavior, behavior);
+        behavior_updates.push(if patched_behavior == current_behavior {
+            BehaviorOutcome::Unchanged {
+                uid: behavior_uid.clone(),
+                id: current_behavior.id.clone(),
+                path: found_behavior.path.clone(),
+            }
+        } else {
+            BehaviorOutcome::Updated {
+                uid: behavior_uid.clone(),
+                canonical: Box::new(patched_behavior.clone()),
+                existing_path: found_behavior.path.clone(),
+            }
+        });
+        // Scenarios are checked against the *patched* procedures: a
+        // procedure this same Intent adds must be usable by a `use:` step
+        // it also adds, and one it removes must stop resolving.
+        let current_behavior = patched_behavior;
 
         for (k, scenario) in behavior.scenarios.iter().enumerate() {
             let scenario_location = format!("{location}.scenarios[{k}]");
@@ -992,6 +1117,7 @@ fn plan_scenario_reparents(
                 outcomes.push(ScenarioOutcome::Unchanged {
                     uid: scenario_uid.clone(),
                     id: current_scenario.id.clone(),
+                    path: found_scenario.path,
                 });
                 continue;
             }
@@ -1056,7 +1182,8 @@ fn apply_scenario_patch(
             .unwrap_or_else(|| current.label.clone()),
         description: intent
             .description
-            .clone()
+            .as_deref()
+            .map(canonical_description)
             .unwrap_or_else(|| current.description.clone()),
         phases,
         implementation_note: current.implementation_note.clone(),
@@ -1219,7 +1346,7 @@ requirements:
         let plan = build_plan(dir.path(), &doc).unwrap();
         assert_eq!(plan.requirements.len(), 1);
         match &plan.requirements[0] {
-            RequirementOutcome::Unchanged { uid, id } => {
+            RequirementOutcome::Unchanged { uid, id, .. } => {
                 assert_eq!(uid, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
                 assert_eq!(id, "todo");
             }
@@ -2120,6 +2247,142 @@ features:
             }
             other => panic!("expected Diagnostics, got {other:?}"),
         }
+    }
+
+    /// ADR 0027 §5 applies to a UID-selected Behavior exactly as it does
+    /// to a Requirement or Feature: every field the Intent names replaces
+    /// the current one. Silently keeping the old values while reporting
+    /// success would leave the caller's declaration and the stored state
+    /// diverged.
+    #[test]
+    fn a_uid_selected_behavior_patches_label_axis_description_and_procedures() {
+        let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        label: Capture (renamed label)
+        axis: [functional]
+        description: A new description.
+        procedures:
+          - name: validate_title
+            steps: [Check the title is non-empty]
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        assert_eq!(plan.behavior_updates.len(), 1);
+        let BehaviorOutcome::Updated { canonical, .. } = &plan.behavior_updates[0] else {
+            panic!("expected Updated, got {:?}", plan.behavior_updates[0]);
+        };
+        assert_eq!(canonical.label, "Capture (renamed label)");
+        assert_eq!(canonical.axis, vec!["functional".to_string()]);
+        // Canonical descriptions are newline-terminated: the serializer
+        // always writes a block scalar, which reads back that way.
+        assert_eq!(canonical.description, "A new description.\n");
+        assert_eq!(
+            canonical.procedures.get("validate_title").unwrap().steps,
+            vec!["Check the title is non-empty".to_string()]
+        );
+        assert_eq!(canonical.id, "capture", "id is untouched");
+        assert_eq!(canonical.feature, "todo-management", "scope is untouched");
+    }
+
+    /// The other half of ADR 0027 §5: an omitted field keeps its current
+    /// value, while an explicitly empty value collection clears it.
+    #[test]
+    fn a_uid_selected_behavior_keeps_omitted_fields_and_clears_explicitly_empty_collections() {
+        let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/capture/behavior.yml"),
+            format!(
+                "id: capture\nfeature: todo-management\nlabel: capture\naxis: [functional]\ndescription: Capture a TODO.\nprocedures:\n  validate_title:\n    steps:\n      - Check the title is non-empty\nuid: {capture_uid}\n"
+            ),
+        )
+        .unwrap();
+
+        // Omitting every patchable field leaves the Behavior untouched.
+        let keep = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n"
+        );
+        let plan = build_plan(dir.path(), &parse_intent(&keep).unwrap()).unwrap();
+        assert!(
+            matches!(
+                &plan.behavior_updates[0],
+                BehaviorOutcome::Unchanged { id, .. } if id == "capture"
+            ),
+            "got {:?}",
+            plan.behavior_updates[0]
+        );
+
+        // Explicit empty collections clear both.
+        let clear = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n        axis: []\n        procedures: []\n"
+        );
+        let plan = build_plan(dir.path(), &parse_intent(&clear).unwrap()).unwrap();
+        let BehaviorOutcome::Updated { canonical, .. } = &plan.behavior_updates[0] else {
+            panic!("expected Updated, got {:?}", plan.behavior_updates[0]);
+        };
+        assert!(canonical.axis.is_empty());
+        assert!(canonical.procedures.is_empty());
+        assert_eq!(
+            canonical.description, "Capture a TODO.",
+            "an omitted scalar keeps the current value verbatim"
+        );
+    }
+
+    /// Renaming needs an `IdentityMutation::Renamed` event and a directory
+    /// move, neither of which this path performs — so it must refuse
+    /// rather than report success while keeping the old id.
+    #[test]
+    fn renaming_a_uid_selected_behavior_is_not_yet_supported() {
+        let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n        id: renamed-capture\n"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        assert!(matches!(err, PlanError::NotYetSupported(_)), "{err:?}");
+    }
+
+    /// A procedure declared on an existing Behavior in this same Intent
+    /// must already resolve for a `use:` step patched into one of its
+    /// Scenarios — the check runs against the patched procedures, not the
+    /// pre-patch ones.
+    #[test]
+    fn a_procedure_added_to_an_existing_behavior_resolves_for_its_scenarios_use_step() {
+        let (dir, feature_uid, capture_uid, _review_uid, scenario_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        procedures:
+          - name: validate_title
+            steps: [Check the title is non-empty]
+        scenarios:
+          - uid: {scenario_uid}
+            phases:
+              - steps:
+                  - use: validate_title
+                results:
+                  - No TODO is added
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        assert_eq!(plan.behavior_updates.len(), 1);
+        assert_eq!(plan.scenario_updates.len(), 1);
     }
 
     /// A brand-new Behavior always starts with an empty `procedures` map —

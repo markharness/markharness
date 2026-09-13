@@ -20,6 +20,12 @@ fn intent_path(root: &Path, operation_id: &str) -> PathBuf {
     staging_dir(root, operation_id).join("intent.yml")
 }
 
+/// The logical commit point for an operation that records no identity
+/// event of its own — see [`is_committed`].
+fn commit_marker_path(root: &Path, operation_id: &str) -> PathBuf {
+    staging_dir(root, operation_id).join("committed")
+}
+
 /// `.markharness/identity-events/<kind>/<uid>/<event_uid>.yml` — the
 /// identity event's final location (design doc §4.1, §6.1). Writing to
 /// this exact path is the operation's single logical commit point:
@@ -45,9 +51,21 @@ pub fn event_file_path(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Intent {
     pub operation_id: String,
-    pub entity_kind: EntityKind,
-    pub entity_uid: String,
-    pub identity_event_uid: String,
+    /// The single entity a legacy (non-batch) operation acts on, and — for
+    /// a batch — a mirror of its first event, whose arrival at
+    /// [`event_file_path`] is the batch's commit point. `None` only for an
+    /// operation that records no identity event at all: a content-only
+    /// `knowledge reconcile` (ADR 0027 §1 step 7) changes Knowledge
+    /// fields that the immutable identity model does not track, so it has
+    /// no event to stand as its commit point and uses
+    /// [`commit_marker_path`] instead. All three are `Some` together or
+    /// `None` together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_kind: Option<EntityKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_uid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_event_uid: Option<String>,
     /// All events belonging to one project-wide operation. Empty for the
     /// legacy/single-entity form. The first entry is the logical commit
     /// point; once it exists, recovery writes every remaining event and
@@ -82,24 +100,41 @@ pub enum IntentPayload {
     /// survives a crash between the commit point and the migration
     /// manifest being updated.
     IdentityMigration(std::collections::BTreeMap<String, String>),
-    /// `knowledge_reconcile::execute`'s brand-new canonical Knowledge files
-    /// (ADR 0027): unlike every other caller of this recovery protocol,
+    /// Every canonical Knowledge file `knowledge_reconcile::execute` still
+    /// needs to write or move after its commit point (ADR 0027 §1 step 7:
+    /// Knowledge and identity events land as one crash-recoverable
+    /// transaction). Unlike every other caller of this recovery protocol,
     /// which patches a Knowledge file that already exists in the working
-    /// tree, reconcile's new elements have no file to patch yet. Their
-    /// full contents (already carrying the freshly issued `uid`) are
-    /// captured here *before* the batch's commit point, so a crash between
-    /// that point and the files actually being written is recovered by
-    /// writing them from this durable copy instead of losing them.
-    KnowledgeReconcile(Vec<PendingKnowledgeFile>),
+    /// tree, reconcile also creates files that do not exist yet and moves
+    /// existing ones between Behaviors. Capturing all of it here *before*
+    /// the commit point is what lets a crash anywhere after that point
+    /// converge on the new state: every entry is replayed idempotently
+    /// from this durable copy rather than being lost or half-applied.
+    KnowledgeReconcile {
+        files: Vec<PendingKnowledgeFile>,
+        moves: Vec<PendingKnowledgeMove>,
+    },
 }
 
-/// One canonical Knowledge file `knowledge_reconcile::execute` still needs
-/// to write after its batch's logical commit point (see
-/// `IntentPayload::KnowledgeReconcile`). `relative_path` is root-relative,
+/// One canonical Knowledge file to create or overwrite wholesale (see
+/// [`IntentPayload::KnowledgeReconcile`]). `relative_path` is root-relative,
 /// forward-slash-normalized (mirrors `feature_ops::relative_path_string`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingKnowledgeFile {
     pub relative_path: String,
+    pub contents: String,
+}
+
+/// One canonical Knowledge file to relocate and then rewrite — a Scenario
+/// reparented to a different Behavior (ADR 0027 §3). Kept distinct from
+/// [`PendingKnowledgeFile`] so replay can move the existing file rather
+/// than writing the destination and deleting the source: a move leaves
+/// exactly one file claiming this Scenario's UID at every instant, where
+/// write-then-delete would transiently leave two.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingKnowledgeMove {
+    pub from_relative_path: String,
+    pub to_relative_path: String,
     pub contents: String,
 }
 
@@ -123,9 +158,9 @@ pub fn begin(
 ) -> io::Result<Intent> {
     let intent = Intent {
         operation_id: ulid::Ulid::new().to_string(),
-        entity_kind,
-        entity_uid: entity_uid.to_string(),
-        identity_event_uid: identity_event_uid.to_string(),
+        entity_kind: Some(entity_kind),
+        entity_uid: Some(entity_uid.to_string()),
+        identity_event_uid: Some(identity_event_uid.to_string()),
         batch_events: Vec::new(),
         caller_payload: None,
     };
@@ -149,19 +184,28 @@ pub fn begin_batch(root: &Path, batch_events: Vec<BatchEvent>) -> io::Result<Int
 /// it survives a crash between that commit point and the caller's own
 /// post-commit work (e.g. `feature_ops::migrate_all` recording the
 /// migration manifest).
+/// `batch_events` may be empty when `caller_payload` alone carries the
+/// operation's whole effect — a content-only `knowledge reconcile`
+/// (ADR 0027 §5) changes Knowledge fields the identity model does not
+/// track, so it issues no event. Such an operation's commit point is the
+/// marker [`commit_batch`] writes instead of an event file.
 pub fn begin_batch_with_payload(
     root: &Path,
     batch_events: Vec<BatchEvent>,
     caller_payload: Option<IntentPayload>,
 ) -> io::Result<Intent> {
-    let first = batch_events
-        .first()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "batch must not be empty"))?;
+    if batch_events.is_empty() && caller_payload.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "an operation with neither events nor a payload has nothing to recover",
+        ));
+    }
+    let first = batch_events.first();
     let intent = Intent {
         operation_id: ulid::Ulid::new().to_string(),
-        entity_kind: first.entity_kind,
-        entity_uid: first.entity_uid.clone(),
-        identity_event_uid: first.identity_event_uid.clone(),
+        entity_kind: first.map(|e| e.entity_kind),
+        entity_uid: first.map(|e| e.entity_uid.clone()),
+        identity_event_uid: first.map(|e| e.identity_event_uid.clone()),
         batch_events,
         caller_payload,
     };
@@ -179,14 +223,19 @@ pub fn begin_batch_with_payload(
 /// `intent.identity_event_uid`; recovery's `is_committed` check depends on
 /// this agreement.
 pub fn commit(root: &Path, intent: &Intent, event_yaml: &str) -> io::Result<()> {
+    let (Some(kind), Some(entity_uid), Some(event_uid)) = (
+        intent.entity_kind,
+        intent.entity_uid.as_deref(),
+        intent.identity_event_uid.as_deref(),
+    ) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "this intent records no identity event of its own; commit_batch owns its commit point",
+        ));
+    };
     replace_file(
         root,
-        &event_file_path(
-            root,
-            intent.entity_kind,
-            &intent.entity_uid,
-            &intent.identity_event_uid,
-        ),
+        &event_file_path(root, kind, entity_uid, event_uid),
         event_yaml.as_bytes(),
     )
 }
@@ -195,6 +244,20 @@ pub fn commit(root: &Path, intent: &Intent, event_yaml: &str) -> io::Result<()> 
 /// logical commit point; the durable intent contains enough information
 /// for startup recovery to finish every later event.
 pub fn commit_batch(root: &Path, intent: &Intent) -> io::Result<()> {
+    if intent.batch_events.is_empty() {
+        // Nothing to commit at `event_file_path`, so this marker — written
+        // atomically, like any event — is this operation's commit point
+        // instead (see `is_committed`). Everything it will change lives in
+        // `caller_payload` and is written afterwards by roll-forward, so a
+        // crash before this marker converges on the old state and a crash
+        // after it converges on the new one, exactly as for an operation
+        // that does issue events.
+        return replace_file(
+            root,
+            &commit_marker_path(root, &intent.operation_id),
+            b"committed\n",
+        );
+    }
     for event in &intent.batch_events {
         replace_file(
             root,
@@ -228,15 +291,21 @@ pub fn complete_batch_commits(root: &Path, intent: &Intent) -> io::Result<()> {
 }
 
 /// Whether `intent`'s event has reached its final location — the sole
-/// criterion for "did this operation happen" (design doc §6.1).
+/// criterion for "did this operation happen" (design doc §6.1). An
+/// operation that issues no event of its own has no such location, so its
+/// equally-atomic marker file answers the same question (see
+/// [`commit_batch`]).
 pub fn is_committed(root: &Path, intent: &Intent) -> bool {
-    event_file_path(
-        root,
+    match (
         intent.entity_kind,
-        &intent.entity_uid,
-        &intent.identity_event_uid,
-    )
-    .is_file()
+        intent.entity_uid.as_deref(),
+        intent.identity_event_uid.as_deref(),
+    ) {
+        (Some(kind), Some(entity_uid), Some(event_uid)) => {
+            event_file_path(root, kind, entity_uid, event_uid).is_file()
+        }
+        _ => commit_marker_path(root, &intent.operation_id).is_file(),
+    }
 }
 
 /// Step 5: removes the staging directory, marking the operation
@@ -428,8 +497,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let intent = begin(dir.path(), EntityKind::Feature, "uid-1", "event-1").unwrap();
         assert!(intent_path(dir.path(), &intent.operation_id).is_file());
-        assert_eq!(intent.entity_uid, "uid-1");
-        assert_eq!(intent.identity_event_uid, "event-1");
+        assert_eq!(intent.entity_uid.as_deref(), Some("uid-1"));
+        assert_eq!(intent.identity_event_uid.as_deref(), Some("event-1"));
     }
 
     #[test]
@@ -528,7 +597,7 @@ mod tests {
 
         let mut rolled_forward_for: Vec<String> = Vec::new();
         let outcomes = recover_incomplete_operations(dir.path(), |intent| {
-            rolled_forward_for.push(intent.entity_uid.clone());
+            rolled_forward_for.push(intent.entity_uid.clone().unwrap());
             Ok(())
         })
         .unwrap();
@@ -563,7 +632,7 @@ mod tests {
 
         let mut rolled_forward_for: Vec<String> = Vec::new();
         let outcomes = recover_incomplete_operations(dir.path(), |intent| {
-            rolled_forward_for.push(intent.entity_uid.clone());
+            rolled_forward_for.push(intent.entity_uid.clone().unwrap());
             Ok(())
         })
         .unwrap();

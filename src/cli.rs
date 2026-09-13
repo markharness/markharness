@@ -2053,12 +2053,25 @@ fn report_reconcile_diagnostics(diagnostics: &[ReconcileDiagnostic], json: bool)
 /// Reports `knowledge reconcile`'s result (ADR 0027 §7: `--json` returns
 /// at least `created`/`updated`/`unchanged`).
 fn report_reconcile_outcome(outcome: &ReconcileOutcome, json: bool) {
-    fn element_to_json(kind: crate::identity::EntityKind, uid: &str, id: &str) -> String {
+    /// `previous_path` is emitted only when the element's file actually
+    /// moved (a reparented Scenario), so a caller can tell a relocation
+    /// apart from an in-place rewrite without comparing paths itself.
+    fn element_to_json(
+        kind: crate::identity::EntityKind,
+        uid: &str,
+        id: &str,
+        path: &str,
+        previous_path: Option<&str>,
+    ) -> String {
+        let previous = previous_path
+            .map(|p| format!(",\"previous_path\":\"{}\"", json_escape(p)))
+            .unwrap_or_default();
         format!(
-            "{{\"kind\":\"{}\",\"uid\":\"{}\",\"id\":\"{}\"}}",
+            "{{\"kind\":\"{}\",\"uid\":\"{}\",\"id\":\"{}\",\"path\":\"{}\"{previous}}}",
             kind.as_str(),
             json_escape(uid),
             json_escape(id),
+            json_escape(path),
         )
     }
 
@@ -2066,17 +2079,17 @@ fn report_reconcile_outcome(outcome: &ReconcileOutcome, json: bool) {
         let created: Vec<String> = outcome
             .created
             .iter()
-            .map(|c| element_to_json(c.kind, &c.uid, &c.id))
+            .map(|c| element_to_json(c.kind, &c.uid, &c.id, &c.path, None))
             .collect();
         let updated: Vec<String> = outcome
             .updated
             .iter()
-            .map(|u| element_to_json(u.kind, &u.uid, &u.id))
+            .map(|u| element_to_json(u.kind, &u.uid, &u.id, &u.path, u.previous_path.as_deref()))
             .collect();
         let unchanged: Vec<String> = outcome
             .unchanged
             .iter()
-            .map(|u| element_to_json(u.kind, &u.uid, &u.id))
+            .map(|u| element_to_json(u.kind, &u.uid, &u.id, &u.path, None))
             .collect();
         println!(
             "{{\"ok\":true,\"created\":[{}],\"updated\":[{}],\"unchanged\":[{}]}}",
@@ -2086,13 +2099,40 @@ fn report_reconcile_outcome(outcome: &ReconcileOutcome, json: bool) {
         );
     } else {
         for c in &outcome.created {
-            println!("created {} '{}' (uid {})", c.kind.as_str(), c.id, c.uid);
+            println!(
+                "created {} '{}' (uid {}) {}",
+                c.kind.as_str(),
+                c.id,
+                c.uid,
+                c.path
+            );
         }
         for u in &outcome.updated {
-            println!("updated {} '{}' (uid {})", u.kind.as_str(), u.id, u.uid);
+            match &u.previous_path {
+                Some(previous) => println!(
+                    "updated {} '{}' (uid {}) {previous} -> {}",
+                    u.kind.as_str(),
+                    u.id,
+                    u.uid,
+                    u.path
+                ),
+                None => println!(
+                    "updated {} '{}' (uid {}) {}",
+                    u.kind.as_str(),
+                    u.id,
+                    u.uid,
+                    u.path
+                ),
+            }
         }
         for u in &outcome.unchanged {
-            println!("unchanged {} '{}' (uid {})", u.kind.as_str(), u.id, u.uid);
+            println!(
+                "unchanged {} '{}' (uid {}) {}",
+                u.kind.as_str(),
+                u.id,
+                u.uid,
+                u.path
+            );
         }
         if outcome.created.is_empty() && outcome.updated.is_empty() && outcome.unchanged.is_empty()
         {

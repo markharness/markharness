@@ -10,7 +10,7 @@
 //! kind of write.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::identity::{
     EntityKind, IdentityEvent, IdentityMutation, feature_ops, lock, recovery, registry,
@@ -22,8 +22,8 @@ use super::diagnostics::{Diagnostic, DiagnosticCode};
 use super::intent::IntentDocument;
 use super::paths::{behavior_path, feature_path, requirement_path, scenario_path};
 use super::plan::{
-    FeatureOutcome, Plan, PlanError, RequirementOutcome, ScenarioOutcome, build_plan,
-    state_fingerprint,
+    BehaviorOutcome, FeatureOutcome, Plan, PlanError, RequirementOutcome, ScenarioOutcome,
+    build_plan, state_fingerprint,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +31,10 @@ pub struct CreatedElement {
     pub kind: EntityKind,
     pub uid: String,
     pub id: String,
+    /// Root-relative, forward-slash-normalized path of the canonical
+    /// Knowledge file this element was written to (ADR 0027 §7: the result
+    /// reports each element's changed path, not just its identity).
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +42,13 @@ pub struct UpdatedElement {
     pub kind: EntityKind,
     pub uid: String,
     pub id: String,
+    /// Where this element's file lives *after* the update.
+    pub path: String,
+    /// Where it lived before, when the update moved it (a reparented
+    /// Scenario). `None` when the file stayed put — including a
+    /// Requirement/Feature rename, which by design rewrites `id:` without
+    /// moving the directory.
+    pub previous_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +56,7 @@ pub struct UnchangedElement {
     pub kind: EntityKind,
     pub uid: String,
     pub id: String,
+    pub path: String,
 }
 
 /// `knowledge reconcile`'s result (ADR 0027 §7: `--json` returns at least
@@ -181,7 +193,7 @@ pub fn check_creation(
             return Err(ReconcileError::RecoveryPending);
         }
         let plan = build_plan(root, doc)?;
-        Ok(plan_outcome(&plan))
+        Ok(plan_outcome(root, &plan))
     })();
     held_lock.release()?;
     outcome
@@ -316,8 +328,9 @@ fn pending_file(root: &Path, path: &Path, contents: String) -> recovery::Pending
 /// [`commit_plan`] does, shared with [`check_creation`] (ADR 0027 §6's
 /// `--check`) so the preview a caller sees before committing can never
 /// drift from what an actual commit of the same plan would report.
-fn plan_outcome(plan: &Plan) -> ReconcileOutcome {
+fn plan_outcome(root: &Path, plan: &Plan) -> ReconcileOutcome {
     let mut outcome = ReconcileOutcome::default();
+    let rel = |path: &Path| relative_path_string(root, path);
 
     for req in &plan.requirements {
         match req {
@@ -325,17 +338,28 @@ fn plan_outcome(plan: &Plan) -> ReconcileOutcome {
                 kind: EntityKind::Requirement,
                 uid: uid.clone(),
                 id: canonical.id.clone(),
+                path: rel(&requirement_path(root, &canonical.id)),
             }),
-            RequirementOutcome::Unchanged { uid, id } => outcome.unchanged.push(UnchangedElement {
-                kind: EntityKind::Requirement,
-                uid: uid.clone(),
-                id: id.clone(),
-            }),
-            RequirementOutcome::Updated { uid, canonical, .. } => {
+            RequirementOutcome::Unchanged { uid, id, path } => {
+                outcome.unchanged.push(UnchangedElement {
+                    kind: EntityKind::Requirement,
+                    uid: uid.clone(),
+                    id: id.clone(),
+                    path: rel(path),
+                });
+            }
+            RequirementOutcome::Updated {
+                uid,
+                canonical,
+                existing_path,
+                ..
+            } => {
                 outcome.updated.push(UpdatedElement {
                     kind: EntityKind::Requirement,
                     uid: uid.clone(),
                     id: canonical.id.clone(),
+                    path: rel(existing_path),
+                    previous_path: None,
                 });
             }
         }
@@ -352,32 +376,76 @@ fn plan_outcome(plan: &Plan) -> ReconcileOutcome {
                     kind: EntityKind::Feature,
                     uid: uid.clone(),
                     id: canonical.id.clone(),
+                    path: rel(&feature_path(root, &canonical.id)),
                 });
                 for behavior in behaviors {
                     outcome.created.push(CreatedElement {
                         kind: EntityKind::Behavior,
                         uid: behavior.uid.clone(),
                         id: behavior.canonical.id.clone(),
+                        path: rel(&behavior_path(root, &canonical.id, &behavior.canonical.id)),
                     });
                     for scenario in &behavior.scenarios {
                         outcome.created.push(CreatedElement {
                             kind: EntityKind::Scenario,
                             uid: scenario.uid.clone(),
                             id: scenario.canonical.id.clone(),
+                            path: rel(&scenario_path(
+                                root,
+                                &canonical.id,
+                                &behavior.canonical.id,
+                                &scenario.canonical.id,
+                            )),
                         });
                     }
                 }
             }
-            FeatureOutcome::Unchanged { uid, id } => outcome.unchanged.push(UnchangedElement {
-                kind: EntityKind::Feature,
-                uid: uid.clone(),
-                id: id.clone(),
-            }),
-            FeatureOutcome::Updated { uid, canonical, .. } => {
+            FeatureOutcome::Unchanged { uid, id, path } => {
+                outcome.unchanged.push(UnchangedElement {
+                    kind: EntityKind::Feature,
+                    uid: uid.clone(),
+                    id: id.clone(),
+                    path: rel(path),
+                });
+            }
+            FeatureOutcome::Updated {
+                uid,
+                canonical,
+                existing_path,
+                ..
+            } => {
                 outcome.updated.push(UpdatedElement {
                     kind: EntityKind::Feature,
                     uid: uid.clone(),
                     id: canonical.id.clone(),
+                    path: rel(existing_path),
+                    previous_path: None,
+                });
+            }
+        }
+    }
+
+    for behavior in &plan.behavior_updates {
+        match behavior {
+            BehaviorOutcome::Unchanged { uid, id, path } => {
+                outcome.unchanged.push(UnchangedElement {
+                    kind: EntityKind::Behavior,
+                    uid: uid.clone(),
+                    id: id.clone(),
+                    path: rel(path),
+                });
+            }
+            BehaviorOutcome::Updated {
+                uid,
+                canonical,
+                existing_path,
+            } => {
+                outcome.updated.push(UpdatedElement {
+                    kind: EntityKind::Behavior,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                    path: rel(existing_path),
+                    previous_path: None,
                 });
             }
         }
@@ -385,16 +453,26 @@ fn plan_outcome(plan: &Plan) -> ReconcileOutcome {
 
     for scenario in &plan.scenario_updates {
         match scenario {
-            ScenarioOutcome::Unchanged { uid, id } => outcome.unchanged.push(UnchangedElement {
-                kind: EntityKind::Scenario,
-                uid: uid.clone(),
-                id: id.clone(),
-            }),
-            ScenarioOutcome::Updated { uid, canonical, .. } => {
+            ScenarioOutcome::Unchanged { uid, id, path } => {
+                outcome.unchanged.push(UnchangedElement {
+                    kind: EntityKind::Scenario,
+                    uid: uid.clone(),
+                    id: id.clone(),
+                    path: rel(path),
+                });
+            }
+            ScenarioOutcome::Updated {
+                uid,
+                canonical,
+                existing_path,
+                new_path,
+            } => {
                 outcome.updated.push(UpdatedElement {
                     kind: EntityKind::Scenario,
                     uid: uid.clone(),
                     id: canonical.id.clone(),
+                    path: rel(new_path),
+                    previous_path: (new_path != existing_path).then(|| rel(existing_path)),
                 });
             }
         }
@@ -403,12 +481,20 @@ fn plan_outcome(plan: &Plan) -> ReconcileOutcome {
     outcome
 }
 
+/// Commits `plan` as one crash-recoverable transaction (ADR 0027 §1 step
+/// 7). Every canonical Knowledge write it performs — brand-new elements,
+/// renames, content-only patches and Scenario reparents alike — is
+/// recorded in the recovery payload *before* the commit point and carried
+/// out by `feature_ops::roll_forward` after it, so a crash anywhere
+/// converges: before that point on the old state, after it on the new one.
+/// Writing any part of it directly here instead (as an earlier version did
+/// for content-only patches and reparents) leaves a partially updated tree
+/// that no later command knows to finish.
 fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
     let recorded_at = iso8601_utc_now();
     let mut batch_events = Vec::new();
     let mut files = Vec::new();
-    let mut direct_writes: Vec<(PathBuf, String)> = Vec::new();
-    let outcome = plan_outcome(plan);
+    let outcome = plan_outcome(root, plan);
 
     for req in &plan.requirements {
         match req {
@@ -434,6 +520,9 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                 canonical,
                 existing_path,
             } => {
+                // The rewritten file is identical either way; only an `id`
+                // change additionally needs a `Renamed` event, since
+                // content fields are not part of identity history.
                 if &canonical.id != before_id {
                     push_renamed(
                         root,
@@ -444,17 +533,12 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                         &canonical.id,
                         &recorded_at,
                     )?;
-                    files.push(pending_file(
-                        root,
-                        existing_path,
-                        knowledge::serialize_requirement(canonical),
-                    ));
-                } else {
-                    direct_writes.push((
-                        existing_path.clone(),
-                        knowledge::serialize_requirement(canonical),
-                    ));
                 }
+                files.push(pending_file(
+                    root,
+                    existing_path,
+                    knowledge::serialize_requirement(canonical),
+                ));
             }
         }
     }
@@ -534,28 +618,40 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                         &canonical.id,
                         &recorded_at,
                     )?;
-                    files.push(pending_file(
-                        root,
-                        existing_path,
-                        knowledge::serialize_feature(canonical),
-                    ));
-                } else {
-                    direct_writes.push((
-                        existing_path.clone(),
-                        knowledge::serialize_feature(canonical),
-                    ));
                 }
+                files.push(pending_file(
+                    root,
+                    existing_path,
+                    knowledge::serialize_feature(canonical),
+                ));
             }
         }
     }
 
-    // Scenario reparent/content-patch (ADR 0027 §3): no `IdentityMutation`
-    // event exists for this — `feature`/`behavior` fields are content, not
-    // identity-tracked lifecycle, and `plan_scenario_reparents` already
-    // refuses an accompanying `id` change (the one Scenario edit that
-    // *would* need an event) — so these never join `batch_events`, only
-    // `scenario_moves`/`direct_writes`.
-    let mut scenario_moves: Vec<(PathBuf, PathBuf, String)> = Vec::new();
+    // A Behavior patch and a Scenario reparent/patch (ADR 0027 §3, §5)
+    // carry no `IdentityMutation`: `feature`/`behavior` and every field
+    // they touch are content, not identity-tracked lifecycle, and
+    // `plan_existing_behaviors` already refuses the one edit that *would*
+    // need an event — an `id` change. They still ride the same payload, so
+    // they commit and recover together with everything else.
+    for behavior in &plan.behavior_updates {
+        match behavior {
+            BehaviorOutcome::Unchanged { .. } => {}
+            BehaviorOutcome::Updated {
+                canonical,
+                existing_path,
+                ..
+            } => {
+                files.push(pending_file(
+                    root,
+                    existing_path,
+                    knowledge::serialize_behavior(canonical),
+                ));
+            }
+        }
+    }
+
+    let mut moves = Vec::new();
     for scenario in &plan.scenario_updates {
         match scenario {
             ScenarioOutcome::Unchanged { .. } => {}
@@ -567,41 +663,29 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
             } => {
                 let contents = knowledge::serialize_scenario(canonical);
                 if new_path == existing_path {
-                    direct_writes.push((existing_path.clone(), contents));
+                    files.push(pending_file(root, new_path, contents));
                 } else {
-                    scenario_moves.push((existing_path.clone(), new_path.clone(), contents));
+                    moves.push(recovery::PendingKnowledgeMove {
+                        from_relative_path: relative_path_string(root, existing_path),
+                        to_relative_path: relative_path_string(root, new_path),
+                        contents,
+                    });
                 }
             }
         }
     }
 
-    if !batch_events.is_empty() {
-        let intent = recovery::begin_batch_with_payload(
-            root,
-            batch_events,
-            Some(recovery::IntentPayload::KnowledgeReconcile(files)),
-        )?;
-        recovery::commit_batch(root, &intent)?;
-        feature_ops::roll_forward(root, &intent)?;
-        recovery::finish(root, &intent)?;
+    if batch_events.is_empty() && files.is_empty() && moves.is_empty() {
+        return Ok(outcome);
     }
-
-    for (path, contents) in direct_writes {
-        crate::fs_safety::replace_file(root, &path, contents.as_bytes())?;
-    }
-
-    for (from, to, contents) in scenario_moves {
-        // Move first, so at every instant exactly one file represents this
-        // Scenario (never both old and new, never neither) — then write
-        // its full new content at the destination. A crash between these
-        // two steps leaves the file at `to` with stale (pre-patch)
-        // content; re-running the same reconcile finds it already moved
-        // (`new_path == existing_path` on the next plan) and simply
-        // finishes the content write, so this is self-correcting on retry
-        // without needing its own staging/batch machinery.
-        crate::fs_safety::rename_no_follow(root, &from, &to)?;
-        crate::fs_safety::replace_file(root, &to, contents.as_bytes())?;
-    }
+    let intent = recovery::begin_batch_with_payload(
+        root,
+        batch_events,
+        Some(recovery::IntentPayload::KnowledgeReconcile { files, moves }),
+    )?;
+    recovery::commit_batch(root, &intent)?;
+    feature_ops::roll_forward(root, &intent)?;
+    recovery::finish(root, &intent)?;
 
     Ok(outcome)
 }
@@ -1207,6 +1291,408 @@ requirements:
         );
     }
 
+    /// A UID-selected Behavior's own fields must actually reach disk (ADR
+    /// 0027 §5). An earlier version walked the Behavior only as reparent
+    /// context and silently discarded `label`/`axis`/`description`/
+    /// `procedures` while still reporting success.
+    #[test]
+    fn a_uid_selected_behaviors_patched_fields_reach_disk_without_an_identity_event() {
+        let dir = init_project();
+        let create_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+";
+        let created = reconcile_creation(dir.path(), &parse_intent(create_yaml).unwrap()).unwrap();
+        let uid_of = |kind: EntityKind| {
+            created
+                .created
+                .iter()
+                .find(|e| e.kind == kind)
+                .unwrap()
+                .uid
+                .clone()
+        };
+        let feature_uid = uid_of(EntityKind::Feature);
+        let behavior_uid = uid_of(EntityKind::Behavior);
+
+        let patch_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {behavior_uid}
+        label: Capture (renamed label)
+        description: A new description.
+        procedures:
+          - name: validate_title
+            steps: [Check the title is non-empty]
+"
+        );
+        let outcome = reconcile_creation(dir.path(), &parse_intent(&patch_yaml).unwrap()).unwrap();
+        assert_eq!(outcome.updated.len(), 1);
+        assert_eq!(outcome.updated[0].kind, EntityKind::Behavior);
+
+        let behavior = knowledge::parse_behavior(
+            &std::fs::read_to_string(
+                dir.path()
+                    .join(".markharness/knowledge/features/todo-management/capture/behavior.yml"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(behavior.label, "Capture (renamed label)");
+        assert_eq!(behavior.description, "A new description.\n");
+        assert_eq!(
+            behavior.procedures.get("validate_title").unwrap().steps,
+            vec!["Check the title is non-empty".to_string()]
+        );
+        assert_eq!(behavior.uid, Some(behavior_uid.clone()));
+
+        let events = registry::load_events_from_working_tree(
+            dir.path(),
+            EntityKind::Behavior,
+            &behavior_uid,
+        )
+        .unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "a content-only Behavior patch adds no identity event"
+        );
+    }
+
+    /// ADR 0027 §6: the same Intent against the same state must produce
+    /// the same plan. A `description` is the one field where that nearly
+    /// broke — the serializer always writes it as a literal block scalar,
+    /// so it reads back newline-terminated while the Intent's own value is
+    /// not — which would make every re-run report a change and rewrite the
+    /// file forever. Covers both a re-run of a creation Intent and a
+    /// re-run of a UID-selected patch.
+    #[test]
+    fn re_running_an_intent_that_sets_descriptions_settles_on_unchanged() {
+        let dir = init_project();
+        // No nested `behaviors` here: re-running a creation Intent that
+        // has them is refused outright (a no-UID Feature cannot carry
+        // `behaviors` yet), so this covers the elements whose re-run
+        // comparison actually runs today.
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    description: Requirements about TODOs.
+    axis: []
+
+features:
+  - id: todo-management
+    label: TODO management
+    description: The TODO management feature.
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        let first = reconcile_creation(dir.path(), &doc).unwrap();
+        assert_eq!(first.created.len(), 2);
+
+        let second = reconcile_creation(dir.path(), &doc).unwrap();
+        assert!(second.created.is_empty(), "{second:?}");
+        assert!(
+            second.updated.is_empty(),
+            "a re-run must not keep rewriting descriptions: {second:?}"
+        );
+        assert_eq!(second.unchanged.len(), 2, "the Requirement and the Feature");
+
+        // The same holds for a UID-selected patch that sets a description.
+        let requirement_uid = first
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Requirement)
+            .unwrap()
+            .uid
+            .clone();
+        let patch = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nrequirements:\n  - uid: {requirement_uid}\n    description: A patched description.\n"
+        );
+        let patch_doc = parse_intent(&patch).unwrap();
+        assert_eq!(
+            reconcile_creation(dir.path(), &patch_doc)
+                .unwrap()
+                .updated
+                .len(),
+            1
+        );
+        let repeated = reconcile_creation(dir.path(), &patch_doc).unwrap();
+        assert!(repeated.updated.is_empty(), "{repeated:?}");
+        assert_eq!(repeated.unchanged.len(), 1);
+    }
+
+    /// The happy path of a content-only reconcile must still go through
+    /// the recovery protocol and clean up after itself — a staging entry
+    /// left behind would block the next `--check`, and no staging entry at
+    /// all would mean the writes bypassed the protocol entirely.
+    #[test]
+    fn a_content_only_reconcile_commits_through_recovery_and_leaves_no_staging_entry() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let created = reconcile_creation(dir.path(), &parse_intent(yaml).unwrap()).unwrap();
+        let uid = created.created[0].uid.clone();
+
+        let patch_yaml = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nrequirements:\n  - uid: {uid}\n    label: Patched\n"
+        );
+        reconcile_creation(dir.path(), &parse_intent(&patch_yaml).unwrap()).unwrap();
+
+        assert_eq!(
+            label_of(
+                &dir.path()
+                    .join(".markharness/knowledge/requirements/todo/requirement.yml")
+            ),
+            "Patched"
+        );
+        assert!(
+            !recovery::has_incomplete_operations(dir.path()).unwrap(),
+            "the operation must finish its own staging entry"
+        );
+    }
+
+    /// Stages the payload a content-only reconcile of two Requirements
+    /// produces, without any identity event — the shape whose crash
+    /// behaviour the reviewer flagged, since an earlier version wrote
+    /// these files directly and left a half-updated tree behind.
+    fn stage_two_label_patches(
+        dir: &tempfile::TempDir,
+        label: &str,
+    ) -> (recovery::Intent, Vec<std::path::PathBuf>) {
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: first
+    source: native
+    label: First
+    axis: []
+  - id: second
+    source: native
+    label: Second
+    axis: []
+";
+        reconcile_creation(dir.path(), &parse_intent(yaml).unwrap()).unwrap();
+
+        let paths: Vec<std::path::PathBuf> = ["first", "second"]
+            .iter()
+            .map(|id| {
+                dir.path().join(format!(
+                    ".markharness/knowledge/requirements/{id}/requirement.yml"
+                ))
+            })
+            .collect();
+        let files = paths
+            .iter()
+            .map(|path| {
+                let mut requirement =
+                    knowledge::parse_requirement(&std::fs::read_to_string(path).unwrap()).unwrap();
+                requirement.label = Some(label.to_string());
+                recovery::PendingKnowledgeFile {
+                    relative_path: relative_path_string(dir.path(), path),
+                    contents: knowledge::serialize_requirement(&requirement),
+                }
+            })
+            .collect();
+        let intent = recovery::begin_batch_with_payload(
+            dir.path(),
+            Vec::new(),
+            Some(recovery::IntentPayload::KnowledgeReconcile {
+                files,
+                moves: Vec::new(),
+            }),
+        )
+        .unwrap();
+        (intent, paths)
+    }
+
+    fn label_of(path: &std::path::Path) -> String {
+        knowledge::parse_requirement(&std::fs::read_to_string(path).unwrap())
+            .unwrap()
+            .label
+            .unwrap()
+    }
+
+    /// Pre-commit crash for a content-only operation: the staged intent
+    /// exists but its commit marker never landed, so recovery must discard
+    /// it and leave *both* Requirements at their old labels — no partial
+    /// application.
+    #[test]
+    fn a_content_only_batch_that_never_reached_its_commit_marker_is_discarded() {
+        let dir = init_project();
+        let (_intent, paths) = stage_two_label_patches(&dir, "Patched");
+        // Deliberately no `commit_batch`: this is the crash point.
+
+        recovery::run_startup_recovery(dir.path(), |intent| {
+            feature_ops::roll_forward(dir.path(), intent)
+        })
+        .unwrap();
+
+        assert_eq!(label_of(&paths[0]), "First");
+        assert_eq!(label_of(&paths[1]), "Second");
+        assert!(!recovery::has_incomplete_operations(dir.path()).unwrap());
+    }
+
+    /// Post-commit crash for the same content-only operation: the marker
+    /// landed, so recovery must roll *every* pending file forward. An
+    /// operation that issues no identity event still converges on its new
+    /// state rather than being silently dropped.
+    #[test]
+    fn a_content_only_batch_past_its_commit_marker_is_rolled_forward_in_full() {
+        let dir = init_project();
+        let (intent, paths) = stage_two_label_patches(&dir, "Patched");
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+        // Deliberately no roll_forward/finish: this is the crash point.
+        assert_eq!(label_of(&paths[0]), "First", "nothing written yet");
+
+        recovery::run_startup_recovery(dir.path(), |intent| {
+            feature_ops::roll_forward(dir.path(), intent)
+        })
+        .unwrap();
+
+        assert_eq!(label_of(&paths[0]), "Patched");
+        assert_eq!(label_of(&paths[1]), "Patched");
+        assert!(!recovery::has_incomplete_operations(dir.path()).unwrap());
+    }
+
+    /// A crash *between* two of the payload's file writes — the multi-
+    /// element boundary the reviewer asked about — must also converge:
+    /// recovery replays the whole payload idempotently, finishing the
+    /// files that never landed without disturbing the ones that did.
+    #[test]
+    fn recovery_finishes_a_multi_file_payload_interrupted_between_two_writes() {
+        let dir = init_project();
+        let (intent, paths) = stage_two_label_patches(&dir, "Patched");
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+        let recovery::IntentPayload::KnowledgeReconcile { files, .. } =
+            intent.caller_payload.as_ref().unwrap()
+        else {
+            panic!("expected a KnowledgeReconcile payload");
+        };
+        crate::fs_safety::replace_file(
+            dir.path(),
+            &dir.path().join(&files[0].relative_path),
+            files[0].contents.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(label_of(&paths[0]), "Patched");
+        assert_eq!(label_of(&paths[1]), "Second", "the crash point");
+
+        recovery::run_startup_recovery(dir.path(), |intent| {
+            feature_ops::roll_forward(dir.path(), intent)
+        })
+        .unwrap();
+
+        assert_eq!(label_of(&paths[0]), "Patched");
+        assert_eq!(label_of(&paths[1]), "Patched");
+    }
+
+    /// A Scenario reparent is replayed as a move, so recovery has to cope
+    /// with a crash in its own middle: the file already relocated but
+    /// still holding pre-patch content. Replay must skip the rename it
+    /// cannot redo and finish the content write, rather than failing on
+    /// the missing source.
+    #[test]
+    fn recovery_finishes_a_scenario_move_interrupted_between_the_rename_and_the_rewrite() {
+        let dir = init_project();
+        let create_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+      - id: review
+        description: Review a TODO.
+";
+        reconcile_creation(dir.path(), &parse_intent(create_yaml).unwrap()).unwrap();
+        let from = dir.path().join(
+            ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml",
+        );
+        let to = dir.path().join(
+            ".markharness/knowledge/features/todo-management/review/empty-title/scenario.yml",
+        );
+        let mut scenario =
+            knowledge::parse_scenario(&std::fs::read_to_string(&from).unwrap()).unwrap();
+        scenario.behavior = "review".to_string();
+
+        let intent = recovery::begin_batch_with_payload(
+            dir.path(),
+            Vec::new(),
+            Some(recovery::IntentPayload::KnowledgeReconcile {
+                files: Vec::new(),
+                moves: vec![recovery::PendingKnowledgeMove {
+                    from_relative_path: relative_path_string(dir.path(), &from),
+                    to_relative_path: relative_path_string(dir.path(), &to),
+                    contents: knowledge::serialize_scenario(&scenario),
+                }],
+            }),
+        )
+        .unwrap();
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+        // The rename happened; the content rewrite did not.
+        crate::fs_safety::rename_no_follow(dir.path(), &from, &to).unwrap();
+        assert_eq!(
+            knowledge::parse_scenario(&std::fs::read_to_string(&to).unwrap())
+                .unwrap()
+                .behavior,
+            "capture",
+            "the crash point: relocated but still pre-patch"
+        );
+
+        recovery::run_startup_recovery(dir.path(), |intent| {
+            feature_ops::roll_forward(dir.path(), intent)
+        })
+        .unwrap();
+
+        assert!(!from.is_file());
+        assert_eq!(
+            knowledge::parse_scenario(&std::fs::read_to_string(&to).unwrap())
+                .unwrap()
+                .behavior,
+            "review"
+        );
+    }
+
     /// Simulates a crash after the batch's logical commit point (the first
     /// identity event landing at its final path) but before the pending
     /// Knowledge files were written: a later command's startup recovery
@@ -1247,13 +1733,14 @@ requirements:
                 identity_event_uid: event_uid.clone(),
                 event_yaml: serde_yaml_ng::to_string(&event).unwrap(),
             }],
-            Some(recovery::IntentPayload::KnowledgeReconcile(vec![
-                recovery::PendingKnowledgeFile {
+            Some(recovery::IntentPayload::KnowledgeReconcile {
+                files: vec![recovery::PendingKnowledgeFile {
                     relative_path: ".markharness/knowledge/requirements/todo/requirement.yml"
                         .to_string(),
                     contents: knowledge::serialize_requirement(&requirement),
-                },
-            ])),
+                }],
+                moves: Vec::new(),
+            }),
         )
         .unwrap();
         recovery::commit_batch(dir.path(), &intent).unwrap();
@@ -1491,13 +1978,14 @@ requirements:
                 identity_event_uid: event_uid.clone(),
                 event_yaml: serde_yaml_ng::to_string(&event).unwrap(),
             }],
-            Some(recovery::IntentPayload::KnowledgeReconcile(vec![
-                recovery::PendingKnowledgeFile {
+            Some(recovery::IntentPayload::KnowledgeReconcile {
+                files: vec![recovery::PendingKnowledgeFile {
                     relative_path: ".markharness/knowledge/requirements/todo/requirement.yml"
                         .to_string(),
                     contents: knowledge::serialize_requirement(&requirement),
-                },
-            ])),
+                }],
+                moves: Vec::new(),
+            }),
         )
         .unwrap();
         recovery::commit_batch(dir.path(), &staged_intent).unwrap();
@@ -1642,13 +2130,14 @@ requirements:
                 identity_event_uid: event_uid.clone(),
                 event_yaml: serde_yaml_ng::to_string(&event).unwrap(),
             }],
-            Some(recovery::IntentPayload::KnowledgeReconcile(vec![
-                recovery::PendingKnowledgeFile {
+            Some(recovery::IntentPayload::KnowledgeReconcile {
+                files: vec![recovery::PendingKnowledgeFile {
                     relative_path: ".markharness/knowledge/requirements/todo/requirement.yml"
                         .to_string(),
                     contents: knowledge::serialize_requirement(&requirement),
-                },
-            ])),
+                }],
+                moves: Vec::new(),
+            }),
         )
         .unwrap();
 

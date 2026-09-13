@@ -414,6 +414,197 @@ requirements:
     );
 }
 
+/// ADR 0027 §7: the machine-readable result reports each element's
+/// changed path, not just its identity, so a caller can tell which
+/// canonical Knowledge files a run touched without guessing the layout.
+#[test]
+fn json_reports_the_changed_path_for_created_elements() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let created = json["created"].as_array().unwrap();
+    let path_of = |kind: &str| {
+        created.iter().find(|e| e["kind"] == kind).unwrap()["path"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(
+        path_of("requirement"),
+        ".markharness/knowledge/requirements/todo/requirement.yml"
+    );
+    assert_eq!(
+        path_of("feature"),
+        ".markharness/knowledge/features/todo-management/feature.yml"
+    );
+    assert!(
+        created.iter().all(|e| e.get("previous_path").is_none()),
+        "a creation never moved anything: {created:?}"
+    );
+}
+
+/// A content patch and a rename both rewrite the file in place — the ADR's
+/// rename keeps the directory — so both report `path` and no
+/// `previous_path`. A caller can therefore treat the presence of
+/// `previous_path` as "this file moved".
+#[test]
+fn json_reports_the_changed_path_for_a_patch_and_a_rename() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+    let first = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(first.status.success());
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    let requirement_uid = first_json["created"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "requirement")
+        .unwrap()["uid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    for intent in [
+        format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nrequirements:\n  - uid: {requirement_uid}\n    label: Patched\n"
+        ),
+        format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nrequirements:\n  - uid: {requirement_uid}\n    id: task\n"
+        ),
+    ] {
+        let path = write_intent(&dir, &intent);
+        let output = run(&[
+            "knowledge",
+            "reconcile",
+            path.to_str().unwrap(),
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--json",
+        ]);
+        assert!(output.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let updated = &json["updated"].as_array().unwrap()[0];
+        assert_eq!(
+            updated["path"], ".markharness/knowledge/requirements/todo/requirement.yml",
+            "even a rename keeps the directory: {updated:?}"
+        );
+        assert!(updated.get("previous_path").is_none(), "{updated:?}");
+    }
+}
+
+/// A reparented Scenario is the one update that actually relocates a file,
+/// so its result carries both the new `path` and the `previous_path` it
+/// came from.
+#[test]
+fn json_reports_both_paths_for_a_reparented_scenario() {
+    let dir = setup_root_with_axes(&[]);
+    let create = write_intent(
+        &dir,
+        "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+      - id: review
+        description: Review a TODO.
+",
+    );
+    let first = run(&[
+        "knowledge",
+        "reconcile",
+        create.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    let created = first_json["created"].as_array().unwrap();
+    let uid_of = |kind: &str, id: &str| {
+        created
+            .iter()
+            .find(|e| e["kind"] == kind && e["id"] == id)
+            .unwrap()["uid"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let reparent = write_intent(
+        &dir,
+        &format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {}\n    behaviors:\n      - uid: {}\n        scenarios:\n          - uid: {}\n",
+            uid_of("feature", "todo-management"),
+            uid_of("behavior", "review"),
+            uid_of("scenario", "empty-title"),
+        ),
+    );
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        reparent.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let scenario = json["updated"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "scenario")
+        .unwrap();
+    assert_eq!(
+        scenario["path"],
+        ".markharness/knowledge/features/todo-management/review/empty-title/scenario.yml"
+    );
+    assert_eq!(
+        scenario["previous_path"],
+        ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml"
+    );
+}
+
 #[test]
 fn check_on_a_new_intent_reports_planned_changes_without_writing_and_exits_4() {
     let dir = setup_root_with_axes(&["functional"]);

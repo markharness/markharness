@@ -73,7 +73,7 @@ pub struct Procedure {
     pub steps: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Behavior {
     pub id: String,
     pub feature: String,
