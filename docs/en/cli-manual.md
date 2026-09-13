@@ -141,6 +141,8 @@ features:
 
 `mode` accepts only `merge` in the initial version (it never deletes existing elements). A `format` other than `markharness/knowledge-intent/v1` is an `invalid_format` error.
 
+Supplying a string field as an empty (or whitespace-only) value is distinct from omitting it, and is rejected with `missing_required_field`: `label: ""` is written out as `label: `, which reads back as YAML null and leaves the saved file broken, and an empty `action` or `results` entry is something a Test Executor can neither perform nor observe.
+
 A Requirement's `native` and `external` modes have disjoint field sets (ADR 0023). A `native` Requirement owns its own content, so it requires `label` and cannot carry `source_locator`. An `external` one is owned by the external document, so it can carry neither `label` nor `description`, and requires both `source_locator` and `source_revision: current` — the latter resolved to the current blob OID at run time. A patch that switches `source` drops the fields the new mode cannot carry, and stops with `missing_required_field` when a field the new mode requires is supplied by neither the Intent nor the current value — switching from external to native, for instance, has to supply a `label`.
 
 **Updating and renaming existing elements**

@@ -381,7 +381,7 @@ markharness generate     # 2回目。N が同じで差分が出ないことを�
 | `conflicting_existing_value` | 書込み先のパスが別のファイルに占有されている。id を変えるか、既存ファイルを整理する |
 | `invalid_procedure_reference` | `use:` が、その Behavior の `procedures` に無い名前を指している |
 | `invalid_source_revision` | `source_revision` の値が不正(`current` 以外を書いた、`source: native` に対して `current` を書いた等) |
-| `missing_required_field` | 必須フィールドの欠落。新規作成時の `id` / `description` / `phases`、`source` など |
+| `missing_required_field` | 必須フィールドの欠落。新規作成時の `id` / `description` / `phases`、`source` など。**空文字列や空白のみの値も同じ扱い**で拒否される(省略とは区別される) |
 | `invalid_slug` | id に使えない文字。小文字英数字とハイフンにする |
 | `redundant_prefix` | `scenario.id` が behavior id をプレフィックスとして繰り返している。id を短くする |
 | `multiline_label` | `label` に改行が含まれる。`label` は単一行のみ |

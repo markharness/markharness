@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use super::diagnostics::{Diagnostic, DiagnosticCode};
-use super::intent::IntentDocument;
+use super::intent::{IntentDocument, StepIntent};
 
 /// A string that parses as a ULID is treated as an attempted UID reference
 /// rather than a document-local `key` (ADR 0027 §2/§3): UIDs are issued via
@@ -30,7 +30,105 @@ pub fn validate_static(doc: &IntentDocument, known_axes: &HashSet<String>) -> Ve
     check_unknown_local_references(doc, &mut diagnostics);
     check_unknown_axes(doc, known_axes, &mut diagnostics);
     check_display_ids_and_labels(doc, &mut diagnostics);
+    check_blank_strings(doc, &mut diagnostics);
     diagnostics
+}
+
+/// A present-but-blank string is not the same as an omitted one, and is
+/// never what the author meant. `knowledge::serialize_*` writes `label:`
+/// as a plain scalar, so an empty one round-trips as YAML null and leaves
+/// the file `knowledge reconcile` just wrote failing `markharness
+/// validate`; an empty `action` or `results` entry is a step a Test
+/// Executor cannot perform (the rule the deleted KnowledgeDraft validator
+/// reported as `missing_steps`). Whitespace-only counts as blank: the
+/// canonical form trims it away, so it would be stored as empty anyway.
+fn check_blank_strings(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
+    fn check(value: &Option<String>, location: String, out: &mut Vec<Diagnostic>) {
+        if value.as_deref().is_some_and(|v| v.trim().is_empty()) {
+            push_blank(location, out);
+        }
+    }
+
+    for (i, req) in doc.requirements.iter().enumerate() {
+        let location = format!("requirements[{i}]");
+        check(&req.label, format!("{location}.label"), out);
+        check(&req.description, format!("{location}.description"), out);
+        check(
+            &req.source_locator,
+            format!("{location}.source_locator"),
+            out,
+        );
+        for (j, issue) in req.related_issues.iter().flatten().enumerate() {
+            if issue.trim().is_empty() {
+                push_blank(format!("{location}.related_issues[{j}]"), out);
+            }
+        }
+    }
+
+    for (i, feature) in doc.features.iter().enumerate() {
+        let location = format!("features[{i}]");
+        check(&feature.label, format!("{location}.label"), out);
+        check(&feature.description, format!("{location}.description"), out);
+        for (j, behavior) in feature.behaviors.iter().enumerate() {
+            let location = format!("{location}.behaviors[{j}]");
+            check(&behavior.label, format!("{location}.label"), out);
+            check(
+                &behavior.description,
+                format!("{location}.description"),
+                out,
+            );
+            for (k, procedure) in behavior.procedures.iter().flatten().enumerate() {
+                let location = format!("{location}.procedures[{k}]");
+                if procedure.name.trim().is_empty() {
+                    push_blank(format!("{location}.name"), out);
+                }
+                for (n, step) in procedure.steps.iter().enumerate() {
+                    if step.trim().is_empty() {
+                        push_blank(format!("{location}.steps[{n}]"), out);
+                    }
+                }
+            }
+            for (k, scenario) in behavior.scenarios.iter().enumerate() {
+                let location = format!("{location}.scenarios[{k}]");
+                check(&scenario.label, format!("{location}.label"), out);
+                check(
+                    &scenario.description,
+                    format!("{location}.description"),
+                    out,
+                );
+                check(
+                    &scenario.implementation_note,
+                    format!("{location}.implementation_note"),
+                    out,
+                );
+                for (n, phase) in scenario.phases.iter().flatten().enumerate() {
+                    let location = format!("{location}.phases[{n}]");
+                    for (m, step) in phase.steps.iter().enumerate() {
+                        let (field, value) = match step {
+                            StepIntent::Action { action } => ("action", action),
+                            StepIntent::Use { procedure } => ("use", procedure),
+                        };
+                        if value.trim().is_empty() {
+                            push_blank(format!("{location}.steps[{m}].{field}"), out);
+                        }
+                    }
+                    for (m, result) in phase.results.iter().enumerate() {
+                        if result.trim().is_empty() {
+                            push_blank(format!("{location}.results[{m}]"), out);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn push_blank(location: String, out: &mut Vec<Diagnostic>) {
+    out.push(Diagnostic::new(
+        DiagnosticCode::MissingRequiredField,
+        location,
+        "must not be empty",
+    ));
 }
 
 /// ADR 0028 §2: the display-id and label rules the deleted KnowledgeDraft
@@ -542,5 +640,94 @@ requirements:
 ";
         let doc = parse_intent(yaml).unwrap();
         assert!(validate_static(&doc, &axes(&[])).is_empty());
+    }
+
+    /// A present-but-blank required string is not the same as an omitted
+    /// one: `label: ""` serializes as `label: `, which parses back as YAML
+    /// null, so the file `knowledge reconcile` wrote no longer satisfies
+    /// `markharness validate`. Blank `steps`/`results` entries are
+    /// meaningless for the same reason the old KnowledgeDraft validator
+    /// rejected them — a Test Executor cannot perform an empty step.
+    #[test]
+    fn detects_blank_required_strings() {
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req
+    id: todo
+    source: native
+    label: \"\"
+    axis: []
+
+features:
+  - key: feature
+    id: add-todo
+    contributes_to: [req]
+    label: add-todo
+    axis: []
+    description: \"   \"
+    behaviors:
+      - id: add
+        label: add
+        axis: []
+        description: Adds.
+        procedures:
+          - name: \"\"
+            steps:
+              - \"\"
+        scenarios:
+          - id: empty-title
+            label: empty-title
+            description: Empty title.
+            phases:
+              - steps:
+                  - action: \"\"
+                results:
+                  - \"  \"
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc, &axes(&[]));
+        let blanks: Vec<&str> = diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::MissingRequiredField)
+            .map(|d| d.location.as_str())
+            .collect();
+        for expected in [
+            "requirements[0].label",
+            "features[0].description",
+            "features[0].behaviors[0].procedures[0].name",
+            "features[0].behaviors[0].procedures[0].steps[0]",
+            "features[0].behaviors[0].scenarios[0].phases[0].steps[0].action",
+            "features[0].behaviors[0].scenarios[0].phases[0].results[0]",
+        ] {
+            assert!(
+                blanks.contains(&expected),
+                "expected a blank-string diagnostic at {expected}, got {blanks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_blank_source_locator_is_reported() {
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: external
+    axis: []
+    source_locator: \"\"
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc, &axes(&[]));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.location == "requirements[0].source_locator"
+                    && d.code == DiagnosticCode::MissingRequiredField),
+            "{diagnostics:?}"
+        );
     }
 }

@@ -141,6 +141,8 @@ features:
 
 `mode` は初期版では `merge` のみを受け付ける(既存要素を削除しない)。`format` が `markharness/knowledge-intent/v1` 以外なら `invalid_format` エラーになる。
 
+文字列fieldを空文字列(または空白のみ)で与えることは、省略とは区別して `missing_required_field` で拒否される。`label: ""` は `label: ` として書き出されYAML nullとして読み戻るため保存ファイルが壊れ、空の `action` や `results` はTest Executorが実施・観測できない記述になるため。
+
 Requirementの`native`と`external`はfieldの集合が排他である(ADR 0023)。`native`は自身の内容を所有するため`label`を必須とし、`source_locator`を持てない。`external`は外部ドキュメントが内容を所有するため`label`と`description`のどちらも持てず、`source_locator`と`source_revision: current`が必須で、後者は実行時に現在のblob OIDへ解決される。`source`を切り替えるpatchでは、新しいmodeが持てないfieldは破棄され、新しいmodeが必須とするfieldがIntentにも現在値にも無ければ`missing_required_field`で停止する(例: externalからnativeへ切り替えるIntentは`label`を与える必要がある)。
 
 **既存要素の更新・rename**
