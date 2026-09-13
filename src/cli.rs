@@ -899,10 +899,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     report_reconcile_diagnostics(&diagnostics, json);
                     unreachable!("report_reconcile_diagnostics exits the process on error");
                 }
-                Err(ReconcileError::NotYetSupported(message)) => {
-                    eprintln!("error: {message}");
-                    std::process::exit(2);
-                }
                 Err(ReconcileError::OperationInProgress) => {
                     eprintln!("error: a concurrent identity operation is in progress; retry later");
                     std::process::exit(3);

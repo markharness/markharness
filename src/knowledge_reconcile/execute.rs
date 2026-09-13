@@ -91,8 +91,6 @@ impl From<io::Error> for ExecuteError {
 #[derive(Debug)]
 pub enum ReconcileError {
     Diagnostics(Vec<super::diagnostics::Diagnostic>),
-    /// See [`PlanError::NotYetSupported`] — not a stable ADR 0027 §7 code.
-    NotYetSupported(String),
     OperationInProgress,
     /// [`check_creation`] only: a previous operation's staging entry is
     /// still on disk, and resolving it (discard or roll-forward) is itself
@@ -113,7 +111,6 @@ impl From<PlanError> for ReconcileError {
     fn from(e: PlanError) -> Self {
         match e {
             PlanError::Diagnostics(d) => ReconcileError::Diagnostics(d),
-            PlanError::NotYetSupported(m) => ReconcileError::NotYetSupported(m),
             PlanError::Io(e) => ReconcileError::Io(e),
         }
     }
@@ -425,6 +422,38 @@ fn plan_outcome(root: &Path, plan: &Plan) -> ReconcileOutcome {
         }
     }
 
+    for new in &plan.new_behaviors {
+        let behavior_dir = new.parent_dir.join(&new.behavior.canonical.id);
+        outcome.created.push(CreatedElement {
+            kind: EntityKind::Behavior,
+            uid: new.behavior.uid.clone(),
+            id: new.behavior.canonical.id.clone(),
+            path: rel(&behavior_dir.join("behavior.yml")),
+        });
+        for scenario in &new.behavior.scenarios {
+            outcome.created.push(CreatedElement {
+                kind: EntityKind::Scenario,
+                uid: scenario.uid.clone(),
+                id: scenario.canonical.id.clone(),
+                path: rel(&behavior_dir
+                    .join(&scenario.canonical.id)
+                    .join("scenario.yml")),
+            });
+        }
+    }
+
+    for new in &plan.new_scenarios {
+        outcome.created.push(CreatedElement {
+            kind: EntityKind::Scenario,
+            uid: new.scenario.uid.clone(),
+            id: new.scenario.canonical.id.clone(),
+            path: rel(&new
+                .parent_dir
+                .join(&new.scenario.canonical.id)
+                .join("scenario.yml")),
+        });
+    }
+
     for behavior in &plan.behavior_updates {
         match behavior {
             BehaviorOutcome::Unchanged { uid, id, path } => {
@@ -650,6 +679,59 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                 ));
             }
         }
+    }
+
+    // Brand-new children of parents that already exist. Their paths come
+    // from the parent's own directory rather than from its display id: a
+    // renamed parent keeps its directory, so an id-derived path would
+    // scatter the new child away from its siblings.
+    for new in &plan.new_behaviors {
+        let behavior_dir = new.parent_dir.join(&new.behavior.canonical.id);
+        push_issued(
+            &mut batch_events,
+            EntityKind::Behavior,
+            &new.behavior.uid,
+            &new.behavior.canonical.id,
+            &recorded_at,
+        )?;
+        files.push(pending_file(
+            root,
+            &behavior_dir.join("behavior.yml"),
+            knowledge::serialize_behavior(&new.behavior.canonical),
+        ));
+        for scenario in &new.behavior.scenarios {
+            push_issued(
+                &mut batch_events,
+                EntityKind::Scenario,
+                &scenario.uid,
+                &scenario.canonical.id,
+                &recorded_at,
+            )?;
+            files.push(pending_file(
+                root,
+                &behavior_dir
+                    .join(&scenario.canonical.id)
+                    .join("scenario.yml"),
+                knowledge::serialize_scenario(&scenario.canonical),
+            ));
+        }
+    }
+
+    for new in &plan.new_scenarios {
+        push_issued(
+            &mut batch_events,
+            EntityKind::Scenario,
+            &new.scenario.uid,
+            &new.scenario.canonical.id,
+            &recorded_at,
+        )?;
+        files.push(pending_file(
+            root,
+            &new.parent_dir
+                .join(&new.scenario.canonical.id)
+                .join("scenario.yml"),
+            knowledge::serialize_scenario(&new.scenario.canonical),
+        ));
     }
 
     // A Behavior patch and a Scenario reparent/patch (ADR 0027 §3, §5)
@@ -2607,5 +2689,236 @@ features:
             ".markharness/knowledge/features/todo-management/review/empty-title/scenario.yml",
         );
         assert!(new_path.is_file());
+    }
+
+    /// ADR 0027 §3's "UIDなし、同じkind・scope・IDが存在しない → 新規" row,
+    /// applied to a Scenario whose parent Behavior already exists: the most
+    /// common incremental authoring step there is (the repository's own
+    /// `examples/todo-minimal` evolves exactly this way between v1 and v2).
+    /// The restated Requirement/Feature/Behavior match by id and content, so
+    /// they report `unchanged` while only the added Scenario is created.
+    #[test]
+    fn adds_a_new_scenario_under_an_existing_behavior_and_leaves_its_siblings_unchanged() {
+        let dir = init_project();
+        let v1 = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        reconcile_creation(dir.path(), &parse_intent(v1).unwrap()).unwrap();
+
+        let v2 = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+          - id: max-length
+            description: An over-long title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add a 201-character title
+                results:
+                  - No TODO is added
+";
+        let outcome = reconcile_creation(dir.path(), &parse_intent(v2).unwrap()).unwrap();
+
+        assert_eq!(outcome.created.len(), 1, "only the added Scenario is new");
+        assert_eq!(outcome.created[0].kind, EntityKind::Scenario);
+        assert_eq!(outcome.created[0].id, "max-length");
+        assert!(outcome.updated.is_empty());
+        assert_eq!(
+            outcome.unchanged.len(),
+            3,
+            "Feature, Behavior and the pre-existing Scenario"
+        );
+
+        let scenario = knowledge::parse_scenario(
+            &std::fs::read_to_string(dir.path().join(
+                ".markharness/knowledge/features/todo-management/add-todo/max-length/scenario.yml",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(scenario.behavior, "add-todo");
+        assert!(scenario.uid.is_some());
+    }
+
+    /// The same ADR 0027 §3 "新規" row one level up: a Behavior (with its own
+    /// Scenarios) added under a Feature that already exists.
+    #[test]
+    fn adds_a_new_behavior_with_its_scenarios_under_an_existing_feature() {
+        let dir = init_project();
+        let v1 = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        reconcile_creation(dir.path(), &parse_intent(v1).unwrap()).unwrap();
+
+        let v2 = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: remove-todo
+        description: Remove a TODO
+        scenarios:
+          - id: last-item
+            description: Removing the last remaining TODO empties the list
+            phases:
+              - steps:
+                  - action: Remove the only TODO
+                results:
+                  - The list is empty
+";
+        let outcome = reconcile_creation(dir.path(), &parse_intent(v2).unwrap()).unwrap();
+
+        assert_eq!(outcome.created.len(), 2, "the Behavior and its Scenario");
+        assert_eq!(outcome.created[0].kind, EntityKind::Behavior);
+        assert_eq!(outcome.created[0].id, "remove-todo");
+        assert_eq!(outcome.created[1].kind, EntityKind::Scenario);
+        assert_eq!(outcome.created[1].id, "last-item");
+        assert_eq!(outcome.unchanged.len(), 1, "the Feature itself");
+
+        let behavior =
+            knowledge::parse_behavior(
+                &std::fs::read_to_string(dir.path().join(
+                    ".markharness/knowledge/features/todo-management/remove-todo/behavior.yml",
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(behavior.feature, "todo-management");
+        assert!(behavior.uid.is_some());
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/add-todo/behavior.yml")
+                .is_file(),
+            "the pre-existing Behavior must survive untouched"
+        );
+    }
+
+    /// ADR 0027 §3's reparent row, with a destination Behavior this same
+    /// Intent creates: the Scenario keeps its UID and moves under the new
+    /// Behavior's directory.
+    #[test]
+    fn reparents_an_existing_scenario_into_a_brand_new_behavior() {
+        let dir = init_project();
+        let v1 = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        let created = reconcile_creation(dir.path(), &parse_intent(v1).unwrap()).unwrap();
+        let scenario_uid = created
+            .created
+            .iter()
+            .find(|c| c.kind == EntityKind::Scenario)
+            .unwrap()
+            .uid
+            .clone();
+
+        let v2 = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: validate-todo
+        description: Validate a TODO before adding it
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let outcome = reconcile_creation(dir.path(), &parse_intent(&v2).unwrap()).unwrap();
+
+        assert_eq!(outcome.created.len(), 1, "the destination Behavior");
+        assert_eq!(outcome.created[0].kind, EntityKind::Behavior);
+        assert_eq!(outcome.updated.len(), 1, "the reparented Scenario");
+        assert_eq!(outcome.updated[0].uid, scenario_uid);
+
+        let moved = dir.path().join(
+            ".markharness/knowledge/features/todo-management/validate-todo/empty-title/scenario.yml",
+        );
+        assert!(moved.is_file());
+        let scenario =
+            knowledge::parse_scenario(&std::fs::read_to_string(&moved).unwrap()).unwrap();
+        assert_eq!(scenario.behavior, "validate-todo");
+        assert_eq!(scenario.uid.as_deref(), Some(scenario_uid.as_str()));
+        assert!(
+            !dir.path()
+                .join(
+                    ".markharness/knowledge/features/todo-management/add-todo/empty-title/scenario.yml"
+                )
+                .is_file(),
+            "the Scenario must not be left behind at its old path"
+        );
     }
 }

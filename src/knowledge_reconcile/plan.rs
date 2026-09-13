@@ -4,14 +4,12 @@
 //! unchanged (no UID, content matches), UID-selected update/rename, and
 //! the fail-closed `ambiguous_identity`/`unknown_uid` diagnostics.
 //!
-//! Behavior/Scenario creation is supported only nested under a Feature (or
-//! Behavior) that is itself brand-new in this same Intent: see
-//! [`PlanError::NotYetSupported`] for the boundary this phase does not yet
-//! cross. Adding a Behavior/Scenario to an *existing* Feature/Behavior
-//! needs scope-aware existing-element matching (ADR 0027 §3's "Scenario以外
-//! でscopeが矛盾する" row) that a later phase still has to add; nested
-//! under a guaranteed-new parent, no such check is needed because the
-//! parent's own directory cannot exist yet.
+//! Behavior and Scenario go through the same table, scoped to the parent
+//! the Intent nests them under. Scope is decided by the parent's own
+//! directory rather than by a child's display id, because a child's id is
+//! unique only within its parent: an unrelated Feature may hold a Behavior
+//! with the very same id. Under a parent this plan is itself creating, no
+//! lookup is needed at all — that directory cannot exist yet.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -71,6 +69,30 @@ pub struct NewBehavior {
 pub struct NewScenario {
     pub uid: String,
     pub canonical: Scenario,
+}
+
+/// A brand-new Behavior (with its own new Scenarios) created under a
+/// Feature that already exists on disk — ADR 0027 §3's "UIDなし、同じ
+/// kind・scope・IDが存在しない" row applied one level down. Kept apart
+/// from [`FeatureOutcome::New`]'s nested `behaviors`, whose parent is
+/// created by the very same plan.
+///
+/// `parent_dir` is the parent's actual directory rather than a path
+/// derived from its display id: a renamed parent keeps its directory
+/// (see [`plan_existing_behaviors`]), so deriving the path from the new
+/// id would drop the child into a directory holding nothing else.
+#[derive(Debug)]
+pub struct NewChildBehavior {
+    pub parent_dir: PathBuf,
+    pub behavior: NewBehavior,
+}
+
+/// [`NewChildBehavior`] one level down: a brand-new Scenario under a
+/// Behavior that already exists.
+#[derive(Debug)]
+pub struct NewChildScenario {
+    pub parent_dir: PathBuf,
+    pub scenario: NewScenario,
 }
 
 /// An existing Scenario reached by UID while walking a Feature's
@@ -178,6 +200,12 @@ pub struct Plan {
     /// Children the Intent never named, rewritten only to follow a renamed
     /// parent (see [`BackReferenceFixup`]).
     pub back_reference_fixups: Vec<BackReferenceFixup>,
+    /// Brand-new Behaviors under Features that already exist (see
+    /// [`NewChildBehavior`]).
+    pub new_behaviors: Vec<NewChildBehavior>,
+    /// Brand-new Scenarios under Behaviors that already exist (see
+    /// [`NewChildScenario`]).
+    pub new_scenarios: Vec<NewChildScenario>,
     /// A snapshot of `.markharness/knowledge`'s on-disk content taken as
     /// [`build_plan`] started reading it (ADR 0027 §6's `stale_plan`).
     /// `None` for a `Plan` no caller built with [`build_plan`] (e.g.
@@ -236,6 +264,8 @@ struct ExistingElementEdits {
     scenarios: Vec<ScenarioOutcome>,
     behaviors: Vec<BehaviorOutcome>,
     back_reference_fixups: Vec<BackReferenceFixup>,
+    new_behaviors: Vec<NewChildBehavior>,
+    new_scenarios: Vec<NewChildScenario>,
 }
 
 /// Why [`build_plan`] could not produce a [`Plan`].
@@ -243,12 +273,6 @@ struct ExistingElementEdits {
 pub enum PlanError {
     /// One or more elements failed a state-dependent check (ADR 0027 §7).
     Diagnostics(Vec<Diagnostic>),
-    /// The Intent contains an element this phase does not yet resolve —
-    /// see this module's own doc comment for the current boundary. Not one
-    /// of §7's stable diagnostic codes: a later phase replaces this
-    /// function's handling of these cases entirely, so this variant is not
-    /// a contract callers should depend on.
-    NotYetSupported(String),
     Io(io::Error),
 }
 
@@ -297,6 +321,8 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
         scenario_updates: edits.scenarios,
         behavior_updates: edits.behaviors,
         back_reference_fixups: edits.back_reference_fixups,
+        new_behaviors: edits.new_behaviors,
+        new_scenarios: edits.new_scenarios,
         state_fingerprint: Some(fingerprint),
     })
 }
@@ -709,6 +735,7 @@ fn plan_feature(
                 &location,
                 &current.id,
                 &candidate.id,
+                found.path.parent().unwrap_or(&found.path),
                 &feature.behaviors,
                 diagnostics,
                 edits,
@@ -778,7 +805,19 @@ fn plan_feature(
                 None => Vec::new(),
             };
             let canonical = build_feature_content(id, &uid, requirement_uids, feature);
-            let behaviors = plan_new_behaviors(&location, id, &feature.behaviors, diagnostics)?;
+            let feature_dir = super::paths::feature_path(root, id)
+                .parent()
+                .expect("a Feature path always has a directory")
+                .to_path_buf();
+            let behaviors = plan_new_behaviors(
+                root,
+                &location,
+                id,
+                &feature_dir,
+                &feature.behaviors,
+                diagnostics,
+                edits,
+            )?;
             Ok(Some(FeatureOutcome::New {
                 uid,
                 canonical,
@@ -786,18 +825,6 @@ fn plan_feature(
             }))
         }
         Some(found) => {
-            // Unlike the UID-selected branch above, this Feature was only
-            // matched by `id` — no UID was given. ADR 0027 §3 never infers
-            // identity from content/id similarity alone, so mutating scope
-            // relationships (which Behavior owns which Scenario) here,
-            // without the caller having explicitly named this Feature's
-            // UID, would be exactly that kind of inference. Reparenting
-            // requires selecting the Feature by UID.
-            if !feature.behaviors.is_empty() {
-                return Err(PlanError::NotYetSupported(format!(
-                    "{location}.behaviors: reparenting Scenarios requires selecting the Feature by uid"
-                )));
-            }
             let current = parse_feature_file(&found.path)?;
             let Some(existing_uid) = current.uid.clone() else {
                 diagnostics.push(Diagnostic::new(
@@ -818,13 +845,7 @@ fn plan_feature(
                 None => Vec::new(),
             };
             let candidate = build_feature_content(id, &existing_uid, requirement_uids, feature);
-            if candidate == current {
-                Ok(Some(FeatureOutcome::Unchanged {
-                    uid: existing_uid,
-                    id: id.clone(),
-                    path: found.path,
-                }))
-            } else {
+            if candidate != current {
                 diagnostics.push(Diagnostic::new(
                     DiagnosticCode::AmbiguousIdentity,
                     location,
@@ -832,22 +853,51 @@ fn plan_feature(
                         "a Feature with id '{id}' already exists with different content; supply its UID to patch or rename it"
                     ),
                 ));
-                Ok(None)
+                return Ok(None);
             }
+            // The Feature itself was matched by `id` alone, but its own
+            // content is identical, so this is the same element rather
+            // than a similarity guess. Its children still each go through
+            // ADR 0027 §3's matching table in their own right — a uid-less
+            // child whose content differs stops with `ambiguous_identity`
+            // instead of being silently rewritten. A Feature reached this
+            // way cannot be renamed (renames need its uid), so its current
+            // and effective ids are the same.
+            if !feature.behaviors.is_empty() {
+                plan_existing_behaviors(
+                    root,
+                    &location,
+                    &current.id,
+                    &current.id,
+                    found.path.parent().unwrap_or(&found.path),
+                    &feature.behaviors,
+                    diagnostics,
+                    edits,
+                )?;
+            }
+            Ok(Some(FeatureOutcome::Unchanged {
+                uid: existing_uid,
+                id: id.clone(),
+                path: found.path,
+            }))
         }
     }
 }
 
 /// Plans every Behavior (and nested Scenario) under a Feature guaranteed
 /// to be brand-new in this same Intent: since the Feature's own directory
-/// cannot exist yet, no existing-element lookup is needed — every entry
-/// simply gets a fresh UID. See this module's doc comment for why this is
-/// restricted to a new parent.
+/// cannot exist yet, no existing Behavior can be found by id there — every
+/// entry simply gets a fresh UID. A nested Scenario *may* still carry a
+/// uid, which reparents an existing Scenario into one of these brand-new
+/// Behaviors (ADR 0027 §3), hence `root`/`feature_dir`/`edits`.
 fn plan_new_behaviors(
+    root: &Path,
     feature_location: &str,
     feature_id: &str,
+    feature_dir: &Path,
     behaviors: &[BehaviorIntent],
     diagnostics: &mut Vec<Diagnostic>,
+    edits: &mut ExistingElementEdits,
 ) -> Result<Vec<NewBehavior>, PlanError> {
     let mut planned = Vec::new();
     for (j, behavior) in behaviors.iter().enumerate() {
@@ -869,107 +919,182 @@ fn plan_new_behaviors(
             ));
             continue;
         }
-        let Some(id) = &behavior.id else {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::MissingRequiredField,
-                format!("{location}.id"),
-                "id is required",
-            ));
+        let Some(planned_behavior) = build_new_behavior(
+            root,
+            &location,
+            feature_id,
+            feature_dir,
+            behavior,
+            diagnostics,
+            edits,
+        )?
+        else {
             continue;
         };
-        let Some(description) = &behavior.description else {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::MissingRequiredField,
-                format!("{location}.description"),
-                "description is required",
-            ));
-            continue;
-        };
-        let procedures: std::collections::BTreeMap<String, knowledge::Procedure> = behavior
-            .procedures
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| (p.name, knowledge::Procedure { steps: p.steps }))
-            .collect();
-        let uid = ulid::Ulid::new().to_string();
-        let canonical = Behavior {
-            id: id.clone(),
-            feature: feature_id.to_string(),
-            label: behavior.label.clone().unwrap_or_else(|| id.clone()),
-            axis: behavior.axis.clone().unwrap_or_default(),
-            description: canonical_description(description),
-            procedures: procedures.clone(),
-            uid: Some(uid.clone()),
-        };
-        let scenarios =
-            plan_new_scenarios(&location, id, &procedures, &behavior.scenarios, diagnostics)?;
-        planned.push(NewBehavior {
-            uid,
-            canonical,
-            scenarios,
-        });
+        planned.push(planned_behavior);
     }
     Ok(planned)
 }
 
+/// Builds one brand-new Behavior and everything nested under it. Shared by
+/// [`plan_new_behaviors`] (parent Feature created by this same plan) and
+/// [`plan_existing_behaviors`] (parent Feature already on disk) so both
+/// paths mint identical content, events and child Scenarios. `None` means
+/// a diagnostic was recorded and this entry contributes nothing.
+fn build_new_behavior(
+    root: &Path,
+    location: &str,
+    feature_id: &str,
+    feature_dir: &Path,
+    behavior: &BehaviorIntent,
+    diagnostics: &mut Vec<Diagnostic>,
+    edits: &mut ExistingElementEdits,
+) -> Result<Option<NewBehavior>, PlanError> {
+    let Some(id) = &behavior.id else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::MissingRequiredField,
+            format!("{location}.id"),
+            "id is required",
+        ));
+        return Ok(None);
+    };
+    let Some(description) = &behavior.description else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::MissingRequiredField,
+            format!("{location}.description"),
+            "description is required",
+        ));
+        return Ok(None);
+    };
+    let procedures: std::collections::BTreeMap<String, knowledge::Procedure> = behavior
+        .procedures
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p.name, knowledge::Procedure { steps: p.steps }))
+        .collect();
+    let uid = ulid::Ulid::new().to_string();
+    let canonical = Behavior {
+        id: id.clone(),
+        feature: feature_id.to_string(),
+        label: behavior.label.clone().unwrap_or_else(|| id.clone()),
+        axis: behavior.axis.clone().unwrap_or_default(),
+        description: canonical_description(description),
+        procedures: procedures.clone(),
+        uid: Some(uid.clone()),
+    };
+    let scenarios = plan_new_scenarios(
+        root,
+        location,
+        id,
+        &feature_dir.join(id),
+        &procedures,
+        &behavior.scenarios,
+        diagnostics,
+        edits,
+    )?;
+    Ok(Some(NewBehavior {
+        uid,
+        canonical,
+        scenarios,
+    }))
+}
+
+/// Plans the Scenarios under a Behavior that is itself brand-new. An entry
+/// without a `uid` is a new Scenario; one *with* a `uid` is an existing
+/// Scenario being reparented into this new Behavior (ADR 0027 §3), which
+/// keeps its UID and is recorded in `edits` rather than returned here.
+#[allow(clippy::too_many_arguments)]
 fn plan_new_scenarios(
+    root: &Path,
     behavior_location: &str,
     behavior_id: &str,
+    behavior_dir: &Path,
     behavior_procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
     scenarios: &[super::intent::ScenarioIntent],
     diagnostics: &mut Vec<Diagnostic>,
+    edits: &mut ExistingElementEdits,
 ) -> Result<Vec<NewScenario>, PlanError> {
     let mut planned = Vec::new();
     for (k, scenario) in scenarios.iter().enumerate() {
         let location = format!("{behavior_location}.scenarios[{k}]");
         if scenario.uid.is_some() {
-            // Reparenting an existing Scenario into a brand-new Behavior is
-            // plausible under ADR 0027 §3 ("別のFeatureまたはBehaviorへ配置
-            // される" does not require the destination to already exist),
-            // but this function only ever builds genuinely-new Scenarios;
-            // routing a uid-given entry to the reparent path
-            // (`plan_scenario_reparents`) as well would need its own
-            // `scenario_updates`/diagnostics threading through this
-            // brand-new-parent path. Not yet supported.
-            return Err(PlanError::NotYetSupported(format!(
-                "{location}: reparenting a Scenario into a brand-new Behavior is not supported yet"
-            )));
-        }
-        let Some(id) = &scenario.id else {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::MissingRequiredField,
-                format!("{location}.id"),
-                "id is required",
-            ));
-            continue;
-        };
-        let Some(description) = &scenario.description else {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::MissingRequiredField,
-                format!("{location}.description"),
-                "description is required",
-            ));
-            continue;
-        };
-        let phases = scenario.phases.clone().unwrap_or_default();
-        if phases.is_empty() {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::MissingRequiredField,
-                format!("{location}.phases"),
-                "at least one phase is required",
-            ));
+            // ADR 0027 §3: "別のFeatureまたはBehaviorへ配置される" does not
+            // require the destination Behavior to already exist, so a
+            // uid-given entry here is a reparent into this brand-new
+            // Behavior. It keeps its UID and moves, so it belongs in
+            // `edits.scenarios` rather than among the new Scenarios.
+            plan_scenario_under_existing_behavior(
+                root,
+                &location,
+                behavior_id,
+                behavior_dir,
+                behavior_procedures,
+                scenario,
+                diagnostics,
+                edits,
+            )?;
             continue;
         }
-        let converted_phases: Vec<KnowledgePhase> = phases.into_iter().map(convert_phase).collect();
-        if let Some(diagnostic) =
-            check_procedure_references(&location, behavior_procedures, &converted_phases)
-        {
-            diagnostics.push(diagnostic);
-            continue;
+        if let Some(planned_scenario) = build_new_scenario(
+            &location,
+            behavior_id,
+            behavior_procedures,
+            scenario,
+            diagnostics,
+        ) {
+            planned.push(planned_scenario);
         }
-        let uid = ulid::Ulid::new().to_string();
-        let canonical = Scenario {
+    }
+    Ok(planned)
+}
+
+/// Builds one brand-new Scenario. Shared by every path that can create
+/// one — under a Behavior this plan creates, and under a Behavior already
+/// on disk — so both mint identical content. `None` means a diagnostic was
+/// recorded and this entry contributes nothing.
+fn build_new_scenario(
+    location: &str,
+    behavior_id: &str,
+    behavior_procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
+    scenario: &super::intent::ScenarioIntent,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<NewScenario> {
+    let Some(id) = &scenario.id else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::MissingRequiredField,
+            format!("{location}.id"),
+            "id is required",
+        ));
+        return None;
+    };
+    let Some(description) = &scenario.description else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::MissingRequiredField,
+            format!("{location}.description"),
+            "description is required",
+        ));
+        return None;
+    };
+    let phases = scenario.phases.clone().unwrap_or_default();
+    if phases.is_empty() {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::MissingRequiredField,
+            format!("{location}.phases"),
+            "at least one phase is required",
+        ));
+        return None;
+    }
+    let converted_phases: Vec<KnowledgePhase> = phases.into_iter().map(convert_phase).collect();
+    if let Some(diagnostic) =
+        check_procedure_references(location, behavior_procedures, &converted_phases)
+    {
+        diagnostics.push(diagnostic);
+        return None;
+    }
+    let uid = ulid::Ulid::new().to_string();
+    Some(NewScenario {
+        canonical: Scenario {
             id: id.clone(),
             behavior: behavior_id.to_string(),
             label: scenario.label.clone().unwrap_or_else(|| id.clone()),
@@ -979,10 +1104,9 @@ fn plan_new_scenarios(
             generated_by: None,
             verified_by: None,
             uid: Some(uid.clone()),
-        };
-        planned.push(NewScenario { uid, canonical });
-    }
-    Ok(planned)
+        },
+        uid,
+    })
 }
 
 /// Builds a UID-selected Behavior's patched content (ADR 0027 §5: present
@@ -1038,21 +1162,23 @@ fn parse_scenario_file(path: &Path) -> io::Result<Scenario> {
     knowledge::parse_scenario(&content).map_err(io::Error::other)
 }
 
-/// Walks `behaviors` (a UID-selected Feature's `behaviors` list) and plans
-/// both the Behaviors' own patches (ADR 0027 §5) and any existing
-/// Scenarios listed under them, which may be updated in place or
-/// reparented (ADR 0027 §3). Each `BehaviorIntent` here must itself carry
-/// a `uid` naming a Behavior that *already belongs to*
-/// `feature_current_id`; creating a new Behavior under an existing Feature
-/// remains unsupported, so a `BehaviorIntent` without a `uid` is rejected.
+/// Walks `behaviors` (an existing Feature's `behaviors` list) and plans
+/// everything under it per ADR 0027 §3's matching table: a `uid`-selected
+/// Behavior is patched (§5), a uid-less one is matched by id within this
+/// Feature — created when nothing holds that id, reported unchanged when
+/// the content already matches, and refused as `ambiguous_identity` when
+/// an element with that id exists but differs. Scenarios under either kind
+/// follow the same rule, and additionally may be reparented here (§3).
 /// Returns the uids of the Behaviors it handled explicitly, so the caller
 /// can skip them when sweeping the Feature's remaining children for
 /// back-reference fixups.
+#[allow(clippy::too_many_arguments)]
 fn plan_existing_behaviors(
     root: &Path,
     feature_location: &str,
     feature_current_id: &str,
     feature_effective_id: &str,
+    feature_dir: &Path,
     behaviors: &[BehaviorIntent],
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
@@ -1061,9 +1187,16 @@ fn plan_existing_behaviors(
     for (j, behavior) in behaviors.iter().enumerate() {
         let location = format!("{feature_location}.behaviors[{j}]");
         let Some(behavior_uid) = &behavior.uid else {
-            return Err(PlanError::NotYetSupported(format!(
-                "{location}: adding a new Behavior to an existing Feature is not supported yet"
-            )));
+            plan_uid_less_behavior(
+                root,
+                &location,
+                feature_effective_id,
+                feature_dir,
+                behavior,
+                diagnostics,
+                edits,
+            )?;
+            continue;
         };
         let Some(found_behavior) =
             knowledge_walk::find_by_uid(root, EntityKind::Behavior, behavior_uid)?
@@ -1138,79 +1271,15 @@ fn plan_existing_behaviors(
         // procedure this same Intent adds must be usable by a `use:` step
         // it also adds, and one it removes must stop resolving.
         let current_behavior = patched_behavior;
-        let mut handled_scenario_uids: HashSet<String> = HashSet::new();
-
-        for (k, scenario) in behavior.scenarios.iter().enumerate() {
-            let scenario_location = format!("{location}.scenarios[{k}]");
-            let Some(scenario_uid) = &scenario.uid else {
-                return Err(PlanError::NotYetSupported(format!(
-                    "{scenario_location}: creating a new Scenario under an existing Behavior is not supported yet"
-                )));
-            };
-            let Some(found_scenario) =
-                knowledge_walk::find_by_uid(root, EntityKind::Scenario, scenario_uid)?
-            else {
-                diagnostics.push(Diagnostic::new(
-                    DiagnosticCode::UnknownUid,
-                    scenario_location,
-                    format!("no Scenario with uid '{scenario_uid}' exists"),
-                ));
-                continue;
-            };
-            handled_scenario_uids.insert(scenario_uid.clone());
-            let current_scenario = parse_scenario_file(&found_scenario.path)?;
-            let candidate = match apply_scenario_patch(
-                &scenario_location,
-                &current_scenario,
-                scenario,
-                &current_behavior.id,
-            ) {
-                Ok(c) => c,
-                Err(d) => {
-                    diagnostics.push(d);
-                    continue;
-                }
-            };
-            if let Some(diagnostic) = check_procedure_references(
-                &scenario_location,
-                &current_behavior.procedures,
-                &candidate.phases,
-            ) {
-                diagnostics.push(diagnostic);
-                continue;
-            }
-            let new_path = behavior_dir.join(&candidate.id).join("scenario.yml");
-            if candidate == current_scenario && new_path == found_scenario.path {
-                edits.scenarios.push(ScenarioOutcome::Unchanged {
-                    uid: scenario_uid.clone(),
-                    id: current_scenario.id.clone(),
-                    path: found_scenario.path,
-                });
-                continue;
-            }
-            if new_path != found_scenario.path && new_path.is_file() {
-                // Same reasoning as `plan_requirement`/`plan_feature`'s
-                // path-collision check: a renamed/reparented Scenario's
-                // old file is never moved automatically by an unrelated
-                // write, so the target path could already be occupied.
-                diagnostics.push(Diagnostic::new(
-                    DiagnosticCode::ConflictingExistingValue,
-                    scenario_location,
-                    format!(
-                        "a file already exists at the target path ({}); choose a different id or target Behavior",
-                        new_path.display()
-                    ),
-                ));
-                continue;
-            }
-            edits.scenarios.push(ScenarioOutcome::Updated {
-                uid: scenario_uid.clone(),
-                before_id: current_scenario.id.clone(),
-                canonical: Box::new(candidate),
-                existing_path: found_scenario.path,
-                new_path,
-            });
-        }
+        let handled_scenario_uids = plan_scenarios_of_existing_behavior(
+            root,
+            &location,
+            &current_behavior,
+            &behavior_dir,
+            &behavior.scenarios,
+            diagnostics,
+            edits,
+        )?;
 
         // Every Scenario the Intent did *not* name still records the old
         // `behavior:` id, so a rename has to carry them along too.
@@ -1226,6 +1295,283 @@ fn plan_existing_behaviors(
         }
     }
     Ok(handled_behavior_uids)
+}
+
+/// ADR 0027 §3's three uid-less rows for a Behavior, scoped to one
+/// Feature: a display id nothing under this Feature holds creates a new
+/// Behavior, one already held by identical content is unchanged, and one
+/// held by *different* content stops with `ambiguous_identity` demanding
+/// the uid. Ownership is decided by the parent's directory, since a
+/// Behavior's display id is unique only within its own Feature.
+fn plan_uid_less_behavior(
+    root: &Path,
+    location: &str,
+    feature_effective_id: &str,
+    feature_dir: &Path,
+    behavior: &BehaviorIntent,
+    diagnostics: &mut Vec<Diagnostic>,
+    edits: &mut ExistingElementEdits,
+) -> Result<(), PlanError> {
+    let Some(id) = &behavior.id else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::MissingRequiredField,
+            format!("{location}.id"),
+            "id is required",
+        ));
+        return Ok(());
+    };
+    let existing_path = feature_dir.join(id).join("behavior.yml");
+    if !existing_path.is_file() {
+        if let Some(planned) = build_new_behavior(
+            root,
+            location,
+            feature_effective_id,
+            feature_dir,
+            behavior,
+            diagnostics,
+            edits,
+        )? {
+            edits.new_behaviors.push(NewChildBehavior {
+                parent_dir: feature_dir.to_path_buf(),
+                behavior: planned,
+            });
+        }
+        return Ok(());
+    }
+
+    let current = parse_behavior_file(&existing_path)?;
+    let Some(existing_uid) = current.uid.clone() else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::InvariantViolation,
+            location,
+            format!("existing Behavior '{id}' has no uid; run identity migrate first"),
+        ));
+        return Ok(());
+    };
+    let candidate = apply_behavior_patch(&current, behavior, feature_effective_id);
+    if candidate != current {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::AmbiguousIdentity,
+            location,
+            format!(
+                "Behavior '{id}' already exists under this Feature with different content; add `uid: {existing_uid}` to change it"
+            ),
+        ));
+        return Ok(());
+    }
+    edits.behaviors.push(BehaviorOutcome::Unchanged {
+        uid: existing_uid,
+        id: current.id.clone(),
+        path: existing_path.clone(),
+    });
+    let behavior_dir = existing_path
+        .parent()
+        .unwrap_or(&existing_path)
+        .to_path_buf();
+    plan_scenarios_of_existing_behavior(
+        root,
+        location,
+        &current,
+        &behavior_dir,
+        &behavior.scenarios,
+        diagnostics,
+        edits,
+    )?;
+    Ok(())
+}
+
+/// Plans the Scenarios listed under a Behavior that already exists,
+/// dispatching each entry by ADR 0027 §3: `uid` given means an existing
+/// Scenario (patched in place, or reparented here from elsewhere), no
+/// `uid` means the same three-row match by display id the Behaviors
+/// themselves get. Returns the uids it handled explicitly.
+fn plan_scenarios_of_existing_behavior(
+    root: &Path,
+    behavior_location: &str,
+    behavior: &Behavior,
+    behavior_dir: &Path,
+    scenarios: &[super::intent::ScenarioIntent],
+    diagnostics: &mut Vec<Diagnostic>,
+    edits: &mut ExistingElementEdits,
+) -> Result<HashSet<String>, PlanError> {
+    let mut handled = HashSet::new();
+    for (k, scenario) in scenarios.iter().enumerate() {
+        let location = format!("{behavior_location}.scenarios[{k}]");
+        if scenario.uid.is_some() {
+            if let Some(uid) = plan_scenario_under_existing_behavior(
+                root,
+                &location,
+                &behavior.id,
+                behavior_dir,
+                &behavior.procedures,
+                scenario,
+                diagnostics,
+                edits,
+            )? {
+                handled.insert(uid);
+            }
+            continue;
+        }
+        if let Some(uid) = plan_uid_less_scenario(
+            &location,
+            behavior,
+            behavior_dir,
+            scenario,
+            diagnostics,
+            edits,
+        )? {
+            handled.insert(uid);
+        }
+    }
+    Ok(handled)
+}
+
+/// ADR 0027 §3's three uid-less rows for a Scenario, scoped to one
+/// Behavior. Returns the uid of an existing Scenario it matched, so the
+/// caller can exclude it from a parent rename's back-reference sweep; a
+/// newly created one has no such prior file to sweep.
+fn plan_uid_less_scenario(
+    location: &str,
+    behavior: &Behavior,
+    behavior_dir: &Path,
+    scenario: &super::intent::ScenarioIntent,
+    diagnostics: &mut Vec<Diagnostic>,
+    edits: &mut ExistingElementEdits,
+) -> Result<Option<String>, PlanError> {
+    let Some(id) = &scenario.id else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::MissingRequiredField,
+            format!("{location}.id"),
+            "id is required",
+        ));
+        return Ok(None);
+    };
+    let existing_path = behavior_dir.join(id).join("scenario.yml");
+    if !existing_path.is_file() {
+        if let Some(planned) = build_new_scenario(
+            location,
+            &behavior.id,
+            &behavior.procedures,
+            scenario,
+            diagnostics,
+        ) {
+            edits.new_scenarios.push(NewChildScenario {
+                parent_dir: behavior_dir.to_path_buf(),
+                scenario: planned,
+            });
+        }
+        return Ok(None);
+    }
+
+    let current = parse_scenario_file(&existing_path)?;
+    let Some(existing_uid) = current.uid.clone() else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::InvariantViolation,
+            location,
+            format!("existing Scenario '{id}' has no uid; run identity migrate first"),
+        ));
+        return Ok(None);
+    };
+    let candidate = match apply_scenario_patch(location, &current, scenario, &behavior.id) {
+        Ok(c) => c,
+        Err(d) => {
+            diagnostics.push(d);
+            return Ok(None);
+        }
+    };
+    if candidate != current {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::AmbiguousIdentity,
+            location,
+            format!(
+                "Scenario '{id}' already exists under this Behavior with different content; add `uid: {existing_uid}` to change it"
+            ),
+        ));
+        return Ok(None);
+    }
+    edits.scenarios.push(ScenarioOutcome::Unchanged {
+        uid: existing_uid.clone(),
+        id: current.id.clone(),
+        path: existing_path,
+    });
+    Ok(Some(existing_uid))
+}
+
+/// Plans one `uid`-selected Scenario placed under `behavior_id`: a
+/// content patch when it already lives there, a reparent (ADR 0027 §3)
+/// when it does not. `behavior_dir` is the destination Behavior's own
+/// directory, which may belong to a Behavior this same plan creates.
+#[allow(clippy::too_many_arguments)]
+fn plan_scenario_under_existing_behavior(
+    root: &Path,
+    location: &str,
+    behavior_id: &str,
+    behavior_dir: &Path,
+    behavior_procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
+    scenario: &super::intent::ScenarioIntent,
+    diagnostics: &mut Vec<Diagnostic>,
+    edits: &mut ExistingElementEdits,
+) -> Result<Option<String>, PlanError> {
+    let scenario_uid = scenario
+        .uid
+        .as_ref()
+        .expect("callers dispatch on `uid` being present");
+    let Some(found_scenario) =
+        knowledge_walk::find_by_uid(root, EntityKind::Scenario, scenario_uid)?
+    else {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::UnknownUid,
+            location,
+            format!("no Scenario with uid '{scenario_uid}' exists"),
+        ));
+        return Ok(None);
+    };
+    let current_scenario = parse_scenario_file(&found_scenario.path)?;
+    let candidate = match apply_scenario_patch(location, &current_scenario, scenario, behavior_id) {
+        Ok(c) => c,
+        Err(d) => {
+            diagnostics.push(d);
+            return Ok(None);
+        }
+    };
+    if let Some(diagnostic) =
+        check_procedure_references(location, behavior_procedures, &candidate.phases)
+    {
+        diagnostics.push(diagnostic);
+        return Ok(None);
+    }
+    let new_path = behavior_dir.join(&candidate.id).join("scenario.yml");
+    if candidate == current_scenario && new_path == found_scenario.path {
+        edits.scenarios.push(ScenarioOutcome::Unchanged {
+            uid: scenario_uid.clone(),
+            id: current_scenario.id.clone(),
+            path: found_scenario.path,
+        });
+        return Ok(Some(scenario_uid.clone()));
+    }
+    if new_path != found_scenario.path && new_path.is_file() {
+        // Same reasoning as `plan_requirement`/`plan_feature`'s
+        // path-collision check: a renamed/reparented Scenario's old file
+        // is never moved automatically by an unrelated write, so the
+        // target path could already be occupied.
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::ConflictingExistingValue,
+            location,
+            format!(
+                "a file already exists at the target path ({}); choose a different id or target Behavior",
+                new_path.display()
+            ),
+        ));
+        return Ok(None);
+    }
+    edits.scenarios.push(ScenarioOutcome::Updated {
+        uid: scenario_uid.clone(),
+        before_id: current_scenario.id.clone(),
+        canonical: Box::new(candidate),
+        existing_path: found_scenario.path,
+        new_path,
+    });
+    Ok(Some(scenario_uid.clone()))
 }
 
 /// Whether another Behavior under `feature_id` already uses `candidate_id`
@@ -1880,8 +2226,20 @@ features:
         description: Add a TODO
 ";
         let doc = parse_intent(yaml).unwrap();
-        let err = build_plan(dir.path(), &doc).unwrap_err();
-        assert!(matches!(err, PlanError::NotYetSupported(_)));
+        let plan = build_plan(dir.path(), &doc).unwrap();
+
+        assert!(matches!(plan.features[0], FeatureOutcome::Unchanged { .. }));
+        assert_eq!(plan.new_behaviors.len(), 1);
+        assert_eq!(plan.new_behaviors[0].behavior.canonical.id, "add-todo");
+        assert_eq!(
+            plan.new_behaviors[0].behavior.canonical.feature,
+            "todo-management"
+        );
+        assert_eq!(
+            plan.new_behaviors[0].parent_dir,
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management")
+        );
     }
 
     #[test]
@@ -2354,8 +2712,11 @@ features:
         }
     }
 
+    /// ADR 0027 §3's "UIDなし、同じkind・scope・IDが存在しない → 新規" row
+    /// under a Feature selected by uid: the Behavior is created, and the
+    /// Feature's own outcome stays untouched.
     #[test]
-    fn a_new_behavior_under_an_existing_feature_is_not_yet_supported() {
+    fn a_uid_less_behavior_under_a_uid_selected_feature_is_created() {
         let (dir, feature_uid, ..) = reparent_fixture();
         let yaml = format!(
             "\
@@ -2370,12 +2731,43 @@ features:
 "
         );
         let doc = parse_intent(&yaml).unwrap();
-        let err = build_plan(dir.path(), &doc).unwrap_err();
-        assert!(matches!(err, PlanError::NotYetSupported(_)));
+        let plan = build_plan(dir.path(), &doc).unwrap();
+
+        assert_eq!(plan.new_behaviors.len(), 1);
+        assert_eq!(plan.new_behaviors[0].behavior.canonical.id, "brand-new");
+        assert!(plan.behavior_updates.is_empty());
     }
 
+    /// The `ambiguous_identity` row of the same table: a uid-less Behavior
+    /// whose display id is already taken under this Feature, but whose
+    /// content differs, must not be silently rewritten.
     #[test]
-    fn a_new_scenario_under_an_existing_behavior_is_not_yet_supported() {
+    fn a_uid_less_behavior_matching_an_existing_id_with_different_content_is_ambiguous() {
+        let (dir, feature_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - id: capture
+        description: A completely different description.
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].code, DiagnosticCode::AmbiguousIdentity);
+    }
+
+    /// The same "新規" row one level down: a uid-less Scenario under a
+    /// uid-selected Behavior that holds no Scenario with that display id.
+    #[test]
+    fn a_uid_less_scenario_under_a_uid_selected_behavior_is_created() {
         let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
         let yaml = format!(
             "\
@@ -2397,8 +2789,11 @@ features:
 "
         );
         let doc = parse_intent(&yaml).unwrap();
-        let err = build_plan(dir.path(), &doc).unwrap_err();
-        assert!(matches!(err, PlanError::NotYetSupported(_)));
+        let plan = build_plan(dir.path(), &doc).unwrap();
+
+        assert_eq!(plan.new_scenarios.len(), 1);
+        assert_eq!(plan.new_scenarios[0].scenario.canonical.id, "brand-new");
+        assert_eq!(plan.new_scenarios[0].scenario.canonical.behavior, "capture");
     }
 
     #[test]
