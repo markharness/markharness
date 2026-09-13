@@ -22,46 +22,37 @@
 markharness --version                                  # 0.5.0 相当を確認。無ければ §2.1 へ
 markharness init --dir .                               # .markharness/ が無い場合のみ
 markharness axes add functional --label 機能            # 使う axis を *すべて* 先に登録(§4.5)
-printf '<req-id>\n<axis-id>\n' | markharness knowledge add   # 新規 Requirement 作成(落とし穴②)
-markharness identity migrate --dir .                   # ← 1回目。Requirement に uid を発行
-# ... ドラフト YAML を書く(§3)...
-markharness knowledge validate --batch drafts/ --json  # 全件検証。エラーが0になるまで繰り返す
-markharness knowledge apply    --batch drafts/ --json  # 一括適用(途中失敗なら全ロールバック)
-markharness identity migrate --dir .                   # ← 2回目。**これを忘れると次の validate が必ず失敗する**
+markharness knowledge reconcile --print-template > intent.yml   # Knowledge Intent の雛形
+# ... intent.yml を書く(§3)...
+markharness knowledge reconcile intent.yml --check --json   # 検証のみ。エラーが0になるまで繰り返す
+markharness knowledge reconcile intent.yml --json           # 反映(単一トランザクション)
 markharness generate                                   # → "generated N testcase(s) into ..."
 markharness validate                                   # → ".markharness/knowledge/ and .markharness/axes/ are valid"
 markharness generate                                   # もう一度。N が同じで差分が出ないことを確認
 ```
 
-### 落とし穴 ①: `identity migrate` は2回必要
+**Knowledge の書込み口は `knowledge reconcile` だけです。** Intent(望ましい状態を書いた1ファイル)を渡すと、現在状態との差分から作成・更新・renameが決まり、UID の発行とファイル書込みが単一トランザクションで行われます。`identity migrate` を挟む必要はありません。
 
-`knowledge apply` が作成した Feature / Behavior / Scenario にも uid は付きません。apply 後に migrate を実行しないと `markharness validate` が次のエラーで落ちます。
+### 落とし穴 ①: 既存要素を書き直すときは内容を完全に一致させる
 
-```
-project is in UID mode ([identity] mode = "uid") but this feature '<id>' has no uid;
-run `markharness identity migrate` to repair
-```
+Intent は**望ましい状態**の記述なので、既存要素をもう一度書いても構いません。ただし判定は次のとおりです(表示IDでの照合)。
 
-migrate は冪等です。迷ったら実行してください。害はありません。
+| Intent の書き方 | 現在状態 | 結果 |
+|---|---|---|
+| `uid` なし、同じ scope に同じ id が無い | — | 新規作成 |
+| `uid` なし、同じ id があり内容も一致 | 既存 | `unchanged`(何も書かれない) |
+| `uid` なし、同じ id があるが内容が違う | 既存 | **`ambiguous_identity` で停止**。UID の明示を要求 |
+| `uid` あり | 既存 | 内容を比較して更新。`id` を変えれば rename |
 
-### 落とし穴 ②: `markharness knowledge add` は対話専用で、非対話フラグが無い
+**つまり「既存要素の内容を変えたい」ときだけ `uid` が必要です。** UID は反映成功時の出力か `--json` の結果から取得します。
 
-`--dir` と `--edit`(`$EDITOR` を開く)しかありません。**stdin が EOF になると「入力が空です。」を無限に出力し続け、終了しません。** AI から実行する場合は必ず stdin にパイプしてください。
+### 落とし穴 ②: axis は Intent を書く前に全部登録する
 
-プロンプトは**2つだけ**、この順です:
+未登録 axis は `unknown_axis` で反映前に全件弾かれます。Intent を全部書き終えてから気づくと手戻りになります(§4.5・§5.1)。
 
-1. `Requirement name (e.g. task-management):`
-2. `Requirement axis (comma separated, e.g. ui, validation):`
+### 落とし穴 ③: `--check` の結果は書込みの許可証ではない
 
-```bash
-printf 'todo-app\nfunctional\n' | markharness knowledge add --dir .
-```
-
-成功すると `Requirement '<id>' を作成しました。` と出て**その時点で対話は自動終了します**(Feature 以降は尋ねられません)。これは正常な挙動であり、失敗ではありません。
-
-### 落とし穴 ③: Requirement の `label` は id に固定される
-
-`knowledge add` は label を尋ねないため、`label: <入力した id>` が確定します。後からドラフト側に別の label(例: `label: TODO アプリ`)を書くと `conflicting_existing_value` で弾かれます。**id を決める時点で、それが表示名になることを前提に命名してください。**
+`--check` は解析・照合・検証・計画までを本番と同じ実装で行い、書込みだけをしません。ただし通常実行はコミット直前に現在状態を読み直し、その間に状態が変わっていれば `stale_plan` で停止します。`--check` が通ったからといって、次の実行が必ず成功するとは限りません。
 
 ---
 
@@ -75,7 +66,7 @@ printf 'todo-app\nfunctional\n' | markharness knowledge add --dir .
 
 ### 2.2 既存知識の確認(**再現性のために必須**)
 
-**ドラフトを書き始める前に、必ず既存の階層を確認してください。**
+**Intent を書き始める前に、必ず既存の階層を確認してください。**
 
 ```bash
 markharness axes list
@@ -117,7 +108,7 @@ Created: <YYYY-MM-DD>
 
 ---
 
-## 3. ドラフトの書き方
+## 3. Knowledge Intent の書き方
 
 ### 3.1 データモデル
 
@@ -141,50 +132,62 @@ Created: <YYYY-MM-DD>
 - `scenario.id` は**同じ Behavior 内でのみ一意**であればよく、別 Behavior での再利用は衝突しません。id のリネームや衝突回避作業は不要です。
 - 生成される TestCase の `axis` は **Feature と Behavior の axis の和集合**(重複除去・ソート済み)です。Scenario は axis を持ちません。Requirement の axis は継承されません。
 
-### 3.2 ドラフトスキーマ(`KnowledgeDraft`)
+**Intent はこの保存形式とは別のスキーマです。** Intent は authoring 専用の入力であり、保存される YAML そのものではありません。新規要素は Intent 内ローカルな `key` で相互参照し(`key` は保存されません)、既存要素は `uid` で選択します。
 
-**この YAML がスキーマの正本です。** `markharness knowledge scaffold` は空欄のテンプレートのみを出力し、`procedures` や `phases` の中身の書式は示しません。
+### 3.2 Intent スキーマ
+
+**この YAML がスキーマの正本です。** `markharness knowledge reconcile --print-template` は空欄の雛形のみを出力し、`procedures` や `phases` の中身の書式は示しません。
 
 ```yaml
-requirement:
-  id: <existing-or-new-requirement-slug>
-  label: <label>            # 既存かつ変更なしなら省略
-  axis: [<axis-id>, ...]    # 既存かつ変更なしなら省略
-  description: <text or null>
+format: markharness/knowledge-intent/v1
+mode: merge                    # 初期版は merge のみ(既存要素を削除しない)
 
-feature:
-  id: <feature-slug>
-  label: <label>
-  axis: [<axis-id>, ...]
-  description: <text>
+requirements:
+  - key: <intent-local-name>   # 新規要素の Intent 内参照名。保存されない
+    # uid: <ULID>              # 既存 Requirement を変更する場合のみ。key と排他
+    id: <requirement-slug>
+    source: native             # native | external
+    label: <label>             # source: native では新規作成時に必須
+    axis: [<axis-id>, ...]
+    description: <text or null>          # 省略可
+    related_issues: []                   # 省略可
 
-behavior:
-  id: <behavior-slug>
-  label: <label>
-  axis: [<axis-id>, ...]
-  description: <この Behavior が行うこと。コード自身の言葉で>
-  procedures:                 # 省略可。既存 Behavior を変更なしで再利用する場合も省略可
-    - name: <procedure-slug>  # scenario.phases から `use: <name>` で参照
-      steps:
-        - <素の文字列。最低1件必須>      # ← 書式に注意(§3.3a)
-
-scenario:
-  id: <scenario-slug>         # behavior id をプレフィックスとして繰り返さない
-  label: <label>
-  description: <このパスを引き起こす具体的な入力/状態 + 出所(ファイルパス#関数名)>
-  phases:                     # 常に完全指定。省略による再利用は不可。最低1件必須
-    - steps:
-        - action: <人間が手作業で行える操作>    # ← マッピング。`- <文字列>` は不可(§3.3a)
-        # - use: <procedure-slug>              # Behavior の procedure を参照する場合
-      results:
-        - <この phase の操作後に観測できる結果。1要素=1観測。最低1件必須>
-  implementation_note: <実装根拠メモ。省略可。生成には使わない>
+features:
+  - key: <intent-local-name>
+    # uid: <ULID>              # 既存 Feature を変更する場合のみ
+    id: <feature-slug>
+    contributes_to: [<requirement key または uid>, ...]   # 全置換
+    label: <label>
+    axis: [<axis-id>, ...]
+    description: <text>                  # 省略可
+    forked_from: <feature-id or null>    # 省略可。概念的な派生元(§6.3)
+    behaviors:
+      - id: <behavior-slug>
+        # uid: <ULID>          # 既存 Behavior を変更する場合のみ
+        label: <label>
+        axis: [<axis-id>, ...]
+        description: <この Behavior が行うこと。コード自身の言葉で>   # 新規作成時は必須
+        procedures:                 # 省略可。全置換
+          - name: <procedure-slug>  # scenario.phases から `use: <name>` で参照
+            steps:
+              - <素の文字列。最低1件必須>      # ← 書式に注意(§3.3a)
+        scenarios:
+          - id: <scenario-slug>     # behavior id をプレフィックスとして繰り返さない
+            # uid: <ULID>           # 既存 Scenario を変更/reparent する場合のみ
+            label: <label>
+            description: <このパスを引き起こす具体的な入力/状態 + 出所(ファイルパス#関数名)>
+            phases:                 # 新規作成時は必須。最低1件
+              - steps:
+                  - action: <人間が手作業で行える操作>    # ← マッピング。`- <文字列>` は不可(§3.3a)
+                  # - use: <procedure-slug>              # Behavior の procedure を参照する場合
+                results:
+                  - <この phase の操作後に観測できる結果。1要素=1観測。最低1件必須>
+            implementation_note: <実装根拠メモ。省略可。生成には使わない>
 ```
 
-**既存要素の省略ルール:**
+**値のcollection(`axis` / `contributes_to` / `procedures`)は全置換です。** 記述すればその内容で置き換わり、省略すれば現在値を保ち、空配列を明示すれば空になります。
 
-- 既存の Requirement / Feature / Behavior は `label` / `axis` / `description` / `procedures` を**省略する**。矛盾する値を渡すと `conflicting_existing_value` で失敗します。これにより2件目以降のドラフトは実質10行で済みます。
-- **Scenario にはこの省略はありません。** `description` / `phases` は常に完全指定。既存 `scenario.id` の再利用時は内容の完全一致がチェックされます。
+**Requirement と Feature を同じ Intent で新規作成できます。** Feature の `contributes_to` に Requirement の `key` を書けば、同じ反映の中で発行された UID へ解決されます。
 
 ### 3.3 書式の落とし穴(**必読 — ここで確実に一度は詰まります**)
 
@@ -192,13 +195,13 @@ scenario:
 
 | 場所 | 書式 | 例 |
 |---|---|---|
-| `behavior.procedures[].steps` | **素の文字列** | `- ページを開く` |
-| `scenario.phases[].steps` | **マッピング** `action:` または `use:` | `- action: ページを開く` |
+| `behaviors[].procedures[].steps` | **素の文字列** | `- ページを開く` |
+| `scenarios[].phases[].steps` | **マッピング** `action:` または `use:` | `- action: ページを開く` |
 
-同じ「steps」という名前ですが非対称です。`scenario.phases[].steps` で `action:` を書き忘れると、次の Rust 内部型名がそのまま出ます:
+同じ「steps」という名前ですが非対称です。`phases[].steps` で `action:` を書き忘れると、次の Rust 内部型名がそのまま出ます:
 
 ```
-scenario.phases[0].steps: data did not match any variant of untagged enum StepItem
+data did not match any variant of untagged enum StepItem
 ```
 
 **このエラーを見たら `- action:` の付け忘れです。**
@@ -208,7 +211,7 @@ scenario.phases[0].steps: data did not match any variant of untagged enum StepIt
 **すべてのプレーンスカラー**(`label`、`description`、`steps` の文字列、`results` の文字列)で、**コロン直後にスペースが続くとマッピングの区切りと誤認されパースエラーになります。**
 
 ```
-failed to parse draft: mapping values are not allowed in this context at line 23 column 57
+error[invalid_format]: mapping values are not allowed in this context at line 23 column 57 (<document>)
 ```
 
 このエラーメッセージは原因を一切説明しません。対処は2つ:
@@ -222,19 +225,13 @@ failed to parse draft: mapping values are not allowed in this context at line 23
 
 出所の明記は「ファイルパス + 関数/メソッド/分岐名」までに留めます。行番号はリファクタリングや無関係な変更で陳腐化し、維持コストを増やすだけで検証可能性を高めません。
 
-### 3.4 ドラフトの分割粒度
+### 3.4 Intent の分割粒度
 
-**Scenario ごとに1ファイル。** 大きなドラフト1つにまとめないこと。
+**1つの Intent に複数の Requirement / Feature / Behavior / Scenario をまとめて書いて構いません。** 反映は全体で1トランザクションであり、どれか1つでも検証に失敗すれば何も書き込まれません。
 
-理由(実測):
+診断は `features[0].behaviors[1].scenarios[0].phases` のような `location` 付きで返るため、1ファイルにまとめてもどこが悪いかは特定できます。`--check --json` は**検出できた診断をまとめて返す**ので、1件直しては再実行する必要はありません。
 
-- パースエラーが複数同時に出ても、原因が1種類だと即座に分かる
-- 1箇所の書式ミスの修正が1ファイルで済む
-- `validate --batch` がどのファイルが悪いかをファイル名付きで返す
-
-ファイル名は `01-xxx.yml`、`02-xxx.yml` のように順序を制御できる形にします。**バッチはファイル名順に適用され、後続のドラフトは先行するドラフトが作成した Requirement/Feature/Behavior を参照できます。**
-
-**`--batch <dir>` は直下の `*.yml` のみを対象にします。`.yaml` 拡張子は無視されます**(該当ファイルが1つも無ければ exit code 2)。拡張子を `.yml` に統一してください。
+導出対象が大きい場合は、**Feature 単位で Intent ファイルを分ける**のが実用的です(`intent-todo-management.yml` 等)。1つの Intent が巨大になると、YAML のインデント階層が深くなり書式ミスを起こしやすくなります。
 
 ---
 
@@ -304,7 +301,7 @@ error-handling  異常系      バリデーション・エラーパス・境界�
 - **Feature 名と1対1になる axis を作らない**(`todo-management` という axis)。Feature 自体で絞り込めるため無意味です
 - **axis 数を増やしすぎない。** 4〜8個程度で、どの Behavior にも最低1つ付く粒度が実用的です
 
-**axis はドラフト作成前にすべて登録が必要です**(§5.1)。新規プロジェクトでは `axes/` は空(`markharness axes list --json` が `[]` を返す)で、頼れる既存レジストリはありません。**先に設計してから登録してください。** 登録漏れがあると、ドラフトを全件書き終えてから全件 `unknown_axis` で弾かれます。
+**axis は Intent を書く前にすべて登録が必要です**(§5.1)。新規プロジェクトでは `axes/` は空(`markharness axes list --json` が `[]` を返す)で、頼れる既存レジストリはありません。**先に設計してから登録してください。**
 
 ---
 
@@ -320,31 +317,25 @@ markharness axes add functional --label 機能           # 必要な分だけ繰
 - `--label` 省略時は `id` がそのまま label になります
 - **`axes add` は冪等ではありません。** 既存 id を指定するとエラーになります。先に `list` で確認してください
 
-### 5.2 Requirement の作成(新規の場合のみ)
-
-既存 Requirement を再利用するだけなら、この節は飛ばして §5.3 へ。
+### 5.2 Intent の作成
 
 ```bash
-printf '<req-id>\n<axis-id>\n' | markharness knowledge add --dir .
-markharness identity migrate --dir .
+markharness knowledge reconcile --print-template > intent.yml
 ```
 
-- **新規 Requirement は `identity migrate` するまで uid を持ちません。** その間、Feature からの参照は `requirement_not_migrated` で拒否されます
-- **`knowledge apply` には Requirement 単体を書き込む手段がありません。** ドラフトは requirement/feature/behavior/scenario の4セクション全部を必須とし、新規 Requirement と新規 Feature を同じドラフトで作ることは構造的に不可能です(必ず `requirement_not_migrated` で拒否され、何も書き込まれません)
-- `identity migrate` は `--dry-run`(書き込まず予定のみ表示)と `--json` に対応します
+雛形は Requirement 1件 → Feature 1件 → Behavior 1件 → Scenario 1件の最小構成です。§3.2 を正本として書き足してください。
 
-### 5.3 ドラフトの検証と適用
+### 5.3 検証と反映
 
 ```bash
-markharness knowledge validate --batch drafts/ --json   # エラーが0になるまで修正 → 再実行
-markharness knowledge apply    --batch drafts/ --json
-markharness identity migrate --dir .                    # ← 必須。忘れると §5.4 の validate が落ちる
+markharness knowledge reconcile intent.yml --check --json   # エラーが0になるまで修正 → 再実行
+markharness knowledge reconcile intent.yml --json           # 反映
 ```
 
-単一ファイルの場合は `--batch drafts/` を `<draft-file>` に置き換えます。
-
-- `apply --batch` が途中のファイルで失敗した場合、**その回に書き込み済みのファイルも含めて全ロールバックされます**(バッチ全体が不可分)。安心して一括適用できます
-- 適用が終わったドラフトに対応するチェックリストのステップを `- [x]` にします
+- 反映は**単一トランザクション**です。検証に失敗すれば何も書き込まれず、途中で中断しても中途半端な状態は後続コマンドへ公開されません
+- UID の発行も同じトランザクション内で行われます。**`identity migrate` を別途実行する必要はありません**
+- 終了コード: `0` 成功 / `1` 検証エラー / `3` 他の identity 操作が進行中または回復保留 / `4` `--check` で変更が生じる状態
+- 反映が終わった Scenario に対応するチェックリストのステップを `- [x]` にします
 
 ### 5.4 生成と検証
 
@@ -354,11 +345,11 @@ markharness validate     # → .markharness/knowledge/ and .markharness/axes/ ar
 markharness generate     # 2回目。N が同じで差分が出ないことを確認(CI が見る内容)
 ```
 
-**件数の検算(OS 非依存):** `markharness generate` の出力行 `generated N testcase(s)` の **N が、適用した Scenario の数と一致すること**を確認します。一致しない場合は、同じ feature/behavior/scenario の組み合わせを誤って複数回 apply していないか確認してください。
+**件数の検算(OS 非依存):** `markharness generate` の出力行 `generated N testcase(s)` の **N が、反映した Scenario の総数と一致すること**を確認します。
 
 生成される各 TestCase は `generated_from`(出所と `requirement_ids`/`requirement_uids`)、`phases`(`use:` 参照は procedure の steps に展開済み)、`axis`(Feature ∪ Behavior)から構成されます。`case_uid` / `case_revision` は決定的で、再生成しても変わりません。
 
-**`.markharness/generated/testcases/*.yml` を手編集しないこと。** 派生出力です。書いてよいのは `.markharness/knowledge/` 配下のみ、それも `apply` 経由だけです。
+**`.markharness/generated/testcases/*.yml` を手編集しないこと。** 派生出力です。書いてよいのは `.markharness/knowledge/` 配下のみ、それも `knowledge reconcile` 経由だけです。
 
 ### 5.5 完了処理
 
@@ -374,57 +365,47 @@ markharness generate     # 2回目。N が同じで差分が出ないことを�
 
 ### 6.1 エラー別の対処
 
-#### パース段階のエラー(構造化されず、生のメッセージが出る)
-
-| メッセージ | 原因 | 対処 |
-|---|---|---|
-| `mapping values are not allowed in this context at line N column M` | プレーンスカラー内の `": "` | 該当行の値をダブルクォートで囲む、または `:` を `#` 等に置換(§3.3b) |
-| `data did not match any variant of untagged enum StepItem` | `scenario.phases[].steps` の `- action:` 付け忘れ | `- action: <操作>` または `- use: <name>` にする(§3.3a) |
-
-#### `knowledge validate` が返す構造化エラー
+診断は人間可読モードでは `error[<code>]: <message> (<location>)`、`--json` では `{"ok":false,...}` の形で返ります。
 
 | コード | 意味 / 対処 |
 |---|---|
-| `unknown_axis` | axis 未登録。`markharness axes add` で先に登録(§5.1)。最も近い候補が提示される |
-| `requirement_not_migrated` | 新規 Requirement に uid が無い。`markharness identity migrate` を実行(§5.2) |
-| `conflicting_existing_value` | 既存要素に異なる値を渡した。既存要素では `label`/`axis`/`description` を省略する(§3.2) |
-| `missing_steps` | `behavior.procedures[].steps` / `scenario.phases` / `phases[].steps` / `phases[].results` のいずれかが欠落・空・空文字列要素を含む。`procedures[].steps` は空配列も拒否。`phases` とその `steps`/`results` は常に非空必須 |
-| `missing_description` | `description` が未指定 |
-| `missing_axis` | 新規要素に `axis` が無い。最低1件必要 |
+| `invalid_format` | YAML がパースできない、または `format` が `markharness/knowledge-intent/v1` でない。プレーンスカラー内の `": "` が原因のことが多い(§3.3b) |
+| `unknown_axis` | axis 未登録。`markharness axes add` で先に登録(§5.1) |
+| `unknown_local_reference` | `contributes_to` が、同じ Intent に存在しない `key` を指している |
+| `unknown_uid` | 指定した `uid` を持つ要素が存在しない |
+| `duplicate_key` / `duplicate_uid` | 同じ Intent 内で `key` / `uid` を重複して使っている |
+| `ambiguous_identity` | `uid` なしで書いた要素が、同じ id の既存要素と内容不一致。変更したいなら `uid` を明示する(落とし穴①) |
+| `conflicting_scope` | Behavior を別の Feature へ移そうとした。Behavior の移動は非対応(移動できるのは Scenario のみ) |
+| `conflicting_existing_value` | 書込み先のパスが別のファイルに占有されている。id を変えるか、既存ファイルを整理する |
+| `invalid_procedure_reference` | `use:` が、その Behavior の `procedures` に無い名前を指している |
+| `invalid_source_revision` | `source_revision` の値が不正(`current` 以外を書いた、`source: native` に対して `current` を書いた等) |
+| `missing_required_field` | 必須フィールドの欠落。新規作成時の `id` / `description` / `phases`、`source` など |
 | `invalid_slug` | id に使えない文字。小文字英数字とハイフンにする |
-| `redundant_prefix` | `scenario.id` が behavior id をプレフィックスとして繰り返している。id を短くするか、意図的なら `apply --strip-redundant-prefix` |
-| `multiline_label` | `label` に改行が含まれる |
-| `parent_not_found` | 参照先の親要素が存在しない。バッチ内の適用順(ファイル名順)を確認 |
-| `unknown_forked_from` | `feature.forked_from` の参照先が存在しない |
-
-#### `markharness validate`(プロジェクト全体)のエラー
-
-```
-project is in UID mode ([identity] mode = "uid") but this <kind> '<id>' has no uid
-```
-
-→ `markharness identity migrate --dir .` を実行(§5.3 の最後の migrate 漏れ)。
+| `redundant_prefix` | `scenario.id` が behavior id をプレフィックスとして繰り返している。id を短くする |
+| `multiline_label` | `label` に改行が含まれる。`label` は単一行のみ |
+| `invariant_violation` | 既存要素が `uid` を持たない等、前提が壊れている。`markharness identity migrate` での修復が必要 |
+| `stale_plan` | 計画を立ててから反映するまでの間に現在状態が変わった。もう一度実行する |
 
 ### 6.2 2回目以降の更新
 
 既存の知識に追記・修正する場合:
 
 1. **§2.2 を必ず実施し、既存の Feature/Behavior 分割を再利用する。**
-2. 既存要素は `label`/`axis`/`description`/`procedures` を省略したドラフトを書く。
-3. 既存 `scenario.id` を再利用する場合、`description`/`phases` は完全一致が必要。変更したい場合は内容を書き換えたドラフトを apply する。
-4. Feature の分割を変更する場合、既存テストが参照する case_id が壊れます。**自分で決めず、影響一覧を出してユーザーに確認してください。**
+2. **追加だけなら `uid` は不要です。** 既存要素を同じ内容で書き直せば `unchanged` となり、追加した要素だけが `created` になります。
+3. **既存要素の内容を変えるなら `uid` が必要です。** `uid` なしで内容だけ変えると `ambiguous_identity` で停止します。UID は直前の反映結果か `--json` の出力から取得します。
+4. rename は `uid` で対象を選び、`id` に新しい値を書きます。uid と版履歴は維持されます。
+5. Scenario を別の Behavior へ移す(reparent)場合は、その Scenario を `uid` で指定し、移動先 Behavior の下に書きます。
+6. Feature の分割を変更する場合、既存テストが参照する case_id が壊れます。**自分で決めず、影響一覧を出してユーザーに確認してください。**
 
 ### 6.3 このドキュメントで扱っていないオプション
 
 初回導出では不要です。必要になったら `--help` を参照してください。
 
-- `feature.forked_from` — 他の Feature の真の派生である場合のみ
-- `apply --strip-redundant-prefix` — `redundant_prefix` を意図的に剥がす
-- `scenario.implementation_note` — 実装根拠メモ。生成には使われない
-- `knowledge add --edit` — `$EDITOR` を開く。**AI からは使用不可**
-- `apply --batch --dry-run` — `validate --batch` と同等のチェック
+- `features[].forked_from` — 他の Feature の真の派生である場合のみ
+- `scenarios[].implementation_note` — 実装根拠メモ。生成には使われない
+- `requirements[].source: external` と `source_revision: current` — 外部ドキュメントを出典とする Requirement の固定参照更新
 - `markharness axes prune` — 未参照 axis の報告
-- `markharness identity sync` / `audit` / `resolve` — identity 履歴の修復・監査
+- `markharness identity sync` / `audit` / `resolve` / `migrate` — identity 履歴の修復・監査
 
 ### 6.4 外部状態への依存
 

@@ -39,7 +39,7 @@ knowledge/<requirement>/
                 └── 002.yml
 ```
 
-各YAMLの`id`はGitのblob SHAではなく人間可読なslugです(論文§3.1・§3.5でいう表示用ではなく識別子そのものとして使用)。**当初案(以下§9参照)とは異なり、実装では`Behavior`/`Condition`/`ExpectedResult`のいずれも親要素へのID参照フィールド(`feature`/`behavior`/`condition`)を明示的に持つ**(`knowledge.rs`の各構造体定義)。生成アルゴリズム自体はディレクトリの入れ子構造だけを辿り、これら参照フィールドの値を生成ロジックの分岐には使わない(`TestCase.generated_from`へコピーするのみ)が、値の整合性チェック(親参照が実在するか)は`markharness knowledge validate`側(`knowledge-apply-cli-spec.md`)が担う。
+各YAMLの`id`はGitのblob SHAではなく人間可読なslugです(論文§3.1・§3.5でいう表示用ではなく識別子そのものとして使用)。**当初案(以下§9参照)とは異なり、実装では`Behavior`/`Condition`/`ExpectedResult`のいずれも親要素へのID参照フィールド(`feature`/`behavior`/`condition`)を明示的に持つ**(`knowledge.rs`の各構造体定義)。生成アルゴリズム自体はディレクトリの入れ子構造だけを辿り、これら参照フィールドの値を生成ロジックの分岐には使わない(`TestCase.generated_from`へコピーするのみ)が、値の整合性チェック(親参照が実在するか)は`markharness knowledge reconcile`側([decisions/0027](../decisions/0027-declarative-knowledge-reconciliation.md))が担う。
 
 ### 論文§3.5「idはパスに依存しない」原則との関係
 

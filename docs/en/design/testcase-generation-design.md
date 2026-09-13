@@ -39,7 +39,7 @@ knowledge/<requirement>/
                 └── 002.yml
 ```
 
-Each YAML's `id` is a human-readable slug, not a Git blob SHA (used as the identifier itself, not as a display value per paper §3.1/§3.5). **Unlike the initial proposal (see §9 below), in the implementation, all of `Behavior`/`Condition`/`ExpectedResult` explicitly hold an ID reference field to their parent element (`feature`/`behavior`/`condition`)** (each struct definition in `knowledge.rs`). The generation algorithm itself only traverses the nested directory structure and does not use the values of these reference fields for branching in the generation logic (it only copies them into `TestCase.generated_from`); consistency checking of the values (whether the parent reference actually exists) is handled on the `markharness knowledge validate` side (`knowledge-apply-cli-spec.md`).
+Each YAML's `id` is a human-readable slug, not a Git blob SHA (used as the identifier itself, not as a display value per paper §3.1/§3.5). **Unlike the initial proposal (see §9 below), in the implementation, all of `Behavior`/`Condition`/`ExpectedResult` explicitly hold an ID reference field to their parent element (`feature`/`behavior`/`condition`)** (each struct definition in `knowledge.rs`). The generation algorithm itself only traverses the nested directory structure and does not use the values of these reference fields for branching in the generation logic (it only copies them into `TestCase.generated_from`); consistency checking of the values (whether the parent reference actually exists) is handled on the `markharness knowledge reconcile` side ([decisions/0027](../decisions/0027-declarative-knowledge-reconciliation.md)).
 
 ### Relationship to Paper §3.5's Principle That "id Is Path-Independent"
 

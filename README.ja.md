@@ -2,13 +2,13 @@
 
 English version: [README.md](./README.md)
 
-Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI(Rust実装)です。`.markharness/knowledge/` に YAML で手動記述したテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって `ChangeEvent`(Featureごとの版履歴の差分ログであり、永続的にクエリ可能なグラフとして保持するわけではありません)を自動計算します。この主系譜の算出(`changes compute`)は2つのマイルストーン間のtree差分だけを見るためブランチ運用(merge/squash/rebase)に依存しませんが、マージの分岐そのものを監査する副次機能(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とするため、squash/rebase運用では機能しません(詳細は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md) 1.11/1.16節)。
+Git そのものをバックエンドにした、テスト知識(Feature / Condition / ExpectedResult)の Git-native 管理 CLI(Rust実装)です。`.markharness/knowledge/` に YAML で手動記述したテスト知識から `TestCase` を決定的に生成し、マイルストーンタグ間の Git tree SHA 比較によって `ChangeEvent`(Featureごとの版履歴の差分ログであり、永続的にクエリ可能なグラフとして保持するわけではありません)を自動計算します。この主系譜の算出(`changes compute`)は2つのマイルストーン間のtree差分だけを見るためブランチ運用(merge/squash/rebase)に依存しませんが、マージの分岐そのものを監査する副次機能(`changes lineage`、`true_divergences`)はマージコミットの保持を前提とするため、squash/rebase運用では機能しません(詳細は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md) 1.9/1.16節)。
 
 markharness が管理するファイルはすべて単一の `.markharness/` 名前空間(`knowledge/`、`axes/`、`generated/`、`executions/`、`changes/`、`schema/`)配下に置かれ、導入先プロジェクトが既に持つトップレベルの `knowledge/` や `schema/` と衝突しません。`.markharness/` 配下は `generated/` や `executions/`(この Git-native モデルでは証跡として扱われます)を含め基本的にすべてコミット対象です。唯一の例外は id 解決キャッシュである `.markharness-cache/` で、`markharness init` がこれを `.gitignore` に追加します。
 
 設計の背景は [docs/ja/テスト知識管理のGit-nativeモデル_統合版.md](./docs/ja/テスト知識管理のGit-nativeモデル_統合版.md)、プロダクトとしての詳細は [docs/ja/product-operation.md](./docs/ja/product-operation.md) を参照してください。開発への参加方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
 
-全ての永続Knowledge要素(Requirement / Feature / Behavior / Condition / ExpectedResult)は、人間が編集する `id` に加えて不変の `uid`(ULID)を持ちます([ADR 0013](./docs/ja/decisions/0013-immutable-identity-model.md))。`id` は入力・編集する値であり、ChangeEvent・lineage・verify・execution・TestCaseの同一性判定は内部的に `uid` を優先して使います。そのため要素の `id` を変更しても(Featureは `markharness feature rename-id`、他の種別は `markharness identity migrate`/`resolve`/`release`/`retire`/`restore`/`reissue`/`sync`)、削除+追加の2件に分裂せず単一のChangeEventとして版履歴が継続します。identityコマンド一覧は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md) 1.25〜1.33節を参照してください。
+全ての永続Knowledge要素(Requirement / Feature / Behavior / Scenario)は、人間が編集する `id` に加えて不変の `uid`(ULID)を持ちます([ADR 0013](./docs/ja/decisions/0013-immutable-identity-model.md))。`id` は入力・編集する値であり、ChangeEvent・lineage・verify・execution・TestCaseの同一性判定は内部的に `uid` を優先して使います。そのため要素の `id` を変更しても(`markharness knowledge reconcile` へ対象の `uid` と新しい `id` を書いたKnowledge Intentを渡す)、削除+追加の2件に分裂せず単一のChangeEventとして版履歴が継続します。identityコマンド一覧は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md) 1.21〜1.24節を参照してください。
 
 ## 最小チュートリアル
 
@@ -24,9 +24,9 @@ git init
 # 2. markharness init — .markharness/{knowledge,axes,generated,executions,changes,schema}/ を作成
 markharness init
 
-# 3. 知識登録 — examples/todo-minimal/ の axis レジストリとドラフトYAMLを使う
+# 3. 知識登録 — examples/todo-minimal/ の axis レジストリと Knowledge Intent を使う
 cp -r <markharness のクローン先>/examples/todo-minimal/axes .markharness/
-markharness knowledge apply <markharness のクローン先>/examples/todo-minimal/draft-v1.yml
+markharness knowledge reconcile <markharness のクローン先>/examples/todo-minimal/intent-v1.yml
 
 # 4. 生成 — .markharness/knowledge/ から TestCase を決定的に生成する
 markharness generate
@@ -36,11 +36,12 @@ git add -A && git commit -m "add todo-management/add-todo knowledge"
 git tag v1
 markharness milestone init v1
 
-# --- ここで仕様が変わったとする(examples/todo-minimal/draft-v2.yml は
-#     同じ Feature に新しい Condition を1件追加するドラフト) ---
-markharness knowledge apply <markharness のクローン先>/examples/todo-minimal/draft-v2.yml
+# --- ここで仕様が変わったとする(examples/todo-minimal/intent-v2.yml は
+#     同じ Behavior に新しい Scenario を1件追加したIntent。既存の要素は
+#     書き直しても内容が同じなら unchanged となり、追加分だけが created) ---
+markharness knowledge reconcile <markharness のクローン先>/examples/todo-minimal/intent-v2.yml
 markharness generate
-git add -A && git commit -m "add max-length condition"
+git add -A && git commit -m "add max-length scenario"
 git tag v2
 markharness milestone init v2
 
@@ -54,7 +55,7 @@ markharness binding set --case-uid <case-uid> --mode manual
 markharness binding list
 ```
 
-`case_id` は生成規則 `tc-{requirement.id}-{feature.id}-{behavior.id}-{condition.id}` に従います。`generate` 後の正確なIDが分からない場合は、生成されたファイル(例: `.markharness/generated/testcases/todo-management/add-todo/add-task/empty-title.yml`)を直接読んで確認してください。bindingはこの表示上の `case_id` ではなく、同じファイルの `case_uid` を鍵にします。
+`case_id` は生成規則 `tc-{feature.id}-{behavior.id}-{scenario.id}` に従います。`generate` 後の正確なIDが分からない場合は、生成されたファイル(例: `.markharness/generated/testcases/add-todo/add-task/empty-title.yml`)を直接読んで確認してください。bindingはこの表示上の `case_id` ではなく、同じファイルの `case_uid` を鍵にします。
 
 bindingは「そのTestCaseがどう検証されるか」と「検証実体がどこにあるか」を宣言するものです。実行の記録ではありません — 結果・日時・対象ビルド・実行環境のいずれも持たず、その存在を「実行済み」「合格」と読んではなりません(ADR 0025)。
 
@@ -64,7 +65,7 @@ bindingは「そのTestCaseがどう検証されるか」と「検証実体が�
 
 - **Gitタグがマイルストーンの前提**：`changes compute` / `backfill run` は `git tag` された地点しかマイルストーンとして扱えません。タグを打たない限りリリース境界を認識できません(UC4のタグ付け自体は人間の判断ポイントであり、`markharness` は代行しません)。
 - **`git notes` は push/fetch で自動同期されません**：バックフィルの進捗記録([第4.3節](./docs/ja/テスト知識管理のGit-nativeモデル_統合版.md))は `refs/notes/markharness-backfill` に保存されますが、これは通常の `git push`/`git fetch` の対象外です。共有リポジトリでチーム運用する場合は、`git push origin refs/notes/*` と対応する fetch 設定(`git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'` 等)を各メンバー・CI環境で追加してください。
-- **既存TMS(TestRail / Xray 等)からの移行は未実装**：UC8(既存ツールからのインポート)は未実装です。移行は手作業で `.markharness/knowledge/` 配下のYAMLを作成する(または `markharness knowledge apply`/`add` を使う)ことになります。詳細は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md#2-未実装今後実装予定のコマンド) の未実装コマンド一覧を参照してください。
+- **既存TMS(TestRail / Xray 等)からの移行は未実装**：UC8(既存ツールからのインポート)は未実装です。移行は手作業で Knowledge Intent を書き `markharness knowledge reconcile` へ渡すことになります。詳細は [docs/ja/cli-manual.md](./docs/ja/cli-manual.md#2-未実装今後実装予定のコマンド) の未実装コマンド一覧を参照してください。
 
 ## 未対応事項
 
@@ -72,7 +73,7 @@ bindingは「そのTestCaseがどう検証されるか」と「検証実体が�
 
 - 既存TMS(TestRail/Xray等)からのインポータ(UC8) — 未実装。
 - id解決キャッシュの `canonicalization_rule_version` / `id_index_schema_version` — 現状固定値で、実際の改訂運用は未検証。
-- ADR 0013の「UID modeへの公開cutover後にuidなし要素が追加された場合は通常コマンドを拒否する」検証規則は `markharness validate` にのみ実装されており、`knowledge apply`/`interactive add` 等の生成系コマンドへの拡張は未定。
+- ADR 0013の「UID modeへの公開cutover後にuidなし要素が追加された場合は通常コマンドを拒否する」検証規則は `markharness validate` にのみ実装されており、`knowledge reconcile` 等の生成系コマンドへの拡張は未定。
 - `ExecutionBinding` が持つのは検証手段(`automated`/`manual`)と自由記述の `reference` だけ。詳細な実行証跡(結果・日時・対象ビルド・実行環境)はmarkharnessの責務外で、`reference` が指す先に委ねる(ADR 0020)。
 - `markharness backfill run` — 常駐デーモンではなく、呼び出しごとに未処理ペアを1パス処理して終了する設計(CI等からの反復呼び出しを前提とする)。
 

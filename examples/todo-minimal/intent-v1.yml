@@ -1,0 +1,36 @@
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_todo_management
+    id: todo-management
+    source: native
+    label: todo-management
+    axis: [workflow]
+
+features:
+  - key: feature_add_todo
+    id: add-todo
+    contributes_to: [req_todo_management]
+    label: add-todo
+    axis: [ui, validation]
+    behaviors:
+      - id: add-task
+        label: add-task
+        axis: [ui]
+        description: User adds a new task to the list.
+        procedures:
+          - name: open-app
+            steps:
+              - Open the todo app.
+        scenarios:
+          - id: empty-title
+            label: empty-title
+            description: Submit the todo form with an empty title
+            phases:
+              - steps:
+                  - use: open-app
+                  - action: Leave the title field empty.
+                  - action: Click the "Add" button.
+                results:
+                  - A validation error is shown under the title field.

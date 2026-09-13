@@ -10,7 +10,6 @@ English version: [docs/en/README.md](../en/README.md)
 2. **[product-operation.md](./product-operation.md)** — 論文の設計を製品運用イメージ(UC1〜UC8、アクター、ファイル作成順序)に落とし込んだもの。
 3. **[cli-manual.md](./cli-manual.md)** — 実装済み/未実装のCLIコマンド一覧。ユースケースとの対応は2.のUC番号を参照する。
 4. 個別コマンドの詳細設計(cli-manualから参照される):
-   - **[knowledge-apply-cli-spec.md](./design/knowledge-apply-cli-spec.md)** — `knowledge validate`/`apply`(非対話ナレッジ登録)の仕様。
    - **[testcase-generation-design.md](./design/testcase-generation-design.md)** — `generate`(TestCase決定的生成)の仕様。
    - **[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md)** — `verify trace`/`verify pending`(実行結果とChangeEventの自動突合)の仕様。
    - **[verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)** — (Status: Proposed、未実装)PR Verification Plan生成のためのcanonical model・パイプライン設計。[decisions/0008](./decisions/0008-verification-plan-product-roadmap.md)で決定したロードマップのStage 1〜2に対応。
@@ -21,7 +20,7 @@ English version: [docs/en/README.md](../en/README.md)
 ## 資料の鮮度について
 
 - **統合版**は本文中に「注(実装状況について)」「§3.6 実装状況まとめ」を持ち、CLI実装との既知の相違を追記済み。詳細な突き合わせへのリンクは`gap-analysis-mh-sample-test-case.md`を参照する。
-- `cli-manual.md`・`knowledge-apply-cli-spec.md`・`testcase-generation-design.md`・`change-event-verification-tracking-spec.md`は「Status: Implemented」等のステータス行と「実装時の追記/変更」節を持ち、初期案と実装の差分を本文内で自己完結して管理している。
+- `cli-manual.md`・`testcase-generation-design.md`・`change-event-verification-tracking-spec.md`は「Status: Implemented」等のステータス行と「実装時の追記/変更」節を持ち、初期案と実装の差分を本文内で自己完結して管理している。
 - `gap-analysis-mh-sample-test-case.md`は「調査時点のスナップショット」であり、指摘時点と現在の実装状態を区別して読む必要がある。
 
 ## ファイル名の命名規則

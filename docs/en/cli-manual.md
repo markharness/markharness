@@ -1,9 +1,9 @@
 # markharness CLI Manual
 
 **Status**: Implemented (implemented commands are in Chapter 1) / Draft (tentative proposals for unimplemented commands are in Chapter 2)
-**Related documents**: [product-operation.md](./product-operation.md) (use case mapping), [testcase-generation-design.md](./design/testcase-generation-design.md) (generation rules for `generate`), [knowledge-apply-cli-spec.md](./design/knowledge-apply-cli-spec.md) (detailed design of `knowledge validate`/`apply`)
+**Related documents**: [product-operation.md](./product-operation.md) (use case mapping), [testcase-generation-design.md](./design/testcase-generation-design.md) (generation rules for `generate`), [decisions/0027](./decisions/0027-declarative-knowledge-reconciliation.md) (the design of `knowledge reconcile`)
 
-**Purpose**: This document summarizes how to use the `markharness` CLI, divided into **implemented commands** and **unimplemented (planned) commands**. The mapping to use cases (UC1–UC8) is based on the "3. Use Case Descriptions" table in `docs/product-operation.md`. For the concrete generation rules of the implemented commands, see `docs/design/testcase-generation-design.md` (however, the current implementation of `generate`/`verify` has since been overhauled into the 4-tier `feature → behavior → condition → expected` model after that document was written; treat sections 1.5/1.6 of this manual as authoritative for the details). For the detailed design of `knowledge validate`/`apply` (the non-interactive, TTY-independent versions, sections 1.3/1.4), treat `docs/design/knowledge-apply-cli-spec.md` as authoritative.
+**Purpose**: This document summarizes how to use the `markharness` CLI, divided into **implemented commands** and **unimplemented (planned) commands**. The mapping to use cases (UC1–UC8) is based on the "3. Use Case Descriptions" table in `docs/product-operation.md`. For the concrete generation rules of the implemented commands, see `docs/design/testcase-generation-design.md` (however, the current implementation of `generate`/`verify` has since been overhauled into the 4-tier `feature → behavior → condition → expected` model after that document was written; treat sections 1.3/1.4 of this manual as authoritative for the details).
 
 ---
 
@@ -43,7 +43,7 @@ UC8 (importing from existing tools) has no dedicated directory, since it is assu
 **Behavior**
 
 - For each directory: if it does not exist, create it; if it already exists, do nothing (including leaving its contents untouched) — an idempotent operation. Re-running on an already-initialized project does not error; only the missing directories are additionally created.
-- Creates `.markharness/config.toml` (containing `schema_version = 1` and `[knowledge]\nschema_version = 1`, [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)). Every command other than `init` uses the top-level `schema_version` marker to find its own project root: it searches upward for it when `--dir` is omitted, and validates it's present even when `--dir` is explicit (exiting with a `markharness init`-guidance error if not found). `[knowledge].schema_version` is a separate, independently-scoped value that `changes compute` (section 1.12) resolves per-ref to detect Knowledge schema migrations. It is committed to the repository (not added to `.gitignore`). Left untouched if it already exists.
+- Creates `.markharness/config.toml` (containing `schema_version = 1` and `[knowledge]\nschema_version = 1`, [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)). Every command other than `init` uses the top-level `schema_version` marker to find its own project root: it searches upward for it when `--dir` is omitted, and validates it's present even when `--dir` is explicit (exiting with a `markharness init`-guidance error if not found). `[knowledge].schema_version` is a separate, independently-scoped value that `changes compute` (section 1.9) resolves per-ref to detect Knowledge schema migrations. It is committed to the repository (not added to `.gitignore`). Left untouched if it already exists.
 - On success, prints the created paths to standard output.
 
 **Example**
@@ -60,489 +60,125 @@ initialized .markharness/{knowledge,axes,generated,executions,changes,schema}/ u
 
 ---
 
-### 1.2 `markharness knowledge add` — Interactive description of knowledge (UC1: describe knowledge, in the order Requirement → Feature → Behavior → Condition → ExpectedResult)
+### 1.2 `markharness knowledge reconcile` — Declarative reconciliation of a Knowledge Intent (UC1: describe knowledge)
 
 ```text
-markharness knowledge add [--dir <path>]
+markharness knowledge reconcile <intent-file> [--check] [--json] [-d, --dir <path>]
+markharness knowledge reconcile --print-template
 ```
 
-**Purpose**: Lets a Test Designer describe the five tiers `Requirement` → `Feature` → `Behavior` → `Condition` → `ExpectedResult` interactively (sequential prompts on standard input), creating `.yml` files under `.markharness/knowledge/`. `Requirement` is the requirement unit that is the parent of a Feature, and `Feature` references its parent via its own `requirement:` field. `Behavior` is a required intermediate tier expressing "how the feature behaves," and becomes the source of the `preconditions` (common to every Condition) in the TestCase that `generate` assembles. The actual operation steps, which vary per Condition, are entered as the Condition's `steps`, and the results to check are entered as the ExpectedResult's `results` ([ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md)).
+**Purpose**: Takes a Knowledge Intent (a YAML document describing the desired state) as a single file, reconciles it against the repository's current state, and applies the resulting creations, updates, and renames of Requirements, Features, Behaviors, and Scenarios in a single transaction. This command is the only write interface for Knowledge authoring; humans and AI agents use the same path ([decisions/0027](./decisions/0027-declarative-knowledge-reconciliation.md), [decisions/0028](./decisions/0028-consolidate-knowledge-authoring-commands.md)).
+
+An Intent describes **desired state, not a procedure**. New elements cross-reference each other through a document-local `key` (never persisted); existing elements are selected by `uid`. Re-running the same Intent leaves matching elements `unchanged` with no write.
 
 **Options**
 
-| Option              | Description                                                                                                    |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `-d, --dir <path>` | Specifies the target project directory (the parent of `.markharness/knowledge/`); its `.markharness/config.toml` presence is validated. If omitted, searches upward from the current directory for `.markharness/config.toml` and targets the project root it finds. |
-
-**Example (targeting a directory other than the current one)**
-
-```console
-$ markharness knowledge add --dir tmp/todo-sample
-Requirement name (e.g. task-management): task-management
-Requirement axis (comma separated, e.g. ui, validation): workflow
-Feature name (e.g. add-todo): add-todo
-Axis (comma separated, e.g. ui, validation): ui, validation
-Behavior name (e.g. add-task): add-task
-Behavior axis (comma separated, e.g. ui, validation): ui
-Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
-Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
-  step 1: Open the todo app.
-  step 2:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
-Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
-  step 1: Click the title field.
-  step 2: Press the add button.
-  step 3:
-Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
-  step 1:
-Expected result (e.g. shows a validation error): shows a validation error
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: A validation error is shown under the title field.
-  step 2:
-```
-
-→ Files are created under `tmp/todo-sample/.markharness/knowledge/task-management/add-todo/...`.
-
-**Actor**: Test Designer (`docs/product-operation.md` UC1)
-
-**Flow**
-
-1. `Requirement name (e.g. task-management):` — enter the Requirement's slug (lowercase alphanumerics and hyphens only), or a Japanese-language label
-   - If one or more existing Requirements exist under `.markharness/knowledge/`, a numbered list in the form `N) id` is displayed before the prompt. Entering a number selects the corresponding Requirement, and typing an existing id directly also works for reuse. If there are zero candidates, no list is shown.
-   - If an existing `.markharness/knowledge/<requirement_id>/requirement.yml` exists, it is reused and the flow skips to the next prompt.
-   - Only for a new Requirement, the axis is entered as a comma-separated list at `Requirement axis (comma separated, e.g. ui, validation):`, and `requirement.yml` is newly created.
-2. `Feature name (e.g. add-todo):` — enter the Feature's slug (lowercase alphanumerics and hyphens only), or a Japanese-language label
-   - If one or more existing Features exist under the selected Requirement, a numbered list is shown the same way, and either number selection or direct entry works.
-   - If an existing `.markharness/knowledge/<requirement_id>/<feature_id>/feature.yml` exists, it is reused and the flow skips to the next prompt.
-   - Only for a new Feature, the axis is entered as a comma-separated list at `Axis (comma separated, e.g. ui, validation):`, and `feature.yml` is newly created (the `requirement:` field automatically records the id of the selected/created Requirement).
-3. `Behavior name (e.g. add-task):` — enter the Behavior's slug, or a Japanese-language label
-   - If one or more existing Behaviors exist under the selected Feature, a numbered list is shown the same way, and either number selection or direct entry works.
-   - If an existing `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/behavior.yml` exists, it is reused and the flow skips to the next prompt.
-   - Only for a new Behavior, `Behavior axis (...)`, `Behavior description (...)`, and `Behavior steps (...)` (one operation per line, blank line to finish; at least one required) are entered, and `behavior.yml` is newly created.
-4. `Condition name (e.g. empty-title):` — enter the Condition's slug, or a Japanese-language label
-   - If one or more existing Conditions exist under the selected Behavior, a numbered list is shown the same way, and either number selection or direct entry works.
-   - If the newly created Condition id begins with `{behavior_id}-` (i.e., the Behavior id was accidentally duplicated in it), that prefix is automatically stripped before creation, and the fact is reported (e.g., entering the Condition id `add-task-empty-title` under Behavior `add-task` creates it as `empty-title`). However, if a directory with the id exactly as entered already exists, it is not stripped and is reused as-is (to avoid breaking data that was previously created manually with a duplicated name).
-   - If an existing `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/<condition_id>/condition.yml` exists (judged using the id after stripping), it is reused and the flow skips to the next prompt.
-   - Only for a new Condition, `Scenario (...)`, `Condition steps (...)` (one operation per line, blank line to finish; at least one required), and `Additional preconditions (...)` (one operation per line, blank line to finish; zero is allowed) are entered, and `condition.yml` is newly created.
-5. `Expected result (e.g. shows a validation error):` — enter a one-line summary of the expected result, then `Observable results (...)` (one observable result per line, blank line to finish; at least one required), and create `expected/NNN.yml` (3-digit sequence number, existing file count + 1). Unlike a reused Condition, an ExpectedResult is always newly created, so these two prompts are never skipped.
-
-**On the prompt wording**: Each prompt internally determines the `id` of a Feature/Behavior/Condition (the directory name and the `id` field in the YAML), but to avoid the human operator getting confused by the abstract notion of "id," it is presented with easy-to-understand English phrasing and examples such as `Feature name` / `Behavior name` / `Condition name`. The internal data model (the `id` field, notification messages, variable names in the code) is unchanged.
-
-**Japanese-label input (Feature name / Behavior name / Condition name)**
-
-For each name prompt, if the input contains non-ASCII characters (e.g., a Japanese-language label), the following romanization flow is used instead of direct id entry. This does not apply to ExpectedResult's id, since it is an automatic sequence number.
-
-1. Determine whether the input string contains non-ASCII characters.
-2. If it does, convert the input to romaji using the [`kakasi`](https://crates.io/crates/kakasi) crate, then present a single id candidate after normalization (lowercasing, hyphenation of whitespace, collapsing consecutive hyphens, stripping leading/trailing hyphens, removing disallowed symbols).
-3. At the prompt `id候補: <candidate> (Enterで採用、編集する場合は入力):` ("id candidate: <candidate> (press Enter to accept, or type to edit):"), sending only an empty input (Enter) accepts that candidate as-is as the id. Typing any string instead runs that input through the same normalization rules and adopts it as the id (free editing).
-4. If the normalized id collides with an existing candidate in the numbered list, a warning is shown and id entry for that tier must be redone (there is no automatic reuse of an existing id; intentional reuse of an existing id is done via number selection).
-5. For a Requirement/Feature/Behavior/Condition newly created via Japanese-label input, the `label` field stores the entered Japanese string as-is. For direct ASCII input, or when an existing entry is reused via number selection, the input value itself (i.e., the same string as the id) is stored as `label`. ExpectedResult has no `label` field, since its id is an automatic sequence number and is not something the user names (the entered description text is stored directly in `description`).
-
-**Input validation**
-
-- The id (Feature id / Behavior id / Condition id) allows only lowercase alphanumerics and hyphens. Invalid input prompts for re-entry.
-- When a candidate list is displayed, entering an integer between 1 and the number of candidates (inclusive) selects the corresponding candidate. An out-of-range integer or a non-numeric value is treated as normal id input (or as a Japanese-language label if it contains non-ASCII characters).
-- For all prompts, empty input (empty after trimming) prompts for re-entry. However, empty input in response to the id-candidate prompt after Japanese-label conversion means "accept the candidate as-is" and is not subject to re-entry.
-
-**Generated files** (example: `task-management` / `add-todo` / `add-task` / `empty-title` / first entry)
-
-```
-.markharness/knowledge/task-management/requirement.yml
-.markharness/knowledge/task-management/add-todo/feature.yml
-.markharness/knowledge/task-management/add-todo/add-task/behavior.yml
-.markharness/knowledge/task-management/add-todo/add-task/empty-title/condition.yml
-.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/001.yml
-```
-
-`requirement.yml`:
-
-```yaml
-id: task-management
-label: task-management
-axis: [workflow]
-```
-
-`feature.yml`:
-
-```yaml
-id: add-todo
-requirement: task-management
-label: add-todo
-axis: [ui, validation]
-```
-
-`behavior.yml`:
-
-```yaml
-id: add-task
-feature: add-todo
-label: add-task
-axis: [ui]
-description: |
-  User adds a new task to the list.
-preconditions:
-  - "Open the todo app."
-```
-
-`condition.yml`:
-
-```yaml
-id: empty-title
-behavior: add-task
-label: empty-title
-description: |
-  Submit the todo form with an empty title
-steps:
-  - "Click the title field."
-  - "Press the add button."
-additional_preconditions: []
-```
-
-`expected/001.yml` (id is `{condition_id}-{3-digit sequence}`):
-
-```yaml
-id: empty-title-001
-condition: empty-title
-description: |
-  shows a validation error
-results:
-  - "A validation error is shown under the title field."
-```
-
-**Example (first session)**
-
-```console
-$ markharness knowledge add
-Requirement name (e.g. task-management): task-management
-Requirement axis (comma separated, e.g. ui, validation): workflow
-Feature name (e.g. add-todo): add-todo
-Axis (comma separated, e.g. ui, validation): ui, validation
-Behavior name (e.g. add-task): add-task
-Behavior axis (comma separated, e.g. ui, validation): ui
-Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
-Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
-  step 1: Open the todo app.
-  step 2:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
-Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
-  step 1: Click the title field.
-  step 2: Press the add button.
-  step 3:
-Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
-  step 1:
-Expected result (e.g. shows a validation error): shows a validation error
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: A validation error is shown under the title field.
-  step 2:
-```
-
-**Example (adding a second ExpectedResult to an existing Requirement/Feature/Behavior/Condition, via number selection)**
-
-```console
-$ markharness knowledge add
-Requirement name (e.g. task-management):
-  1) task-management
-1
-Reusing existing Requirement 'task-management'.
-Feature name (e.g. add-todo):
-  1) add-todo
-1
-Reusing existing Feature 'add-todo'.
-Behavior name (e.g. add-task):
-  1) add-task
-1
-Reusing existing Behavior 'add-task'.
-Condition name (e.g. empty-title):
-  1) empty-title
-1
-Reusing existing Condition 'empty-title'.
-Expected result (e.g. shows a validation error): highlights the title field in red
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: The title field is highlighted in red.
-  step 2:
-```
-
-→ `.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/002.yml` is created. Typing `task-management` / `add-todo` / `add-task` / `empty-title` directly instead of the numbers produces the same result. When reusing an existing Condition, the `Condition steps`/`Additional preconditions` prompts are skipped (the existing `condition.yml`'s values are used as-is).
-
-**Example (automatic stripping of a duplicated Condition id prefix)**
-
-```console
-$ markharness knowledge add
-Requirement name (e.g. task-management): task-management
-Reusing existing Requirement 'task-management'.
-Feature name (e.g. add-todo): add-todo
-Reusing existing Feature 'add-todo'.
-Behavior name (e.g. add-task): add-task
-Reusing existing Behavior 'add-task'.
-Condition name (e.g. empty-title):
-  1) empty-title
-add-task-max-length
-Stripping the prefix 'add-task' (duplicating the Behavior id) from Condition id 'add-task-max-length'; creating as 'max-length'.
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with a title longer than 200 characters
-Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
-  step 1: Enter a title longer than 200 characters.
-  step 2: Press the add button.
-  step 3:
-Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
-  step 1:
-Expected result (e.g. shows a validation error): shows a length validation error
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: A length validation error is shown under the title field.
-  step 2:
-```
-
-→ `.markharness/knowledge/task-management/add-todo/add-task/max-length/condition.yml` and `.markharness/knowledge/task-management/add-todo/add-task/max-length/expected/001.yml` are created (the `add-task-max-length/` directory is not created).
-
-**Use case mapping**: Supports UC1 "describe knowledge" (manual description, `docs/product-operation.md` line 103) via an interactive form.
-
----
-
-### 1.3 `markharness knowledge validate` — Validation of draft YAML (UC1: describe knowledge, non-interactive, TTY-independent)
-
-```text
-markharness knowledge validate <draft-file> [--json] [-d, --dir <path>]
-markharness knowledge validate --batch <dir> [--json] [-d, --dir <path>]
-```
-
-**Purpose**: Without depending on the sequential TTY prompts assumed by `knowledge add` (section 1.2), this validates the schema and consistency of one Requirement→Feature→Behavior→Condition→ExpectedResult chain given as a single draft YAML file. **It has no side effects and performs no file writes whatsoever.** It is intended for non-interactive invocation by AI agents such as Claude Code, and for use from a future GUI implementation. `docs/design/knowledge-apply-cli-spec.md` is authoritative for the detailed design intent and the full list of validation rules.
-
-**Options**
-
-| Option              | Description                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `<draft-file>`     | Path to the draft YAML file. Mutually exclusive with `--batch` (exactly one of the two is required)          |
-| `--batch <dir>`    | Treats every `*.yml` directly under `<dir>` as a draft file and validates them cumulatively in ascending file-name order. See "Batch mode" below |
-| `-d, --dir <path>` | Target project directory (the parent of `.markharness/knowledge/`). Defaults to the project root (auto-detected by searching upward from cwd).                    |
-| `--json`           | Print errors/results as single-line JSON. If omitted, prints human-readable text.                             |
-
-**Batch mode (`--batch <dir>`)**: Validates multiple drafts the same cumulative way `knowledge apply --batch` (section 1.4) does — in ascending file-name order, a later draft may reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch would newly create**, the same way it could reuse one an earlier draft actually applied. Unlike `apply --batch`, though, one draft's failure does not stop the run: every file in the batch is checked through to the end before results are reported together (this is the point of the command — surfacing every error before anything is written). A failed draft does not contribute to the cumulative state seen by later drafts (they are checked as though it were never in the batch). With `--json`, any failures print `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` (`errors` for validation errors, `error` for a parse error). Human-readable mode likewise prints every failing file's errors, prefixed with its file name. `{"ok":true}` when every file is valid. Nothing is ever written to the real project directory (internally, `.markharness/knowledge/` and `.markharness/axes/` are copied into a temp directory and validated there). If `<dir>` has no `*.yml` files directly under it (including when it only contains `.yaml`-extension drafts), this is an error: exit code 2, with `{"ok":false,"error":"no *.yml files found in batch directory <dir>"}` (same behavior as section 1.4's "Batch mode").
-
-**Draft YAML format** (a single run validates one chain). A blank template is available via `markharness knowledge scaffold` (section 1.21). See `docs/knowledge_draft.schema.json` for a reference schema meant for IDE autocompletion (a static reference file not used for actual validation — the table below and `docs/design/knowledge-apply-cli-spec.md` are authoritative for `knowledge validate`/`apply`'s own validation rules).
-
-```yaml
-requirement:
-  id: controls # required. ASCII slug
-  label: controls # optional (omittable when reusing an existing id)
-  axis: [gameplay] # required when creating new; omittable when reusing an existing id
-  description: null # optional
-
-feature:
-  id: player-jump
-  label: player-jump
-  axis: [gameplay, animation]
-
-behavior:
-  id: jump
-  label: jump
-  axis: [gameplay]
-  description: Player presses jump. # description is required only for Behavior (when newly created)
-  steps: # required when newly created: at least one non-empty operation, one per element. Common to every Condition (stored internally as Behavior.preconditions)
-    - Press the jump button.
-
-condition:
-  id: ground
-  label: ground
-  description: Jump from the ground and land
-  steps: # required when newly created: at least one non-empty operation, one per element. This Condition's own operations
-    - Land on the ground.
-  additional_preconditions: [] # optional. Extra preconditions specific to this Condition that its steps alone cannot establish
-
-expected:
-  - description: lands safely
-    results: # required: at least one non-empty result, one per element, one observable result per element
-      - Player is standing on the ground.
-  - description: takes fall damage if height > 3m
-    results:
-      - Player's health decreases.
-    additional_steps: # optional. Extra operations to perform before checking these results
-      - Measure the fall height first.
-    implementation_note: applyFallDamage() is called when landing velocity exceeds a threshold. # optional. Implementation rationale, not used for generation
-```
-
-`axis`/`label`/`description`/`steps` (for both Behavior and Condition) can be omitted when reusing an existing id (a Requirement/Feature/Behavior/Condition for which a file already exists under `.markharness/knowledge/`). Omitted fields are excluded from comparison against the existing value; only specified fields are checked against the existing file's values (`conflicting_existing_value` error). `expected[].results` has no such omit-on-reuse concept, since an ExpectedResult is always newly created — it is always required. See [ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md) for the full model, including the filename-order-is-execution-order contract for `additional_steps`.
-
-**Validation rules (summary; see spec §5 for details)**
-
-| Error code                   | Meaning                                                                                                                    |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_slug`               | The id contains characters other than lowercase alphanumerics and hyphens                                                 |
-| `missing_axis`               | `axis` is empty/unspecified for a newly created Requirement/Feature/Behavior. When `.markharness/axes/*.yml` has at least one axis registered, `suggestion` lists the registered axes (comma-separated); when none are registered, `suggestion` stays `null` and `message` points the caller at `axes add` instead |
-| `missing_description`        | `description` is empty for a newly created Behavior/Condition, or for any ExpectedResult                                  |
-| `missing_steps`               | `steps` is empty/unspecified for a newly created Behavior/Condition, or `results` is empty/unspecified for any ExpectedResult |
-| `unknown_axis`               | An axis value not registered in the `.markharness/axes/*.yml` registry (a close match, if any, is offered in `suggestion`)             |
-| `redundant_prefix`           | `condition.id` starts with `{behavior.id}-` (when `--strip-redundant-prefix` is not given to `knowledge apply`; see 1.4)  |
-| `conflicting_existing_value` | When reusing an existing id, the specified `label`/`axis`/`description` does not match the existing file's value          |
-| `parent_not_found`           | The parent reference recorded in an existing file (e.g., `requirement:` in `feature.yml`) contradicts the draft's chain    |
-| `multiline_label`            | `label` on `requirement`/`feature`/`behavior`/`condition` contains a newline (labels are serialized as a single-line plain scalar) |
+| Option             | Description                                                                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `<intent-file>`    | Path to the Knowledge Intent YAML. Mutually exclusive with `--print-template` (exactly one is required)                              |
+| `--print-template` | Prints a blank Knowledge Intent template to stdout. Cannot be combined with any other option                                         |
+| `--check`          | Parses, matches, validates, and builds the mutation plan with the same implementation as a normal run, but **writes nothing**        |
+| `-d, --dir <path>` | Target project directory (the parent of `.markharness/knowledge/`). Defaults to the project root (discovered by walking up from cwd) |
+| `--json`           | Emits the result and diagnostics as single-line JSON. Otherwise human-readable text is printed                                       |
 
 **Exit codes**
 
-| Code | Meaning                                                                                           |
-| ---- | --------------------------------------------------------------------------------------------------- |
-| 0    | Success (no errors)                                                                                  |
-| 1    | Validation errors present (error content on stderr; on JSON stdout when `--json` is given)          |
-| 2    | Usage error (file not found, YAML unparsable, `--batch <dir>` has no `*.yml` files)                 |
+| Code | Meaning                                                                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Success (a normal run applied the Intent; `--check` found nothing to change)                                               |
+| 1    | Validation error (diagnostics are reported)                                                                                |
+| 3    | Another identity operation is in progress, or a previous operation left recovery pending                                   |
+| 4    | `--check` only: applying the Intent would change something, so scripts can detect "changes pending" without parsing output |
 
-**Example (success, human-readable)**
+`--check` shares the planning implementation but its result is not a permit for a later write. A normal run re-reads the current state just before committing and stops with a stale plan if the input state has changed.
 
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample
-$ echo $?
-0
+**Knowledge Intent format**
+
+Get a template with `markharness knowledge reconcile --print-template`.
+
+```yaml
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_todo # Document-local reference name; never persisted
+    id: todo # Required. ASCII slug
+    source: native # native | external
+    label: TODO management # Required when source is native
+    axis: [functional] # Registered axes only; anything else is an unknown_axis error
+    description: null # Optional
+    related_issues: [] # Optional
+
+features:
+  - key: feature_todo_add
+    id: todo-add
+    contributes_to: [req_todo] # Requirement keys (new) or uids (existing)
+    label: Add a TODO
+    axis: [functional]
+    description: null # Optional
+    forked_from: null # Optional. id of the Feature this one is conceptually derived from (section 3.1); must name an existing Feature
+    behaviors:
+      - id: add
+        label: Add
+        axis: [functional]
+        description: The user adds a TODO item. # A new Behavior requires a description
+        procedures: # Optional. Common procedures this Behavior declares (ADR 0017)
+          - name: open-app
+            steps:
+              - Launch the application.
+        scenarios:
+          - id: empty-list
+            label: Empty list
+            description: Adding to an empty list
+            phases:
+              - steps:
+                  - use: open-app # Invokes a common procedure declared in procedures
+                  - action: Type a title and submit. # One element = one operation
+                results:
+                  - The item appears in the list. # One element = one observable result
+            implementation_note: null # Optional. Implementation rationale note; never used for generation (ADR 0016)
 ```
 
-(Neither stdout nor stderr prints anything)
+`mode` accepts only `merge` in the initial version (it never deletes existing elements). A `format` other than `markharness/knowledge-intent/v1` is an `invalid_format` error.
 
-**Example (success, `--json`)**
+**Updating and renaming existing elements**
 
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample --json
-{"ok":true}
+Existing elements are selected by `uid`, not by `key`/`id`. UIDs come from a successful run's output or from a `--json` snapshot.
+
+```yaml
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: 01J8Z... # Selects an existing Feature
+    id: todo-create # Changing the display ID performs a rename (the uid is kept)
+    label: Create a TODO # Omitted fields keep their current value
+    contributes_to: [01J8A..., 01J8B...] # Collections are replaced wholesale
 ```
 
-**Example (failure, human-readable)**
+- Value collections (`axis`, `contributes_to`, `procedures`) are **replaced wholesale** when present, keep their current value when omitted, and are cleared by an explicit empty array.
+- A rename is just a changed `id` on a `uid`-selected element. The uid and its identity events are preserved.
+- Reparenting a Scenario to a different Behavior is expressed by writing the `uid`-selected Scenario under that other Behavior. The file move is reported as `previous_path` in the result.
+- Adding and removing Feature-to-Requirement relationships is expressed by replacing `contributes_to` wholesale.
+- Re-pinning an external Requirement is expressed with `source_revision: current`, which re-pins it to the current blob OID. Using it on a `source: native` Requirement is an error.
 
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample
-error: unknown_axis: axis "validdation" is not registered (path=behavior.axis[0])
-error: redundant_prefix: condition.id "jump-ground" starts with behavior.id "jump-" prefix (suggested="ground", path=condition.id)
-$ echo $?
-1
-```
+**Output**
 
-**Example (failure, `--json`)**
-
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample --json
-{"ok":false,"errors":[{"code":"unknown_axis","path":"behavior.axis[0]","value":"validdation","message":"axis \"validdation\" is not registered","suggestion":"validation"}]}
-$ echo $?
-1
-```
-
-**Example (`--batch`, validating several drafts, one fails)**
-
-```console
-$ markharness knowledge validate --batch drafts/ --dir tmp/todo-sample --json
-{"ok":false,"failures":[{"file":"01-broken.yml","error":"failed to parse draft: ..."},{"file":"03-air.yml","errors":[{"code":"missing_description","path":"condition.description","value":null,"message":"condition.description must not be empty","suggestion":null}]}]}
-$ echo $?
-1
-```
-
-A valid file such as `02-*.yml` is not included in `failures`. `03-air.yml` is still checked through to the end even though `01-broken.yml` failed to parse first.
-
-**Use case mapping**: Supports UC1 "describe knowledge" (`docs/product-operation.md` line 103) in a TTY-independent way. Shares the same validation logic as `knowledge add` in section 1.2.
-
----
-
-### 1.4 `markharness knowledge apply` — Validation + write of draft YAML (UC1: describe knowledge, non-interactive, TTY-independent)
+In human-readable mode, one `created` / `updated` / `unchanged` line is printed per element (`no changes` when nothing at all differs).
 
 ```text
-markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
-markharness knowledge apply --batch <dir> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
+created requirement 'todo' (uid 01J8A...) .markharness/knowledge/requirements/todo.yml
+updated feature 'todo-create' (uid 01J8Z...) .markharness/knowledge/features/todo-add.yml -> .markharness/knowledge/features/todo-create.yml
+unchanged behavior 'add' (uid 01J8C...) .markharness/knowledge/features/todo-create/behaviors/add.yml
 ```
 
-**Purpose**: Performs the same validation as `knowledge validate` (section 1.3), and if there are no problems, writes **atomically** under `.markharness/knowledge/`. Even when only some of the five tiers (Requirement through ExpectedResult) are newly created, the write happens all at once after all validation passes (temp file + rename; if an I/O error occurs mid-write, even the files already succeeded are rolled back). Files for an existing id (reuse) are not overwritten.
+`--json` emits `{"ok":true,"created":[...],"updated":[...],"unchanged":[...]}` on one line. Each element carries `kind` / `uid` / `id` / `path`, plus `previous_path` only when the file actually moved. On a validation error it returns the diagnostic code, location, and message in an `{"ok":false,...}` document; human-readable mode prints `error[<code>]: <message> (<location>)` to stderr.
 
-**Options**
+**Atomic persistence**: Knowledge files and identity events are written in a single transaction, so an interruption never exposes UID-less Knowledge or a half-updated state to later commands. When an interruption is detected the command exits 3 reporting that recovery is pending; run it once without `--check` to complete the recovery.
 
-| Option                      | Description                                                                                                                                                                                                                                                                                          |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<draft-file>`              | Path to the draft YAML file. Same format as section 1.3. Mutually exclusive with `--batch`.                                                                                                                                                                                                          |
-| `--batch <dir>`             | Treats every `*.yml` directly under `<dir>` as a draft file, validating and applying them one at a time in ascending file-name order. Mutually exclusive with `<draft-file>`. See "Batch mode" below.                                                                                              |
-| `-d, --dir <path>`         | Same as section 1.3                                                                                                                                                                                                                                                                                   |
-| `--json`                    | Same as section 1.3. On success, prints the list of written files (see below).                                                                                                                                                                                                                       |
-| `--strip-redundant-prefix` | When `condition.id` starts with `{behavior.id}-`, adopts the id with the prefix stripped, without confirmation. If not given, stops with a `redundant_prefix` error (see section 1.3). If a directory of the same name as the stripped id already exists (legacy data), it is reused as-is without stripping, just as with `knowledge add`. |
-| `--dry-run`                 | Synonymous with `knowledge validate` (validates only, does not write). A separate name intended for use in CI, etc.                                                                                                                                                                                  |
+**Prerequisite**: Register every axis the Intent references with `axes add` (section 1.4) beforehand. Unregistered axes are rejected as `unknown_axis` before anything is written.
 
-**Batch mode (`--batch <dir>`)**: Instead of manually looping `validate` → `apply` over each Condition one at a time, applies every draft YAML accumulated in a scratch directory in one call.
-
-- Each draft is validated and applied in ascending file-name order (e.g. `01-empty-title.yml`, `02-max-length.yml`, ...). A later draft can reuse a Requirement/Feature/Behavior that an **earlier draft in the same batch just created**, by referencing it via id alone — the same way it could reuse one that already existed on disk before a single `apply`. No dependency resolution is performed, so name files so a parent-creating draft sorts before the drafts that reuse it.
-- **All-or-nothing overall**: if any one draft fails with a validation or parse error, every file already written earlier in this batch call is deleted, and `.markharness/knowledge/` ends up exactly as it was before the batch ran. Note, however, that each draft is validated against `.markharness/knowledge/`'s state immediately before *that* draft is applied (reflecting the results of earlier drafts in the batch) — this is not a single upfront validation pass across every draft before any writing begins.
-- `--dry-run --batch <dir>` is a thin alias that calls the exact same implementation as `knowledge validate --batch` (section 1.3) and never writes. Like section 1.3, it is cumulative (it does simulate every other draft in the batch being applied first) and checks every file (one failure does not stop the run), so it can never disagree with what a real (non-dry-run) run would do. See section 1.3's "Batch mode" for the `--json` output shape and exit code.
-- If `<dir>` has no `*.yml` files directly under it (e.g. the directory only holds `.yaml`-extension drafts), this is an error: exit code 2, with `{"ok":false,"error":"no *.yml files found in batch directory <dir>"}` under `--json` (plain text on stderr otherwise). Treating a zero-match batch as a silent success would let an extension mistake or an empty directory pass unnoticed.
-- Validation/parse error `--json` output (without `--dry-run`, when an actual write attempt fails) adds `"file":"<name>"` to the single-draft shape: `{"ok":false,"file":"...","errors":[...]}` for a validation failure, or `{"ok":false,"file":"...","error":"..."}` for a parse failure. Unlike `--dry-run` (section 1.3's collect-everything behavior), this stops at the first failure — since a write-mode failure requires rolling back everything already written, there is no point validating further. The human-readable mode likewise prefixes each error line with the file name.
-
-**Exit codes**
-
-| Code | Meaning                                                                            |
-| ---- | ------------------------------------------------------------------------------------ |
-| 0    | Success (write succeeded; no error when `--dry-run` is given)                       |
-| 1    | Validation errors present (same format as section 1.3; no files are written at all) |
-| 2    | Usage error (file not found, YAML unparsable, `--batch <dir>` has no `*.yml` files)  |
-| 3    | Filesystem error (e.g., write failure)                                              |
-
-**Example (success, `--json`)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample --json
-{"ok":true,"written":[".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml"]}
-$ echo $?
-0
-```
-
-`written` lists only the files newly written (files skipped due to reuse of an existing id are not included), as paths relative to the target directory (`--dir`).
-
-**Example (stripping a duplicated Condition id prefix with `--strip-redundant-prefix`)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample --strip-redundant-prefix
-$ echo $?
-0
-```
-
-`draft.yml`'s `condition.id: add-task-max-length` (duplicating Behavior id `add-task`) is written as `max-length`. Same behavior as the automatic stripping in `knowledge add` (section 1.2).
-
-**Example (applying multiple drafts at once with `--batch`)**
-
-```console
-$ ls drafts/
-01-empty-title.yml  02-max-length.yml  03-duplicate-title.yml
-$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample --json
-{"ok":true,"written":[".markharness/knowledge/req-todo/todo/add-task/empty-title/condition.yml",".markharness/knowledge/req-todo/todo/add-task/empty-title/expected/001.yml",".markharness/knowledge/req-todo/todo/add-task/max-length/condition.yml",".markharness/knowledge/req-todo/todo/add-task/max-length/expected/001.yml",".markharness/knowledge/req-todo/todo/add-task/duplicate-title/condition.yml",".markharness/knowledge/req-todo/todo/add-task/duplicate-title/expected/001.yml"]}
-```
-
-`02-max-length.yml`/`03-duplicate-title.yml` reference `req-todo`/`todo`/`add-task` — newly created by `01-empty-title.yml` — by id alone, reusing them just as a single `apply` reuses an existing parent.
-
-**Example (`--batch` rejects the whole batch on a validation error)**
-
-```console
-$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample
-error: 02-max-length.yml: missing_description: condition.description must not be empty (path=condition.description)
-$ echo $?
-1
-```
-
-(No files remain under `.markharness/knowledge/`, including the ones `01-empty-title.yml` had already written)
-
-**Example (`--dry-run`)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample --dry-run --json
-{"ok":true}
-$ echo $?
-0
-```
-
-(No files are written)
-
-**Example (write rejected due to a validation error)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample
-error: missing_description: behavior.description must not be empty (path=behavior.description)
-$ echo $?
-1
-```
-
-(No files are created under `.markharness/knowledge/` at all)
-
-**Use case mapping**: Supports UC1 "describe knowledge" (`docs/product-operation.md` line 103) in a TTY-independent way. The common entry point through which an AI agent or a future GUI implementation finalizes and registers knowledge. The human-facing `$EDITOR`-launching wrapper is implemented as `knowledge add --edit` (section 1.10).
-
----
-
-### 1.5 `markharness generate` — Deterministic generation of TestCase (UC2: deterministically generate TestCase)
+### 1.3 `markharness generate` — Deterministic generation of TestCase (UC2: deterministically generate TestCase)
 
 ```text
 markharness generate [--json] [-d, --dir <path>]
@@ -562,7 +198,7 @@ markharness generate [--json] [-d, --dir <path>]
 - `generated_from` records each of the `requirement` / `feature` / `behavior` / `condition` ids, and the source `expected_results` (the list of `id`s of `expected/*.yml`) that were aggregated.
 - `axis`: a list of viewpoints formed by combining (union, deduplicated and sorted) the `axis` of the `Requirement` / `Feature` / `Behavior` (§3.4 "axis inheritance").
 - The output is serialized with `serde_yaml_ng`, and always produces the same output for the same input (determinism, a prerequisite for diff verification in CI).
-- In addition to `.markharness/generated/testcases/*.yml`, `generate` also regenerates `.markharness/generated/traceability-index.json` at the same time (a machine-readable index holding the Requirement → Feature → Behavior → Condition → TestCase correspondence, as pretty-printed JSON via `serde_json`). `markharness verify` (section 1.6) also includes this file in its diff verification.
+- In addition to `.markharness/generated/testcases/*.yml`, `generate` also regenerates `.markharness/generated/traceability-index.json` at the same time (a machine-readable index holding the Requirement → Feature → Behavior → Condition → TestCase correspondence, as pretty-printed JSON via `serde_json`). `markharness verify` (section 1.4) also includes this file in its diff verification.
 - Omitting `--dir` searches upward from the current directory for `.markharness/config.toml` and targets the project root it finds (the same convention every other command follows; `generate` used to be the sole exception, always pinned to the current directory).
 - `--json` prints `{"ok":true,"generated":<count>,"written":[<list of written file paths, including traceability-index.json>]}` instead of the human-readable message, so a caller can mechanically reconcile the reported count against the actual written files.
 
@@ -598,11 +234,11 @@ phases:
 
 If `.markharness/knowledge/` has nothing in it, `.markharness/generated/testcases/` becomes empty (0 files).
 
-**Use case mapping**: UC2 "deterministically generate TestCase" (`docs/product-operation.md` line 105). Diff verification in CI (UC3) is done by `markharness verify` in section 1.6.
+**Use case mapping**: UC2 "deterministically generate TestCase" (`docs/product-operation.md` line 105). Diff verification in CI (UC3) is done by `markharness verify` in section 1.4.
 
 ---
 
-### 1.6 `markharness verify` — Diff verification of generated artifacts (UC3: review and merge generated artifacts)
+### 1.4 `markharness verify` — Diff verification of generated artifacts (UC3: review and merge generated artifacts)
 
 ```text
 markharness verify [--json] [-d, --dir <path>]
@@ -654,13 +290,13 @@ $ echo $?
 
 ---
 
-### 1.7 `markharness axes list` — List the axis registry
+### 1.5 `markharness axes list` — List the axis registry
 
 ```text
 markharness axes list [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: Prints the list of viewpoints registered under `.markharness/axes/*.yml`, in ascending id order. A reference command for pre-emptively avoiding `unknown_axis` errors from `knowledge validate`/`apply`.
+**Purpose**: Prints the list of viewpoints registered under `.markharness/axes/*.yml`, in ascending id order. A reference command for pre-emptively avoiding `unknown_axis` errors from `knowledge reconcile`.
 
 **Behavior**: Without `--json`, prints `id (label)` (or just id if the label equals the id) one per line, and prints `no axes registered under .markharness/axes/` if there are zero registered. With `--json`, prints `[{"id":...,"label":...|null}]` as single-line JSON.
 
@@ -675,17 +311,17 @@ $ markharness axes list --dir tmp/todo-sample --json
 [{"id":"gameplay","label":"Gameplay"},{"id":"ui","label":null}]
 ```
 
-**Use case mapping**: A helper command that does not explicitly correspond to any UC (`docs/design/knowledge-apply-cli-spec.md` §8).
+**Use case mapping**: A helper command that does not explicitly correspond to any UC.
 
 ---
 
-### 1.8 `markharness axes add` — Non-interactive axis registration
+### 1.6 `markharness axes add` — Non-interactive axis registration
 
 ```text
 markharness axes add <id> [--label <label>] [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: Creates `.markharness/axes/<id>.yml`. `knowledge add --edit` (section 1.10) auto-registers unregistered axes as part of its interactive edit flow, but that is aimed at an interactive user who can launch `$VISUAL`/`$EDITOR` — it isn't usable by an AI agent or other caller driving the CLI non-interactively off JSON output. `axes add` is the standalone write command for that case, symmetric with the other resources (Requirement/Feature/Behavior/Condition).
+**Purpose**: Creates `.markharness/axes/<id>.yml`. Every axis a Knowledge Intent references must already be registered (an unregistered axis is rejected as an `unknown_axis` error before anything is written), and `axes add` is the standalone write command for that, symmetric with the other resources (Requirement/Feature/Behavior/Scenario).
 
 **Behavior**
 
@@ -709,13 +345,13 @@ $ markharness axes add security --label Security --dir tmp/todo-sample --json
 {"ok":true,"written":["tmp/todo-sample/.markharness/axes/security.yml"]}
 ```
 
-**Use case mapping**: Like `markharness axes list` (section 1.7), a helper command that does not explicitly correspond to any UC.
+**Use case mapping**: Like `markharness axes list` (section 1.5), a helper command that does not explicitly correspond to any UC.
 
 ---
 
-### 1.9 `forked_from` (UC1b: manually describe a conceptual derivation from another Feature)
+### 1.7 `forked_from` (UC1b: manually describe a conceptual derivation from another Feature)
 
-There is no dedicated command; instead, the operational practice is to write the id of the source Feature directly into the `forked_from` field of `feature.yml` (§3.1). The draft YAML for `knowledge validate`/`apply` (sections 1.3/1.4) also accepts `feature.forked_from`; if the referenced Feature does not exist anywhere under `.markharness/knowledge/`, it stops with an `unknown_forked_from` error. Because this is domain knowledge that cannot be automatically derived from Git history, unlike `derived_from` (the version history of the same Feature, §3.2–3.4), only validation is performed and no automatic computation is done.
+Write the id of the source Feature into a Feature's `forked_from` in a Knowledge Intent for `knowledge reconcile` (section 1.2) (§3.1). If the referenced Feature does not exist anywhere under `.markharness/knowledge/`, it stops with an `unknown_forked_from` error. Because this is domain knowledge that cannot be automatically derived from Git history, unlike `derived_from` (the version history of the same Feature, §3.2–3.4), only validation is performed and no automatic computation is done.
 
 ```yaml
 feature:
@@ -727,42 +363,13 @@ feature:
 
 ---
 
-### 1.10 `markharness knowledge add --edit` — `$EDITOR` editing of draft YAML (UC1: describe knowledge)
-
-```text
-markharness knowledge add --edit [-d, --dir <path>]
-```
-
-**Purpose**: Instead of the interactive prompts of `knowledge add` (section 1.2), writes an empty draft YAML template (the same format as section 1.3) to a temporary file and launches `$VISUAL` (or `$EDITOR` if unset). When the file is saved and the editor exits, the same validation and write as `knowledge apply` (section 1.4) is performed; if there is a validation error, the error content is displayed and the same file is reopened in the editor (a loop). If neither `$VISUAL` nor `$EDITOR` is set, an error is displayed and the process exits with code `2`.
-
-**On Windows / the `code` command**: VS Code's `code` command is actually a `.cmd` (batch file), and Rust's `std::process::Command` does not perform extension resolution (PATHEXT), so `EDITOR=code --wait` results in `program not found`. Specify it to launch via `cmd /c`, e.g. `EDITOR="cmd /c code --wait"`.
-
-**Automatic axis registration**: If `requirement.axis` / `feature.axis` / `behavior.axis` includes a value not registered in `.markharness/axes/*.yml`, only values satisfying all of the following conditions are automatically newly registered as `.markharness/axes/<value>.yml` (with both `id` and `label` set to that value), and a message is displayed.
-
-- There is no close match (edit distance / Levenshtein distance of 2 or less) against a registered axis (a value that might be a typo is not auto-registered, and remains as an `unknown_axis` error as before, with the close match presented via `suggested="..."`).
-- It is in a valid `id` format (lowercase alphanumerics and hyphens only).
-
-When a single validation has multiple unregistered axis values, each axis is judged independently (some may be auto-registered while only those with a close match remain as errors). This auto-registration is exclusive to `knowledge add --edit`; interactive `knowledge add` and non-interactive `knowledge validate`/`apply` continue to stop with only an `unknown_axis` error, as before.
-
-**Example**
-
-```console
-$ EDITOR="cmd /c code --wait" markharness knowledge add --edit
-axis 'state' を新規登録しました (.markharness/axes/state.yml)
-wrote .markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml
-```
-
-**Use case mapping**: UC1 "describe knowledge" (`docs/product-operation.md` line 103). Reuses `knowledge apply`'s non-interactive validation logic as-is.
-
----
-
-### 1.11 `markharness cache rebuild` — Discarding the id cache (UC7: discard/rebuild the id cache)
+### 1.8 `markharness cache rebuild` — Discarding the id cache (UC7: discard/rebuild the id cache)
 
 ```text
 markharness cache rebuild [-d, --dir <path>]
 ```
 
-**Purpose**: Deletes `.markharness-cache/` entirely (the uncommitted cache of Feature id→tree SHA resolution results used by `changes compute` in section 1.12. It is keyed by a content-addressing scheme, and is automatically recomputed on load whenever the content of `.markharness/knowledge/` or the tool version changes, so explicit `rebuild` is normally unnecessary). Does not perform an immediate recomputation (it is computed lazily on the next `changes compute` run). No error occurs if the cache directory does not exist (idempotent).
+**Purpose**: Deletes `.markharness-cache/` entirely (the uncommitted cache of Feature id→tree SHA resolution results used by `changes compute` in section 1.9. It is keyed by a content-addressing scheme, and is automatically recomputed on load whenever the content of `.markharness/knowledge/` or the tool version changes, so explicit `rebuild` is normally unnecessary). Does not perform an immediate recomputation (it is computed lazily on the next `changes compute` run). No error occurs if the cache directory does not exist (idempotent).
 
 **Example**
 
@@ -779,7 +386,7 @@ removed .markharness-cache/ under /path/to/project
 
 ---
 
-### 1.12 `markharness changes compute` — Computing ChangeEvents (UC5: automatically compute ChangeEvent)
+### 1.9 `markharness changes compute` — Computing ChangeEvents (UC5: automatically compute ChangeEvent)
 
 ```text
 markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [--granularity <feature|behavior|condition>] [-d, --dir <path>]
@@ -795,7 +402,7 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
 
 - Before comparing anything, resolves `[knowledge].schema_version` from `from-milestone`'s and `to-milestone`'s own `.markharness/config.toml` ([decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)). A ref with no recorded version is treated as legacy schema version 1, and a warning to that effect is included in the output (see below). If the two resolved versions differ, or either is newer than this CLI build knows about, the command exits with an error and writes nothing — no `ChangeEvent` is generated and any existing `.markharness/changes/<to-milestone>.yaml` is left untouched (fail closed, since a raw tree-SHA diff across schema versions could otherwise misreport a schema-only migration as a Feature change).
 - For each Feature, compares `from_blob`/`to_blob`; if they match, nothing happens. If it exists in only one, it is an addition/deletion; if it exists in both with differing values, it is a change, and one `ChangeEvent` is generated.
-- `impacted_testcases` lists the `TestCase.case_id`s originating from the changed Feature, enumerated from the same generation graph as `generate` (section 1.5) (the structural generation graph of §3.2(A); version history is not used). Which point in time's `.markharness/knowledge/` this generation graph is built from splits into two modes as of 2026-08 (as of 2026-08-12; see also [change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4).
+- `impacted_testcases` lists the `TestCase.case_id`s originating from the changed Feature, enumerated from the same generation graph as `generate` (section 1.3) (the structural generation graph of §3.2(A); version history is not used). Which point in time's `.markharness/knowledge/` this generation graph is built from splits into two modes as of 2026-08 (as of 2026-08-12; see also [change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4).
   - **Default (`--current-tree` not given)**: Built by loading the `.markharness/knowledge/` tree pointed to by the `to-milestone` tag directly from Git blobs. Recomputing the same interval later always yields the same result.
   - **When `--current-tree` is given**: Built from `.markharness/knowledge/` in the current working tree (legacy behavior). As long as the working tree keeps changing, recomputation results for the same interval can also change.
 - **`--granularity <feature|behavior|condition>` (default: `feature`)**: Selects the unit `impacted_testcases` is narrowed down to (issue #15).
@@ -805,11 +412,11 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
   - `behavior`/`condition` do not affect Feature-level change *detection* itself (which Feature gets a `ChangeEvent`, rename tracking, `true_divergences`) — only the narrowing of `impacted_testcases`.
   - **Caveat (false-negative risk)**: The Behavior/Condition schema has no field expressing dependencies between siblings, and this command does not detect or infer any. A Feature boundary may encode an author's implicit coupling (shared setup, preconditions, etc.) that `behavior`/`condition` deliberately ignores in exchange for precision over recall. Since the tool cannot guarantee this trade-off is safe for any given project, the choice is left to the user's judgment of their own project.
   - The chosen granularity, and the evidence for the narrowing, are recorded on each computed `ChangeEvent`'s `impact_reason` field (`granularity` and `changed_paths`; see the output examples below). `changed_paths` is only populated for `behavior`/`condition`: the marker-file paths (`behavior.yml`/`condition.yml`) of the Behaviors/Conditions whose tree SHA actually changed (or was added/removed). It is empty for `feature`, since that granularity doesn't resolve individual Behaviors/Conditions.
-- `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.19) (§3.5).
-- Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.11), keyed by content-addressing.
+- `change_type` (spec change / bug fix, etc.) is output as `null` at the time of computation. The practice is for a human to fill it in afterward via `markharness changes annotate` (section 1.15) (§3.5).
+- Unless `--no-cache` is given, Feature tree SHA resolution results are read from and written to `.markharness-cache/` (section 1.8), keyed by content-addressing.
 - On success, human output appends one `warning: ...` line per side that fell back to legacy schema version 1; `--json` output includes the same messages as a `"warnings"` array in the existing JSON envelope. Neither appears when both refs have a recorded `[knowledge].schema_version` — the JSON `"warnings"` key is omitted entirely rather than emitted as `[]`, since only optional field additions are allowed within one `schema_version` (§5 of [verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)).
 - If either `from-milestone` or `to-milestone` has a `.markharness/executions/<name>/milestone.yml` whose recorded `commit_oid`/`knowledge_schema_version` disagrees with what that tag now resolves to, the command errors out before computing anything (a moved tag, or a hand-edited file — [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)). A `milestone.yml` predating those fields is not checked.
-- The `from-milestone..to-milestone` interval is traversed with `git rev-list --ancestry-path`, and for every two-parent merge commit present within the interval, the section 1.20 `lineage` determination logic is internally run using `git merge-base` (oldest first). If a target Feature is judged a `true_divergence` (true divergence) at any of the merges, an entry consisting of `merge_commit` (the merge commit SHA, for auditing) and `parent_tree_shas: [P1, P2]` is appended to the `true_divergences` field, in the order they occurred (§3.2). If the same Feature undergoes true divergence multiple times within the interval, all of them are recorded. For a normal linear history, or when there is no merge within the interval, it remains an empty array.
+- The `from-milestone..to-milestone` interval is traversed with `git rev-list --ancestry-path`, and for every two-parent merge commit present within the interval, the section 1.16 `lineage` determination logic is internally run using `git merge-base` (oldest first). If a target Feature is judged a `true_divergence` (true divergence) at any of the merges, an entry consisting of `merge_commit` (the merge commit SHA, for auditing) and `parent_tree_shas: [P1, P2]` is appended to the `true_divergences` field, in the order they occurred (§3.2). If the same Feature undergoes true divergence multiple times within the interval, all of them are recorded. For a normal linear history, or when there is no merge within the interval, it remains an empty array.
 - **Note on branch-strategy dependence**: The `from_tree_sha`/`to_tree_sha` diff detection itself does not depend on the branch strategy (merge/squash/rebase/fast-forward), but `true_divergences` presupposes that a two-parent merge commit actually remains within the milestone interval; with squash merges, rebases, or fast-forward merges, the divergence relationship of the original branch is lost from the commit graph, so it is not detected (remains an empty array; paper §3.4 Table 2).
 
 **Output example** (`.markharness/changes/m2.yaml`, linear history case)
@@ -875,26 +482,26 @@ The target project directory (`-d`/`--dir`, the parent of `.markharness/knowledg
 
 ---
 
-### 1.13 `markharness backfill run` — Batch processing of past milestones (UC6: run backfill asynchronously)
+### 1.10 `markharness backfill run` — Batch processing of past milestones (UC6: run backfill asynchronously)
 
 ```text
 markharness backfill run [--no-cache] [--max-pairs <count>] [--time-budget <duration>] [-d, --dir <path>]
 ```
 
-**Purpose**: Targets the milestones for which `.markharness/executions/*/milestone.yml` exists, orders them newest-first by the commit date (committer date) of the corresponding git tag, and runs processing equivalent to `changes compute` (section 1.12) for each pair of adjacent milestones, generating `.markharness/changes/<milestone>.yaml`. A single run processes all pairs and then exits (it is not a resident daemon; intended for periodic execution from CI, etc.).
+**Purpose**: Targets the milestones for which `.markharness/executions/*/milestone.yml` exists, orders them newest-first by the commit date (committer date) of the corresponding git tag, and runs processing equivalent to `changes compute` (section 1.9) for each pair of adjacent milestones, generating `.markharness/changes/<milestone>.yaml`. A single run processes all pairs and then exits (it is not a resident daemon; intended for periodic execution from CI, etc.).
 
 **Behavior**
 
 - The oldest milestone has nothing to compare against, so it is skipped.
 - Completion of processing for each milestone (the "to" side) is recorded in `git notes --ref=markharness-backfill`; on the next run, the same pair is not recomputed and is skipped (§4.3).
-- A pair whose Knowledge schema versions can't be compared safely (the same fail-closed check as `changes compute`, section 1.12, [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)) is skipped rather than aborting the whole run — the rest of the pairs still get processed. This skip is *not* recorded in `git notes`, so a later run retries it automatically (e.g. once a converter for that schema version exists). Each skipped pair is printed as `skipped <to-milestone>: <reason>`, where `<reason>` is the same fail-closed error `changes compute` would show for that pair verbatim (both sides' schema versions, and that a CLI update or migration is needed — issue #29 §5) — not a generic message, so the operator can tell why without re-running `changes compute` by hand. The command exits with code `1` if any pair was skipped this way — a run that leaves an incompatible pair unprocessed is not reported as a clean success.
+- A pair whose Knowledge schema versions can't be compared safely (the same fail-closed check as `changes compute`, section 1.9, [decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md)) is skipped rather than aborting the whole run — the rest of the pairs still get processed. This skip is *not* recorded in `git notes`, so a later run retries it automatically (e.g. once a converter for that schema version exists). Each skipped pair is printed as `skipped <to-milestone>: <reason>`, where `<reason>` is the same fail-closed error `changes compute` would show for that pair verbatim (both sides' schema versions, and that a CLI update or migration is needed — issue #29 §5) — not a generic message, so the operator can tell why without re-running `changes compute` by hand. The command exits with code `1` if any pair was skipped this way — a run that leaves an incompatible pair unprocessed is not reported as a clean success.
 - A `milestone.yml` whose recorded `commit_oid`/`knowledge_schema_version` disagrees with what its tag now resolves to (a moved tag, or a hand-edited file) is a hard error for the pair involving it — this is *not* the fail-closed skip above; the whole run stops, since a stale or tampered audit copy needs a human to look at it rather than being retried automatically.
 - Any legacy-schema-version warning encountered while processing a pair (the same warning `changes compute` would show for that ref) is printed as a `warning: ...` line.
 - Unless `--no-cache` is given, it shares the same `.markharness-cache/` as `changes compute`.
 - `--max-pairs` limits newly processed pairs per run; already-processed skipped pairs do not consume the limit.
 - `--time-budget` checks the remaining budget before starting each unprocessed pair. Units are `ms`, `s`, `m`, and `h` (for example `30s` or `5m`). It does not interrupt a pair in progress.
 
-The constraint for when the target project directory (`-d`/`--dir`) is a subdirectory of the git repository is resolved the same way as in section 1.12 ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
+The constraint for when the target project directory (`-d`/`--dir`) is a subdirectory of the git repository is resolved the same way as in section 1.9 ([decisions/0006](./decisions/0006-nested-project-directory-support.md)).
 
 **Exit codes**
 
@@ -915,13 +522,13 @@ backfill: 1 processed, 2 already up to date
 
 ---
 
-### 1.14 `markharness milestone init` — Creating `.markharness/executions/<tag>/milestone.yml` (a helper for UC4: tag a milestone)
+### 1.11 `markharness milestone init` — Creating `.markharness/executions/<tag>/milestone.yml` (a helper for UC4: tag a milestone)
 
 ```text
 markharness milestone init <tag> [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: Creates `.markharness/executions/<tag>/milestone.yml` corresponding to an existing `git tag <tag>`. UC4 itself (making the release-timing decision by putting down a `git tag`) remains a point of human judgment and is out of scope for this command, but this mechanically scaffolds that tag into the form that `backfill run` (section 1.13) can recognize (a directory name under `.markharness/executions/<name>/milestone.yml` that matches the tag name, [src/backfill.rs:21-22](../../src/backfill.rs#L21-L22)).
+**Purpose**: Creates `.markharness/executions/<tag>/milestone.yml` corresponding to an existing `git tag <tag>`. UC4 itself (making the release-timing decision by putting down a `git tag`) remains a point of human judgment and is out of scope for this command, but this mechanically scaffolds that tag into the form that `backfill run` (section 1.10) can recognize (a directory name under `.markharness/executions/<name>/milestone.yml` that matches the tag name, [src/backfill.rs:21-22](../../src/backfill.rs#L21-L22)).
 
 **Options**
 
@@ -975,7 +582,7 @@ $ echo $?
 
 ---
 
-### 1.15 `markharness binding set` / `list` — Declare how a TestCase is verified (ADR 0020, ADR 0025)
+### 1.12 `markharness binding set` / `list` — Declare how a TestCase is verified (ADR 0020, ADR 0025)
 
 ```text
 markharness binding set --case-uid <case-uid> --mode <automated|manual> [--reference <text>] [--json] [-d, --dir <path>]
@@ -1035,52 +642,7 @@ reference: tests/login.spec.ts
 
 ---
 
-### 1.16 `markharness requirement link` / `unlink` / `repin` — Relate Features to Requirements, and move a fixed reference (ADR 0023)
-
-```text
-markharness requirement link --feature <feature-id> --requirement <requirement-id> [-d, --dir <path>]
-markharness requirement unlink --feature <feature-id> --requirement <requirement-id> [-d, --dir <path>]
-markharness requirement repin --requirement <requirement-id> [-d, --dir <path>]
-```
-
-**Purpose**: Edits the many-to-many relation between Features and Requirements, and updates the fixed reference of a `source: external` Requirement.
-
-**The Feature owns the relation** (ADR 0017 §1/§3). `link`/`unlink` edit `feature.yml`'s `requirement_uids`; they do not introduce a second place where the relation could be stated. What gets stored is the Requirement's **uid**, never its display id (ADR 0013), so renaming the Requirement's `id:` later cannot break the relation.
-
-**The two Requirement modes** (ADR 0023)
-
-| Mode | Content owner | Fields it may carry | Change detection |
-| --- | --- | --- | --- |
-| `source: native` | markharness | `label` (required), `description` (optional) | base/head diff of `requirement.yml` itself |
-| `source: external` | an external `.sdoc` | `source_locator` (required), `source_revision` (required) | base/head diff of the `.sdoc` blob the locator names |
-
-`axis` is markharness's own classification rather than a copy of the external owner's content, so it is kept in both modes. `source` is **required**; omitting it is rejected by `validate`, as is a `requirement.yml` that carries both modes' fields or is incomplete as either.
-
-**What `repin` means**: it moves `source_revision` to the blob OID the locator's file currently has. **A repin never cancels a spec change.** Change Impact detects a spec-side change from the base/head diff of the `.sdoc` blob, so repinning inside the same range leaves that detection unchanged (design §6.1, AC18/AC19). A repin records that a human looked; it is not a substitute for an alignment check either.
-
-**Exit codes**
-
-| Code | Meaning |
-| --- | --- |
-| 0 | Success (including when the state was already as requested) |
-| 2 | No such Feature or Requirement; the Requirement has no `uid` yet (`identity migrate` not run); `repin` was given a `source: native` Requirement; or the file the locator names is missing |
-| 3 | Filesystem error |
-
-**Example**
-
-```console
-$ markharness requirement link --feature player-jump --requirement controls
-linked player-jump to controls
-
-$ markharness requirement repin --requirement controls
-repinned controls to 0123456789abcdef0123456789abcdef01234567 (docs/requirements.sdoc)
-```
-
-**Use case mapping**: [the markharness v2 design](./design/markharness-v2-design.md) §5.2 and §5.2.1. The interactive flow (section 1.2) always creates `source: native` Requirements; external ones are handled with these commands and by hand.
-
----
-
-### 1.17 `markharness impact` — Change Impact and the alignment check (ADR 0019, design §5.3 and §6.1)
+### 1.13 `markharness impact` — Change Impact and the alignment check (ADR 0019, design §5.3 and §6.1)
 
 ```text
 markharness impact --base <git-ref> --head <git-ref> [--format json] [--fail-on-findings] [-d, --dir <path>]
@@ -1130,7 +692,7 @@ Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-requ
 
 ---
 
-### 1.18 `markharness release scope` / `markharness coverage` — Release selection lists and Release Coverage (ADR 0024, design §6.2)
+### 1.14 `markharness release scope` / `markharness coverage` — Release selection lists and Release Coverage (ADR 0024, design §6.2)
 
 ```text
 markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...] [-d, --dir <path>]
@@ -1152,7 +714,7 @@ markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at 
 
 | Field | Meaning |
 | --- | --- |
-| `requirements[].cases[].binding_mode` / `binding_reference` | That TestCase's verification means (section 1.15). **Its presence does not mean anything ran** |
+| `requirements[].cases[].binding_mode` / `binding_reference` | That TestCase's verification means (section 1.12). **Its presence does not mean anything ran** |
 | `requirements[].cases[].selected` | Only with `--release`: whether the selection includes it |
 | `gaps[].kind = requirement_has_no_feature` | No Feature contributes to this Requirement (AC08) |
 | `gaps[].kind = feature_has_no_case` | A Feature contributes, but nothing underneath it produces a TestCase (AC21) |
@@ -1183,13 +745,13 @@ $ markharness coverage --requirements all --release v1.2.0 --at v1.2.0
 
 ---
 
-### 1.19 `markharness changes annotate` — Post-hoc entry of change_type / related_events (§3.5)
+### 1.15 `markharness changes annotate` — Post-hoc entry of change_type / related_events (§3.5)
 
 ```text
 markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
 ```
 
-**Purpose**: Lets a human set, after the fact, the `change_type` and `related_events` of a `ChangeEvent` computed by `changes compute` (section 1.12). Since it searches across all `*.yaml` files under `.markharness/changes/` by `event_id`, the caller does not need to know in advance which milestone interval's file contains it.
+**Purpose**: Lets a human set, after the fact, the `change_type` and `related_events` of a `ChangeEvent` computed by `changes compute` (section 1.9). Since it searches across all `*.yaml` files under `.markharness/changes/` by `event_id`, the caller does not need to know in advance which milestone interval's file contains it.
 
 **Behavior**
 
@@ -1213,13 +775,13 @@ set related_events on player-jump--m2--m3
 
 ---
 
-### 1.20 `markharness changes lineage` — Lineage audit via merge-base ancestor search (§3.2, secondary feature)
+### 1.16 `markharness changes lineage` — Lineage audit via merge-base ancestor search (§3.2, secondary feature)
 
 ```text
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
 ```
 
-**Purpose**: For a given merge commit, compares the tree SHA of its two parents (P1, P2) and the merge base (B) via `git merge-base`, and for each Feature id, determines and outputs the §3.2 case classification (`linear` / `true_divergence` / `single_parent`) — an audit-only command. `changes compute` (section 1.12) internally invokes the same determination logic as this command for every two-parent merge commit present within the `from-milestone..to-milestone` interval, and reflects the result in `true_divergences`. To manually audit/verify an individual merge commit by itself, run this command independently. This command itself does not write to `.markharness/changes/*.yaml` (it is a read-only audit command). In repositories operated with squash merges, rebases, or fast-forward merges, the target two-parent merge commits simply do not exist on the commit graph in the first place, so there is nothing this command can audit (paper §3.4 Table 2).
+**Purpose**: For a given merge commit, compares the tree SHA of its two parents (P1, P2) and the merge base (B) via `git merge-base`, and for each Feature id, determines and outputs the §3.2 case classification (`linear` / `true_divergence` / `single_parent`) — an audit-only command. `changes compute` (section 1.9) internally invokes the same determination logic as this command for every two-parent merge commit present within the `from-milestone..to-milestone` interval, and reflects the result in `true_divergences`. To manually audit/verify an individual merge commit by itself, run this command independently. This command itself does not write to `.markharness/changes/*.yaml` (it is a read-only audit command). In repositories operated with squash merges, rebases, or fast-forward merges, the target two-parent merge commits simply do not exist on the commit graph in the first place, so there is nothing this command can audit (paper §3.4 Table 2).
 
 **Behavior**
 
@@ -1237,7 +799,7 @@ player-jump: linear
 
 ---
 
-### 1.21 `markharness validate` — Structural validation of .markharness/knowledge/, .markharness/axes/, .markharness/bindings/ (§3.5/§3.6)
+### 1.17 `markharness validate` — Structural validation of .markharness/knowledge/, .markharness/axes/, .markharness/bindings/ (§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
@@ -1245,9 +807,9 @@ markharness validate [--json] [-d, --dir <path>]
 
 **Purpose**: Performs JSON Schema validation of all YAML under `.markharness/knowledge/` (`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`), `.markharness/axes/*.yml`, and `.markharness/executions/<milestone>/results.yml`, against the corresponding `.markharness/schema/*.schema.json` (a default set placed by `markharness init`; section 1.1). In addition, it validates cross-reference constraints that cannot be expressed by JSON Schema alone: whether `axis` tags are registered in `.markharness/axes/*.yml`, and whether `feature.yml`'s `forked_from` points to an actually existing Feature id.
 
-**Binding validation**: `.markharness/bindings/*.yml` is checked for being readable as an `ExecutionBinding` (section 1.15). A binding carrying execution-fact fields such as `result`, `executed_at`, `build`, or `environment` is rejected as having unknown fields (ADR 0025 §2).
+**Binding validation**: `.markharness/bindings/*.yml` is checked for being readable as an `ExecutionBinding` (section 1.12). A binding carrying execution-fact fields such as `result`, `executed_at`, `build`, or `environment` is rejected as having unknown fields (ADR 0025 §2).
 
-**Additional validation in UID mode (ADR 0013, design doc §13 Phase 5)**: For a project whose `.markharness/config.toml` `[identity]` marker is `mode = "uid"` (written by `identity migrate`, section 1.26, once every kind has finished migrating), any Requirement/Feature/Behavior/Condition/ExpectedResult that lacks a `uid:` is reported as a validation issue, naming the file and prompting a run of `markharness identity migrate`. This guards against a uid-less element being introduced after cutover (via copy/import/hand-editing); it does not apply to a project that hasn't cut over yet (no marker).
+**Additional validation in UID mode (ADR 0013, design doc §13 Phase 5)**: For a project whose `.markharness/config.toml` `[identity]` marker is `mode = "uid"` (written by `identity migrate`, section 1.21, once every kind has finished migrating), any Requirement/Feature/Behavior/Condition/ExpectedResult that lacks a `uid:` is reported as a validation issue, naming the file and prompting a run of `markharness identity migrate`. This guards against a uid-less element being introduced after cutover (via copy/import/hand-editing); it does not apply to a project that hasn't cut over yet (no marker).
 
 **Behavior**
 
@@ -1267,7 +829,7 @@ $ echo $?
 
 ---
 
-### 1.22 `markharness --version` / `-V` — Display version
+### 1.18 `markharness --version` / `-V` — Display version
 
 ```text
 markharness --version
@@ -1285,7 +847,7 @@ markharness 0.3.1
 
 ---
 
-### 1.23 `markharness axes prune` — Detect/delete unused axes
+### 1.19 `markharness axes prune` — Detect/delete unused axes
 
 ```text
 markharness axes prune [--delete] [--json] [-d, --dir <path>]
@@ -1316,45 +878,11 @@ $ markharness axes list --dir tmp/todo-sample --json
 
 (`legacy-ui` is removed from `.markharness/axes/` and no longer appears in `axes list`)
 
-**Use case mapping**: A companion command to `markharness axes add` (section 1.8). Does not map explicitly to any UC.
+**Use case mapping**: A companion command to `markharness axes add` (section 1.6). Does not map explicitly to any UC.
 
 ---
 
-### 1.24 `markharness knowledge scaffold` — Print a blank draft YAML template
-
-```text
-markharness knowledge scaffold [--out <path>]
-```
-
-**Purpose**: Prints the same blank draft YAML chain (`EDIT_TEMPLATE`) that `knowledge add --edit` (section 1.10) writes into `$VISUAL`/`$EDITOR`, without spawning an editor. For non-interactive callers — AI agents and the like — that just want a draft file's starting point. Same five-tier (Requirement through ExpectedResult) blank chain as the "Draft YAML format" in section 1.3. See `docs/knowledge_draft.schema.json` for a reference schema meant for IDE autocompletion (not used for actual validation — see the note at the top of section 1.3).
-
-**Options**
-
-| Option         | Description                                                                                              |
-| -------------- | ----------------------------------------------------------------------------------------------------------- |
-| `--out <path>` | Write to this path instead of stdout. Refuses to overwrite an existing file at that path (exit code `2`) |
-
-**Example (stdout)**
-
-```console
-$ markharness knowledge scaffold > drafts/01-new-condition.yml
-```
-
-**Example (`--out`)**
-
-```console
-$ markharness knowledge scaffold --out drafts/01-new-condition.yml
-$ markharness knowledge scaffold --out drafts/01-new-condition.yml
-error: cannot write drafts/01-new-condition.yml: ...(refuses to overwrite the existing file)
-$ echo $?
-2
-```
-
-**Use case mapping**: Supports UC1 "describe knowledge." Intended to pair with `knowledge apply --batch <dir>` (section 1.4): run `scaffold --out drafts/NN-xxx.yml` repeatedly, then apply the whole directory at once.
-
----
-
-### 1.25 `markharness import` — Emit a canonical snapshot
+### 1.20 `markharness import` — Emit a canonical snapshot
 
 ```text
 markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
@@ -1364,34 +892,7 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
-### 1.26 `markharness feature rename-id` — Rename a Feature's id while preserving its uid (ADR 0013)
-
-```text
-markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
-```
-
-**Purpose**: Changes a Feature's `id:` from `OLD` to `NEW`. Because its immutable `uid` (issued by `identity migrate`, section 1.26) is preserved, `changes compute` (section 1.12) treats the rename as the same Feature before and after, detecting it as a single ChangeEvent rather than a delete+add (ADR 0013, Issue #17). This is a crash-recoverable identity operation (append an identity event, then rewrite `feature.yml`) and runs without a confirmation prompt (to undo, run `rename-id` again back to the original id).
-
-**Precondition**: The target Feature must already have a `uid` from `identity migrate` (section 1.26).
-
-**Behavior**
-
-- On success, prints `renamed Feature '<old>' to '<new>' (uid preserved)` and exits with code `0`.
-- Exits with code `2` if: no Feature with id `<OLD>` exists; `<NEW>` is already used by another Feature; the target Feature has no `uid` yet (prompts to run `identity migrate` first); `feature.yml`'s `id:` disagrees with what replaying its identity events says (working tree and identity event log have drifted apart, e.g. from a manual edit); or a concurrent identity operation is detected.
-- Exits with code `3` on a filesystem error.
-
-**Example**
-
-```console
-$ markharness feature rename-id todo todo-v2
-renamed Feature 'todo' to 'todo-v2' (uid preserved)
-```
-
-**Use case mapping**: ADR 0013 (immutable uid model), Issue #17 (ChangeEvent failing to track id changes correctly).
-
----
-
-### 1.27 `markharness identity migrate` — Bulk-issue uids for every Knowledge element kind (ADR 0013, design doc §12 and §13 Phase 4/5)
+### 1.21 `markharness identity migrate` — Bulk-issue uids for every Knowledge element kind (ADR 0013, design doc §12 and §13 Phase 4/5)
 
 ```text
 markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
@@ -1399,7 +900,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 
 **Purpose**: Issues a fresh uid, and records a root `Issued` identity event, for every Requirement/Feature/Behavior/Condition/ExpectedResult under `.markharness/knowledge/` that doesn't have one yet. Idempotent — safe to re-run after copy/import/hand-editing introduces new uid-less elements. Also records TestCase `case_id` → `case_uid` mappings (the migration manifest, `.markharness/identity-migration-manifest.yml`).
 
-Once every one of the five kinds has zero uid-less elements left, writes `schema_version = 1` / `mode = "uid"` into `.markharness/config.toml`'s `[identity]` marker, completing the public cutover to UID mode (design doc §13 Phase 5). Cutover completion is determined by `mode` alone, not `schema_version` (ADR 0018). After cutover, `markharness validate` (section 1.21) starts reporting any newly introduced uid-less element as a validation issue.
+Once every one of the five kinds has zero uid-less elements left, writes `schema_version = 1` / `mode = "uid"` into `.markharness/config.toml`'s `[identity]` marker, completing the public cutover to UID mode (design doc §13 Phase 5). Cutover completion is determined by `mode` alone, not `schema_version` (ADR 0018). After cutover, `markharness validate` (section 1.17) starts reporting any newly introduced uid-less element as a validation issue.
 
 **Precondition**: The target directory must already be a Git repository. To record the legacy snapshot identity (the tree SHA of `.markharness/knowledge`) into the migration manifest, this internally performs a `git write-tree`-equivalent operation against a disposable temporary index (the repository's real staging area is never touched).
 
@@ -1409,7 +910,7 @@ Once every one of the five kinds has zero uid-less elements left, writes `schema
 - Normal run: processes all five kinds in two passes (detect id/uid conflicts first; if none, record every kind's `Issued` events as one crash-recoverable batch). Reusing the same id across different kinds is allowed; a duplicate id within one kind is rejected as a conflict (exit code `2`).
 - Exits with code `2` if a concurrent identity operation is detected.
 - Exits with code `3` on a filesystem error.
-- `--json`: prints `{"audit_scope":"working_tree","dry_run":bool,"migrated":[{"kind","id","uid"}],"conflicts":[string],"changed_files":[string]}`. `audit_scope` is a machine-readable field (design doc §11) contrasting with `"two_snapshot"` (`changes compute`/`verify`, sections 1.6/1.12) and `"full_history"` (`identity audit`, section 1.29) — it marks `identity migrate` as inspecting only the current working tree.
+- `--json`: prints `{"audit_scope":"working_tree","dry_run":bool,"migrated":[{"kind","id","uid"}],"conflicts":[string],"changed_files":[string]}`. `audit_scope` is a machine-readable field (design doc §11) contrasting with `"two_snapshot"` (`changes compute`/`verify`, sections 1.4/1.9) and `"full_history"` (`identity audit`, section 1.23) — it marks `identity migrate` as inspecting only the current working tree.
 
 **Example**
 
@@ -1441,7 +942,7 @@ $ markharness identity migrate --json
 
 ---
 
-### 1.28 `markharness identity resolve` — Explicitly resolve a branch divergence (ADR 0013, design doc §7)
+### 1.22 `markharness identity resolve` — Explicitly resolve a branch divergence (ADR 0013, design doc §7)
 
 ```text
 markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
@@ -1461,13 +962,13 @@ markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
 
 ---
 
-### 1.29 `markharness identity audit` — Full commit-history identity audit (IdentityAuditor, ADR 0013, design doc §11)
+### 1.23 `markharness identity audit` — Full commit-history identity audit (IdentityAuditor, ADR 0013, design doc §11)
 
 ```text
 markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
 ```
 
-**Purpose**: Walks the entire first-parent history of `<ref>` (default `HEAD`) and verifies two properties `.markharness/identity-events/` is supposed to hold: (1) identity events are append-only (an event file committed once must never disappear or change content in a later commit), and (2) the event set at every commit still replays without a causal-chain contradiction. `changes compute`, `verify`, and `identity migrate` (sections 1.6/1.12/1.26) are all lightweight comparisons that look at no more than two `.markharness` snapshots; `identity audit` is the one command that walks the entire Git commit history, and is kept as its own separate top-level command for that reason (design doc §11).
+**Purpose**: Walks the entire first-parent history of `<ref>` (default `HEAD`) and verifies two properties `.markharness/identity-events/` is supposed to hold: (1) identity events are append-only (an event file committed once must never disappear or change content in a later commit), and (2) the event set at every commit still replays without a causal-chain contradiction. `changes compute`, `verify`, and `identity migrate` (sections 1.4/1.9/1.26) are all lightweight comparisons that look at no more than two `.markharness` snapshots; `identity audit` is the one command that walks the entire Git commit history, and is kept as its own separate top-level command for that reason (design doc §11).
 
 The walk is limited to the first-parent history of the currently checked-out branch (equivalent to `git log --first-parent`). Changes that only ever existed on a not-yet-merged side branch are not this project's published history, and are excluded.
 
@@ -1502,7 +1003,7 @@ $ echo $?
 
 ---
 
-### 1.30 `markharness identity sync` — Re-derive a Knowledge file's id:/uid: from its identity event log
+### 1.24 `markharness identity sync` — Re-derive a Knowledge file's id:/uid: from its identity event log
 
 ```text
 markharness identity sync <KIND> <UID> [-d, --dir <path>]
@@ -1510,7 +1011,7 @@ markharness identity sync <KIND> <UID> [-d, --dir <path>]
 
 **Purpose**: Replays `<UID>`'s identity events to their current state and writes the resulting `id` back into whatever Knowledge file currently carries it — filling in a missing `uid:` or correcting a stale one. Records no new identity event; it only re-derives file state from the already-durable event log. This is the same "resync Knowledge file via roll-forward" side effect every other identity operation (including `identity migrate`) already performs internally, exposed on its own.
 
-**Precondition**: Meant to cover cases where no other operation's side effect performed the sync — most notably, restoring or re-creating a Knowledge file from Git history. `rename-id` (section 1.25) exists only for Feature and requires the file to already carry a `uid:`, so it cannot serve as a general-purpose resync for a still-uid-less file; `identity sync` supports all five kinds and works regardless of whether the file currently has a `uid:`.
+**Precondition**: Meant to cover cases where no other operation's side effect performed the sync — most notably, restoring or re-creating a Knowledge file from Git history. A rename through `knowledge reconcile` (section 1.2) selects its target by `uid`, so it cannot serve as a resync for a still-uid-less file; `identity sync` supports all five kinds and works regardless of whether the file currently has a `uid:`.
 
 **Behavior**
 
@@ -1549,7 +1050,7 @@ These are currently not yet started; implementation ordering is managed separate
 
 ## 3. Verification / Testing
 
-Unit tests for the implemented commands can be run with `cargo test` (see the `#[cfg(test)] mod tests` in `src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/knowledge_edit.rs` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs`, as well as `tests/knowledge_cli.rs`, which verifies the exit codes and output of `knowledge validate`/`apply`). Because the tests in `git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` actually run `git init`/`commit`/`tag` in a temporary directory, the `git` command is required in the test environment. Following the Pre-PR checklist (`CONTRIBUTING.md`), run the following before committing:
+Unit tests for the implemented commands can be run with `cargo test` (see the `#[cfg(test)] mod tests` in `src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs`, as well as `tests/knowledge_reconcile_cli.rs`, which verifies the exit codes and output of `knowledge reconcile`). Because the tests in `git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` actually run `git init`/`commit`/`tag` in a temporary directory, the `git` command is required in the test environment. Following the Pre-PR checklist (`CONTRIBUTING.md`), run the following before committing:
 
 ```bash
 cargo test
