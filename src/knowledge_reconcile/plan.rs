@@ -281,6 +281,27 @@ fn plan_requirement(
 
     match knowledge_walk::find_by_id(root, EntityKind::Requirement, id)? {
         None => {
+            let target_path = super::paths::requirement_path(root, id);
+            if target_path.is_file() {
+                // No entity currently has this `id` (checked above), yet a
+                // file already sits at the path a fresh creation would use.
+                // The only way that happens is a rename that changed a
+                // file's `id:` without moving its directory (this module's
+                // own `execute::commit_plan` does exactly that, matching
+                // `feature_ops::write_id_and_uid`'s existing precedent):
+                // the old id's directory is still physically there. Writing
+                // a new Requirement here would silently overwrite that
+                // renamed entity's file — fail closed instead.
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ConflictingExistingValue,
+                    location,
+                    format!(
+                        "a file already exists at the path id '{id}' would use ({}), likely a renamed Requirement whose directory was not moved; choose a different id",
+                        target_path.display()
+                    ),
+                ));
+                return Ok(None);
+            }
             let uid = ulid::Ulid::new().to_string();
             match build_requirement_content(&location, id, &uid, req) {
                 Ok(canonical) => Ok(Some(RequirementOutcome::New { uid, canonical })),
@@ -451,6 +472,22 @@ fn plan_feature(
 
     match knowledge_walk::find_by_id(root, EntityKind::Feature, id)? {
         None => {
+            let target_path = super::paths::feature_path(root, id);
+            if target_path.is_file() {
+                // See the identical check in `plan_requirement`: a renamed
+                // Feature's directory is not moved, so its old id's path
+                // can still exist even though no Feature currently has
+                // that id. Fail closed instead of silently overwriting it.
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ConflictingExistingValue,
+                    location,
+                    format!(
+                        "a file already exists at the path id '{id}' would use ({}), likely a renamed Feature whose directory was not moved; choose a different id",
+                        target_path.display()
+                    ),
+                ));
+                return Ok(None);
+            }
             let uid = ulid::Ulid::new().to_string();
             let requirement_uids = match &feature.contributes_to {
                 Some(refs) => resolve_contributes_to(
@@ -934,6 +971,77 @@ requirements:
             }
             other => panic!("expected Diagnostics, got {other:?}"),
         }
+    }
+
+    /// Regression test for the reviewer-flagged corruption risk: a rename
+    /// (via UID) changes a Requirement's `id:` field but does not move its
+    /// directory (this module's own `execute::commit_plan`, matching
+    /// `feature_ops::write_id_and_uid`'s existing precedent). The old id's
+    /// path (`requirements/todo/requirement.yml` here) can therefore still
+    /// physically exist even though `find_by_id("todo")` now correctly
+    /// finds nothing — reusing "todo" for a brand-new Requirement must not
+    /// silently overwrite that renamed entity's file at the collided path.
+    #[test]
+    fn reusing_a_renamed_away_id_reports_conflicting_existing_value_instead_of_overwriting() {
+        let dir = init_project();
+        // Simulates the on-disk state right after renaming a Requirement
+        // from id "todo" to id "task" via UID patch: the file stays at the
+        // "todo" directory, but its own `id:` field now says "task".
+        write_requirement(
+            dir.path(),
+            "todo",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "TODO management",
+        );
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+            content.replace("id: todo", "id: task"),
+        )
+        .unwrap();
+        assert!(
+            knowledge_walk::find_by_id(dir.path(), EntityKind::Requirement, "todo")
+                .unwrap()
+                .is_none(),
+            "no Requirement should currently have id 'todo'"
+        );
+
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: A brand new TODO requirement
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics.len(), 1);
+                assert_eq!(
+                    diagnostics[0].code,
+                    DiagnosticCode::ConflictingExistingValue
+                );
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+
+        // The renamed entity's file must be untouched by the failed attempt.
+        let content = fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+        )
+        .unwrap();
+        assert!(content.contains("id: task"));
+        assert!(content.contains("01ARZ3NDEKTSV4RRFFQ69G5FAV"));
     }
 
     #[test]

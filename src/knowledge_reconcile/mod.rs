@@ -5,6 +5,7 @@
 pub mod diagnostics;
 pub mod execute;
 pub mod intent;
+pub mod paths;
 pub mod plan;
 pub mod validate;
 

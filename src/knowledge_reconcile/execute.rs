@@ -19,6 +19,7 @@ use crate::knowledge;
 use crate::time::iso8601_utc_now;
 
 use super::intent::IntentDocument;
+use super::paths::{behavior_path, feature_path, requirement_path, scenario_path};
 use super::plan::{FeatureOutcome, Plan, PlanError, RequirementOutcome, build_plan};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,41 +228,6 @@ fn pending_file(root: &Path, path: &Path, contents: String) -> recovery::Pending
         relative_path: relative_path_string(root, path),
         contents,
     }
-}
-
-fn requirement_path(root: &Path, id: &str) -> PathBuf {
-    root.join(crate::project_root::MARKHARNESS_DIR)
-        .join("knowledge")
-        .join("requirements")
-        .join(id)
-        .join("requirement.yml")
-}
-
-fn feature_path(root: &Path, id: &str) -> PathBuf {
-    root.join(crate::project_root::MARKHARNESS_DIR)
-        .join("knowledge")
-        .join("features")
-        .join(id)
-        .join("feature.yml")
-}
-
-fn behavior_path(root: &Path, feature_id: &str, behavior_id: &str) -> PathBuf {
-    root.join(crate::project_root::MARKHARNESS_DIR)
-        .join("knowledge")
-        .join("features")
-        .join(feature_id)
-        .join(behavior_id)
-        .join("behavior.yml")
-}
-
-fn scenario_path(root: &Path, feature_id: &str, behavior_id: &str, scenario_id: &str) -> PathBuf {
-    root.join(crate::project_root::MARKHARNESS_DIR)
-        .join("knowledge")
-        .join("features")
-        .join(feature_id)
-        .join(behavior_id)
-        .join(scenario_id)
-        .join("scenario.yml")
 }
 
 fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
@@ -825,6 +791,82 @@ requirements:
         )
         .unwrap();
         assert!(content.contains("id: task"));
+    }
+
+    /// End-to-end regression test for the reviewer-flagged corruption risk:
+    /// rename a Requirement away from id "todo" (its file stays at the
+    /// "todo" directory, per `push_renamed`'s design, matching
+    /// `feature_ops::write_id_and_uid`'s existing precedent), then try to
+    /// `reconcile_creation` a brand-new Requirement that reuses "todo".
+    /// The renamed entity's file must survive untouched, and the attempt
+    /// must fail rather than silently overwrite it.
+    #[test]
+    fn reconciling_a_new_requirement_that_reuses_a_renamed_away_id_does_not_corrupt_the_renamed_file()
+     {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        let created = reconcile_creation(dir.path(), &doc).unwrap();
+        let renamed_uid = created.created[0].uid.clone();
+
+        let rename_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: {renamed_uid}
+    id: task
+"
+        );
+        let rename_doc = parse_intent(&rename_yaml).unwrap();
+        reconcile_creation(dir.path(), &rename_doc).unwrap();
+
+        let reuse_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: A brand new, unrelated TODO requirement
+    axis: []
+";
+        let reuse_doc = parse_intent(reuse_yaml).unwrap();
+        let err = reconcile_creation(dir.path(), &reuse_doc).unwrap_err();
+        assert!(matches!(err, ReconcileError::Diagnostics(_)));
+
+        let content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+        )
+        .unwrap();
+        assert!(
+            content.contains("id: task"),
+            "the renamed entity's file must survive untouched, got: {content}"
+        );
+        assert!(content.contains(&renamed_uid));
+
+        let events = registry::load_events_from_working_tree(
+            dir.path(),
+            EntityKind::Requirement,
+            &renamed_uid,
+        )
+        .unwrap();
+        assert_eq!(
+            events.len(),
+            2,
+            "no spurious Issued event for a second entity sharing the same uid"
+        );
     }
 
     /// Simulates a crash after the batch's logical commit point (the first
