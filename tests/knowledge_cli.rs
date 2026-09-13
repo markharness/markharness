@@ -149,6 +149,45 @@ fn scaffold_out_refuses_to_overwrite_an_existing_file() {
 }
 
 #[test]
+fn scaffold_intent_prints_a_blank_knowledge_intent_to_stdout() {
+    let output = run(&["knowledge", "scaffold", "--intent"]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("format: markharness/knowledge-intent/v1"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("requirements:"), "{stdout}");
+    assert!(stdout.contains("scenarios:"), "{stdout}");
+}
+
+#[test]
+fn scaffold_intent_out_writes_the_template_to_a_file_instead_of_stdout() {
+    let dir = tempfile::tempdir().unwrap();
+    let out_path = dir.path().join("intent.yml");
+
+    let output = run(&[
+        "knowledge",
+        "scaffold",
+        "--intent",
+        "--out",
+        out_path.to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        "stdout should be silent when --out is given"
+    );
+    let written = fs::read_to_string(&out_path).unwrap();
+    assert!(
+        written.contains("format: markharness/knowledge-intent/v1"),
+        "{written}"
+    );
+}
+
+#[test]
 fn validate_exits_zero_and_prints_nothing_on_success() {
     let dir = setup_root_with_axes(&["gameplay", "animation"]);
     write_migrated_controls_requirement(dir.path());

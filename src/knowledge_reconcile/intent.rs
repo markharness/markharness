@@ -3,10 +3,79 @@
 //! (`crate::knowledge`). New elements are referenced by a document-local
 //! `key` that is never persisted; existing elements are referenced by UID.
 
+use std::io::{self, Write};
+use std::path::Path;
+
 use serde::Deserialize;
+
+use crate::fs_safety::create_new_no_follow;
 
 /// The only `format` value `knowledge reconcile` accepts (ADR 0027 §2).
 pub const INTENT_FORMAT_V1: &str = "markharness/knowledge-intent/v1";
+
+/// A blank Knowledge Intent for non-interactive callers (ADR 0027 §7's
+/// "Intent雛形" / 0028 start gate) to start from — one new Requirement,
+/// referenced by document-local `key` from one new Feature, which in turn
+/// declares one new Behavior and Scenario, mirroring `knowledge_edit::
+/// EDIT_TEMPLATE`'s role for the older `KnowledgeDraft` chain. Scalars
+/// left blank (`id:` with nothing after the colon) parse as YAML `null` →
+/// `None`, but fail `validate_static`/`build_plan`'s required-field
+/// checks until filled in — `--check` against this file reports exactly
+/// what is still missing. `action`/`results` entries cannot be left blank
+/// the same way (`StepIntent`/`results` hold plain `String`, not
+/// `Option<String>` — nothing being untyped-null there for a step or
+/// result to "omit"), so they carry placeholder text to replace instead.
+pub const INTENT_TEMPLATE: &str = "\
+# knowledge reconcile (ADR 0027)
+# Fill in the Knowledge Intent below, then run:
+#   markharness knowledge reconcile <this-file> --check
+# to preview the resulting mutation plan before writing it for real (drop
+# --check once it looks right). `key` is a document-local reference used
+# only by `contributes_to` in this same file; it is never saved. Existing
+# elements are selected by `uid` instead of `key`/`id` — see
+# docs/ja/decisions/0027-declarative-knowledge-reconciliation.md §5.
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_example
+    id:
+    source: native
+    label:
+    axis: []
+
+features:
+  - key: feature_example
+    id:
+    contributes_to: [req_example]
+    label:
+    axis: []
+    behaviors:
+      - id:
+        label:
+        axis: []
+        description:
+        scenarios:
+          - id:
+            label:
+            description:
+            phases:
+              - steps:
+                  - action: Describe what happens in this step
+                results:
+                  - Describe the expected result
+";
+
+/// Writes [`INTENT_TEMPLATE`] to `out`, mirroring `knowledge_edit::
+/// write_scaffold`'s contract: refuses to overwrite a file already at
+/// `out` (a symlink there is refused too, rather than followed), and `out`
+/// is a caller-chosen path outside any managed `root`, so this uses
+/// `create_new_no_follow` directly rather than `fs_safety::replace_file`'s
+/// root-scoped guards.
+pub fn write_intent_scaffold(out: &Path) -> io::Result<()> {
+    let mut file = create_new_no_follow(out)?;
+    file.write_all(INTENT_TEMPLATE.as_bytes())
+}
 
 /// The initial version supports only non-deleting `merge` (ADR 0027 §4).
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -89,8 +158,25 @@ pub struct BehaviorIntent {
     pub axis: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Common procedures this Behavior declares (ADR 0017 §2), replacing
+    /// the whole collection when present, same as `axis`/`contributes_to`
+    /// (ADR 0027 §5's value-collection rule). Only meaningful when this
+    /// `BehaviorIntent` creates a brand-new Behavior — `knowledge_draft`'s
+    /// own `apply_draft` never lets an *existing* Behavior's `procedures`
+    /// be extended either (a mismatch there is rejected as a conflict, not
+    /// merged), so nothing already expressible is lost by not supporting
+    /// that here.
+    #[serde(default)]
+    pub procedures: Option<Vec<ProcedureIntent>>,
     #[serde(default)]
     pub scenarios: Vec<ScenarioIntent>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProcedureIntent {
+    pub name: String,
+    #[serde(default)]
+    pub steps: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -186,6 +272,39 @@ requirements:
         assert_eq!(doc.requirements.len(), 1);
         assert_eq!(doc.requirements[0].key, Some("req_todo".to_string()));
         assert_eq!(doc.requirements[0].id, Some("todo".to_string()));
+    }
+
+    /// A blank scalar (`id:` with nothing after the colon) is YAML `null`,
+    /// which every field here accepts as `None` — the template must parse
+    /// even before anyone fills it in, so `--check` is what first reports
+    /// what is still missing (`missing_required_field`), not a parse
+    /// failure.
+    #[test]
+    fn the_intent_template_parses_as_a_valid_intent_document() {
+        let doc = parse_intent(INTENT_TEMPLATE).expect("should parse");
+        assert_eq!(doc.mode, IntentMode::Merge);
+        assert_eq!(doc.requirements.len(), 1);
+        assert_eq!(doc.features.len(), 1);
+        assert_eq!(doc.features[0].behaviors.len(), 1);
+        assert_eq!(doc.features[0].behaviors[0].scenarios.len(), 1);
+    }
+
+    #[test]
+    fn write_intent_scaffold_writes_the_template_to_a_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("intent.yml");
+        write_intent_scaffold(&out).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), INTENT_TEMPLATE);
+    }
+
+    #[test]
+    fn write_intent_scaffold_refuses_to_overwrite_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("intent.yml");
+        std::fs::write(&out, "existing content\n").unwrap();
+        let err = write_intent_scaffold(&out).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "existing content\n");
     }
 
     #[test]

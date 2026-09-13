@@ -68,7 +68,7 @@ pub struct Feature {
 /// ADR 0017 §2: Behaviorが定義する共通手順。Scenarioの`Phase.steps`が
 /// `use: <name>`で明示参照する。先頭への自動挿入はしない。共通手順から
 /// 別の共通手順を呼ぶ入れ子は認めない(検証は生成側で行う)。
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Procedure {
     pub steps: Vec<String>,
 }

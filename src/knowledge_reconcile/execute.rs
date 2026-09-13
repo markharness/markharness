@@ -18,10 +18,12 @@ use crate::identity::{
 use crate::knowledge;
 use crate::time::iso8601_utc_now;
 
+use super::diagnostics::{Diagnostic, DiagnosticCode};
 use super::intent::IntentDocument;
 use super::paths::{behavior_path, feature_path, requirement_path, scenario_path};
 use super::plan::{
     FeatureOutcome, Plan, PlanError, RequirementOutcome, ScenarioOutcome, build_plan,
+    state_fingerprint,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +61,11 @@ pub enum ExecuteError {
     /// A concurrent identity operation is genuinely in progress (design
     /// doc §6.3) — the caller must retry later, not race it.
     OperationInProgress,
+    /// Includes `stale_plan` (ADR 0027 §6): `plan` was built from state
+    /// that no longer matches the repository, most commonly because it was
+    /// built separately from this call (see this module's own doc comment
+    /// on why that reopens a TOCTOU gap `reconcile_creation` closes).
+    Diagnostics(Vec<super::diagnostics::Diagnostic>),
     Io(io::Error),
 }
 
@@ -128,10 +135,60 @@ pub fn reconcile_creation(
     };
     let outcome = (|| {
         let plan = build_plan(root, doc)?;
+        if let Some(diagnostic) = check_not_stale(root, &plan)? {
+            return Err(ReconcileError::Diagnostics(vec![diagnostic]));
+        }
         commit_plan(root, &plan).map_err(ReconcileError::from)
     })();
     held_lock.release()?;
     outcome
+}
+
+/// `--check` (ADR 0027 §6): runs the exact same parse → match → validate →
+/// plan pipeline a real run does, under the same lock (a consistent read
+/// of current state) — but stops before `commit_plan`, so nothing is
+/// written. `--check`'s result is a preview only: the ADR explicitly
+/// forbids treating it as a permit for a later write, since state can
+/// change in between (that gap is exactly what [`ExecuteError::Diagnostics`]'s
+/// `stale_plan` covers on the later real run).
+pub fn check_creation(
+    root: &Path,
+    doc: &IntentDocument,
+) -> Result<ReconcileOutcome, ReconcileError> {
+    let held_lock = match recovery::run_startup_recovery(root, |intent| {
+        feature_ops::roll_forward(root, intent)
+    })? {
+        recovery::StartupRecovery::OperationInProgress => {
+            return Err(ReconcileError::OperationInProgress);
+        }
+        recovery::StartupRecovery::Ready { lock, .. } => lock,
+    };
+    let outcome = build_plan(root, doc)
+        .map(|plan| plan_outcome(&plan))
+        .map_err(ReconcileError::from);
+    held_lock.release()?;
+    outcome
+}
+
+/// Re-reads `.markharness/knowledge`'s current fingerprint and compares it
+/// to the one `plan` was built against (ADR 0027 §6 `stale_plan`). `plan`
+/// carries no fingerprint (`state_fingerprint: None`) when it was not
+/// produced by [`build_plan`] itself (e.g. a hand-built `Plan::default()`
+/// in a test) — nothing to compare against, so this passes it through
+/// rather than treating the absence as either fresh or stale.
+fn check_not_stale(root: &Path, plan: &Plan) -> io::Result<Option<Diagnostic>> {
+    let Some(expected) = &plan.state_fingerprint else {
+        return Ok(None);
+    };
+    let current = state_fingerprint(root)?;
+    if &current == expected {
+        return Ok(None);
+    }
+    Ok(Some(Diagnostic::new(
+        DiagnosticCode::StalePlan,
+        "<document>",
+        "the repository's Knowledge changed since this plan was built; re-run reconcile to build a fresh plan before committing",
+    )))
 }
 
 /// Commits `plan` as one crash-recoverable batch (new/renamed elements)
@@ -161,7 +218,12 @@ pub fn execute_creation_plan(root: &Path, plan: &Plan) -> Result<ReconcileOutcom
         }
         recovery::StartupRecovery::Ready { lock, .. } => lock,
     };
-    let outcome = commit_plan(root, plan).map_err(ExecuteError::Io);
+    let outcome = (|| {
+        if let Some(diagnostic) = check_not_stale(root, plan)? {
+            return Err(ExecuteError::Diagnostics(vec![diagnostic]));
+        }
+        commit_plan(root, plan).map_err(ExecuteError::Io)
+    })();
     held_lock.release()?;
     outcome
 }
@@ -232,12 +294,104 @@ fn pending_file(root: &Path, path: &Path, contents: String) -> recovery::Pending
     }
 }
 
+/// Classifies `plan` into the created/updated/unchanged preview
+/// [`ReconcileOutcome`] describes — the read-only half of what
+/// [`commit_plan`] does, shared with [`check_creation`] (ADR 0027 §6's
+/// `--check`) so the preview a caller sees before committing can never
+/// drift from what an actual commit of the same plan would report.
+fn plan_outcome(plan: &Plan) -> ReconcileOutcome {
+    let mut outcome = ReconcileOutcome::default();
+
+    for req in &plan.requirements {
+        match req {
+            RequirementOutcome::New { uid, canonical } => outcome.created.push(CreatedElement {
+                kind: EntityKind::Requirement,
+                uid: uid.clone(),
+                id: canonical.id.clone(),
+            }),
+            RequirementOutcome::Unchanged { uid, id } => outcome.unchanged.push(UnchangedElement {
+                kind: EntityKind::Requirement,
+                uid: uid.clone(),
+                id: id.clone(),
+            }),
+            RequirementOutcome::Updated { uid, canonical, .. } => {
+                outcome.updated.push(UpdatedElement {
+                    kind: EntityKind::Requirement,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+            }
+        }
+    }
+
+    for feature in &plan.features {
+        match feature {
+            FeatureOutcome::New {
+                uid,
+                canonical,
+                behaviors,
+            } => {
+                outcome.created.push(CreatedElement {
+                    kind: EntityKind::Feature,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+                for behavior in behaviors {
+                    outcome.created.push(CreatedElement {
+                        kind: EntityKind::Behavior,
+                        uid: behavior.uid.clone(),
+                        id: behavior.canonical.id.clone(),
+                    });
+                    for scenario in &behavior.scenarios {
+                        outcome.created.push(CreatedElement {
+                            kind: EntityKind::Scenario,
+                            uid: scenario.uid.clone(),
+                            id: scenario.canonical.id.clone(),
+                        });
+                    }
+                }
+            }
+            FeatureOutcome::Unchanged { uid, id } => outcome.unchanged.push(UnchangedElement {
+                kind: EntityKind::Feature,
+                uid: uid.clone(),
+                id: id.clone(),
+            }),
+            FeatureOutcome::Updated { uid, canonical, .. } => {
+                outcome.updated.push(UpdatedElement {
+                    kind: EntityKind::Feature,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+            }
+        }
+    }
+
+    for scenario in &plan.scenario_updates {
+        match scenario {
+            ScenarioOutcome::Unchanged { uid, id } => outcome.unchanged.push(UnchangedElement {
+                kind: EntityKind::Scenario,
+                uid: uid.clone(),
+                id: id.clone(),
+            }),
+            ScenarioOutcome::Updated { uid, canonical, .. } => {
+                outcome.updated.push(UpdatedElement {
+                    kind: EntityKind::Scenario,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+            }
+        }
+    }
+
+    outcome
+}
+
 fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
     let recorded_at = iso8601_utc_now();
     let mut batch_events = Vec::new();
     let mut files = Vec::new();
     let mut direct_writes: Vec<(PathBuf, String)> = Vec::new();
-    let mut outcome = ReconcileOutcome::default();
+    let outcome = plan_outcome(plan);
 
     for req in &plan.requirements {
         match req {
@@ -255,19 +409,8 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                     &path,
                     knowledge::serialize_requirement(canonical),
                 ));
-                outcome.created.push(CreatedElement {
-                    kind: EntityKind::Requirement,
-                    uid: uid.clone(),
-                    id: canonical.id.clone(),
-                });
             }
-            RequirementOutcome::Unchanged { uid, id } => {
-                outcome.unchanged.push(UnchangedElement {
-                    kind: EntityKind::Requirement,
-                    uid: uid.clone(),
-                    id: id.clone(),
-                });
-            }
+            RequirementOutcome::Unchanged { .. } => {}
             RequirementOutcome::Updated {
                 uid,
                 before_id,
@@ -295,11 +438,6 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                         knowledge::serialize_requirement(canonical),
                     ));
                 }
-                outcome.updated.push(UpdatedElement {
-                    kind: EntityKind::Requirement,
-                    uid: uid.clone(),
-                    id: canonical.id.clone(),
-                });
             }
         }
     }
@@ -324,11 +462,6 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                     &path,
                     knowledge::serialize_feature(canonical),
                 ));
-                outcome.created.push(CreatedElement {
-                    kind: EntityKind::Feature,
-                    uid: uid.clone(),
-                    id: canonical.id.clone(),
-                });
 
                 for behavior in behaviors {
                     push_issued(
@@ -344,11 +477,6 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                         &behavior_path,
                         knowledge::serialize_behavior(&behavior.canonical),
                     ));
-                    outcome.created.push(CreatedElement {
-                        kind: EntityKind::Behavior,
-                        uid: behavior.uid.clone(),
-                        id: behavior.canonical.id.clone(),
-                    });
 
                     for scenario in &behavior.scenarios {
                         push_issued(
@@ -369,21 +497,10 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                             &scenario_path,
                             knowledge::serialize_scenario(&scenario.canonical),
                         ));
-                        outcome.created.push(CreatedElement {
-                            kind: EntityKind::Scenario,
-                            uid: scenario.uid.clone(),
-                            id: scenario.canonical.id.clone(),
-                        });
                     }
                 }
             }
-            FeatureOutcome::Unchanged { uid, id } => {
-                outcome.unchanged.push(UnchangedElement {
-                    kind: EntityKind::Feature,
-                    uid: uid.clone(),
-                    id: id.clone(),
-                });
-            }
+            FeatureOutcome::Unchanged { .. } => {}
             FeatureOutcome::Updated {
                 uid,
                 before_id,
@@ -411,11 +528,6 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                         knowledge::serialize_feature(canonical),
                     ));
                 }
-                outcome.updated.push(UpdatedElement {
-                    kind: EntityKind::Feature,
-                    uid: uid.clone(),
-                    id: canonical.id.clone(),
-                });
             }
         }
     }
@@ -429,18 +541,12 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
     let mut scenario_moves: Vec<(PathBuf, PathBuf, String)> = Vec::new();
     for scenario in &plan.scenario_updates {
         match scenario {
-            ScenarioOutcome::Unchanged { uid, id } => {
-                outcome.unchanged.push(UnchangedElement {
-                    kind: EntityKind::Scenario,
-                    uid: uid.clone(),
-                    id: id.clone(),
-                });
-            }
+            ScenarioOutcome::Unchanged { .. } => {}
             ScenarioOutcome::Updated {
-                uid,
                 canonical,
                 existing_path,
                 new_path,
+                ..
             } => {
                 let contents = knowledge::serialize_scenario(canonical);
                 if new_path == existing_path {
@@ -448,11 +554,6 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
                 } else {
                     scenario_moves.push((existing_path.clone(), new_path.clone(), contents));
                 }
-                outcome.updated.push(UpdatedElement {
-                    kind: EntityKind::Scenario,
-                    uid: uid.clone(),
-                    id: canonical.id.clone(),
-                });
             }
         }
     }
@@ -1256,6 +1357,238 @@ features:
         let scenario = knowledge::parse_scenario(&content).unwrap();
         assert_eq!(scenario.behavior, "review");
         assert_eq!(scenario.uid, Some(scenario_uid));
+    }
+
+    /// ADR 0027 §6: `--check` reports exactly what a real run's outcome
+    /// would be (same created/updated/unchanged classification, since both
+    /// go through [`plan_outcome`]) but performs no writes at all — no
+    /// identity events, no Knowledge files, nothing under
+    /// `.identity-staging/`.
+    #[test]
+    fn check_creation_reports_the_same_preview_as_a_real_run_but_writes_nothing() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+
+        let preview = check_creation(dir.path(), &doc).unwrap();
+        assert_eq!(preview.created.len(), 1);
+        assert_eq!(preview.created[0].id, "todo");
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml")
+                .is_file(),
+            "--check must not write the Requirement file"
+        );
+        assert!(
+            !dir.path().join(".markharness/identity-events").exists(),
+            "--check must not write any identity event"
+        );
+
+        let real = reconcile_creation(dir.path(), &doc).unwrap();
+        // UIDs differ (each build mints its own for a "New" outcome), but
+        // the shape of the preview must match the real result exactly.
+        assert_eq!(preview.created.len(), real.created.len());
+        assert_eq!(preview.created[0].kind, real.created[0].kind);
+        assert_eq!(preview.created[0].id, real.created[0].id);
+        assert_eq!(preview.updated, real.updated);
+        assert_eq!(preview.unchanged, real.unchanged);
+    }
+
+    /// Re-running `--check` against a repository that already matches the
+    /// Intent reports the same `unchanged` classification a real re-run
+    /// would (ADR 0027 §3's content-comparison rule), not `created`.
+    #[test]
+    fn check_creation_on_an_already_reconciled_repository_reports_unchanged() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        reconcile_creation(dir.path(), &doc).unwrap();
+
+        let preview = check_creation(dir.path(), &doc).unwrap();
+        assert!(preview.created.is_empty());
+        assert!(preview.updated.is_empty());
+        assert_eq!(preview.unchanged.len(), 1);
+    }
+
+    /// ADR 0027 §6 `stale_plan`: a `Plan` built with [`build_plan`] and
+    /// then committed later (as the exposed but TOCTOU-prone
+    /// `execute_creation_plan` allows) must not blindly overwrite state
+    /// that changed in between — here, a second `reconcile_creation` runs
+    /// and actually creates the same Requirement before the stale plan's
+    /// commit is attempted.
+    #[test]
+    fn execute_creation_plan_refuses_a_plan_that_has_gone_stale() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        let stale_plan = build_plan(dir.path(), &doc).unwrap();
+
+        // The repository changes after the plan was built but before it is
+        // committed — exactly the gap `execute_creation_plan`'s own doc
+        // comment warns callers not to reopen.
+        reconcile_creation(dir.path(), &doc).unwrap();
+
+        let err = execute_creation_plan(dir.path(), &stale_plan).unwrap_err();
+        match err {
+            ExecuteError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics.len(), 1);
+                assert_eq!(
+                    diagnostics[0].code,
+                    super::super::diagnostics::DiagnosticCode::StalePlan
+                );
+            }
+            other => panic!("expected Diagnostics(stale_plan), got {other:?}"),
+        }
+
+        // The stale plan's own (would-be duplicate) uid was never
+        // committed at all — only the second, non-stale call's Requirement
+        // exists.
+        let events = registry::load_events_from_working_tree(
+            dir.path(),
+            EntityKind::Requirement,
+            stale_plan.requirements[0].uid(),
+        )
+        .unwrap();
+        assert!(
+            events.is_empty(),
+            "the stale plan's own uid must never have been committed"
+        );
+        let content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+        )
+        .unwrap();
+        assert!(!content.contains(stale_plan.requirements[0].uid()));
+    }
+
+    /// Crash-recovery, pre-commit: `begin_batch_with_payload` stages the
+    /// intent (writes `.identity-staging/<op>/intent.yml`) but the process
+    /// dies before `commit_batch` ever writes the identity event to its
+    /// final location. On restart, `recover_incomplete_operations` must
+    /// find `is_committed` false and discard the staging entry rather than
+    /// roll it forward — the operation never truly happened, so nothing
+    /// (not the identity event, not the Requirement file) should exist
+    /// afterward, and staging must be cleaned up so a fresh reconcile of
+    /// the same Intent can proceed normally.
+    #[test]
+    fn a_subsequent_command_discards_a_staged_but_never_committed_batch() {
+        let dir = init_project();
+        let requirement_uid = "01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string();
+        let event_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE0".to_string();
+        let event = IdentityEvent {
+            identity_event_uid: event_uid.clone(),
+            entity_uid: requirement_uid.clone(),
+            entity_kind: EntityKind::Requirement,
+            previous_identity_event_uid: None,
+            previous_identity_event_uids: Vec::new(),
+            recorded_at: "2026-09-13T00:00:00Z".to_string(),
+            mutation: IdentityMutation::Issued {
+                id: "todo".to_string(),
+            },
+        };
+        let requirement = crate::knowledge::Requirement {
+            id: "todo".to_string(),
+            source: crate::knowledge::RequirementSource::Native,
+            label: Some("TODO management".to_string()),
+            axis: Vec::new(),
+            description: None,
+            source_locator: None,
+            source_revision: None,
+            related_issues: Vec::new(),
+            uid: Some(requirement_uid.clone()),
+        };
+        // Deliberately no `commit_batch` call: this is the crash point,
+        // before the event ever reached its final location.
+        recovery::begin_batch_with_payload(
+            dir.path(),
+            vec![recovery::BatchEvent {
+                entity_kind: EntityKind::Requirement,
+                entity_uid: requirement_uid.clone(),
+                identity_event_uid: event_uid.clone(),
+                event_yaml: serde_yaml_ng::to_string(&event).unwrap(),
+            }],
+            Some(recovery::IntentPayload::KnowledgeReconcile(vec![
+                recovery::PendingKnowledgeFile {
+                    relative_path: ".markharness/knowledge/requirements/todo/requirement.yml"
+                        .to_string(),
+                    contents: knowledge::serialize_requirement(&requirement),
+                },
+            ])),
+        )
+        .unwrap();
+
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml")
+                .is_file()
+        );
+
+        recovery::run_startup_recovery(dir.path(), |intent| {
+            feature_ops::roll_forward(dir.path(), intent)
+        })
+        .unwrap();
+
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml")
+                .is_file(),
+            "a never-committed batch must not have its pending file written"
+        );
+        assert!(
+            registry::load_events_from_working_tree(
+                dir.path(),
+                EntityKind::Requirement,
+                &requirement_uid,
+            )
+            .unwrap()
+            .is_empty(),
+            "a never-committed batch must not have its identity event recorded"
+        );
+
+        // Staging is clean, so reconciling the same Intent for real now
+        // proceeds exactly as if nothing had happened.
+        let doc = parse_intent(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+",
+        )
+        .unwrap();
+        let outcome = reconcile_creation(dir.path(), &doc).unwrap();
+        assert_eq!(outcome.created.len(), 1);
     }
 
     /// Reparenting alongside an unrelated new Requirement in the same

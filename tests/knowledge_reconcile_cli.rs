@@ -415,6 +415,71 @@ requirements:
 }
 
 #[test]
+fn check_on_a_new_intent_reports_planned_changes_without_writing_and_exits_4() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+        "--check",
+    ]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"kind\":\"requirement\""), "{stdout}");
+    assert!(
+        !dir.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge/requirements/todo/requirement.yml")
+            .is_file(),
+        "--check must not write any Knowledge file"
+    );
+}
+
+#[test]
+fn check_on_an_already_reconciled_repository_exits_zero_with_unchanged() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+
+    let first = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert!(first.status.success());
+
+    let second = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+        "--check",
+    ]);
+
+    assert!(
+        second.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&second.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("\"unchanged\""), "{stdout}");
+}
+
+#[test]
 fn missing_intent_file_reports_io_error() {
     let dir = setup_root_with_axes(&[]);
 

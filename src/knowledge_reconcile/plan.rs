@@ -14,7 +14,9 @@
 //! parent's own directory cannot exist yet.
 
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -122,6 +124,53 @@ pub struct Plan {
     /// are not new elements of the Feature/Behavior tree being built, but
     /// edits to Scenarios that already exist elsewhere in the tree.
     pub scenario_updates: Vec<ScenarioOutcome>,
+    /// A snapshot of `.markharness/knowledge`'s on-disk content taken as
+    /// [`build_plan`] started reading it (ADR 0027 §6's `stale_plan`).
+    /// `None` for a `Plan` no caller built with [`build_plan`] (e.g.
+    /// `Plan::default()` in tests) — there is nothing to compare staleness
+    /// against, so callers must skip the check rather than treat `None` as
+    /// "unchanged".
+    pub state_fingerprint: Option<String>,
+}
+
+/// Hashes every file under `.markharness/knowledge` (relative path +
+/// content) into one opaque token. Two calls returning the same token mean
+/// nothing under that tree changed between them — the basis for detecting
+/// a [`Plan`] gone stale (ADR 0027 §6) between when [`build_plan`] read
+/// current state and when a caller later commits it.
+pub(crate) fn state_fingerprint(root: &Path) -> io::Result<String> {
+    let knowledge_root = root.join(".markharness/knowledge");
+    let mut entries: Vec<(String, String)> = Vec::new();
+    collect_knowledge_files(&knowledge_root, &knowledge_root, &mut entries)?;
+    entries.sort();
+    let mut hasher = DefaultHasher::new();
+    entries.hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+fn collect_knowledge_files(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<(String, String)>,
+) -> io::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_knowledge_files(root, &path, out)?;
+        } else {
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push((relative, fs::read_to_string(&path)?));
+        }
+    }
+    Ok(())
 }
 
 /// Why [`build_plan`] could not produce a [`Plan`].
@@ -145,6 +194,7 @@ impl From<io::Error> for PlanError {
 }
 
 pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> {
+    let fingerprint = state_fingerprint(root)?;
     let mut diagnostics = Vec::new();
     let mut requirement_outcomes = Vec::new();
     let mut requirement_uid_by_key: HashMap<&str, String> = HashMap::new();
@@ -180,6 +230,7 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
         requirements: requirement_outcomes,
         features: feature_outcomes,
         scenario_updates,
+        state_fingerprint: Some(fingerprint),
     })
 }
 
@@ -723,6 +774,13 @@ fn plan_new_behaviors(
             ));
             continue;
         };
+        let procedures: std::collections::BTreeMap<String, knowledge::Procedure> = behavior
+            .procedures
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| (p.name, knowledge::Procedure { steps: p.steps }))
+            .collect();
         let uid = ulid::Ulid::new().to_string();
         let canonical = Behavior {
             id: id.clone(),
@@ -730,10 +788,11 @@ fn plan_new_behaviors(
             label: behavior.label.clone().unwrap_or_else(|| id.clone()),
             axis: behavior.axis.clone().unwrap_or_default(),
             description: description.clone(),
-            procedures: std::collections::BTreeMap::new(),
+            procedures: procedures.clone(),
             uid: Some(uid.clone()),
         };
-        let scenarios = plan_new_scenarios(&location, id, &behavior.scenarios, diagnostics)?;
+        let scenarios =
+            plan_new_scenarios(&location, id, &procedures, &behavior.scenarios, diagnostics)?;
         planned.push(NewBehavior {
             uid,
             canonical,
@@ -746,6 +805,7 @@ fn plan_new_behaviors(
 fn plan_new_scenarios(
     behavior_location: &str,
     behavior_id: &str,
+    behavior_procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
     scenarios: &[super::intent::ScenarioIntent],
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Vec<NewScenario>, PlanError> {
@@ -790,13 +850,20 @@ fn plan_new_scenarios(
             ));
             continue;
         }
+        let converted_phases: Vec<KnowledgePhase> = phases.into_iter().map(convert_phase).collect();
+        if let Some(diagnostic) =
+            check_procedure_references(&location, behavior_procedures, &converted_phases)
+        {
+            diagnostics.push(diagnostic);
+            continue;
+        }
         let uid = ulid::Ulid::new().to_string();
         let canonical = Scenario {
             id: id.clone(),
             behavior: behavior_id.to_string(),
             label: scenario.label.clone().unwrap_or_else(|| id.clone()),
             description: description.clone(),
-            phases: phases.into_iter().map(convert_phase).collect(),
+            phases: converted_phases,
             implementation_note: None,
             generated_by: None,
             verified_by: None,
@@ -907,6 +974,14 @@ fn plan_scenario_reparents(
                     continue;
                 }
             };
+            if let Some(diagnostic) = check_procedure_references(
+                &scenario_location,
+                &current_behavior.procedures,
+                &candidate.phases,
+            ) {
+                diagnostics.push(diagnostic);
+                continue;
+            }
             let new_path = super::paths::scenario_path(
                 root,
                 feature_current_id,
@@ -989,6 +1064,33 @@ fn apply_scenario_patch(
         verified_by: current.verified_by.clone(),
         uid: current.uid.clone(),
     })
+}
+
+/// Checks every `use:` step against the owning Behavior's `procedures` map
+/// (ADR 0027 §7 `invalid_procedure_reference`). `BehaviorIntent` has no
+/// `procedures` field yet (see this module's own doc comment / Notes), so
+/// a brand-new Behavior always has an empty map — any `use:` step under a
+/// newly created Scenario is therefore unresolvable by construction, not
+/// just a possible mistake.
+fn check_procedure_references(
+    location: &str,
+    procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
+    phases: &[KnowledgePhase],
+) -> Option<Diagnostic> {
+    for (i, phase) in phases.iter().enumerate() {
+        for (j, step) in phase.steps.iter().enumerate() {
+            if let KnowledgeStepItem::Use { procedure } = step
+                && !procedures.contains_key(procedure)
+            {
+                return Some(Diagnostic::new(
+                    DiagnosticCode::InvalidProcedureReference,
+                    format!("{location}.phases[{i}].steps[{j}]"),
+                    format!("no procedure named '{procedure}' is defined on this Behavior"),
+                ));
+            }
+        }
+    }
+    None
 }
 
 fn convert_phase(phase: PhaseIntent) -> KnowledgePhase {
@@ -2018,5 +2120,159 @@ features:
             }
             other => panic!("expected Diagnostics, got {other:?}"),
         }
+    }
+
+    /// A brand-new Behavior always starts with an empty `procedures` map —
+    /// `BehaviorIntent` has no field to populate it yet (see this module's
+    /// doc comment) — so a `use:` step under a Scenario nested in the same
+    /// new Behavior can never resolve.
+    #[test]
+    fn a_new_scenarios_use_step_referencing_an_undefined_procedure_is_rejected() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - use: validate_title
+                results:
+                  - No TODO is added
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(
+                    diagnostics[0].code,
+                    DiagnosticCode::InvalidProcedureReference
+                );
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    /// ADR 0027 §5's value-collection replace rule applies to a Behavior's
+    /// `procedures` the same as `axis`/`contributes_to`; declaring one on a
+    /// brand-new Behavior makes it immediately usable by a `use:` step in
+    /// a Scenario nested under that same Behavior in this Intent — the
+    /// same capability `knowledge_draft`'s `apply_draft` already has for a
+    /// new Behavior (never for an existing one, which is why this stays
+    /// scoped to `plan_new_behaviors`).
+    #[test]
+    fn a_new_behaviors_procedures_are_usable_by_a_use_step_in_its_own_new_scenario() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        procedures:
+          - name: validate_title
+            steps: [Check the title is non-empty]
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - use: validate_title
+                results:
+                  - No TODO is added
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let feature = &plan.features[0];
+        let FeatureOutcome::New { behaviors, .. } = feature else {
+            panic!("expected a New Feature outcome");
+        };
+        assert_eq!(behaviors[0].canonical.procedures.len(), 1);
+        assert!(
+            behaviors[0]
+                .canonical
+                .procedures
+                .contains_key("validate_title")
+        );
+        assert_eq!(behaviors[0].scenarios.len(), 1);
+    }
+
+    /// An existing Scenario patched/reparented under a UID-selected
+    /// Behavior must resolve `use:` steps against *that* Behavior's actual
+    /// `procedures` map, not an empty one — this is the same check as the
+    /// new-Scenario case above, but exercised on the reparent/patch path.
+    #[test]
+    fn a_patched_scenarios_use_step_referencing_an_undefined_procedure_is_rejected() {
+        let (dir, feature_uid, capture_uid, _review_uid, scenario_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        scenarios:
+          - uid: {scenario_uid}
+            phases:
+              - steps:
+                  - use: validate_title
+                results:
+                  - No TODO is added
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(
+                    diagnostics[0].code,
+                    DiagnosticCode::InvalidProcedureReference
+                );
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    /// `Plan::default()` (hand-built, not from [`build_plan`]) carries no
+    /// fingerprint to compare against — there is nothing to detect
+    /// staleness *from* — so [`state_fingerprint`] itself, and the
+    /// `None` case, must not be confused with "unchanged".
+    #[test]
+    fn build_plan_populates_a_state_fingerprint_that_changes_when_the_knowledge_tree_does() {
+        let dir = init_project();
+        let empty_doc =
+            parse_intent("format: markharness/knowledge-intent/v1\nmode: merge\n").unwrap();
+        let before = build_plan(dir.path(), &empty_doc).unwrap();
+        assert!(before.state_fingerprint.is_some());
+
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/requirements/todo")).unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+            "id: todo\nsource: native\nlabel: TODO\naxis: []\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n",
+        )
+        .unwrap();
+
+        let after = build_plan(dir.path(), &empty_doc).unwrap();
+        assert_ne!(before.state_fingerprint, after.state_fingerprint);
+
+        let unchanged = build_plan(dir.path(), &empty_doc).unwrap();
+        assert_eq!(after.state_fingerprint, unchanged.state_fingerprint);
     }
 }

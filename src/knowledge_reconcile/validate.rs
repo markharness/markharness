@@ -26,6 +26,7 @@ fn looks_like_uid(value: &str) -> bool {
 pub fn validate_static(doc: &IntentDocument, known_axes: &HashSet<String>) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     check_duplicate_keys(doc, &mut diagnostics);
+    check_duplicate_uids(doc, &mut diagnostics);
     check_unknown_local_references(doc, &mut diagnostics);
     check_unknown_axes(doc, known_axes, &mut diagnostics);
     diagnostics
@@ -64,6 +65,56 @@ fn check_duplicate_keys(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
                 &mut seen,
                 out,
             );
+        }
+    }
+}
+
+/// A `uid` names one existing element to select; the same Intent naming it
+/// twice (even under different `key`s or nesting) is an ambiguous
+/// instruction — there is no rule for which occurrence's fields should
+/// win — so this is rejected statically rather than left to whichever
+/// state-dependent pass runs last.
+fn record_uid<'a>(
+    uid: &'a Option<String>,
+    location: String,
+    seen: &mut HashSet<&'a str>,
+    out: &mut Vec<Diagnostic>,
+) {
+    let Some(uid) = uid.as_deref() else {
+        return;
+    };
+    if !seen.insert(uid) {
+        out.push(Diagnostic::new(
+            DiagnosticCode::DuplicateUid,
+            location,
+            format!("uid '{uid}' is referenced by more than one element in this Intent"),
+        ));
+    }
+}
+
+fn check_duplicate_uids(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
+    let mut seen: HashSet<&str> = HashSet::new();
+
+    for (i, req) in doc.requirements.iter().enumerate() {
+        record_uid(&req.uid, format!("requirements[{i}].uid"), &mut seen, out);
+    }
+    for (i, feature) in doc.features.iter().enumerate() {
+        record_uid(&feature.uid, format!("features[{i}].uid"), &mut seen, out);
+        for (j, behavior) in feature.behaviors.iter().enumerate() {
+            record_uid(
+                &behavior.uid,
+                format!("features[{i}].behaviors[{j}].uid"),
+                &mut seen,
+                out,
+            );
+            for (k, scenario) in behavior.scenarios.iter().enumerate() {
+                record_uid(
+                    &scenario.uid,
+                    format!("features[{i}].behaviors[{j}].scenarios[{k}].uid"),
+                    &mut seen,
+                    out,
+                );
+            }
         }
     }
 }
@@ -207,6 +258,45 @@ features:
         let diagnostics = validate_static(&doc, &axes(&[]));
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagnosticCode::DuplicateKey);
+    }
+
+    #[test]
+    fn detects_duplicate_uid_across_requirements() {
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    label: A
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    label: B
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc, &axes(&[]));
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagnosticCode::DuplicateUid);
+        assert_eq!(diagnostics[0].location, "requirements[1].uid");
+    }
+
+    #[test]
+    fn detects_duplicate_uid_across_different_kinds() {
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    label: A
+
+features:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    label: B
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc, &axes(&[]));
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagnosticCode::DuplicateUid);
     }
 
     #[test]

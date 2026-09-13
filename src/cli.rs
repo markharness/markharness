@@ -20,7 +20,9 @@ use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, Dra
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
 use crate::knowledge_reconcile::diagnostics::Diagnostic as ReconcileDiagnostic;
-use crate::knowledge_reconcile::execute::{ReconcileError, ReconcileOutcome, reconcile_creation};
+use crate::knowledge_reconcile::execute::{
+    ReconcileError, ReconcileOutcome, check_creation, reconcile_creation,
+};
 use crate::knowledge_reconcile::intent::{IntentParseError, parse_intent};
 use crate::knowledge_reconcile::validate::validate_static;
 use crate::lineage;
@@ -608,6 +610,9 @@ pub enum KnowledgeCommand {
         /// Write to this path instead of stdout. Refuses to overwrite an existing file.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Print a blank Knowledge Intent (ADR 0027) for `knowledge reconcile` instead of the older draft chain
+        #[arg(long)]
+        intent: bool,
     },
     /// Validate a draft YAML file without writing anything
     Validate {
@@ -655,6 +660,9 @@ pub enum KnowledgeCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+        /// Build and report the mutation plan without writing anything (ADR 0027 §6)
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -733,19 +741,32 @@ pub fn run(cli: Cli) -> io::Result<()> {
             presentation::emit(JsonPresenter.present(&outcome))?;
             Ok(())
         }
-        Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {
-            Some(out) => match knowledge_edit::write_scaffold(&out) {
-                Ok(()) => Ok(()),
-                Err(e) => {
-                    eprintln!("error: cannot write {}: {e}", out.display());
-                    std::process::exit(2);
+        Command::Knowledge(KnowledgeCommand::Scaffold { out, intent }) => {
+            let (write, template): (fn(&Path) -> io::Result<()>, &str) = if intent {
+                (
+                    crate::knowledge_reconcile::write_intent_scaffold,
+                    crate::knowledge_reconcile::INTENT_TEMPLATE,
+                )
+            } else {
+                (
+                    knowledge_edit::write_scaffold,
+                    knowledge_edit::EDIT_TEMPLATE,
+                )
+            };
+            match out {
+                Some(out) => match write(&out) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        eprintln!("error: cannot write {}: {e}", out.display());
+                        std::process::exit(2);
+                    }
+                },
+                None => {
+                    print!("{template}");
+                    Ok(())
                 }
-            },
-            None => {
-                print!("{}", knowledge_edit::EDIT_TEMPLATE);
-                Ok(())
             }
-        },
+        }
         Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             if edit {
@@ -834,6 +855,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             intent_file,
             dir,
             json,
+            check,
         }) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let yaml = fs::read_to_string(&intent_file)?;
@@ -856,9 +878,21 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 report_reconcile_diagnostics(&diagnostics, json);
                 unreachable!("report_reconcile_diagnostics exits the process on error");
             }
-            match reconcile_creation(&root, &doc) {
+            let result = if check {
+                check_creation(&root, &doc)
+            } else {
+                reconcile_creation(&root, &doc)
+            };
+            match result {
                 Ok(outcome) => {
                     report_reconcile_outcome(&outcome, json);
+                    // ADR 0027 §6: `--check` returns a dedicated exit code
+                    // when the plan would change anything, so scripts can
+                    // tell "no changes needed" apart from "changes pending"
+                    // without parsing output.
+                    if check && (!outcome.created.is_empty() || !outcome.updated.is_empty()) {
+                        std::process::exit(4);
+                    }
                     Ok(())
                 }
                 Err(ReconcileError::Diagnostics(diagnostics)) => {
