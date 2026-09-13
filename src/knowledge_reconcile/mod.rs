@@ -10,7 +10,8 @@ pub mod validate;
 
 pub use diagnostics::{Diagnostic, DiagnosticCode};
 pub use execute::{
-    CreatedElement, ExecuteError, ReconcileError, execute_creation_plan, reconcile_creation,
+    CreatedElement, ExecuteError, ReconcileError, ReconcileOutcome, UnchangedElement,
+    UpdatedElement, execute_creation_plan, reconcile_creation,
 };
 pub use intent::{IntentDocument, IntentParseError};
 pub use plan::{Plan, PlanError, build_plan};

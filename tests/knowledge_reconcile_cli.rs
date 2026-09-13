@@ -147,7 +147,7 @@ fn valid_intent_writes_canonical_knowledge_files_with_uid_embedded() {
 }
 
 #[test]
-fn rerunning_reconcile_against_an_already_created_requirement_reports_ambiguous_identity() {
+fn rerunning_the_same_intent_reports_unchanged() {
     let dir = setup_root_with_axes(&["functional"]);
     let intent_file = write_intent(&dir, VALID_INTENT);
 
@@ -164,6 +164,39 @@ fn rerunning_reconcile_against_an_already_created_requirement_reports_ambiguous_
         "knowledge",
         "reconcile",
         intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert!(second.status.success());
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("\"kind\":\"requirement\""), "{stdout}");
+    assert!(stdout.contains("\"unchanged\""), "{stdout}");
+}
+
+#[test]
+fn rerunning_with_different_content_for_the_same_id_reports_ambiguous_identity() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+
+    let first = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert!(first.status.success());
+
+    let changed_intent = write_intent(
+        &dir,
+        &VALID_INTENT.replace("TODO management", "TODO management (changed)"),
+    );
+    let second = run(&[
+        "knowledge",
+        "reconcile",
+        changed_intent.to_str().unwrap(),
         "--dir",
         dir.path().to_str().unwrap(),
         "--json",
@@ -316,6 +349,69 @@ requirements:
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"code\":\"unknown_axis\""), "{stdout}");
+}
+
+#[test]
+fn uid_selected_patch_updates_label_and_reports_updated() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+
+    let first = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(first.status.success());
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).expect("valid json");
+    let requirement_uid = first_json["created"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "requirement")
+        .unwrap()["uid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let patch_intent = write_intent(
+        &dir,
+        &format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: {requirement_uid}
+    label: TODO management (updated)
+"
+        ),
+    );
+    let second = run(&[
+        "knowledge",
+        "reconcile",
+        patch_intent.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert!(second.status.success());
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("\"updated\""), "{stdout}");
+
+    let content = fs::read_to_string(
+        dir.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge/requirements/todo/requirement.yml"),
+    )
+    .unwrap();
+    assert!(
+        content.contains("label: TODO management (updated)"),
+        "{content}"
+    );
 }
 
 #[test]

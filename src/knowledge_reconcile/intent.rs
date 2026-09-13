@@ -110,7 +110,7 @@ pub struct ScenarioIntent {
     pub phases: Option<Vec<PhaseIntent>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PhaseIntent {
     #[serde(default)]
     pub steps: Vec<StepIntent>,
@@ -118,7 +118,7 @@ pub struct PhaseIntent {
     pub results: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum StepIntent {
     Action {

@@ -1,24 +1,54 @@
-//! Commits a [`Plan`] atomically (ADR 0027 §1 step 7): every new element's
-//! identity event and canonical Knowledge file land as one batch, reusing
-//! `identity::recovery`'s existing staging + roll-forward protocol (ADR
-//! 0028 §2 keeps that infra shared rather than duplicated) instead of a
-//! bespoke crash-recovery mechanism.
+//! Commits a [`Plan`] atomically (ADR 0027 §1 step 7): every new or
+//! renamed element's identity event and canonical Knowledge file land as
+//! one batch, reusing `identity::recovery`'s existing staging +
+//! roll-forward protocol (ADR 0028 §2 keeps that infra shared rather than
+//! duplicated) instead of a bespoke crash-recovery mechanism. A pure
+//! content-only patch (no id change) carries no identity event — content
+//! fields are not part of the immutable identity model's own history, only
+//! id/uid lifecycle is — so it is written directly, mirroring
+//! `feature_ops::write_feature_fixups`'s existing precedent for the same
+//! kind of write.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::identity::{EntityKind, IdentityEvent, IdentityMutation, feature_ops, recovery};
+use crate::identity::{
+    EntityKind, IdentityEvent, IdentityMutation, feature_ops, recovery, registry,
+};
 use crate::knowledge;
 use crate::time::iso8601_utc_now;
 
 use super::intent::IntentDocument;
-use super::plan::{Plan, PlanError, build_plan};
+use super::plan::{FeatureOutcome, Plan, PlanError, RequirementOutcome, build_plan};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedElement {
     pub kind: EntityKind,
     pub uid: String,
     pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdatedElement {
+    pub kind: EntityKind,
+    pub uid: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnchangedElement {
+    pub kind: EntityKind,
+    pub uid: String,
+    pub id: String,
+}
+
+/// `knowledge reconcile`'s result (ADR 0027 §7: `--json` returns at least
+/// `created`/`updated`/`unchanged`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReconcileOutcome {
+    pub created: Vec<CreatedElement>,
+    pub updated: Vec<UpdatedElement>,
+    pub unchanged: Vec<UnchangedElement>,
 }
 
 #[derive(Debug)]
@@ -68,22 +98,23 @@ fn relative_path_string(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// The safe entry point for ADR 0027 Phase 2: builds the creation plan
-/// against current state and commits it under one continuous hold of the
-/// identity lock, exactly like `feature_ops::rename_id`/
-/// `resolve_divergence`/`migrate_entities` do for their own state reads.
+/// The safe entry point ADR 0027 requires: builds the plan against current
+/// state and commits it under one continuous hold of the identity lock,
+/// exactly like `feature_ops::rename_id`/`resolve_divergence`/
+/// `migrate_entities` do for their own state reads.
 ///
 /// Building a [`Plan`] with [`build_plan`] and only *later* calling
 /// [`execute_creation_plan`] — as an earlier version of this module's CLI
 /// caller did — reopens the TOCTOU gap those functions' own doc comments
 /// warn about: a second `reconcile` (or any other identity operation)
-/// could create a same-id element between the unlocked state read and the
-/// eventual commit, and this module would then overwrite it. Call this
-/// function instead of that two-step sequence for any real repository.
+/// could create or change a same-id element between the unlocked state
+/// read and the eventual commit, and this module would then overwrite it.
+/// Call this function instead of that two-step sequence for any real
+/// repository.
 pub fn reconcile_creation(
     root: &Path,
     doc: &IntentDocument,
-) -> Result<Vec<CreatedElement>, ReconcileError> {
+) -> Result<ReconcileOutcome, ReconcileError> {
     let held_lock = match recovery::run_startup_recovery(root, |intent| {
         feature_ops::roll_forward(root, intent)
     })? {
@@ -100,9 +131,9 @@ pub fn reconcile_creation(
     outcome
 }
 
-/// Commits every new element in `plan` as one crash-recoverable batch and
-/// returns what was created. An empty plan writes nothing and returns an
-/// empty list.
+/// Commits `plan` as one crash-recoverable batch (new/renamed elements)
+/// plus any pure content-only patches (written directly, no event) and
+/// returns what changed. An empty plan writes nothing.
 ///
 /// Acquires the identity lock itself, but — unlike [`reconcile_creation`]
 /// — does *not* re-check current state under that lock: `plan` was already
@@ -113,10 +144,7 @@ pub fn reconcile_creation(
 /// mutate the same repository between `build_plan` and this call (e.g. a
 /// test against an isolated, single-threaded fixture); production callers
 /// must use [`reconcile_creation`] instead.
-pub fn execute_creation_plan(
-    root: &Path,
-    plan: &Plan,
-) -> Result<Vec<CreatedElement>, ExecuteError> {
+pub fn execute_creation_plan(root: &Path, plan: &Plan) -> Result<ReconcileOutcome, ExecuteError> {
     // Reusing the exact lock `run_startup_recovery` acquired for the
     // check-and-commit below (rather than releasing and reacquiring) keeps
     // recovery and this operation as one continuous critical section — see
@@ -135,95 +163,311 @@ pub fn execute_creation_plan(
     outcome
 }
 
-fn commit_plan(root: &Path, plan: &Plan) -> io::Result<Vec<CreatedElement>> {
-    if plan.is_empty() {
-        return Ok(Vec::new());
-    }
+fn push_issued(
+    batch_events: &mut Vec<recovery::BatchEvent>,
+    kind: EntityKind,
+    uid: &str,
+    id: &str,
+    recorded_at: &str,
+) -> io::Result<()> {
+    let event_uid = ulid::Ulid::new().to_string();
+    let event = IdentityEvent {
+        identity_event_uid: event_uid.clone(),
+        entity_uid: uid.to_string(),
+        entity_kind: kind,
+        previous_identity_event_uid: None,
+        previous_identity_event_uids: Vec::new(),
+        recorded_at: recorded_at.to_string(),
+        mutation: IdentityMutation::Issued { id: id.to_string() },
+    };
+    batch_events.push(recovery::BatchEvent {
+        entity_kind: kind,
+        entity_uid: uid.to_string(),
+        identity_event_uid: event_uid,
+        event_yaml: serde_yaml_ng::to_string(&event).map_err(io::Error::other)?,
+    });
+    Ok(())
+}
 
+fn push_renamed(
+    root: &Path,
+    batch_events: &mut Vec<recovery::BatchEvent>,
+    kind: EntityKind,
+    uid: &str,
+    from_id: &str,
+    to_id: &str,
+    recorded_at: &str,
+) -> io::Result<()> {
+    let replay = registry::resolve_from_working_tree(root, kind, uid)?
+        .map_err(|e| io::Error::other(format!("{e:?}")))?;
+    let event_uid = ulid::Ulid::new().to_string();
+    let event = IdentityEvent {
+        identity_event_uid: event_uid.clone(),
+        entity_uid: uid.to_string(),
+        entity_kind: kind,
+        previous_identity_event_uid: Some(replay.current_head_event_uid),
+        previous_identity_event_uids: Vec::new(),
+        recorded_at: recorded_at.to_string(),
+        mutation: IdentityMutation::Renamed {
+            from_id: from_id.to_string(),
+            to_id: to_id.to_string(),
+        },
+    };
+    batch_events.push(recovery::BatchEvent {
+        entity_kind: kind,
+        entity_uid: uid.to_string(),
+        identity_event_uid: event_uid,
+        event_yaml: serde_yaml_ng::to_string(&event).map_err(io::Error::other)?,
+    });
+    Ok(())
+}
+
+fn pending_file(root: &Path, path: &Path, contents: String) -> recovery::PendingKnowledgeFile {
+    recovery::PendingKnowledgeFile {
+        relative_path: relative_path_string(root, path),
+        contents,
+    }
+}
+
+fn requirement_path(root: &Path, id: &str) -> PathBuf {
+    root.join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge")
+        .join("requirements")
+        .join(id)
+        .join("requirement.yml")
+}
+
+fn feature_path(root: &Path, id: &str) -> PathBuf {
+    root.join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge")
+        .join("features")
+        .join(id)
+        .join("feature.yml")
+}
+
+fn behavior_path(root: &Path, feature_id: &str, behavior_id: &str) -> PathBuf {
+    root.join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge")
+        .join("features")
+        .join(feature_id)
+        .join(behavior_id)
+        .join("behavior.yml")
+}
+
+fn scenario_path(root: &Path, feature_id: &str, behavior_id: &str, scenario_id: &str) -> PathBuf {
+    root.join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge")
+        .join("features")
+        .join(feature_id)
+        .join(behavior_id)
+        .join(scenario_id)
+        .join("scenario.yml")
+}
+
+fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
     let recorded_at = iso8601_utc_now();
     let mut batch_events = Vec::new();
     let mut files = Vec::new();
-    let mut created = Vec::new();
+    let mut direct_writes: Vec<(PathBuf, String)> = Vec::new();
+    let mut outcome = ReconcileOutcome::default();
 
-    for req in &plan.new_requirements {
-        let event_uid = ulid::Ulid::new().to_string();
-        let event = IdentityEvent {
-            identity_event_uid: event_uid.clone(),
-            entity_uid: req.uid.clone(),
-            entity_kind: EntityKind::Requirement,
-            previous_identity_event_uid: None,
-            previous_identity_event_uids: Vec::new(),
-            recorded_at: recorded_at.clone(),
-            mutation: IdentityMutation::Issued { id: req.id.clone() },
-        };
-        batch_events.push(recovery::BatchEvent {
-            entity_kind: EntityKind::Requirement,
-            entity_uid: req.uid.clone(),
-            identity_event_uid: event_uid,
-            event_yaml: serde_yaml_ng::to_string(&event).map_err(io::Error::other)?,
-        });
-        let path = root
-            .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join("requirements")
-            .join(&req.id)
-            .join("requirement.yml");
-        files.push(recovery::PendingKnowledgeFile {
-            relative_path: relative_path_string(root, &path),
-            contents: knowledge::serialize_requirement(&req.to_canonical()),
-        });
-        created.push(CreatedElement {
-            kind: EntityKind::Requirement,
-            uid: req.uid.clone(),
-            id: req.id.clone(),
-        });
+    for req in &plan.requirements {
+        match req {
+            RequirementOutcome::New { uid, canonical } => {
+                push_issued(
+                    &mut batch_events,
+                    EntityKind::Requirement,
+                    uid,
+                    &canonical.id,
+                    &recorded_at,
+                )?;
+                let path = requirement_path(root, &canonical.id);
+                files.push(pending_file(
+                    root,
+                    &path,
+                    knowledge::serialize_requirement(canonical),
+                ));
+                outcome.created.push(CreatedElement {
+                    kind: EntityKind::Requirement,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+            }
+            RequirementOutcome::Unchanged { uid, id } => {
+                outcome.unchanged.push(UnchangedElement {
+                    kind: EntityKind::Requirement,
+                    uid: uid.clone(),
+                    id: id.clone(),
+                });
+            }
+            RequirementOutcome::Updated {
+                uid,
+                before_id,
+                canonical,
+                existing_path,
+            } => {
+                if &canonical.id != before_id {
+                    push_renamed(
+                        root,
+                        &mut batch_events,
+                        EntityKind::Requirement,
+                        uid,
+                        before_id,
+                        &canonical.id,
+                        &recorded_at,
+                    )?;
+                    files.push(pending_file(
+                        root,
+                        existing_path,
+                        knowledge::serialize_requirement(canonical),
+                    ));
+                } else {
+                    direct_writes.push((
+                        existing_path.clone(),
+                        knowledge::serialize_requirement(canonical),
+                    ));
+                }
+                outcome.updated.push(UpdatedElement {
+                    kind: EntityKind::Requirement,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+            }
+        }
     }
 
-    for feature in &plan.new_features {
-        let event_uid = ulid::Ulid::new().to_string();
-        let event = IdentityEvent {
-            identity_event_uid: event_uid.clone(),
-            entity_uid: feature.uid.clone(),
-            entity_kind: EntityKind::Feature,
-            previous_identity_event_uid: None,
-            previous_identity_event_uids: Vec::new(),
-            recorded_at: recorded_at.clone(),
-            mutation: IdentityMutation::Issued {
-                id: feature.id.clone(),
-            },
-        };
-        batch_events.push(recovery::BatchEvent {
-            entity_kind: EntityKind::Feature,
-            entity_uid: feature.uid.clone(),
-            identity_event_uid: event_uid,
-            event_yaml: serde_yaml_ng::to_string(&event).map_err(io::Error::other)?,
-        });
-        let path = root
-            .join(crate::project_root::MARKHARNESS_DIR)
-            .join("knowledge")
-            .join("features")
-            .join(&feature.id)
-            .join("feature.yml");
-        files.push(recovery::PendingKnowledgeFile {
-            relative_path: relative_path_string(root, &path),
-            contents: knowledge::serialize_feature(&feature.to_canonical()),
-        });
-        created.push(CreatedElement {
-            kind: EntityKind::Feature,
-            uid: feature.uid.clone(),
-            id: feature.id.clone(),
-        });
+    for feature in &plan.features {
+        match feature {
+            FeatureOutcome::New {
+                uid,
+                canonical,
+                behaviors,
+            } => {
+                push_issued(
+                    &mut batch_events,
+                    EntityKind::Feature,
+                    uid,
+                    &canonical.id,
+                    &recorded_at,
+                )?;
+                let path = feature_path(root, &canonical.id);
+                files.push(pending_file(
+                    root,
+                    &path,
+                    knowledge::serialize_feature(canonical),
+                ));
+                outcome.created.push(CreatedElement {
+                    kind: EntityKind::Feature,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+
+                for behavior in behaviors {
+                    push_issued(
+                        &mut batch_events,
+                        EntityKind::Behavior,
+                        &behavior.uid,
+                        &behavior.canonical.id,
+                        &recorded_at,
+                    )?;
+                    let behavior_path = behavior_path(root, &canonical.id, &behavior.canonical.id);
+                    files.push(pending_file(
+                        root,
+                        &behavior_path,
+                        knowledge::serialize_behavior(&behavior.canonical),
+                    ));
+                    outcome.created.push(CreatedElement {
+                        kind: EntityKind::Behavior,
+                        uid: behavior.uid.clone(),
+                        id: behavior.canonical.id.clone(),
+                    });
+
+                    for scenario in &behavior.scenarios {
+                        push_issued(
+                            &mut batch_events,
+                            EntityKind::Scenario,
+                            &scenario.uid,
+                            &scenario.canonical.id,
+                            &recorded_at,
+                        )?;
+                        let scenario_path = scenario_path(
+                            root,
+                            &canonical.id,
+                            &behavior.canonical.id,
+                            &scenario.canonical.id,
+                        );
+                        files.push(pending_file(
+                            root,
+                            &scenario_path,
+                            knowledge::serialize_scenario(&scenario.canonical),
+                        ));
+                        outcome.created.push(CreatedElement {
+                            kind: EntityKind::Scenario,
+                            uid: scenario.uid.clone(),
+                            id: scenario.canonical.id.clone(),
+                        });
+                    }
+                }
+            }
+            FeatureOutcome::Unchanged { uid, id } => {
+                outcome.unchanged.push(UnchangedElement {
+                    kind: EntityKind::Feature,
+                    uid: uid.clone(),
+                    id: id.clone(),
+                });
+            }
+            FeatureOutcome::Updated {
+                uid,
+                before_id,
+                canonical,
+                existing_path,
+            } => {
+                if &canonical.id != before_id {
+                    push_renamed(
+                        root,
+                        &mut batch_events,
+                        EntityKind::Feature,
+                        uid,
+                        before_id,
+                        &canonical.id,
+                        &recorded_at,
+                    )?;
+                    files.push(pending_file(
+                        root,
+                        existing_path,
+                        knowledge::serialize_feature(canonical),
+                    ));
+                } else {
+                    direct_writes.push((
+                        existing_path.clone(),
+                        knowledge::serialize_feature(canonical),
+                    ));
+                }
+                outcome.updated.push(UpdatedElement {
+                    kind: EntityKind::Feature,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+            }
+        }
     }
 
-    let intent = recovery::begin_batch_with_payload(
-        root,
-        batch_events,
-        Some(recovery::IntentPayload::KnowledgeReconcile(files)),
-    )?;
-    recovery::commit_batch(root, &intent)?;
-    feature_ops::roll_forward(root, &intent)?;
-    recovery::finish(root, &intent)?;
-    Ok(created)
+    if !batch_events.is_empty() {
+        let intent = recovery::begin_batch_with_payload(
+            root,
+            batch_events,
+            Some(recovery::IntentPayload::KnowledgeReconcile(files)),
+        )?;
+        recovery::commit_batch(root, &intent)?;
+        feature_ops::roll_forward(root, &intent)?;
+        recovery::finish(root, &intent)?;
+    }
+
+    for (path, contents) in direct_writes {
+        crate::fs_safety::replace_file(root, &path, contents.as_bytes())?;
+    }
+
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -275,8 +519,8 @@ requirements:
         );
 
         held_lock.release().unwrap();
-        let created = reconcile_creation(dir.path(), &doc).unwrap();
-        assert_eq!(created.len(), 1);
+        let outcome = reconcile_creation(dir.path(), &doc).unwrap();
+        assert_eq!(outcome.created.len(), 1);
     }
 
     /// Two real concurrent callers racing the exact same creation must
@@ -291,13 +535,12 @@ requirements:
         let root = dir.path();
         const ATTEMPTS: usize = 4;
         let barrier = std::sync::Barrier::new(ATTEMPTS);
-        let results: Vec<Result<Vec<CreatedElement>, ReconcileError>> =
-            std::thread::scope(|scope| {
-                let barrier = &barrier;
-                let handles: Vec<_> = (0..ATTEMPTS)
-                    .map(|_| {
-                        scope.spawn(move || {
-                            let yaml = "\
+        let results: Vec<Result<ReconcileOutcome, ReconcileError>> = std::thread::scope(|scope| {
+            let barrier = &barrier;
+            let handles: Vec<_> = (0..ATTEMPTS)
+                .map(|_| {
+                    scope.spawn(move || {
+                        let yaml = "\
 format: markharness/knowledge-intent/v1
 mode: merge
 
@@ -307,19 +550,19 @@ requirements:
     label: TODO management
     axis: []
 ";
-                            let doc = parse_intent(yaml).unwrap();
-                            barrier.wait();
-                            reconcile_creation(root, &doc)
-                        })
+                        let doc = parse_intent(yaml).unwrap();
+                        barrier.wait();
+                        reconcile_creation(root, &doc)
                     })
-                    .collect();
-                handles.into_iter().map(|h| h.join().unwrap()).collect()
-            });
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
 
         let successes: Vec<_> = results
             .iter()
             .filter_map(|r| r.as_ref().ok())
-            .filter(|created| !created.is_empty())
+            .filter(|outcome| !outcome.created.is_empty())
             .collect();
         assert_eq!(
             successes.len(),
@@ -327,10 +570,10 @@ requirements:
             "exactly one concurrent attempt must actually create 'todo', got {results:?}"
         );
 
-        let events = crate::identity::registry::load_events_from_working_tree(
+        let events = registry::load_events_from_working_tree(
             root,
             EntityKind::Requirement,
-            &successes[0][0].uid,
+            &successes[0].created[0].uid,
         )
         .unwrap();
         assert_eq!(
@@ -364,8 +607,8 @@ features:
         let doc = parse_intent(yaml).unwrap();
         let plan = build_plan(dir.path(), &doc).unwrap();
 
-        let created = execute_creation_plan(dir.path(), &plan).unwrap();
-        assert_eq!(created.len(), 2);
+        let outcome = execute_creation_plan(dir.path(), &plan).unwrap();
+        assert_eq!(outcome.created.len(), 2);
 
         let requirement_content = std::fs::read_to_string(
             dir.path()
@@ -385,9 +628,52 @@ features:
     }
 
     #[test]
-    fn writes_exactly_one_issued_event_per_new_entity() {
-        use crate::identity::registry;
+    fn creates_nested_behaviors_and_scenarios_under_a_new_feature() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
 
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let outcome = execute_creation_plan(dir.path(), &plan).unwrap();
+        assert_eq!(outcome.created.len(), 3);
+
+        let behavior_content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/add-todo/behavior.yml"),
+        )
+        .unwrap();
+        let behavior = knowledge::parse_behavior(&behavior_content).unwrap();
+        assert!(behavior.uid.is_some());
+
+        let scenario_content = std::fs::read_to_string(dir.path().join(
+            ".markharness/knowledge/features/todo-management/add-todo/empty-title/scenario.yml",
+        ))
+        .unwrap();
+        let scenario = knowledge::parse_scenario(&scenario_content).unwrap();
+        assert!(scenario.uid.is_some());
+        assert_eq!(scenario.behavior, "add-todo");
+    }
+
+    #[test]
+    fn writes_exactly_one_issued_event_per_new_entity() {
         let dir = init_project();
         let yaml = "\
 format: markharness/knowledge-intent/v1
@@ -401,12 +687,12 @@ requirements:
 ";
         let doc = parse_intent(yaml).unwrap();
         let plan = build_plan(dir.path(), &doc).unwrap();
-        let created = execute_creation_plan(dir.path(), &plan).unwrap();
+        let outcome = execute_creation_plan(dir.path(), &plan).unwrap();
 
         let events = registry::load_events_from_working_tree(
             dir.path(),
             EntityKind::Requirement,
-            &created[0].uid,
+            &outcome.created[0].uid,
         )
         .unwrap();
         assert_eq!(events.len(), 1);
@@ -419,9 +705,126 @@ requirements:
     #[test]
     fn an_empty_plan_writes_nothing() {
         let dir = init_project();
-        let created = execute_creation_plan(dir.path(), &Plan::default()).unwrap();
-        assert!(created.is_empty());
+        let outcome = execute_creation_plan(dir.path(), &Plan::default()).unwrap();
+        assert!(outcome.created.is_empty());
         assert!(!dir.path().join(".markharness/identity-events").exists());
+    }
+
+    #[test]
+    fn rerunning_the_same_intent_reports_unchanged_and_writes_nothing_new() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        reconcile_creation(dir.path(), &doc).unwrap();
+
+        let outcome = reconcile_creation(dir.path(), &doc).unwrap();
+        assert!(outcome.created.is_empty());
+        assert_eq!(outcome.unchanged.len(), 1);
+    }
+
+    #[test]
+    fn uid_selected_patch_rewrites_the_existing_file_without_a_new_identity_event() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        let created = reconcile_creation(dir.path(), &doc).unwrap();
+        let uid = created.created[0].uid.clone();
+
+        let patch_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: {uid}
+    label: Renamed label
+"
+        );
+        let patch_doc = parse_intent(&patch_yaml).unwrap();
+        let outcome = reconcile_creation(dir.path(), &patch_doc).unwrap();
+        assert_eq!(outcome.updated.len(), 1);
+
+        let events =
+            registry::load_events_from_working_tree(dir.path(), EntityKind::Requirement, &uid)
+                .unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "a content-only patch adds no identity event"
+        );
+
+        let content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+        )
+        .unwrap();
+        assert!(content.contains("label: Renamed label"));
+    }
+
+    #[test]
+    fn uid_selected_rename_writes_a_renamed_identity_event() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        let created = reconcile_creation(dir.path(), &doc).unwrap();
+        let uid = created.created[0].uid.clone();
+
+        let rename_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: {uid}
+    id: task
+"
+        );
+        let rename_doc = parse_intent(&rename_yaml).unwrap();
+        let outcome = reconcile_creation(dir.path(), &rename_doc).unwrap();
+        assert_eq!(outcome.updated.len(), 1);
+
+        let events =
+            registry::load_events_from_working_tree(dir.path(), EntityKind::Requirement, &uid)
+                .unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|e| matches!(
+            &e.mutation,
+            IdentityMutation::Renamed { from_id, to_id } if from_id == "todo" && to_id == "task"
+        )));
+
+        let content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml"),
+        )
+        .unwrap();
+        assert!(content.contains("id: task"));
     }
 
     /// Simulates a crash after the batch's logical commit point (the first

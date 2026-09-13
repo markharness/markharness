@@ -20,7 +20,7 @@ use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, Dra
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
 use crate::knowledge_reconcile::diagnostics::Diagnostic as ReconcileDiagnostic;
-use crate::knowledge_reconcile::execute::{CreatedElement, ReconcileError, reconcile_creation};
+use crate::knowledge_reconcile::execute::{ReconcileError, ReconcileOutcome, reconcile_creation};
 use crate::knowledge_reconcile::intent::{IntentParseError, parse_intent};
 use crate::knowledge_reconcile::validate::validate_static;
 use crate::lineage;
@@ -857,8 +857,8 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 unreachable!("report_reconcile_diagnostics exits the process on error");
             }
             match reconcile_creation(&root, &doc) {
-                Ok(created) => {
-                    report_reconcile_created(&created, json);
+                Ok(outcome) => {
+                    report_reconcile_outcome(&outcome, json);
                     Ok(())
                 }
                 Err(ReconcileError::Diagnostics(diagnostics)) => {
@@ -2010,28 +2010,52 @@ fn report_reconcile_diagnostics(diagnostics: &[ReconcileDiagnostic], json: bool)
     std::process::exit(1);
 }
 
-/// Reports `knowledge reconcile`'s created elements (ADR 0027 §7: `--json`
-/// returns at least `created`/`updated`/`unchanged`). Phase 2 only ever
-/// produces `created` entries; `updated`/`unchanged` land with Phase 3.
-fn report_reconcile_created(created: &[CreatedElement], json: bool) {
+/// Reports `knowledge reconcile`'s result (ADR 0027 §7: `--json` returns
+/// at least `created`/`updated`/`unchanged`).
+fn report_reconcile_outcome(outcome: &ReconcileOutcome, json: bool) {
+    fn element_to_json(kind: crate::identity::EntityKind, uid: &str, id: &str) -> String {
+        format!(
+            "{{\"kind\":\"{}\",\"uid\":\"{}\",\"id\":\"{}\"}}",
+            kind.as_str(),
+            json_escape(uid),
+            json_escape(id),
+        )
+    }
+
     if json {
-        let items: Vec<String> = created
+        let created: Vec<String> = outcome
+            .created
             .iter()
-            .map(|c| {
-                format!(
-                    "{{\"kind\":\"{}\",\"uid\":\"{}\",\"id\":\"{}\"}}",
-                    c.kind.as_str(),
-                    json_escape(&c.uid),
-                    json_escape(&c.id),
-                )
-            })
+            .map(|c| element_to_json(c.kind, &c.uid, &c.id))
             .collect();
-        println!("{{\"ok\":true,\"created\":[{}]}}", items.join(","));
+        let updated: Vec<String> = outcome
+            .updated
+            .iter()
+            .map(|u| element_to_json(u.kind, &u.uid, &u.id))
+            .collect();
+        let unchanged: Vec<String> = outcome
+            .unchanged
+            .iter()
+            .map(|u| element_to_json(u.kind, &u.uid, &u.id))
+            .collect();
+        println!(
+            "{{\"ok\":true,\"created\":[{}],\"updated\":[{}],\"unchanged\":[{}]}}",
+            created.join(","),
+            updated.join(","),
+            unchanged.join(","),
+        );
     } else {
-        for c in created {
+        for c in &outcome.created {
             println!("created {} '{}' (uid {})", c.kind.as_str(), c.id, c.uid);
         }
-        if created.is_empty() {
+        for u in &outcome.updated {
+            println!("updated {} '{}' (uid {})", u.kind.as_str(), u.id, u.uid);
+        }
+        for u in &outcome.unchanged {
+            println!("unchanged {} '{}' (uid {})", u.kind.as_str(), u.id, u.uid);
+        }
+        if outcome.created.is_empty() && outcome.updated.is_empty() && outcome.unchanged.is_empty()
+        {
             println!("no changes");
         }
     }
