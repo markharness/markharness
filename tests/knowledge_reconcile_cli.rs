@@ -788,3 +788,40 @@ fn missing_intent_file_reports_io_error() {
 
     assert!(!output.status.success());
 }
+
+/// ADR 0028 §1: `--print-template` replaces `knowledge scaffold`, and the
+/// usage it defines takes no other option — an Intent path and the
+/// template are mutually exclusive requests.
+#[test]
+fn print_template_prints_a_blank_knowledge_intent_to_stdout() {
+    let output = run(&["knowledge", "reconcile", "--print-template"]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("format: markharness/knowledge-intent/v1"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("requirements:"), "{stdout}");
+    assert!(stdout.contains("scenarios:"), "{stdout}");
+}
+
+#[test]
+fn reconcile_requires_either_an_intent_file_or_print_template() {
+    let output = run(&["knowledge", "reconcile"]);
+
+    assert!(!output.status.success(), "{output:?}");
+}
+
+#[test]
+fn print_template_cannot_be_combined_with_an_intent_file_or_other_options() {
+    for args in [
+        vec!["knowledge", "reconcile", "--print-template", "intent.yml"],
+        vec!["knowledge", "reconcile", "--print-template", "--check"],
+        vec!["knowledge", "reconcile", "--print-template", "--json"],
+        vec!["knowledge", "reconcile", "--print-template", "--dir", "."],
+    ] {
+        let output = run(&args);
+        assert!(!output.status.success(), "{args:?} -> {output:?}");
+    }
+}

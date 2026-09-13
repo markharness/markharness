@@ -653,7 +653,11 @@ pub enum KnowledgeCommand {
     /// Reconcile a Knowledge Intent against the repository's current state (ADR 0027)
     Reconcile {
         /// Path to the Knowledge Intent YAML file
-        intent_file: PathBuf,
+        #[arg(required_unless_present = "print_template")]
+        intent_file: Option<PathBuf>,
+        /// Print a blank Knowledge Intent template to stdout and exit (ADR 0028 §1)
+        #[arg(long, conflicts_with_all = ["intent_file", "dir", "json", "check"])]
+        print_template: bool,
         /// Target project directory containing knowledge/ and axes/. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -853,10 +857,17 @@ pub fn run(cli: Cli) -> io::Result<()> {
         }
         Command::Knowledge(KnowledgeCommand::Reconcile {
             intent_file,
+            print_template,
             dir,
             json,
             check,
         }) => {
+            if print_template {
+                print!("{}", crate::knowledge_reconcile::INTENT_TEMPLATE);
+                return Ok(());
+            }
+            let intent_file =
+                intent_file.expect("clap requires intent_file unless --print-template is given");
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let yaml = fs::read_to_string(&intent_file)?;
             let doc = match parse_intent(&yaml) {
