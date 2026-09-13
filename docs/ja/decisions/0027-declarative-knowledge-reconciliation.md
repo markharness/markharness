@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted（2026-09-13決定、実装未着手）。
+Accepted（2026-09-13決定）。`knowledge reconcile`本体の機能とcrash-recoverableな原子的保存は実装済みだが、[受け入れ条件](#受け入れ条件)のうち[0028](0028-consolidate-knowledge-authoring-commands.md)の実行と関連文書の更新が未達のため、本ADRはまだ実装完了ではない。
 
 ## 背景
 

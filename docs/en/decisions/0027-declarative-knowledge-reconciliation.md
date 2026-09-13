@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (decided 2026-09-13; implementation not started).
+Accepted (decided 2026-09-13). The `knowledge reconcile` implementation itself and its crash-recoverable atomic save are done, but this ADR is not yet complete: under [Acceptance Criteria](#acceptance-criteria), executing [0028](0028-consolidate-knowledge-authoring-commands.md) and updating the related documentation are still outstanding.
 
 ## Context
 
