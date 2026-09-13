@@ -13,8 +13,8 @@
 //! under a guaranteed-new parent, no such check is needed because the
 //! parent's own directory cannot exist yet.
 
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -91,9 +91,33 @@ pub enum ScenarioOutcome {
     },
     Updated {
         uid: String,
+        /// The `id` before this Intent. Differs from `canonical.id` only
+        /// for a rename, which additionally needs an
+        /// `IdentityMutation::Renamed` event (ADR 0027 §3).
+        before_id: String,
         canonical: Box<Scenario>,
         existing_path: PathBuf,
         new_path: PathBuf,
+    },
+}
+
+/// A child element rewritten solely because its parent's display id
+/// changed: a Behavior stores its Feature's id in `feature:`, a Scenario
+/// its Behavior's in `behavior:`. Renaming a parent without rewriting
+/// these leaves the children pointing at an id nothing has any more, which
+/// later scope checks read as a mismatch. Not selected by the Intent, but
+/// reported as updated because the file really did change.
+#[derive(Debug)]
+pub enum BackReferenceFixup {
+    Behavior {
+        uid: Option<String>,
+        canonical: Box<Behavior>,
+        path: PathBuf,
+    },
+    Scenario {
+        uid: Option<String>,
+        canonical: Box<Scenario>,
+        path: PathBuf,
     },
 }
 
@@ -110,6 +134,8 @@ pub enum BehaviorOutcome {
     },
     Updated {
         uid: String,
+        /// See [`ScenarioOutcome::Updated::before_id`].
+        before_id: String,
         canonical: Box<Behavior>,
         existing_path: PathBuf,
     },
@@ -149,6 +175,9 @@ pub struct Plan {
     /// patched in place (see [`BehaviorOutcome`]). Separate from
     /// `features` for the same reason as `scenario_updates`.
     pub behavior_updates: Vec<BehaviorOutcome>,
+    /// Children the Intent never named, rewritten only to follow a renamed
+    /// parent (see [`BackReferenceFixup`]).
+    pub back_reference_fixups: Vec<BackReferenceFixup>,
     /// A snapshot of `.markharness/knowledge`'s on-disk content taken as
     /// [`build_plan`] started reading it (ADR 0027 §6's `stale_plan`).
     /// `None` for a `Plan` no caller built with [`build_plan`] (e.g.
@@ -198,6 +227,17 @@ fn collect_knowledge_files(
     Ok(())
 }
 
+/// What a Feature's walk contributes to the [`Plan`] besides its own
+/// [`FeatureOutcome`]: edits to elements that already exist elsewhere in
+/// the tree. Bundled so the walk's own signature stays about the Feature
+/// rather than about its five separate output lists.
+#[derive(Debug, Default)]
+struct ExistingElementEdits {
+    scenarios: Vec<ScenarioOutcome>,
+    behaviors: Vec<BehaviorOutcome>,
+    back_reference_fixups: Vec<BackReferenceFixup>,
+}
+
 /// Why [`build_plan`] could not produce a [`Plan`].
 #[derive(Debug)]
 pub enum PlanError {
@@ -234,8 +274,7 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
     }
 
     let mut feature_outcomes = Vec::new();
-    let mut scenario_updates = Vec::new();
-    let mut behavior_updates = Vec::new();
+    let mut edits = ExistingElementEdits::default();
     for (i, feature) in doc.features.iter().enumerate() {
         if let Some(outcome) = plan_feature(
             root,
@@ -243,8 +282,7 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
             feature,
             &requirement_uid_by_key,
             &mut diagnostics,
-            &mut scenario_updates,
-            &mut behavior_updates,
+            &mut edits,
         )? {
             feature_outcomes.push(outcome);
         }
@@ -256,8 +294,9 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
     Ok(Plan {
         requirements: requirement_outcomes,
         features: feature_outcomes,
-        scenario_updates,
-        behavior_updates,
+        scenario_updates: edits.scenarios,
+        behavior_updates: edits.behaviors,
+        back_reference_fixups: edits.back_reference_fixups,
         state_fingerprint: Some(fingerprint),
     })
 }
@@ -633,8 +672,7 @@ fn plan_feature(
     feature: &FeatureIntent,
     requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
-    scenario_updates: &mut Vec<ScenarioOutcome>,
-    behavior_updates: &mut Vec<BehaviorOutcome>,
+    edits: &mut ExistingElementEdits,
 ) -> Result<Option<FeatureOutcome>, PlanError> {
     let location = format!("features[{i}]");
 
@@ -648,16 +686,6 @@ fn plan_feature(
             return Ok(None);
         };
         let current = parse_feature_file(&found.path)?;
-        if !feature.behaviors.is_empty() {
-            scenario_updates.extend(plan_existing_behaviors(
-                root,
-                &location,
-                &current.id,
-                &feature.behaviors,
-                diagnostics,
-                behavior_updates,
-            )?);
-        }
         let resolved_requirement_uids = match &feature.contributes_to {
             Some(refs) => Some(resolve_contributes_to(
                 root,
@@ -668,7 +696,33 @@ fn plan_feature(
             )?),
             None => None,
         };
+        // The patch is resolved before walking `behaviors` so that walk
+        // knows the id this Feature will actually carry: a Behavior under
+        // a Feature renamed by this same Intent must record the new id,
+        // not the one still on disk.
         let candidate = apply_feature_patch(&current, feature, resolved_requirement_uids);
+        let handled_behavior_uids = if feature.behaviors.is_empty() {
+            HashSet::new()
+        } else {
+            plan_existing_behaviors(
+                root,
+                &location,
+                &current.id,
+                &candidate.id,
+                &feature.behaviors,
+                diagnostics,
+                edits,
+            )?
+        };
+        if candidate.id != current.id {
+            collect_behavior_back_reference_fixups(
+                root,
+                &current.id,
+                &candidate.id,
+                &handled_behavior_uids,
+                &mut edits.back_reference_fixups,
+            )?;
+        }
         if candidate == current {
             return Ok(Some(FeatureOutcome::Unchanged {
                 uid: uid.clone(),
@@ -933,15 +987,18 @@ fn plan_new_scenarios(
 /// Builds a UID-selected Behavior's patched content (ADR 0027 §5: present
 /// replaces, omitted keeps current). `axis` and `procedures` are value
 /// collections, so an explicit empty one clears them while omitting keeps
-/// them. `id` is never taken from `intent` — the caller refuses an `id`
-/// change outright, because renaming needs an identity event this path
-/// does not record — and `feature` is not patchable at all, since moving a
-/// Behavior to another Feature is the reparent ADR 0027 §3 reserves for
-/// Scenarios.
-fn apply_behavior_patch(current: &Behavior, intent: &BehaviorIntent) -> Behavior {
+/// them. `feature` is not taken from `intent` — moving a Behavior to
+/// another Feature is the reparent ADR 0027 §3 reserves for Scenarios — but
+/// it does follow `feature_effective_id`, so a Behavior under a Feature
+/// this same Intent renames keeps pointing at its parent.
+fn apply_behavior_patch(
+    current: &Behavior,
+    intent: &BehaviorIntent,
+    feature_effective_id: &str,
+) -> Behavior {
     Behavior {
-        id: current.id.clone(),
-        feature: current.feature.clone(),
+        id: intent.id.clone().unwrap_or_else(|| current.id.clone()),
+        feature: feature_effective_id.to_string(),
         label: intent
             .label
             .clone()
@@ -987,15 +1044,19 @@ fn parse_scenario_file(path: &Path) -> io::Result<Scenario> {
 /// a `uid` naming a Behavior that *already belongs to*
 /// `feature_current_id`; creating a new Behavior under an existing Feature
 /// remains unsupported, so a `BehaviorIntent` without a `uid` is rejected.
+/// Returns the uids of the Behaviors it handled explicitly, so the caller
+/// can skip them when sweeping the Feature's remaining children for
+/// back-reference fixups.
 fn plan_existing_behaviors(
     root: &Path,
     feature_location: &str,
     feature_current_id: &str,
+    feature_effective_id: &str,
     behaviors: &[BehaviorIntent],
     diagnostics: &mut Vec<Diagnostic>,
-    behavior_updates: &mut Vec<BehaviorOutcome>,
-) -> Result<Vec<ScenarioOutcome>, PlanError> {
-    let mut outcomes = Vec::new();
+    edits: &mut ExistingElementEdits,
+) -> Result<HashSet<String>, PlanError> {
+    let mut handled_behavior_uids = HashSet::new();
     for (j, behavior) in behaviors.iter().enumerate() {
         let location = format!("{feature_location}.behaviors[{j}]");
         let Some(behavior_uid) = &behavior.uid else {
@@ -1013,6 +1074,7 @@ fn plan_existing_behaviors(
             ));
             continue;
         };
+        handled_behavior_uids.insert(behavior_uid.clone());
         let current_behavior = parse_behavior_file(&found_behavior.path)?;
         if current_behavior.feature != feature_current_id {
             diagnostics.push(Diagnostic::new(
@@ -1025,35 +1087,57 @@ fn plan_existing_behaviors(
             ));
             continue;
         }
-        if let Some(new_id) = &behavior.id
-            && new_id != &current_behavior.id
+        let patched_behavior =
+            apply_behavior_patch(&current_behavior, behavior, feature_effective_id);
+        if patched_behavior.id != current_behavior.id
+            && let Some(conflict) = behavior_id_taken_within_feature(
+                root,
+                feature_current_id,
+                &patched_behavior.id,
+                behavior_uid,
+            )?
         {
-            // Same reason `plan_existing_scenario` refuses a Scenario
-            // rename: changing `id` needs an `IdentityMutation::Renamed`
-            // event plus a directory move, neither of which this path
-            // performs. Refusing beats silently keeping the old id.
-            return Err(PlanError::NotYetSupported(format!(
-                "{location}.id: renaming a Behavior is not supported yet"
-            )));
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ConflictingExistingValue,
+                format!("{location}.id"),
+                format!(
+                    "Behavior '{conflict}' under this Feature already uses id '{}'",
+                    patched_behavior.id
+                ),
+            ));
+            continue;
         }
-        let patched_behavior = apply_behavior_patch(&current_behavior, behavior);
-        behavior_updates.push(if patched_behavior == current_behavior {
-            BehaviorOutcome::Unchanged {
-                uid: behavior_uid.clone(),
-                id: current_behavior.id.clone(),
-                path: found_behavior.path.clone(),
-            }
-        } else {
-            BehaviorOutcome::Updated {
-                uid: behavior_uid.clone(),
-                canonical: Box::new(patched_behavior.clone()),
-                existing_path: found_behavior.path.clone(),
-            }
-        });
+        edits
+            .behaviors
+            .push(if patched_behavior == current_behavior {
+                BehaviorOutcome::Unchanged {
+                    uid: behavior_uid.clone(),
+                    id: current_behavior.id.clone(),
+                    path: found_behavior.path.clone(),
+                }
+            } else {
+                BehaviorOutcome::Updated {
+                    uid: behavior_uid.clone(),
+                    before_id: current_behavior.id.clone(),
+                    canonical: Box::new(patched_behavior.clone()),
+                    existing_path: found_behavior.path.clone(),
+                }
+            });
+        // A renamed Behavior's own file stays where it is, exactly as a
+        // renamed Requirement or Feature's does. Deriving its Scenarios'
+        // paths from that directory — rather than from the Behavior's new
+        // id — is what keeps the subtree together instead of splitting it
+        // across an old-named and a new-named directory.
+        let behavior_dir = found_behavior
+            .path
+            .parent()
+            .unwrap_or(&found_behavior.path)
+            .to_path_buf();
         // Scenarios are checked against the *patched* procedures: a
         // procedure this same Intent adds must be usable by a `use:` step
         // it also adds, and one it removes must stop resolving.
         let current_behavior = patched_behavior;
+        let mut handled_scenario_uids: HashSet<String> = HashSet::new();
 
         for (k, scenario) in behavior.scenarios.iter().enumerate() {
             let scenario_location = format!("{location}.scenarios[{k}]");
@@ -1072,21 +1156,8 @@ fn plan_existing_behaviors(
                 ));
                 continue;
             };
+            handled_scenario_uids.insert(scenario_uid.clone());
             let current_scenario = parse_scenario_file(&found_scenario.path)?;
-            if let Some(new_id) = &scenario.id
-                && new_id != &current_scenario.id
-            {
-                // Changing a Scenario's `id` here would move its file
-                // without recording an `IdentityMutation::Renamed` event —
-                // unlike Requirement/Feature rename, which does record one
-                // (`execute::push_renamed`) — leaving the identity event
-                // log's replayed `current_id` diverged from the file's
-                // actual `id:`. Not supported yet; only `behavior`
-                // (reparent) and other content fields change here.
-                return Err(PlanError::NotYetSupported(format!(
-                    "{scenario_location}.id: renaming a Scenario during reparent is not supported yet"
-                )));
-            }
             let candidate = match apply_scenario_patch(
                 &scenario_location,
                 &current_scenario,
@@ -1107,14 +1178,9 @@ fn plan_existing_behaviors(
                 diagnostics.push(diagnostic);
                 continue;
             }
-            let new_path = super::paths::scenario_path(
-                root,
-                feature_current_id,
-                &current_behavior.id,
-                &candidate.id,
-            );
+            let new_path = behavior_dir.join(&candidate.id).join("scenario.yml");
             if candidate == current_scenario && new_path == found_scenario.path {
-                outcomes.push(ScenarioOutcome::Unchanged {
+                edits.scenarios.push(ScenarioOutcome::Unchanged {
                     uid: scenario_uid.clone(),
                     id: current_scenario.id.clone(),
                     path: found_scenario.path,
@@ -1136,15 +1202,108 @@ fn plan_existing_behaviors(
                 ));
                 continue;
             }
-            outcomes.push(ScenarioOutcome::Updated {
+            edits.scenarios.push(ScenarioOutcome::Updated {
                 uid: scenario_uid.clone(),
+                before_id: current_scenario.id.clone(),
                 canonical: Box::new(candidate),
                 existing_path: found_scenario.path,
                 new_path,
             });
         }
+
+        // Every Scenario the Intent did *not* name still records the old
+        // `behavior:` id, so a rename has to carry them along too.
+        if current_behavior.id != found_behavior.id {
+            collect_scenario_back_reference_fixups(
+                root,
+                &found_behavior.id,
+                &current_behavior.id,
+                &handled_scenario_uids,
+                &mut edits.back_reference_fixups,
+            )?;
+        }
     }
-    Ok(outcomes)
+    Ok(handled_behavior_uids)
+}
+
+/// Whether another Behavior under `feature_id` already uses `candidate_id`
+/// — the scope-aware id-uniqueness check a rename needs, since
+/// `knowledge_walk::find_by_id` matches across every Feature and would
+/// report an unrelated Feature's Behavior as a conflict.
+fn behavior_id_taken_within_feature(
+    root: &Path,
+    feature_id: &str,
+    candidate_id: &str,
+    renaming_uid: &str,
+) -> io::Result<Option<String>> {
+    for found in knowledge_walk::list_entities(root, EntityKind::Behavior)? {
+        if found.uid.as_deref() == Some(renaming_uid) {
+            continue;
+        }
+        let behavior = parse_behavior_file(&found.path)?;
+        if behavior.feature == feature_id && behavior.id == candidate_id {
+            return Ok(Some(behavior.id));
+        }
+    }
+    Ok(None)
+}
+
+fn collect_behavior_back_reference_fixups(
+    root: &Path,
+    old_feature_id: &str,
+    new_feature_id: &str,
+    already_handled: &HashSet<String>,
+    fixups: &mut Vec<BackReferenceFixup>,
+) -> io::Result<()> {
+    for found in knowledge_walk::list_entities(root, EntityKind::Behavior)? {
+        if found
+            .uid
+            .as_deref()
+            .is_some_and(|uid| already_handled.contains(uid))
+        {
+            continue;
+        }
+        let mut behavior = parse_behavior_file(&found.path)?;
+        if behavior.feature != old_feature_id {
+            continue;
+        }
+        behavior.feature = new_feature_id.to_string();
+        fixups.push(BackReferenceFixup::Behavior {
+            uid: behavior.uid.clone(),
+            canonical: Box::new(behavior),
+            path: found.path,
+        });
+    }
+    Ok(())
+}
+
+fn collect_scenario_back_reference_fixups(
+    root: &Path,
+    old_behavior_id: &str,
+    new_behavior_id: &str,
+    already_handled: &HashSet<String>,
+    fixups: &mut Vec<BackReferenceFixup>,
+) -> io::Result<()> {
+    for found in knowledge_walk::list_entities(root, EntityKind::Scenario)? {
+        if found
+            .uid
+            .as_deref()
+            .is_some_and(|uid| already_handled.contains(uid))
+        {
+            continue;
+        }
+        let mut scenario = parse_scenario_file(&found.path)?;
+        if scenario.behavior != old_behavior_id {
+            continue;
+        }
+        scenario.behavior = new_behavior_id.to_string();
+        fixups.push(BackReferenceFixup::Scenario {
+            uid: scenario.uid.clone(),
+            canonical: Box::new(scenario),
+            path: found.path,
+        });
+    }
+    Ok(())
 }
 
 /// Builds a UID-selected Scenario's patched content (ADR 0027 §5: present
@@ -2337,18 +2496,87 @@ features:
         );
     }
 
-    /// Renaming needs an `IdentityMutation::Renamed` event and a directory
-    /// move, neither of which this path performs — so it must refuse
-    /// rather than report success while keeping the old id.
+    /// ADR 0027 §3's rename row is not kind-specific: a UID-selected
+    /// Behavior whose only difference is its display id is an explicit
+    /// rename. Its unnamed child Scenarios must follow, since each stores
+    /// the parent's id in `behavior:`.
     #[test]
-    fn renaming_a_uid_selected_behavior_is_not_yet_supported() {
+    fn renaming_a_uid_selected_behavior_carries_its_unnamed_scenarios_along() {
         let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
         let yaml = format!(
-            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n        id: renamed-capture\n"
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n        id: recorded\n"
         );
         let doc = parse_intent(&yaml).unwrap();
-        let err = build_plan(dir.path(), &doc).unwrap_err();
-        assert!(matches!(err, PlanError::NotYetSupported(_)), "{err:?}");
+        let plan = build_plan(dir.path(), &doc).unwrap();
+
+        let BehaviorOutcome::Updated {
+            before_id,
+            canonical,
+            ..
+        } = &plan.behavior_updates[0]
+        else {
+            panic!("expected Updated, got {:?}", plan.behavior_updates[0]);
+        };
+        assert_eq!(before_id, "capture");
+        assert_eq!(canonical.id, "recorded");
+
+        assert_eq!(plan.back_reference_fixups.len(), 1);
+        let BackReferenceFixup::Scenario { canonical, .. } = &plan.back_reference_fixups[0] else {
+            panic!(
+                "expected a Scenario fixup, got {:?}",
+                plan.back_reference_fixups[0]
+            );
+        };
+        assert_eq!(canonical.id, "empty-title");
+        assert_eq!(canonical.behavior, "recorded");
+    }
+
+    /// Two Behaviors under the same Feature must not end up sharing a
+    /// display id. `find_by_id` matches across every Feature, so the check
+    /// has to be scope-aware — an unrelated Feature's Behavior with the
+    /// same id is not a conflict.
+    #[test]
+    fn renaming_a_behavior_onto_a_sibling_id_reports_conflicting_existing_value() {
+        let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n        id: review\n"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        match build_plan(dir.path(), &doc).unwrap_err() {
+            PlanError::Diagnostics(diagnostics) => assert_eq!(
+                diagnostics[0].code,
+                DiagnosticCode::ConflictingExistingValue
+            ),
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    /// The same rename row applies to a Scenario, whose file does move:
+    /// its path is derived from its own id, so the new id gives a new
+    /// path under the same Behavior directory.
+    #[test]
+    fn renaming_a_uid_selected_scenario_moves_it_within_its_behavior() {
+        let (dir, feature_uid, capture_uid, _review_uid, scenario_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n        scenarios:\n          - uid: {scenario_uid}\n            id: blank-title\n"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+
+        let ScenarioOutcome::Updated {
+            before_id,
+            canonical,
+            existing_path,
+            new_path,
+            ..
+        } = &plan.scenario_updates[0]
+        else {
+            panic!("expected Updated, got {:?}", plan.scenario_updates[0]);
+        };
+        assert_eq!(before_id, "empty-title");
+        assert_eq!(canonical.id, "blank-title");
+        assert!(existing_path.ends_with("capture/empty-title/scenario.yml"));
+        assert!(new_path.ends_with("capture/blank-title/scenario.yml"));
     }
 
     /// A procedure declared on an existing Behavior in this same Intent

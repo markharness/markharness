@@ -605,6 +605,110 @@ features:
     );
 }
 
+/// End-to-end proof through the binary that ADR 0027 §3's rename row
+/// covers Behavior and Scenario too: the Behavior is rewritten in place,
+/// the Scenario's file moves, and the JSON reports both paths.
+#[test]
+fn renaming_a_behavior_and_a_scenario_reports_their_paths() {
+    let dir = setup_root_with_axes(&[]);
+    let create = write_intent(
+        &dir,
+        "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+",
+    );
+    let first = run(&[
+        "knowledge",
+        "reconcile",
+        create.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    let uid_of = |kind: &str| {
+        first_json["created"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["kind"] == kind)
+            .unwrap()["uid"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+
+    let rename = write_intent(
+        &dir,
+        &format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {}\n    behaviors:\n      - uid: {}\n        id: recorded\n        scenarios:\n          - uid: {}\n            id: blank-title\n",
+            uid_of("feature"),
+            uid_of("behavior"),
+            uid_of("scenario"),
+        ),
+    );
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        rename.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let updated = json["updated"].as_array().unwrap();
+    let behavior = updated.iter().find(|e| e["kind"] == "behavior").unwrap();
+    assert_eq!(behavior["id"], "recorded");
+    assert_eq!(
+        behavior["path"],
+        ".markharness/knowledge/features/todo-management/capture/behavior.yml"
+    );
+    let scenario = updated.iter().find(|e| e["kind"] == "scenario").unwrap();
+    assert_eq!(scenario["id"], "blank-title");
+    assert_eq!(
+        scenario["previous_path"],
+        ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml"
+    );
+    assert_eq!(
+        scenario["path"],
+        ".markharness/knowledge/features/todo-management/capture/blank-title/scenario.yml"
+    );
+    assert!(
+        dir.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge/features/todo-management/capture/blank-title/scenario.yml")
+            .is_file()
+    );
+}
+
 #[test]
 fn check_on_a_new_intent_reports_planned_changes_without_writing_and_exits_4() {
     let dir = setup_root_with_axes(&["functional"]);

@@ -22,8 +22,8 @@ use super::diagnostics::{Diagnostic, DiagnosticCode};
 use super::intent::IntentDocument;
 use super::paths::{behavior_path, feature_path, requirement_path, scenario_path};
 use super::plan::{
-    BehaviorOutcome, FeatureOutcome, Plan, PlanError, RequirementOutcome, ScenarioOutcome,
-    build_plan, state_fingerprint,
+    BackReferenceFixup, BehaviorOutcome, FeatureOutcome, Plan, PlanError, RequirementOutcome,
+    ScenarioOutcome, build_plan, state_fingerprint,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,6 +439,7 @@ fn plan_outcome(root: &Path, plan: &Plan) -> ReconcileOutcome {
                 uid,
                 canonical,
                 existing_path,
+                ..
             } => {
                 outcome.updated.push(UpdatedElement {
                     kind: EntityKind::Behavior,
@@ -466,6 +467,7 @@ fn plan_outcome(root: &Path, plan: &Plan) -> ReconcileOutcome {
                 canonical,
                 existing_path,
                 new_path,
+                ..
             } => {
                 outcome.updated.push(UpdatedElement {
                     kind: EntityKind::Scenario,
@@ -476,6 +478,28 @@ fn plan_outcome(root: &Path, plan: &Plan) -> ReconcileOutcome {
                 });
             }
         }
+    }
+
+    for fixup in &plan.back_reference_fixups {
+        let (kind, uid, id, path) = match fixup {
+            BackReferenceFixup::Behavior {
+                uid,
+                canonical,
+                path,
+            } => (EntityKind::Behavior, uid, canonical.id.clone(), path),
+            BackReferenceFixup::Scenario {
+                uid,
+                canonical,
+                path,
+            } => (EntityKind::Scenario, uid, canonical.id.clone(), path),
+        };
+        outcome.updated.push(UpdatedElement {
+            kind,
+            uid: uid.clone().unwrap_or_default(),
+            id,
+            path: rel(path),
+            previous_path: None,
+        });
     }
 
     outcome
@@ -638,10 +662,22 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
         match behavior {
             BehaviorOutcome::Unchanged { .. } => {}
             BehaviorOutcome::Updated {
+                uid,
+                before_id,
                 canonical,
                 existing_path,
-                ..
             } => {
+                if &canonical.id != before_id {
+                    push_renamed(
+                        root,
+                        &mut batch_events,
+                        EntityKind::Behavior,
+                        uid,
+                        before_id,
+                        &canonical.id,
+                        &recorded_at,
+                    )?;
+                }
                 files.push(pending_file(
                     root,
                     existing_path,
@@ -651,16 +687,40 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
         }
     }
 
+    for fixup in &plan.back_reference_fixups {
+        let (path, contents) = match fixup {
+            BackReferenceFixup::Behavior {
+                canonical, path, ..
+            } => (path, knowledge::serialize_behavior(canonical)),
+            BackReferenceFixup::Scenario {
+                canonical, path, ..
+            } => (path, knowledge::serialize_scenario(canonical)),
+        };
+        files.push(pending_file(root, path, contents));
+    }
+
     let mut moves = Vec::new();
     for scenario in &plan.scenario_updates {
         match scenario {
             ScenarioOutcome::Unchanged { .. } => {}
             ScenarioOutcome::Updated {
+                uid,
+                before_id,
                 canonical,
                 existing_path,
                 new_path,
-                ..
             } => {
+                if &canonical.id != before_id {
+                    push_renamed(
+                        root,
+                        &mut batch_events,
+                        EntityKind::Scenario,
+                        uid,
+                        before_id,
+                        &canonical.id,
+                        &recorded_at,
+                    )?;
+                }
                 let contents = knowledge::serialize_scenario(canonical);
                 if new_path == existing_path {
                     files.push(pending_file(root, new_path, contents));
@@ -1437,6 +1497,283 @@ features:
         let repeated = reconcile_creation(dir.path(), &patch_doc).unwrap();
         assert!(repeated.updated.is_empty(), "{repeated:?}");
         assert_eq!(repeated.unchanged.len(), 1);
+    }
+
+    /// Creates a Feature with one Behavior and one Scenario and returns
+    /// their uids in that order.
+    fn rename_fixture(dir: &tempfile::TempDir) -> (String, String, String) {
+        let create_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        let created = reconcile_creation(dir.path(), &parse_intent(create_yaml).unwrap()).unwrap();
+        let uid_of = |kind: EntityKind| {
+            created
+                .created
+                .iter()
+                .find(|e| e.kind == kind)
+                .unwrap()
+                .uid
+                .clone()
+        };
+        (
+            uid_of(EntityKind::Feature),
+            uid_of(EntityKind::Behavior),
+            uid_of(EntityKind::Scenario),
+        )
+    }
+
+    /// ADR 0027 §3: a UID-selected Behavior whose display id changes is an
+    /// explicit rename — it records an `IdentityMutation::Renamed` event
+    /// like a Requirement or Feature does, and its child Scenario's
+    /// `behavior:` back-reference follows. Re-running the same Intent then
+    /// settles on `unchanged` rather than renaming again.
+    #[test]
+    fn renaming_a_behavior_records_an_event_updates_children_and_settles_on_rerun() {
+        let dir = init_project();
+        let (feature_uid, behavior_uid, _) = rename_fixture(&dir);
+
+        let rename = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {behavior_uid}\n        id: recorded\n"
+        );
+        let doc = parse_intent(&rename).unwrap();
+        let outcome = reconcile_creation(dir.path(), &doc).unwrap();
+        assert_eq!(outcome.updated.len(), 2, "the Behavior and its Scenario");
+
+        let events = registry::load_events_from_working_tree(
+            dir.path(),
+            EntityKind::Behavior,
+            &behavior_uid,
+        )
+        .unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|e| matches!(
+            &e.mutation,
+            IdentityMutation::Renamed { from_id, to_id } if from_id == "capture" && to_id == "recorded"
+        )));
+
+        // The Behavior's own file stays put, like a renamed Feature's, but
+        // now declares the new id...
+        let behavior = knowledge::parse_behavior(
+            &std::fs::read_to_string(
+                dir.path()
+                    .join(".markharness/knowledge/features/todo-management/capture/behavior.yml"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(behavior.id, "recorded");
+        // ...and its child no longer points at an id nothing carries.
+        let scenario = knowledge::parse_scenario(
+            &std::fs::read_to_string(dir.path().join(
+                ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(scenario.behavior, "recorded");
+
+        let repeated = reconcile_creation(dir.path(), &doc).unwrap();
+        assert!(repeated.updated.is_empty(), "{repeated:?}");
+        assert_eq!(
+            registry::load_events_from_working_tree(
+                dir.path(),
+                EntityKind::Behavior,
+                &behavior_uid
+            )
+            .unwrap()
+            .len(),
+            2,
+            "a re-run must not record a second Renamed event"
+        );
+    }
+
+    /// The same contract for a Scenario, whose file additionally moves —
+    /// its path is derived from its own id.
+    #[test]
+    fn renaming_a_scenario_records_an_event_and_moves_its_file() {
+        let dir = init_project();
+        let (feature_uid, behavior_uid, scenario_uid) = rename_fixture(&dir);
+
+        let rename = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {behavior_uid}\n        scenarios:\n          - uid: {scenario_uid}\n            id: blank-title\n"
+        );
+        let doc = parse_intent(&rename).unwrap();
+        let outcome = reconcile_creation(dir.path(), &doc).unwrap();
+        assert_eq!(outcome.updated.len(), 1);
+        assert_eq!(
+            outcome.updated[0].previous_path.as_deref(),
+            Some(
+                ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml"
+            )
+        );
+
+        let old_path = dir.path().join(
+            ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml",
+        );
+        let new_path = dir.path().join(
+            ".markharness/knowledge/features/todo-management/capture/blank-title/scenario.yml",
+        );
+        assert!(!old_path.is_file());
+        let scenario =
+            knowledge::parse_scenario(&std::fs::read_to_string(&new_path).unwrap()).unwrap();
+        assert_eq!(scenario.id, "blank-title");
+        assert_eq!(scenario.uid, Some(scenario_uid.clone()));
+
+        let events = registry::load_events_from_working_tree(
+            dir.path(),
+            EntityKind::Scenario,
+            &scenario_uid,
+        )
+        .unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|e| matches!(
+            &e.mutation,
+            IdentityMutation::Renamed { from_id, to_id } if from_id == "empty-title" && to_id == "blank-title"
+        )));
+
+        let repeated = reconcile_creation(dir.path(), &doc).unwrap();
+        assert!(repeated.updated.is_empty(), "{repeated:?}");
+    }
+
+    /// Regression test for a bug this rename work uncovered: renaming a
+    /// Feature left every child Behavior's `feature:` pointing at an id
+    /// nothing carried any more, which the very next scope check reads as
+    /// a mismatch. The rename must carry its children along.
+    #[test]
+    fn renaming_a_feature_updates_its_behaviors_back_reference() {
+        let dir = init_project();
+        let (feature_uid, behavior_uid, _) = rename_fixture(&dir);
+
+        let rename = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    id: task-management\n"
+        );
+        reconcile_creation(dir.path(), &parse_intent(&rename).unwrap()).unwrap();
+
+        let behavior = knowledge::parse_behavior(
+            &std::fs::read_to_string(
+                dir.path()
+                    .join(".markharness/knowledge/features/todo-management/capture/behavior.yml"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(behavior.feature, "task-management");
+
+        // Proof that it matters: the renamed Feature's Behaviors are still
+        // reachable for a follow-up patch, which the stale back-reference
+        // would have rejected as `conflicting_scope`.
+        let patch = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {behavior_uid}\n        label: Still reachable\n"
+        );
+        let outcome = reconcile_creation(dir.path(), &parse_intent(&patch).unwrap()).unwrap();
+        assert_eq!(outcome.updated.len(), 1);
+    }
+
+    /// A rename is committed through the same single transaction as every
+    /// other write, so a crash after the commit point must converge on the
+    /// fully renamed state — identity event, the element's own file, its
+    /// children's back-references and any move, all of it.
+    #[test]
+    fn a_rename_interrupted_after_its_commit_point_is_rolled_forward_in_full() {
+        let dir = init_project();
+        let (feature_uid, behavior_uid, scenario_uid) = rename_fixture(&dir);
+        let rename = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {behavior_uid}\n        id: recorded\n        scenarios:\n          - uid: {scenario_uid}\n            id: blank-title\n"
+        );
+        let plan = build_plan(dir.path(), &parse_intent(&rename).unwrap()).unwrap();
+
+        // Drive the protocol by hand and stop right after the commit point.
+        let recorded_at = crate::time::iso8601_utc_now();
+        let mut batch_events = Vec::new();
+        push_renamed(
+            dir.path(),
+            &mut batch_events,
+            EntityKind::Behavior,
+            &behavior_uid,
+            "capture",
+            "recorded",
+            &recorded_at,
+        )
+        .unwrap();
+        let BehaviorOutcome::Updated {
+            canonical,
+            existing_path,
+            ..
+        } = &plan.behavior_updates[0]
+        else {
+            panic!("expected an Updated Behavior");
+        };
+        let ScenarioOutcome::Updated {
+            canonical: scenario,
+            existing_path: from,
+            new_path: to,
+            ..
+        } = &plan.scenario_updates[0]
+        else {
+            panic!("expected an Updated Scenario");
+        };
+        let intent = recovery::begin_batch_with_payload(
+            dir.path(),
+            batch_events,
+            Some(recovery::IntentPayload::KnowledgeReconcile {
+                files: vec![pending_file(
+                    dir.path(),
+                    existing_path,
+                    knowledge::serialize_behavior(canonical),
+                )],
+                moves: vec![recovery::PendingKnowledgeMove {
+                    from_relative_path: relative_path_string(dir.path(), from),
+                    to_relative_path: relative_path_string(dir.path(), to),
+                    contents: knowledge::serialize_scenario(scenario),
+                }],
+            }),
+        )
+        .unwrap();
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+        // Crash point: the event landed, no Knowledge file has moved yet.
+
+        recovery::run_startup_recovery(dir.path(), |intent| {
+            feature_ops::roll_forward(dir.path(), intent)
+        })
+        .unwrap();
+
+        let behavior = knowledge::parse_behavior(
+            &std::fs::read_to_string(
+                dir.path()
+                    .join(".markharness/knowledge/features/todo-management/capture/behavior.yml"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(behavior.id, "recorded");
+        let moved = dir.path().join(
+            ".markharness/knowledge/features/todo-management/capture/blank-title/scenario.yml",
+        );
+        assert!(moved.is_file(), "the Scenario move must have completed");
+        assert!(
+            !dir.path()
+                .join(
+                    ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml"
+                )
+                .is_file()
+        );
     }
 
     /// The happy path of a content-only reconcile must still go through
