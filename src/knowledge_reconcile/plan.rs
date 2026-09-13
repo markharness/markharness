@@ -400,6 +400,52 @@ fn check_requirement_mode_fields(
     ))
 }
 
+/// The other half of [`check_requirement_mode_fields`]: what the effective
+/// mode *requires*, checked against the finished candidate rather than
+/// against the Intent. A mode switch inherits the previous mode's stored
+/// values, so a field the new mode requires can end up unset even though
+/// the Intent named nothing wrong — switching an external Requirement to
+/// `native` leaves it with no `label`, which `markharness validate`
+/// rejects. Mirrors the rules `validate` applies to what is already saved;
+/// [`build_requirement_content`] demands the same fields up front, with
+/// messages specific to creating a Requirement.
+fn check_requirement_required_fields(
+    location: &str,
+    candidate: &Requirement,
+) -> Option<Diagnostic> {
+    let (field, message) = match candidate.source {
+        RequirementSource::Native => {
+            if candidate.label.is_some() {
+                return None;
+            }
+            (
+                "label",
+                "source: native requires `label` (markharness owns the content)",
+            )
+        }
+        RequirementSource::External => {
+            if candidate.source_locator.is_none() {
+                (
+                    "source_locator",
+                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                )
+            } else if candidate.source_revision.is_none() {
+                (
+                    "source_revision",
+                    "source: external requires `source_revision: current` to pin the .sdoc's current blob OID",
+                )
+            } else {
+                return None;
+            }
+        }
+    };
+    Some(Diagnostic::new(
+        DiagnosticCode::MissingRequiredField,
+        format!("{location}.{field}"),
+        message,
+    ))
+}
+
 /// Clears whatever the effective mode does not own. A mode switch carries
 /// the previous mode's stored values into the patch result, and the Intent
 /// cannot clear them itself (naming either field is refused by
@@ -592,9 +638,9 @@ fn resolve_source_revision(
             }
             let Some(locator) = effective_source_locator.map(str::to_string) else {
                 return Ok(Err(Diagnostic::new(
-                    DiagnosticCode::InvalidSourceRevision,
-                    location,
-                    "source: external Requirement has no source_locator to resolve",
+                    DiagnosticCode::MissingRequiredField,
+                    format!("{location}.source_locator"),
+                    "source: external requires `source_locator` (the .sdoc path in this repository)",
                 )));
             };
             if !root.join(&locator).is_file() {
@@ -688,6 +734,10 @@ fn plan_requirement(
         let mut candidate =
             apply_requirement_patch(&current, req, effective_source, source_revision);
         clear_fields_foreign_to_source(&mut candidate);
+        if let Some(diagnostic) = check_requirement_required_fields(&location, &candidate) {
+            diagnostics.push(diagnostic);
+            return Ok(None);
+        }
         if candidate == current {
             return Ok(Some(RequirementOutcome::Unchanged {
                 uid: uid.clone(),
@@ -3879,5 +3929,102 @@ requirements:
         assert_eq!(canonical.label, None);
         assert_eq!(canonical.description, None);
         assert_eq!(canonical.source_locator.as_deref(), Some("spec.sdoc"));
+    }
+
+    /// The reverse of `switching_a_native_requirement_to_external_drops_its_owned_content`:
+    /// an external Requirement stores no `label` (the document owns its
+    /// content), so switching it to `native` — which requires one — has to
+    /// supply it in the same Intent. Without this the patch wrote a native
+    /// Requirement with no label, which `markharness validate` rejects.
+    #[test]
+    fn switching_an_external_requirement_to_native_without_a_label_is_rejected() {
+        let dir = init_project();
+        write_external_requirement(
+            dir.path(),
+            "controls",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "spec.sdoc",
+            "0000000000000000000000000000000000000000",
+        );
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source: native
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].code, DiagnosticCode::MissingRequiredField);
+        assert_eq!(diagnostics[0].location, "requirements[0].label");
+    }
+
+    #[test]
+    fn switching_an_external_requirement_to_native_with_a_label_drops_the_pin() {
+        let dir = init_project();
+        write_external_requirement(
+            dir.path(),
+            "controls",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "spec.sdoc",
+            "0000000000000000000000000000000000000000",
+        );
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source: native
+    label: controls
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let RequirementOutcome::Updated { canonical, .. } = &plan.requirements[0] else {
+            panic!("expected Updated, got {:?}", plan.requirements[0]);
+        };
+        assert_eq!(canonical.label.as_deref(), Some("controls"));
+        assert_eq!(canonical.source_locator, None);
+        assert_eq!(canonical.source_revision, None);
+    }
+
+    /// The same completeness check in the other direction: a patch that
+    /// switches to `external` must end up with both fields that mode
+    /// requires, not just the one the Intent happened to name.
+    #[test]
+    fn switching_to_external_without_the_fields_that_mode_requires_is_rejected() {
+        for (extra, missing) in [
+            ("source_revision: current", "source_locator"),
+            ("source_locator: spec.sdoc", "source_revision"),
+        ] {
+            let dir = init_project();
+            write_requirement(
+                dir.path(),
+                "controls",
+                "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "controls",
+            );
+            let yaml = format!(
+                "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source: external
+    {extra}
+"
+            );
+            let doc = parse_intent(&yaml).unwrap();
+            let err = build_plan(dir.path(), &doc).unwrap_err();
+            let PlanError::Diagnostics(diagnostics) = err else {
+                panic!("expected diagnostics for missing {missing}, got {err:?}");
+            };
+            assert!(
+                diagnostics[0].location.ends_with(missing),
+                "expected a diagnostic about {missing}, got {diagnostics:?}"
+            );
+        }
     }
 }

@@ -998,3 +998,111 @@ requirements:
         "{validate_output:?}"
     );
 }
+
+/// The companion to `a_new_external_requirement_is_written_in_a_state_project_validation_accepts`,
+/// for the case that keeps producing invalid files: switching a saved
+/// Requirement between ADR 0023's two modes. Whatever the switch writes
+/// must still satisfy `markharness validate`.
+#[test]
+fn switching_a_requirement_between_modes_stays_valid_for_project_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        run(&["init", "--dir", dir.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(&args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    fs::write(
+        dir.path().join("spec.sdoc"),
+        "the external spec
+",
+    )
+    .unwrap();
+
+    let intent_path = dir.path().join("intent.yml");
+    let reconcile = |path: &std::path::Path| {
+        run(&[
+            "knowledge",
+            "reconcile",
+            path.to_str().unwrap(),
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ])
+    };
+    let validate = || run(&["validate", "--dir", dir.path().to_str().unwrap(), "--json"]);
+
+    fs::write(
+        &intent_path,
+        "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    axis: []
+    source_locator: spec.sdoc
+    source_revision: current
+",
+    )
+    .unwrap();
+    assert_eq!(reconcile(&intent_path).status.code(), Some(0));
+    let uid = markharness::knowledge::parse_requirement(
+        &fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+    .uid
+    .unwrap();
+
+    // external -> native: the external mode stores no label, so the switch
+    // has to be given one, and the pin must not survive it.
+    fs::write(
+        &intent_path,
+        format!(
+            "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: {uid}
+    source: native
+    label: controls
+"
+        ),
+    )
+    .unwrap();
+    let output = reconcile(&intent_path);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+
+    let written = fs::read_to_string(
+        dir.path()
+            .join(".markharness/knowledge/requirements/controls/requirement.yml"),
+    )
+    .unwrap();
+    assert!(written.contains("label: controls"), "{written}");
+    assert!(!written.contains("source_locator:"), "{written}");
+    assert!(!written.contains("source_revision:"), "{written}");
+
+    let validate_output = validate();
+    assert_eq!(
+        validate_output.status.code(),
+        Some(0),
+        "{validate_output:?}"
+    );
+}
