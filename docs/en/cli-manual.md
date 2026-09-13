@@ -141,7 +141,7 @@ features:
 
 `mode` accepts only `merge` in the initial version (it never deletes existing elements). A `format` other than `markharness/knowledge-intent/v1` is an `invalid_format` error.
 
-A Requirement's `native` and `external` modes have disjoint field sets (ADR 0023). `native` requires `label` and can carry neither `source_locator` nor `source_revision`. `external` is the reverse: it can carry no `label`, and requires both `source_locator` and `source_revision: current`, the latter being resolved to the current blob OID at run time.
+A Requirement's `native` and `external` modes have disjoint field sets (ADR 0023). A `native` Requirement owns its own content, so it requires `label` and cannot carry `source_locator`. An `external` one is owned by the external document, so it can carry neither `label` nor `description`, and requires both `source_locator` and `source_revision: current` — the latter resolved to the current blob OID at run time. A patch that switches `source` drops the fields the new mode cannot carry.
 
 **Updating and renaming existing elements**
 

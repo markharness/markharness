@@ -364,14 +364,62 @@ fn canonical_description(text: &str) -> String {
 /// (ADR 0027 §3's "正規化後の内容が完全一致する" unchanged row) — *not* for
 /// a UID-selected patch, which keeps omitted fields at their current
 /// value instead (see [`apply_requirement_patch`]).
-/// Builds a brand-new Requirement's content. ADR 0023 gives `native` and
-/// `external` disjoint field sets — native owns its own `label`, external
-/// is owned by the document at `source_locator` and pinned by
-/// `source_revision` — and `markharness validate` rejects a saved file
-/// that mixes them. Since `knowledge reconcile` is the only thing that
-/// saves Knowledge, building such a file here would let the one authoring
-/// path commit state its own validation immediately fails, so each mode's
-/// required fields are demanded and the other mode's are refused.
+/// ADR 0023 gives a Requirement's two modes disjoint field sets: `native`
+/// owns its own content (`label`, `description`) while `external` is owned
+/// by the document at `source_locator`. `source_revision` is not listed
+/// here: it is an Intent-only instruction rather than a stored field, and
+/// [`resolve_source_revision`] already refuses it on a native Requirement
+/// with a message about that instruction.
+/// `markharness validate` rejects a saved file that mixes them, and
+/// `knowledge reconcile` is the only thing that saves Knowledge (ADR 0028
+/// §1), so an Intent naming a field the effective mode does not own is
+/// refused here rather than written and rejected afterwards. Applies to
+/// creation and to UID-selected patches alike — patching must not be a way
+/// around what creating refuses.
+fn check_requirement_mode_fields(
+    location: &str,
+    source: RequirementSource,
+    intent: &RequirementIntent,
+) -> Option<Diagnostic> {
+    let forbidden: &[(&str, bool)] = match source {
+        RequirementSource::Native => &[("source_locator", intent.source_locator.is_some())],
+        RequirementSource::External => &[
+            ("label", intent.label.is_some()),
+            ("description", intent.description.is_some()),
+        ],
+    };
+    let (field, _) = forbidden.iter().find(|(_, present)| *present)?;
+    let (mode, owner) = match source {
+        RequirementSource::Native => ("native", "that belongs to source: external"),
+        RequirementSource::External => ("external", "the external document owns the content"),
+    };
+    Some(Diagnostic::new(
+        DiagnosticCode::ConflictingExistingValue,
+        format!("{location}.{field}"),
+        format!("source: {mode} must not carry `{field}` — {owner}"),
+    ))
+}
+
+/// Clears whatever the effective mode does not own. A mode switch carries
+/// the previous mode's stored values into the patch result, and the Intent
+/// cannot clear them itself (naming either field is refused by
+/// [`check_requirement_mode_fields`]), so the switch has to drop them.
+fn clear_fields_foreign_to_source(requirement: &mut Requirement) {
+    match requirement.source {
+        RequirementSource::Native => {
+            requirement.source_locator = None;
+            requirement.source_revision = None;
+        }
+        RequirementSource::External => {
+            requirement.label = None;
+            requirement.description = None;
+        }
+    }
+}
+
+/// Builds a brand-new Requirement's content, demanding the fields its mode
+/// requires (see [`check_requirement_mode_fields`] for the rule the other
+/// direction).
 fn build_requirement_content(
     root: &Path,
     location: &str,
@@ -383,21 +431,16 @@ fn build_requirement_content(
         Ok(source) => source,
         Err(d) => return Ok(Err(d)),
     };
+    if let Some(diagnostic) = check_requirement_mode_fields(location, source, intent) {
+        return Ok(Err(diagnostic));
+    }
     let (label, source_locator, source_revision) = match source {
         RequirementSource::Native => {
-            if let Some(field) = ["source_locator", "source_revision"]
-                .into_iter()
-                .find(|field| match *field {
-                    "source_locator" => intent.source_locator.is_some(),
-                    _ => intent.source_revision.is_some(),
-                })
-            {
+            if intent.source_revision.is_some() {
                 return Ok(Err(Diagnostic::new(
-                    DiagnosticCode::ConflictingExistingValue,
-                    format!("{location}.{field}"),
-                    format!(
-                        "source: native must not carry `{field}` (that belongs to source: external)"
-                    ),
+                    DiagnosticCode::InvalidSourceRevision,
+                    location,
+                    "source_revision: current applies only to source: external Requirements",
                 )));
             }
             (
@@ -407,13 +450,6 @@ fn build_requirement_content(
             )
         }
         RequirementSource::External => {
-            if intent.label.is_some() {
-                return Ok(Err(Diagnostic::new(
-                    DiagnosticCode::ConflictingExistingValue,
-                    format!("{location}.label"),
-                    "source: external must not carry `label` — the external document owns the content",
-                )));
-            }
             let Some(locator) = intent.source_locator.clone() else {
                 return Ok(Err(Diagnostic::new(
                     DiagnosticCode::MissingRequiredField,
@@ -442,6 +478,9 @@ fn build_requirement_content(
         source,
         label,
         axis: intent.axis.clone().unwrap_or_default(),
+        // `check_requirement_mode_fields` already refused a `description`
+        // on an external Requirement, so this is `None` there without a
+        // second mode check here.
         description: intent.description.as_deref().map(canonical_description),
         source_locator,
         source_revision,
@@ -538,6 +577,7 @@ fn resolve_source_revision(
     location: &str,
     current: &Requirement,
     effective_source: RequirementSource,
+    effective_source_locator: Option<&str>,
     intent_source_revision: &Option<String>,
 ) -> io::Result<Result<Option<String>, Diagnostic>> {
     match intent_source_revision.as_deref() {
@@ -550,7 +590,7 @@ fn resolve_source_revision(
                     "source_revision: current applies only to source: external Requirements",
                 )));
             }
-            let Some(locator) = current.source_locator.clone() else {
+            let Some(locator) = effective_source_locator.map(str::to_string) else {
                 return Ok(Err(Diagnostic::new(
                     DiagnosticCode::InvalidSourceRevision,
                     location,
@@ -623,11 +663,20 @@ fn plan_requirement(
             },
             None => current.source,
         };
+        if let Some(diagnostic) = check_requirement_mode_fields(&location, effective_source, req) {
+            diagnostics.push(diagnostic);
+            return Ok(None);
+        }
+        let effective_source_locator = req
+            .source_locator
+            .as_deref()
+            .or(current.source_locator.as_deref());
         let source_revision = match resolve_source_revision(
             root,
             &location,
             &current,
             effective_source,
+            effective_source_locator,
             &req.source_revision,
         )? {
             Ok(v) => v,
@@ -636,7 +685,9 @@ fn plan_requirement(
                 return Ok(None);
             }
         };
-        let candidate = apply_requirement_patch(&current, req, effective_source, source_revision);
+        let mut candidate =
+            apply_requirement_patch(&current, req, effective_source, source_revision);
+        clear_fields_foreign_to_source(&mut candidate);
         if candidate == current {
             return Ok(Some(RequirementOutcome::Unchanged {
                 uid: uid.clone(),
@@ -2552,7 +2603,7 @@ mode: merge
 
 requirements:
   - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
-    label: unrelated patch
+    related_issues: [ISSUE-1]
 ";
         let doc = parse_intent(yaml).unwrap();
         let plan = build_plan(dir.path(), &doc).unwrap();
@@ -3682,5 +3733,151 @@ requirements:
             panic!("expected diagnostics, got {err:?}");
         };
         assert_eq!(diagnostics[0].location, "requirements[0].source_locator");
+    }
+
+    #[test]
+    fn a_new_external_requirement_carrying_a_description_is_rejected() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(
+            dir.path().join("spec.sdoc"),
+            "spec
+",
+        )
+        .unwrap();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    axis: []
+    description: markharness must not own this text
+    source_locator: spec.sdoc
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].location, "requirements[0].description");
+    }
+
+    /// The same ADR 0023 rule on the UID-selected patch path: patching an
+    /// existing Requirement must not be a way around what creating one
+    /// refuses.
+    #[test]
+    fn patching_an_external_requirement_with_owned_content_fields_is_rejected() {
+        for (field, value) in [
+            ("label", "controls"),
+            ("description", "markharness must not own this text"),
+        ] {
+            let dir = init_project();
+            init_git_repo(dir.path());
+            fs::write(
+                dir.path().join("spec.sdoc"),
+                "spec
+",
+            )
+            .unwrap();
+            write_external_requirement(
+                dir.path(),
+                "controls",
+                "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "spec.sdoc",
+                "0000000000000000000000000000000000000000",
+            );
+            let yaml = format!(
+                "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    {field}: {value}
+"
+            );
+            let doc = parse_intent(&yaml).unwrap();
+            let err = build_plan(dir.path(), &doc).unwrap_err();
+            let PlanError::Diagnostics(diagnostics) = err else {
+                panic!("expected diagnostics for {field}, got {err:?}");
+            };
+            assert_eq!(diagnostics[0].location, format!("requirements[0].{field}"));
+        }
+    }
+
+    #[test]
+    fn patching_a_native_requirement_with_external_fields_is_rejected() {
+        let dir = init_project();
+        write_requirement(
+            dir.path(),
+            "controls",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "controls",
+        );
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source_locator: spec.sdoc
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].location, "requirements[0].source_locator");
+    }
+
+    /// Switching a Requirement's mode must drop the fields the new mode
+    /// forbids. Carrying the old `label`/`description` across would write a
+    /// file `markharness validate` rejects, and the Intent has no way to
+    /// clear them (writing either one is itself refused).
+    #[test]
+    fn switching_a_native_requirement_to_external_drops_its_owned_content() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(
+            dir.path().join("spec.sdoc"),
+            "spec
+",
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls/requirement.yml"),
+            "id: controls
+source: native
+label: controls
+axis: []
+description: |
+  owned by markharness
+uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+",
+        )
+        .unwrap();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source: external
+    source_locator: spec.sdoc
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let RequirementOutcome::Updated { canonical, .. } = &plan.requirements[0] else {
+            panic!("expected Updated, got {:?}", plan.requirements[0]);
+        };
+        assert_eq!(canonical.label, None);
+        assert_eq!(canonical.description, None);
+        assert_eq!(canonical.source_locator.as_deref(), Some("spec.sdoc"));
     }
 }
