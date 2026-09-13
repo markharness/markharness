@@ -839,9 +839,20 @@ mod tests {
     use crate::knowledge_reconcile::intent::parse_intent;
     use crate::knowledge_reconcile::plan::build_plan;
 
+    /// A project fixture shaped like a real one: `build_plan` resolves
+    /// `axis` against the registry, so the Axis these tests use has to be
+    /// registered here the way `axes add` would have registered it.
     fn init_project() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".markharness/knowledge")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".markharness/axes")).unwrap();
+        std::fs::write(
+            dir.path().join(".markharness/axes/functional.yml"),
+            "id: functional
+label: Functional
+",
+        )
+        .unwrap();
         dir
     }
 

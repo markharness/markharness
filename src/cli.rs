@@ -655,9 +655,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     unreachable!("report_reconcile_diagnostics exits the process on error");
                 }
             };
-            let known_axes: std::collections::HashSet<String> =
-                axes::list_axes(&root).into_iter().map(|a| a.id).collect();
-            let diagnostics = validate_static(&doc, &known_axes);
+            let diagnostics = validate_static(&doc);
             if !diagnostics.is_empty() {
                 report_reconcile_diagnostics(&diagnostics, json);
                 unreachable!("report_reconcile_diagnostics exits the process on error");

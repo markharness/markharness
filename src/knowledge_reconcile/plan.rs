@@ -290,6 +290,11 @@ impl From<io::Error> for PlanError {
 pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> {
     let fingerprint = state_fingerprint(root)?;
     let mut diagnostics = Vec::new();
+    let known_axes: HashSet<String> = crate::axes::list_axes(root)
+        .into_iter()
+        .map(|a| a.id)
+        .collect();
+    super::validate::check_unknown_axes(doc, &known_axes, &mut diagnostics);
     let mut requirement_outcomes = Vec::new();
     let mut requirement_uid_by_key: HashMap<&str, String> = HashMap::new();
 
@@ -2022,9 +2027,20 @@ mod tests {
     use super::*;
     use crate::knowledge_reconcile::intent::parse_intent;
 
+    /// A project fixture shaped like a real one: `build_plan` resolves
+    /// `axis` against the registry, so the Axis these tests use has to be
+    /// registered here the way `axes add` would have registered it.
     fn init_project() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".markharness/knowledge")).unwrap();
+        fs::create_dir_all(dir.path().join(".markharness/axes")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/axes/functional.yml"),
+            "id: functional
+label: Functional
+",
+        )
+        .unwrap();
         dir
     }
 
@@ -3549,6 +3565,88 @@ label: Priority
         fs::remove_file(axes_dir.join("priority.yml")).unwrap();
         let removed = build_plan(dir.path(), &empty_doc).unwrap();
         assert_ne!(added.state_fingerprint, removed.state_fingerprint);
+    }
+
+    /// ADR 0027 §4 ("Axisは登録済みのものだけを参照できる") is a check
+    /// against repository state, so it belongs to the same locked read as
+    /// the rest of the plan. Reading `axes` earlier, outside the lock,
+    /// leaves a window in which the Axis is removed after being approved
+    /// and before the plan is built — a commit referencing an Axis that no
+    /// longer exists, which `markharness validate` then rejects. Owning
+    /// the check here is what closes it; [`state_fingerprint`] covers only
+    /// the remaining build-to-commit window.
+    #[test]
+    fn build_plan_rejects_an_axis_that_is_not_registered() {
+        let dir = init_project();
+        let doc = parse_intent(
+            "format: markharness/knowledge-intent/v1
+mode: merge
+requirements:
+  - key: req_todo
+    id: todo
+    source: native
+    label: TODO management
+    axis: [nonexistent]
+features:
+  - id: checkout
+    label: Checkout
+    axis: [also_missing]
+    behaviors:
+      - id: guest
+        label: Guest
+        description: Guest checkout
+        axis: [missing_too]
+",
+        )
+        .unwrap();
+
+        match build_plan(dir.path(), &doc) {
+            Err(PlanError::Diagnostics(diagnostics)) => {
+                let locations: Vec<&str> =
+                    diagnostics.iter().map(|d| d.location.as_str()).collect();
+                assert_eq!(
+                    locations,
+                    [
+                        "requirements[0].axis[0]",
+                        "features[0].axis[0]",
+                        "features[0].behaviors[0].axis[0]"
+                    ]
+                );
+                assert!(
+                    diagnostics
+                        .iter()
+                        .all(|d| d.code == DiagnosticCode::UnknownAxis)
+                );
+            }
+            other => panic!("expected unknown_axis diagnostics, got {other:?}"),
+        }
+    }
+
+    /// The counterpart: a registered Axis passes the same locked check.
+    #[test]
+    fn build_plan_accepts_a_registered_axis() {
+        let dir = init_project();
+        let axes_dir = dir.path().join(".markharness/axes");
+        fs::create_dir_all(&axes_dir).unwrap();
+        fs::write(
+            axes_dir.join("scope.yml"),
+            "id: scope
+label: Scope
+",
+        )
+        .unwrap();
+        let doc = parse_intent(
+            "format: markharness/knowledge-intent/v1
+mode: merge
+features:
+  - id: checkout
+    label: Checkout
+    axis: [scope]
+",
+        )
+        .unwrap();
+
+        build_plan(dir.path(), &doc).expect("a registered axis must pass");
     }
 
     /// ADR 0028 §2: the `redundant_prefix` rule the deleted KnowledgeDraft

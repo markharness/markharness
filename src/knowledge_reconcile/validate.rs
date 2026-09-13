@@ -20,15 +20,15 @@ fn looks_like_uid(value: &str) -> bool {
     ulid::Ulid::from_string(value).is_ok()
 }
 
-/// Runs every check that needs only the Intent document plus the set of
-/// currently registered Axis ids (ADR 0027 §4: "Axisは登録済みのものだけを
-/// 参照できる").
-pub fn validate_static(doc: &IntentDocument, known_axes: &HashSet<String>) -> Vec<Diagnostic> {
+/// Runs every check that needs only the Intent document. Checks that
+/// consult repository state — `unknown_axis` against the registry, every
+/// match against current Knowledge — belong to `plan::build_plan`, which
+/// reads that state once under the identity lock.
+pub fn validate_static(doc: &IntentDocument) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     check_duplicate_keys(doc, &mut diagnostics);
     check_duplicate_uids(doc, &mut diagnostics);
     check_unknown_local_references(doc, &mut diagnostics);
-    check_unknown_axes(doc, known_axes, &mut diagnostics);
     check_display_ids_and_labels(doc, &mut diagnostics);
     check_blank_strings(doc, &mut diagnostics);
     diagnostics
@@ -292,7 +292,11 @@ fn check_unknown_local_references(doc: &IntentDocument, out: &mut Vec<Diagnostic
     }
 }
 
-fn check_unknown_axes(
+/// ADR 0027 §4: "Axisは登録済みのものだけを参照できる". Called from
+/// `plan::build_plan` rather than [`validate_static`] so the registry is
+/// read inside the same locked, fingerprinted window as the rest of the
+/// state the plan is built from.
+pub(crate) fn check_unknown_axes(
     doc: &IntentDocument,
     known_axes: &HashSet<String>,
     out: &mut Vec<Diagnostic>,
@@ -328,10 +332,6 @@ mod tests {
     use super::*;
     use crate::knowledge_reconcile::intent::parse_intent;
 
-    fn axes(ids: &[&str]) -> HashSet<String> {
-        ids.iter().map(|s| s.to_string()).collect()
-    }
-
     #[test]
     fn no_diagnostics_for_a_fully_valid_intent() {
         let yaml = "\
@@ -353,7 +353,7 @@ features:
     axis: [functional]
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&["functional"]));
+        let diagnostics = validate_static(&doc);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
@@ -376,7 +376,7 @@ requirements:
     axis: []
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagnosticCode::DuplicateKey);
         assert_eq!(diagnostics[0].location, "requirements[1].key");
@@ -402,7 +402,7 @@ features:
     axis: []
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagnosticCode::DuplicateKey);
     }
@@ -420,7 +420,7 @@ requirements:
     label: B
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagnosticCode::DuplicateUid);
         assert_eq!(diagnostics[0].location, "requirements[1].uid");
@@ -441,7 +441,7 @@ features:
     label: B
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagnosticCode::DuplicateUid);
     }
@@ -459,7 +459,7 @@ features:
     axis: []
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagnosticCode::UnknownLocalReference);
         assert_eq!(diagnostics[0].location, "features[0].contributes_to[0]");
@@ -478,36 +478,8 @@ features:
     axis: []
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    }
-
-    #[test]
-    fn detects_unknown_axis_on_requirement_and_feature() {
-        let yaml = "\
-format: markharness/knowledge-intent/v1
-mode: merge
-
-requirements:
-  - key: req_todo
-    id: todo
-    source: native
-    label: TODO management
-    axis: [nonexistent]
-
-features:
-  - id: todo-management
-    label: TODO management
-    axis: [also_missing]
-";
-        let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
-        assert_eq!(diagnostics.len(), 2);
-        assert!(
-            diagnostics
-                .iter()
-                .all(|d| d.code == DiagnosticCode::UnknownAxis)
-        );
     }
 
     /// ADR 0028 §2: the display-id format rule the old KnowledgeDraft
@@ -549,7 +521,7 @@ features:
                   - Rejected
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
 
         let slugs: Vec<&str> = diagnostics
             .iter()
@@ -607,7 +579,7 @@ features:
                   - Rejected
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
 
         let labels: Vec<&str> = diagnostics
             .iter()
@@ -639,7 +611,7 @@ requirements:
     axis: []
 ";
         let doc = parse_intent(yaml).unwrap();
-        assert!(validate_static(&doc, &axes(&[])).is_empty());
+        assert!(validate_static(&doc).is_empty());
     }
 
     /// A present-but-blank required string is not the same as an omitted
@@ -687,7 +659,7 @@ features:
                   - \"  \"
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         let blanks: Vec<&str> = diagnostics
             .iter()
             .filter(|d| d.code == DiagnosticCode::MissingRequiredField)
@@ -721,7 +693,7 @@ requirements:
     source_revision: current
 ";
         let doc = parse_intent(yaml).unwrap();
-        let diagnostics = validate_static(&doc, &axes(&[]));
+        let diagnostics = validate_static(&doc);
         assert!(
             diagnostics
                 .iter()
