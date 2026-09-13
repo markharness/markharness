@@ -10,7 +10,6 @@ Documents in this directory fall into four layers: "research design (the paper)"
 2. **[product-operation.md](./product-operation.md)** — Translates the paper's design into a product operation picture (UC1–UC8, actors, file creation order).
 3. **[cli-manual.md](./cli-manual.md)** — List of implemented/unimplemented CLI commands. Correspondence with use cases refers to the UC numbers from item 2.
 4. Detailed design of individual commands (referenced from cli-manual):
-   - **[knowledge-apply-cli-spec.md](./design/knowledge-apply-cli-spec.md)** — Specification of `knowledge validate`/`apply` (non-interactive knowledge registration).
    - **[testcase-generation-design.md](./design/testcase-generation-design.md)** — Specification of `generate` (deterministic TestCase generation).
    - **[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md)** — Specification of `verify trace`/`verify pending` (automatic reconciliation of execution results and ChangeEvents).
    - **[verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)** — (Status: Proposed, not implemented) Canonical-model and pipeline design for PR Verification Plan generation. Corresponds to Stage 1–2 of the roadmap decided in [decisions/0008](./decisions/0008-verification-plan-product-roadmap.md).
@@ -21,7 +20,7 @@ Documents in this directory fall into four layers: "research design (the paper)"
 ## On document freshness
 
 - **git-native-model-for-test-knowledge-management.md** has a "Note (on implementation status)" and "§3.6 Implementation Status Summary" in its body, already noting known differences from the CLI implementation. See `gap-analysis-mh-sample-test-case.md` for a detailed cross-check.
-- `cli-manual.md`, `knowledge-apply-cli-spec.md`, `testcase-generation-design.md`, and `change-event-verification-tracking-spec.md` each carry a "Status: Implemented" style status line and an "Additions/changes made during implementation" section, managing the diff between the initial draft and the implementation self-containedly within the document body.
+- `cli-manual.md`, `testcase-generation-design.md`, and `change-event-verification-tracking-spec.md` each carry a "Status: Implemented" style status line and an "Additions/changes made during implementation" section, managing the diff between the initial draft and the implementation self-containedly within the document body.
 - `gap-analysis-mh-sample-test-case.md` is a "snapshot at investigation time" and must be read while distinguishing the point-in-time findings from the current implementation state.
 
 ## File naming convention

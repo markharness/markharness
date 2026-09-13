@@ -13,12 +13,14 @@ use crate::backfill;
 use crate::binding;
 use crate::changes;
 use crate::id_cache;
-use crate::identity::{self, MigrateError, RenameError, ResolveError, SyncError};
+use crate::identity::{self, MigrateError, ResolveError, SyncError};
 use crate::init;
-use crate::interactive;
-use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, DraftValidation};
-use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
-use crate::knowledge_edit::{self, EditFlowError};
+use crate::knowledge_reconcile::diagnostics::Diagnostic as ReconcileDiagnostic;
+use crate::knowledge_reconcile::execute::{
+    ReconcileError, ReconcileOutcome, check_creation, reconcile_creation,
+};
+use crate::knowledge_reconcile::intent::{IntentParseError, parse_intent};
+use crate::knowledge_reconcile::validate::validate_static;
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::presentation::{self, HumanPresenter, JsonPresenter, Presenter};
@@ -94,9 +96,6 @@ pub enum Command {
     /// Declare how a TestCase is verified (ADR 0020, ADR 0025)
     #[command(subcommand)]
     Binding(BindingCommand),
-    /// Relate Features to Requirements, and re-pin an external Requirement (ADR 0023)
-    #[command(subcommand)]
-    Requirement(RequirementCommand),
     /// Record what a release chose to verify (ADR 0024)
     #[command(subcommand)]
     Release(ReleaseCommand),
@@ -155,9 +154,6 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Manage Feature identity (ADR 0013: rename while preserving the immutable uid)
-    #[command(subcommand)]
-    Feature(FeatureCommand),
     /// Manage cross-entity-kind identity state (ADR 0013)
     #[command(subcommand)]
     Identity(IdentityCommand),
@@ -235,20 +231,6 @@ pub enum IdentityCommand {
     },
 }
 
-#[derive(Subcommand)]
-pub enum FeatureCommand {
-    /// Change a Feature's `id:` while preserving its immutable `uid` (design doc §3, §9)
-    RenameId {
-        /// The Feature's current id
-        old: String,
-        /// The new id
-        new: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-}
-
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportSourceArg {
     Native,
@@ -309,45 +291,6 @@ pub enum ReleaseScopeCommand {
         /// Stable output representation
         #[arg(long, value_enum, default_value = "json")]
         format: ImportFormatArg,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum RequirementCommand {
-    /// Relate a Feature to a Requirement. The Feature owns the relation
-    /// (ADR 0017 §1/§3), so this edits its `requirement_uids`.
-    Link {
-        /// The Feature's display id
-        #[arg(long)]
-        feature: String,
-        /// The Requirement's display id. Its uid is what gets stored.
-        #[arg(long)]
-        requirement: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-    /// Remove a Feature-to-Requirement relation
-    Unlink {
-        /// The Feature's display id
-        #[arg(long)]
-        feature: String,
-        /// The Requirement's display id
-        #[arg(long)]
-        requirement: String,
-        /// Target project directory. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-    },
-    /// Move an external Requirement's `source_revision` to the blob OID its
-    /// `.sdoc` currently has. Never cancels a detected spec change (ADR 0023).
-    Repin {
-        /// The Requirement's display id
-        #[arg(long)]
-        requirement: String,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -590,56 +533,23 @@ pub enum AxesCommand {
 
 #[derive(Subcommand)]
 pub enum KnowledgeCommand {
-    /// Interactively record a Feature/Behavior/Scenario
-    Add {
-        /// Target project directory containing knowledge/. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-        /// Open a blank draft chain in $VISUAL/$EDITOR instead of prompting on stdin
-        #[arg(long)]
-        edit: bool,
-    },
-    /// Print a blank draft YAML chain (the same template `knowledge add --edit` opens) for non-interactive callers
-    Scaffold {
-        /// Write to this path instead of stdout. Refuses to overwrite an existing file.
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    /// Validate a draft YAML file without writing anything
-    Validate {
-        /// Path to the draft YAML file. Required unless --batch is given.
-        #[arg(required_unless_present = "batch")]
-        draft_file: Option<PathBuf>,
-        /// Directory whose direct *.yml children are all treated as draft files and validated in file-name order, cumulatively (a later draft may reuse a Requirement/Feature/Behavior an earlier, valid draft in the same batch would create), without writing anything. Every file is checked and reported, even after an earlier one fails. Exits with code 2 if no *.yml files are found directly under it (a directory of only .yaml drafts does not count).
-        #[arg(long, conflicts_with = "draft_file")]
-        batch: Option<PathBuf>,
-        /// Target project directory containing knowledge/. Defaults to the current directory.
+    /// Reconcile a Knowledge Intent against the repository's current state (ADR 0027)
+    Reconcile {
+        /// Path to the Knowledge Intent YAML file
+        #[arg(required_unless_present = "print_template")]
+        intent_file: Option<PathBuf>,
+        /// Print a blank Knowledge Intent template to stdout and exit (ADR 0028 §1)
+        #[arg(long, conflicts_with_all = ["intent_file", "dir", "json", "check"])]
+        print_template: bool,
+        /// Target project directory containing knowledge/ and axes/. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
-    },
-    /// Validate a draft YAML file and, if valid, write it under knowledge/
-    Apply {
-        /// Path to the draft YAML file. Required unless --batch is given.
-        #[arg(required_unless_present = "batch")]
-        draft_file: Option<PathBuf>,
-        /// Directory whose direct *.yml children are all treated as draft files and applied in file-name order. If any fails to parse or validate, every file this call wrote (including by earlier, successful drafts in the same batch) is removed before it returns. Exits with code 2 if no *.yml files are found directly under it (a directory of only .yaml drafts does not count).
-        #[arg(long, conflicts_with = "draft_file")]
-        batch: Option<PathBuf>,
-        /// Target project directory containing knowledge/. Defaults to the current directory.
-        #[arg(long, short = 'd')]
-        dir: Option<PathBuf>,
-        /// Emit machine-readable JSON instead of human-readable text
+        /// Build and report the mutation plan without writing anything (ADR 0027 §6)
         #[arg(long)]
-        json: bool,
-        /// Strip a scenario.id prefix that redundantly repeats behavior.id, instead of erroring
-        #[arg(long)]
-        strip_redundant_prefix: bool,
-        /// Validate only, without writing (alias for `knowledge validate`)
-        #[arg(long)]
-        dry_run: bool,
+        check: bool,
     },
 }
 
@@ -718,101 +628,70 @@ pub fn run(cli: Cli) -> io::Result<()> {
             presentation::emit(JsonPresenter.present(&outcome))?;
             Ok(())
         }
-        Command::Knowledge(KnowledgeCommand::Scaffold { out }) => match out {
-            Some(out) => match knowledge_edit::write_scaffold(&out) {
-                Ok(()) => Ok(()),
-                Err(e) => {
-                    eprintln!("error: cannot write {}: {e}", out.display());
-                    std::process::exit(2);
-                }
-            },
-            None => {
-                print!("{}", knowledge_edit::EDIT_TEMPLATE);
-                Ok(())
-            }
-        },
-        Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            if edit {
-                run_knowledge_add_edit(&root)
-            } else {
-                let stdin = io::stdin();
-                let mut reader = stdin.lock();
-                let mut stdout = io::stdout();
-                interactive::run_add(&root, &mut reader, &mut stdout)
-            }
-        }
-        Command::Knowledge(KnowledgeCommand::Validate {
-            draft_file,
-            batch,
+        Command::Knowledge(KnowledgeCommand::Reconcile {
+            intent_file,
+            print_template,
             dir,
             json,
+            check,
         }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-
-            if let Some(batch_dir) = batch {
-                return run_knowledge_validate_batch(&root, &batch_dir, json);
-            }
-            let draft_file =
-                draft_file.expect("clap requires draft_file when --batch is not given");
-            let draft = read_and_parse_draft(&draft_file);
-            let options = ValidateOptions {
-                strip_redundant_prefix: false,
-            };
-            let errors = knowledge_draft::validate_draft(&root, &draft, &options);
-            report_validation_outcome(&errors, json);
-            Ok(())
-        }
-        Command::Knowledge(KnowledgeCommand::Apply {
-            draft_file,
-            batch,
-            dir,
-            json,
-            strip_redundant_prefix,
-            dry_run,
-        }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-
-            if let Some(batch_dir) = batch {
-                return run_knowledge_apply_batch(
-                    &root,
-                    &batch_dir,
-                    json,
-                    strip_redundant_prefix,
-                    dry_run,
-                );
-            }
-            let draft_file =
-                draft_file.expect("clap requires draft_file when --batch is not given");
-            let draft = read_and_parse_draft(&draft_file);
-
-            if dry_run {
-                let options = ValidateOptions {
-                    strip_redundant_prefix,
-                };
-                let errors = knowledge_draft::validate_draft(&root, &draft, &options);
-                report_validation_outcome(&errors, json);
+            if print_template {
+                print!("{}", crate::knowledge_reconcile::INTENT_TEMPLATE);
                 return Ok(());
             }
-
-            let options = ApplyOptions {
-                strip_redundant_prefix,
+            let intent_file =
+                intent_file.expect("clap requires intent_file unless --print-template is given");
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            let yaml = fs::read_to_string(&intent_file)?;
+            let doc = match parse_intent(&yaml) {
+                Ok(doc) => doc,
+                Err(e) => {
+                    let diagnostic = ReconcileDiagnostic::new(
+                        crate::knowledge_reconcile::DiagnosticCode::InvalidFormat,
+                        "<document>",
+                        intent_parse_error_message(&e),
+                    );
+                    report_reconcile_diagnostics(&[diagnostic], json);
+                    unreachable!("report_reconcile_diagnostics exits the process on error");
+                }
             };
-            match knowledge_apply::apply_draft(&root, &draft, &options) {
-                Ok(result) => {
-                    if json {
-                        println!("{}", written_paths_to_json(&result.written_paths));
+            let diagnostics = validate_static(&doc);
+            if !diagnostics.is_empty() {
+                report_reconcile_diagnostics(&diagnostics, json);
+                unreachable!("report_reconcile_diagnostics exits the process on error");
+            }
+            let result = if check {
+                check_creation(&root, &doc)
+            } else {
+                reconcile_creation(&root, &doc)
+            };
+            match result {
+                Ok(outcome) => {
+                    report_reconcile_outcome(&outcome, json);
+                    // ADR 0027 §6: `--check` returns a dedicated exit code
+                    // when the plan would change anything, so scripts can
+                    // tell "no changes needed" apart from "changes pending"
+                    // without parsing output.
+                    if check && (!outcome.created.is_empty() || !outcome.updated.is_empty()) {
+                        std::process::exit(4);
                     }
                     Ok(())
                 }
-                Err(ApplyError::Validation(errors)) => {
-                    report_validation_outcome(&errors, json);
-                    unreachable!("report_validation_outcome exits the process on error");
+                Err(ReconcileError::Diagnostics(diagnostics)) => {
+                    report_reconcile_diagnostics(&diagnostics, json);
+                    unreachable!("report_reconcile_diagnostics exits the process on error");
                 }
-                Err(ApplyError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
+                Err(ReconcileError::OperationInProgress) => {
+                    eprintln!("error: a concurrent identity operation is in progress; retry later");
                     std::process::exit(3);
                 }
+                Err(ReconcileError::RecoveryPending) => {
+                    eprintln!(
+                        "error: a previous operation left recovery pending; run `knowledge reconcile` without --check (or any other identity command) once to complete it, then retry --check"
+                    );
+                    std::process::exit(3);
+                }
+                Err(ReconcileError::Io(e)) => Err(e),
             }
         }
         Command::Generate { dir, json } => {
@@ -1145,83 +1024,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Requirement(RequirementCommand::Link {
-            feature,
-            requirement,
-            dir,
-        }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match crate::requirement::link(&root, &feature, &requirement) {
-                Ok(crate::requirement::LinkOutcome::Changed) => {
-                    println!("linked {feature} to {requirement}");
-                    Ok(())
-                }
-                Ok(crate::requirement::LinkOutcome::AlreadyInDesiredState) => {
-                    println!("{feature} is already linked to {requirement}");
-                    Ok(())
-                }
-                Err(crate::requirement::RequirementOpError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(2);
-                }
-            }
-        }
-        Command::Requirement(RequirementCommand::Unlink {
-            feature,
-            requirement,
-            dir,
-        }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match crate::requirement::unlink(&root, &feature, &requirement) {
-                Ok(crate::requirement::LinkOutcome::Changed) => {
-                    println!("unlinked {feature} from {requirement}");
-                    Ok(())
-                }
-                Ok(crate::requirement::LinkOutcome::AlreadyInDesiredState) => {
-                    println!("{feature} is not linked to {requirement}");
-                    Ok(())
-                }
-                Err(crate::requirement::RequirementOpError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(2);
-                }
-            }
-        }
-        Command::Requirement(RequirementCommand::Repin { requirement, dir }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match crate::requirement::repin(&root, &requirement) {
-                Ok(outcome) if outcome.changed() => {
-                    println!(
-                        "repinned {requirement} to {} ({})",
-                        outcome.new_revision, outcome.locator
-                    );
-                    Ok(())
-                }
-                Ok(outcome) => {
-                    println!(
-                        "{requirement} is already pinned to {} ({})",
-                        outcome.new_revision, outcome.locator
-                    );
-                    Ok(())
-                }
-                Err(crate::requirement::RequirementOpError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(2);
-                }
-            }
-        }
         Command::Impact {
             base,
             head,
@@ -1349,51 +1151,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     }
                 }
                 std::process::exit(1);
-            }
-        }
-        Command::Feature(FeatureCommand::RenameId { old, new, dir }) => {
-            let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match identity::rename_id(&root, &old, &new) {
-                Ok(()) => {
-                    println!("renamed Feature '{old}' to '{new}' (uid preserved)");
-                    Ok(())
-                }
-                Err(RenameError::FeatureNotFound(id)) => {
-                    eprintln!(
-                        "error: no Feature with id '{id}' found under .markharness/knowledge/"
-                    );
-                    std::process::exit(2);
-                }
-                Err(RenameError::NotMigrated(id)) => {
-                    eprintln!(
-                        "error: Feature '{id}' has no uid yet. Run `markharness identity migrate` first."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RenameError::NewIdAlreadyInUse(id)) => {
-                    eprintln!("error: id '{id}' is already used by another Feature");
-                    std::process::exit(2);
-                }
-                Err(RenameError::OperationInProgress) => {
-                    eprintln!(
-                        "error: another identity operation is already in progress. Retry shortly."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RenameError::ReplayFailed(e)) => {
-                    eprintln!("error: could not resolve the Feature's current identity: {e:?}");
-                    std::process::exit(2);
-                }
-                Err(RenameError::CurrentIdMismatch { expected, actual }) => {
-                    eprintln!(
-                        "error: feature.yml says id '{expected}' but its identity events say '{actual}'. The working tree and identity event log have drifted apart; reconcile manually before renaming."
-                    );
-                    std::process::exit(2);
-                }
-                Err(RenameError::Io(e)) => {
-                    eprintln!("error: filesystem error: {e}");
-                    std::process::exit(3);
-                }
             }
         }
         Command::Identity(IdentityCommand::Resolve {
@@ -1606,334 +1363,134 @@ pub fn run(cli: Cli) -> io::Result<()> {
     }
 }
 
-fn run_knowledge_add_edit(root: &std::path::Path) -> io::Result<()> {
-    let Some(editor) = knowledge_edit::resolve_editor_command() else {
-        eprintln!(
-            "error: $VISUAL または $EDITOR が設定されていません。knowledge add --edit を使うにはどちらかを設定してください。"
-        );
-        std::process::exit(2);
-    };
-    // Created via tempfile::Builder rather than a PID-derived name so the
-    // path is both unpredictable and opened with O_EXCL-equivalent
-    // exclusive creation: an attacker sharing the temp directory can't
-    // pre-plant a symlink or file at a name they can't guess.
-    let tmp_file = tempfile::Builder::new()
-        .prefix("markharness-knowledge-add-")
-        .suffix(".yml")
-        .tempfile()?;
-    let tmp_path = tmp_file.path().to_path_buf();
-    let mut stdout = io::stdout();
-
-    let invoke_editor = |path: &std::path::Path| -> io::Result<()> {
-        let mut parts = editor.split_whitespace();
-        let program = parts
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty editor command"))?;
-        let status = process::Command::new(program)
-            .args(parts)
-            .arg(path)
-            .status()?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(io::Error::other(format!(
-                "editor exited with status {status}"
-            )))
-        }
-    };
-
-    let result = knowledge_edit::run_edit_loop(root, &tmp_path, invoke_editor, &mut stdout);
-    // tmp_file's Drop removes the file; it's outside root so it isn't a
-    // managed write and fs_safety's root-scoped guards don't apply here.
-    drop(tmp_file);
-
-    match result {
-        Ok(apply_result) => {
-            for path in &apply_result.written_paths {
-                println!("wrote {}", path.display());
-            }
-            Ok(())
-        }
-        Err(EditFlowError::Io(e)) => {
-            eprintln!("error: {e}");
-            std::process::exit(3);
-        }
-    }
+fn intent_parse_error_message(e: &IntentParseError) -> String {
+    e.to_string()
 }
 
-/// Lists `dir`'s direct `*.yml` children, sorted by name for a deterministic
-/// application order. A later draft in a `--batch` run is validated against
-/// `knowledge/`'s state *after* every earlier one in this same listing has
-/// been applied (see `knowledge_apply::apply_batch`), so file naming (e.g.
-/// `01-...yml`, `02-...yml`) controls which drafts can reuse a parent
-/// another draft in the batch creates.
-fn sorted_yaml_files_in(dir: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut files: Vec<PathBuf> = fs::read_dir(dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("yml"))
-        .collect();
-    files.sort();
-    Ok(files)
-}
-
-/// Reads `batch_dir` via `sorted_yaml_files_in` and exits with code 2 if it
-/// matched zero `*.yml` files — a directory of `.yaml` drafts (the wrong
-/// extension) would otherwise look like an empty-but-successful batch to a
-/// caller that only checks `ok`/exit status. Shared by `knowledge validate
-/// --batch` and `knowledge apply --batch` (including `--dry-run`) so both
-/// report this the same way.
-fn read_batch_dir_or_exit(batch_dir: &Path, json: bool) -> Vec<PathBuf> {
-    let draft_paths = match sorted_yaml_files_in(batch_dir) {
-        Ok(paths) => paths,
-        Err(e) => {
-            eprintln!(
-                "error: cannot read batch directory {}: {e}",
-                batch_dir.display()
-            );
-            std::process::exit(2);
-        }
-    };
-
-    if draft_paths.is_empty() {
-        let message = format!(
-            "no *.yml files found in batch directory {}",
-            batch_dir.display()
-        );
-        if json {
-            println!("{{\"ok\":false,\"error\":\"{}\"}}", json_escape(&message));
-        } else {
-            eprintln!("error: {message}");
-        }
-        std::process::exit(2);
-    }
-
-    draft_paths
-}
-
-/// Prints one draft file's validation errors, prefixed with the file name so
-/// they're distinguishable within a `--batch` run, then exits with code 1
-/// (the same code single-draft validation failure uses, via
-/// `report_validation_outcome`).
-fn report_batch_validation_error(file: &Path, errors: &[ValidationError], json: bool) -> ! {
-    if json {
-        println!(
-            "{{\"ok\":false,\"file\":\"{}\",\"errors\":{}}}",
-            json_escape(&file.to_string_lossy()),
-            validation_errors_to_json_array(errors)
-        );
-    } else {
-        for e in errors {
-            let mut detail = String::new();
-            if let Some(suggestion) = &e.suggestion {
-                detail.push_str(&format!("suggested=\"{suggestion}\", "));
-            }
-            detail.push_str(&format!("path={}", e.path));
-            eprintln!(
-                "error: {}: {}: {} ({detail})",
-                file.display(),
-                e.code.as_str(),
-                e.message
-            );
-        }
-    }
-    std::process::exit(1);
-}
-
-/// Prints one draft file's parse error, prefixed with the file name, then
-/// exits with code 2 (the same code a single-draft parse failure uses, via
-/// `read_and_parse_draft`).
-fn report_batch_parse_error(file: &Path, message: &str, json: bool) -> ! {
-    if json {
-        println!(
-            "{{\"ok\":false,\"file\":\"{}\",\"error\":\"{}\"}}",
-            json_escape(&file.to_string_lossy()),
-            json_escape(message)
-        );
-    } else {
-        eprintln!("error: {}: {message}", file.display());
-    }
-    std::process::exit(2);
-}
-
-/// Converts one failing `DraftValidation` (parse or validation error) to a
-/// JSON object, mirroring `report_batch_parse_error`/`report_batch_validation_error`'s
-/// single-file shapes but as an array element rather than the whole payload.
-fn draft_validation_failure_to_json(result: &DraftValidation) -> String {
-    let file = json_escape(&result.file.to_string_lossy());
-    match result
-        .error
-        .as_ref()
-        .expect("caller filters to failures only")
-    {
-        DraftFileError::Parse(message) => {
-            format!(
-                "{{\"file\":\"{file}\",\"error\":\"{}\"}}",
-                json_escape(message)
-            )
-        }
-        DraftFileError::Validation(errors) => {
-            format!(
-                "{{\"file\":\"{file}\",\"errors\":{}}}",
-                validation_errors_to_json_array(errors)
-            )
-        }
-    }
-}
-
-/// Reports a `validate_batch` outcome the same way for both `knowledge
-/// validate --batch` and `apply --batch --dry-run` (they share this one
-/// underlying check, see `knowledge_apply::validate_batch`'s doc comment):
-/// every failing file is listed, not just the first, then exits 1 if any
-/// failed.
-fn report_batch_validate_result(result: &knowledge_apply::BatchValidateResult, json: bool) {
-    if result.ok() {
+/// Reports `knowledge reconcile` diagnostics (ADR 0027 §7) and exits 1 when
+/// any are present, mirroring `report_validation_outcome`'s contract for the
+/// older draft commands.
+fn report_reconcile_diagnostics(diagnostics: &[ReconcileDiagnostic], json: bool) {
+    if diagnostics.is_empty() {
         if json {
             println!("{{\"ok\":true}}");
         }
         return;
     }
+    if json {
+        println!("{}", reconcile_diagnostics_to_json(diagnostics));
+    } else {
+        for d in diagnostics {
+            eprintln!("error[{}]: {} ({})", d.code.as_str(), d.message, d.location);
+        }
+    }
+    std::process::exit(1);
+}
 
-    let failures: Vec<&DraftValidation> = result
-        .results
-        .iter()
-        .filter(|r| r.error.is_some())
-        .collect();
+/// Reports `knowledge reconcile`'s result (ADR 0027 §7: `--json` returns
+/// at least `created`/`updated`/`unchanged`).
+fn report_reconcile_outcome(outcome: &ReconcileOutcome, json: bool) {
+    /// `previous_path` is emitted only when the element's file actually
+    /// moved (a reparented Scenario), so a caller can tell a relocation
+    /// apart from an in-place rewrite without comparing paths itself.
+    fn element_to_json(
+        kind: crate::identity::EntityKind,
+        uid: &str,
+        id: &str,
+        path: &str,
+        previous_path: Option<&str>,
+    ) -> String {
+        let previous = previous_path
+            .map(|p| format!(",\"previous_path\":\"{}\"", json_escape(p)))
+            .unwrap_or_default();
+        format!(
+            "{{\"kind\":\"{}\",\"uid\":\"{}\",\"id\":\"{}\",\"path\":\"{}\"{previous}}}",
+            kind.as_str(),
+            json_escape(uid),
+            json_escape(id),
+            json_escape(path),
+        )
+    }
 
     if json {
-        let items: Vec<String> = failures
+        let created: Vec<String> = outcome
+            .created
             .iter()
-            .map(|r| draft_validation_failure_to_json(r))
+            .map(|c| element_to_json(c.kind, &c.uid, &c.id, &c.path, None))
             .collect();
-        println!("{{\"ok\":false,\"failures\":[{}]}}", items.join(","));
+        let updated: Vec<String> = outcome
+            .updated
+            .iter()
+            .map(|u| element_to_json(u.kind, &u.uid, &u.id, &u.path, u.previous_path.as_deref()))
+            .collect();
+        let unchanged: Vec<String> = outcome
+            .unchanged
+            .iter()
+            .map(|u| element_to_json(u.kind, &u.uid, &u.id, &u.path, None))
+            .collect();
+        println!(
+            "{{\"ok\":true,\"created\":[{}],\"updated\":[{}],\"unchanged\":[{}]}}",
+            created.join(","),
+            updated.join(","),
+            unchanged.join(","),
+        );
     } else {
-        for result in &failures {
-            match result.error.as_ref().expect("filtered to failures only") {
-                DraftFileError::Parse(message) => {
-                    eprintln!("error: {}: {message}", result.file.display());
-                }
-                DraftFileError::Validation(errors) => {
-                    for e in errors {
-                        let mut detail = String::new();
-                        if let Some(suggestion) = &e.suggestion {
-                            detail.push_str(&format!("suggested=\"{suggestion}\", "));
-                        }
-                        detail.push_str(&format!("path={}", e.path));
-                        eprintln!(
-                            "error: {}: {}: {} ({detail})",
-                            result.file.display(),
-                            e.code.as_str(),
-                            e.message
-                        );
-                    }
-                }
-            }
-        }
-    }
-    std::process::exit(1);
-}
-
-fn run_knowledge_validate_batch(root: &Path, batch_dir: &Path, json: bool) -> io::Result<()> {
-    let draft_paths = read_batch_dir_or_exit(batch_dir, json);
-
-    let options = ValidateOptions {
-        strip_redundant_prefix: false,
-    };
-    let result = knowledge_apply::validate_batch(root, &draft_paths, &options)?;
-    report_batch_validate_result(&result, json);
-    Ok(())
-}
-
-fn run_knowledge_apply_batch(
-    root: &Path,
-    batch_dir: &Path,
-    json: bool,
-    strip_redundant_prefix: bool,
-    dry_run: bool,
-) -> io::Result<()> {
-    let draft_paths = read_batch_dir_or_exit(batch_dir, json);
-
-    if dry_run {
-        let options = ValidateOptions {
-            strip_redundant_prefix,
-        };
-        let result = knowledge_apply::validate_batch(root, &draft_paths, &options)?;
-        report_batch_validate_result(&result, json);
-        return Ok(());
-    }
-
-    let options = ApplyOptions {
-        strip_redundant_prefix,
-    };
-    match knowledge_apply::apply_batch(root, &draft_paths, &options) {
-        Ok(result) => {
-            if json {
-                println!("{}", written_paths_to_json(&result.written_paths));
-            }
-            Ok(())
-        }
-        Err(knowledge_apply::BatchApplyError::Draft { file, error }) => match error {
-            knowledge_apply::DraftFileError::Parse(message) => {
-                report_batch_parse_error(&file, &message, json)
-            }
-            knowledge_apply::DraftFileError::Validation(errors) => {
-                report_batch_validation_error(&file, &errors, json)
-            }
-        },
-        Err(knowledge_apply::BatchApplyError::Io(e)) => {
-            eprintln!("error: filesystem error: {e}");
-            std::process::exit(3);
-        }
-    }
-}
-
-fn read_and_parse_draft(draft_file: &std::path::Path) -> knowledge_draft::KnowledgeDraft {
-    let yaml = match fs::read_to_string(draft_file) {
-        Ok(yaml) => yaml,
-        Err(e) => {
-            eprintln!(
-                "error: cannot read draft file {}: {e}",
-                draft_file.display()
+        for c in &outcome.created {
+            println!(
+                "created {} '{}' (uid {}) {}",
+                c.kind.as_str(),
+                c.id,
+                c.uid,
+                c.path
             );
-            std::process::exit(2);
         }
-    };
-    match knowledge_draft::parse_draft(&yaml) {
-        Ok(draft) => draft,
-        Err(e) => {
-            eprintln!("error: {e}");
-            std::process::exit(2);
+        for u in &outcome.updated {
+            match &u.previous_path {
+                Some(previous) => println!(
+                    "updated {} '{}' (uid {}) {previous} -> {}",
+                    u.kind.as_str(),
+                    u.id,
+                    u.uid,
+                    u.path
+                ),
+                None => println!(
+                    "updated {} '{}' (uid {}) {}",
+                    u.kind.as_str(),
+                    u.id,
+                    u.uid,
+                    u.path
+                ),
+            }
+        }
+        for u in &outcome.unchanged {
+            println!(
+                "unchanged {} '{}' (uid {}) {}",
+                u.kind.as_str(),
+                u.id,
+                u.uid,
+                u.path
+            );
+        }
+        if outcome.created.is_empty() && outcome.updated.is_empty() && outcome.unchanged.is_empty()
+        {
+            println!("no changes");
         }
     }
 }
 
-/// Prints the validation outcome and, on failure, exits the process with
-/// code 1 (per §3.4 of docs/en/design/knowledge-apply-cli-spec.md). Returns normally
-/// only when `errors` is empty.
-fn report_validation_outcome(errors: &[ValidationError], json: bool) {
-    if errors.is_empty() {
-        if json {
-            println!("{{\"ok\":true}}");
-        }
-        return;
-    }
-    if json {
-        println!("{}", errors_to_json(errors));
-    } else {
-        print_errors_human(errors);
-    }
-    std::process::exit(1);
-}
-
-fn print_errors_human(errors: &[ValidationError]) {
-    for e in errors {
-        let mut detail = String::new();
-        if let Some(suggestion) = &e.suggestion {
-            detail.push_str(&format!("suggested=\"{suggestion}\", "));
-        }
-        detail.push_str(&format!("path={}", e.path));
-        eprintln!("error: {}: {} ({detail})", e.code.as_str(), e.message);
-    }
+fn reconcile_diagnostics_to_json(diagnostics: &[ReconcileDiagnostic]) -> String {
+    let items: Vec<String> = diagnostics
+        .iter()
+        .map(|d| {
+            format!(
+                "{{\"code\":\"{}\",\"location\":\"{}\",\"message\":\"{}\"}}",
+                d.code.as_str(),
+                json_escape(&d.location),
+                json_escape(&d.message),
+            )
+        })
+        .collect();
+    format!("{{\"ok\":false,\"diagnostics\":[{}]}}", items.join(","))
 }
 
 fn json_escape(s: &str) -> String {
@@ -1957,29 +1514,6 @@ fn json_string_or_null(value: &Option<String>) -> String {
         Some(s) => format!("\"{}\"", json_escape(s)),
         None => "null".to_string(),
     }
-}
-
-fn validation_error_to_json(e: &ValidationError) -> String {
-    format!(
-        "{{\"code\":\"{}\",\"path\":\"{}\",\"value\":{},\"message\":\"{}\",\"suggestion\":{}}}",
-        e.code.as_str(),
-        json_escape(&e.path),
-        json_string_or_null(&e.value),
-        json_escape(&e.message),
-        json_string_or_null(&e.suggestion),
-    )
-}
-
-fn validation_errors_to_json_array(errors: &[ValidationError]) -> String {
-    let items: Vec<String> = errors.iter().map(validation_error_to_json).collect();
-    format!("[{}]", items.join(","))
-}
-
-fn errors_to_json(errors: &[ValidationError]) -> String {
-    format!(
-        "{{\"ok\":false,\"errors\":{}}}",
-        validation_errors_to_json_array(errors)
-    )
 }
 
 fn lineage_to_json(entries: &[lineage::FeatureLineage]) -> String {
@@ -2071,19 +1605,6 @@ fn verify_diffs_to_json(diffs: &[verify::DiffEntry]) -> String {
     )
 }
 
-fn written_paths_to_json(written_paths: &[PathBuf]) -> String {
-    let paths: Vec<String> = written_paths
-        .iter()
-        .map(|p| {
-            format!(
-                "\"{}\"",
-                json_escape(&p.to_string_lossy().replace('\\', "/"))
-            )
-        })
-        .collect();
-    format!("{{\"ok\":true,\"written\":[{}]}}", paths.join(","))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2171,117 +1692,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_knowledge_add_dir_option() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "knowledge",
-            "add",
-            "--dir",
-            "tmp/todo-sample",
-        ]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
-                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")));
-                assert!(!edit);
-            }
-            _ => panic!("expected Knowledge Add command"),
-        }
-    }
-
-    #[test]
-    fn parses_knowledge_add_without_dir_option() {
-        let cli = Cli::parse_from(["markharness", "knowledge", "add"]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Add { dir, edit }) => {
-                assert_eq!(dir, None);
-                assert!(!edit);
-            }
-            _ => panic!("expected Knowledge Add command"),
-        }
-    }
-
-    #[test]
-    fn parses_knowledge_add_with_edit_flag() {
-        let cli = Cli::parse_from(["markharness", "knowledge", "add", "--edit"]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Add { edit, .. }) => assert!(edit),
-            _ => panic!("expected Knowledge Add command"),
-        }
-    }
-
-    #[test]
-    fn parses_knowledge_validate_with_all_options() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "knowledge",
-            "validate",
-            "draft.yml",
-            "--dir",
-            "tmp/todo-sample",
-            "--json",
-        ]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Validate {
-                draft_file,
-                batch,
-                dir,
-                json,
-            }) => {
-                assert_eq!(draft_file, Some(PathBuf::from("draft.yml")));
-                assert_eq!(batch, None);
-                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")));
-                assert!(json);
-            }
-            _ => panic!("expected Knowledge Validate command"),
-        }
-    }
-
-    #[test]
-    fn parses_knowledge_validate_with_only_required_arg() {
-        let cli = Cli::parse_from(["markharness", "knowledge", "validate", "draft.yml"]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Validate {
-                draft_file,
-                batch,
-                dir,
-                json,
-            }) => {
-                assert_eq!(draft_file, Some(PathBuf::from("draft.yml")));
-                assert_eq!(batch, None);
-                assert_eq!(dir, None);
-                assert!(!json);
-            }
-            _ => panic!("expected Knowledge Validate command"),
-        }
-    }
-
-    #[test]
-    fn parses_knowledge_validate_with_batch_option() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "knowledge",
-            "validate",
-            "--batch",
-            "tmp/drafts",
-        ]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Validate {
-                draft_file, batch, ..
-            }) => {
-                assert_eq!(draft_file, None);
-                assert_eq!(batch, Some(PathBuf::from("tmp/drafts")));
-            }
-            _ => panic!("expected Knowledge Validate command"),
-        }
-    }
-
-    #[test]
     fn knowledge_validate_batch_and_draft_file_are_mutually_exclusive() {
         let result = Cli::try_parse_from([
             "markharness",
@@ -2293,91 +1703,6 @@ mod tests {
         ]);
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn parses_knowledge_apply_with_all_options() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "knowledge",
-            "apply",
-            "draft.yml",
-            "--dir",
-            "tmp/todo-sample",
-            "--json",
-            "--strip-redundant-prefix",
-            "--dry-run",
-        ]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Apply {
-                draft_file,
-                batch,
-                dir,
-                json,
-                strip_redundant_prefix,
-                dry_run,
-            }) => {
-                assert_eq!(draft_file, Some(PathBuf::from("draft.yml")));
-                assert_eq!(batch, None);
-                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")));
-                assert!(json);
-                assert!(strip_redundant_prefix);
-                assert!(dry_run);
-            }
-            _ => panic!("expected Knowledge Apply command"),
-        }
-    }
-
-    #[test]
-    fn parses_knowledge_apply_with_only_required_arg() {
-        let cli = Cli::parse_from(["markharness", "knowledge", "apply", "draft.yml"]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Apply {
-                draft_file,
-                batch,
-                dir,
-                json,
-                strip_redundant_prefix,
-                dry_run,
-            }) => {
-                assert_eq!(draft_file, Some(PathBuf::from("draft.yml")));
-                assert_eq!(batch, None);
-                assert_eq!(dir, None);
-                assert!(!json);
-                assert!(!strip_redundant_prefix);
-                assert!(!dry_run);
-            }
-            _ => panic!("expected Knowledge Apply command"),
-        }
-    }
-
-    #[test]
-    fn parses_knowledge_apply_with_batch_option() {
-        let cli = Cli::parse_from([
-            "markharness",
-            "knowledge",
-            "apply",
-            "--batch",
-            "tmp/drafts",
-            "--dir",
-            "tmp/todo-sample",
-        ]);
-
-        match cli.command {
-            Command::Knowledge(KnowledgeCommand::Apply {
-                draft_file,
-                batch,
-                dir,
-                ..
-            }) => {
-                assert_eq!(draft_file, None);
-                assert_eq!(batch, Some(PathBuf::from("tmp/drafts")));
-                assert_eq!(dir, Some(PathBuf::from("tmp/todo-sample")));
-            }
-            _ => panic!("expected Knowledge Apply command"),
-        }
     }
 
     #[test]

@@ -50,14 +50,47 @@ impl From<io::Error> for RenameError {
 /// idempotent and safe to redo from just the identity event log. Kind-
 /// generic (design doc §3.2): the only kind-specific part —
 /// which struct to parse/serialize — lives in `knowledge_walk`.
-fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result<()> {
+pub(crate) fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result<()> {
     recovery::complete_batch_commits(root, intent)?;
-    if intent.batch_events.is_empty() {
-        roll_forward_entity(root, intent.entity_kind, &intent.entity_uid)?;
-    } else {
+    // `knowledge_reconcile::execute` is the only caller whose new elements
+    // have no pre-existing Knowledge file for `roll_forward_entity` below
+    // to find and patch (design doc §6.1 assumes a file already exists;
+    // reconcile's "new" row does not). Writing these first means the
+    // subsequent `roll_forward_entity` loop finds them already correct and
+    // is a harmless no-op verification rather than silently doing nothing.
+    if let Some(recovery::IntentPayload::KnowledgeReconcile { files, moves }) =
+        &intent.caller_payload
+    {
+        for file in files {
+            crate::fs_safety::replace_file(
+                root,
+                &root.join(&file.relative_path),
+                file.contents.as_bytes(),
+            )?;
+        }
+        for moved in moves {
+            // Replaying a move that already happened must not fail: a
+            // crash between the rename and the content write below leaves
+            // the source gone and the destination holding pre-patch
+            // content, so skipping the rename and rewriting the contents
+            // is what converges that state instead of erroring on a
+            // missing source.
+            let from = root.join(&moved.from_relative_path);
+            let to = root.join(&moved.to_relative_path);
+            if from.is_file() {
+                crate::fs_safety::rename_no_follow(root, &from, &to)?;
+            }
+            crate::fs_safety::replace_file(root, &to, moved.contents.as_bytes())?;
+        }
+    }
+    if !intent.batch_events.is_empty() {
         for event in &intent.batch_events {
             roll_forward_entity(root, event.entity_kind, &event.entity_uid)?;
         }
+    } else if let (Some(kind), Some(entity_uid)) = (intent.entity_kind, &intent.entity_uid) {
+        // A content-only reconcile has neither events nor a single entity;
+        // its whole effect is the payload written above.
+        roll_forward_entity(root, kind, entity_uid)?;
     }
     // `migrate_all` is the only caller that ever sets `caller_payload`
     // (its cases' legacy, pre-migration snapshot identity, captured and

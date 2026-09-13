@@ -1,7 +1,7 @@
 # markharness v2 設計書
 
 作成日：2026-09-11(初版)。2026-09-11、既存の設計・概念に引っ張られない再検討(grillingセッション)により全面書き直し。同日、既存実装(`src/`)との突合結果を反映して§5.2.1・§6.1・§9.1等を訂正。さらに、StrictDoc→markharness→Playwrightの実運用後に完全モデルへ進めるための契約を§9.2と[ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md)へ追加した。
-状態：**MVP(M0〜M2)実装済み**(2026-09-12、`checklist-v2-core.md`参照)。本書が定める型・CLI・判定規則は実装されている。M3・M4は未着手であり、これらに関する記述は引き続き提案である。
+状態：**MVP(M0〜M2)実装済み**(2026-09-12、`checklist-v2-core.md`参照)。本書が定める型・判定規則は実装されている。CLI表面は[0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)がKnowledge authoringを`knowledge reconcile`へ統合したため本書の初版から変わっており、§7・§9.1に反映済みである。M3・M4は未着手であり、これらに関する記述は引き続き提案である。
 
 ## 1. 結論と製品の命題
 
@@ -129,7 +129,7 @@ FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型�
 | `source_locator`/`source_revision` | 無し | externalで必須、nativeでは書けない。欠落・混在は`validate`で拒否する |
 | `axis` | 保持 | 両モードで保持(markharness自身の分類であり外部正本の複製ではない) |
 | `uid`・`feature.requirement_uids` | ADR 0013のUID・多対多関連 | そのまま維持 |
-| 対話作成フロー(`src/interactive.rs`・`knowledge_draft.rs`)のRequirement入力 | `label`/`axis`を入力 | nativeはそのまま。externalを選んだ場合のみ`source_locator`入力へ切り替える(AC02と整合させるため) |
+| Requirement authoring | 対話フローで`label`/`axis`を入力 | [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)により対話フローは廃止。Knowledge Intentへ`source`ごとのfieldを書く(nativeは`label`、externalは`source_locator`と`source_revision: current`。AC02と整合) |
 | `traceability.rs`のRequirement索引・`GeneratedFrom.requirement_ids`/`requirement_uids` | 実装済み | 維持 |
 
 `source`は必須であり、省略時のdefaultは持たない。[0023](../decisions/0023-requirement-native-and-external-source.md)§1の「省略時はnative」は既存ファイルを無変更で通すための互換規定であったため、過去を無かったものとして扱う方針([0026](../decisions/0026-module-inventory-and-plan-removal.md)§7)の下では適用しない。externalへ移す場合は人が書き直す(§2の後方互換不要方針により自動変換は作らない)。
@@ -164,11 +164,11 @@ base/head間のFeature版比較(現行`changes.rs`の`ChangeEvent`計算を流�
 2. **仕様側の変更は base/head 間の差分で判定する。** モードごとの判定対象は次の通りで、いずれも「base時点の内容」と「head時点の内容」を比較する。
    - `source: native`：`requirement.yml`自体のbase/head差分。粒度はRequirement単位で、外部ツールを必要としない。
    - `source: external`：`source_locator`が指す`.sdoc` blobのbase/head差分。`.sdoc`が**markharnessと同一のGitリポジトリで管理されている**ことを前提とし、`.sdoc`の構文解析を必要としない。粒度はファイル単位であり、同一ファイル内の別Requirementの変更でも「変更あり」と判定される(偽陽性を許容する。Requirement単位の粒度が必要になった時点でM3の`.sdoc`解析へ引き上げる)。
-3. **固定参照の古さ(stale pin)は別項目として算出する。** externalモードで`source_revision`がhead時点のblob OIDと一致しない場合、「固定参照が古い」として出力する。これは2の変更検知とは独立した項目であり、`requirement repin`による参照更新が仕様変更の検知を打ち消してはならない(同一PR内で`.sdoc`を変更しrepinしても、2の差分は成立する)。
+3. **固定参照の古さ(stale pin)は別項目として算出する。** externalモードで`source_revision`がhead時点のblob OIDと一致しない場合、「固定参照が古い」として出力する。これは2の変更検知とは独立した項目であり、`source_revision: current`による参照更新が仕様変更の検知を打ち消してはならない(同一PR内で`.sdoc`を変更しrepinしても、2の差分は成立する)。
 4. 変更されたTestCase・Requirementそれぞれについて、Alignment checkの状態(§5.3の三値)を算出する。
 5. 影響を受けるTestCase一覧、関連Requirement一覧、Alignment checkの状態別一覧、stale pin一覧を出力する。
 
-この方式により、Change Impact(M1)は`.sdoc`パーサ(M3)にも、StrictDocの導入有無にも依存しない。`repin`は固定参照を現在値へ進める操作にすぎず、対応確認の代替ではない(確認の記録は§5.3のトレーラーだけが担う)。repin後の無変更PRでは、base/head間に差分がないため新たな仕様変更としては報告されない。
+この方式により、Change Impact(M1)は`.sdoc`パーサ(M3)にも、StrictDocの導入有無にも依存しない。repin(`source_revision: current`)は固定参照を現在値へ進める操作にすぎず、対応確認の代替ではない(確認の記録は§5.3のトレーラーだけが担う)。repin後の無変更PRでは、base/head間に差分がないため新たな仕様変更としては報告されない。
 
 ### 6.2 Release Coverage(リリース単位)
 
@@ -193,9 +193,8 @@ Release Coverageは指定したGit ref(既定はHEAD)の内容で評価する。
 ## 7. CLI案
 
 ```text
-markharness requirement link --feature <feature-id> --requirement <requirement-id>
-markharness requirement unlink --feature <feature-id> --requirement <requirement-id>
-markharness requirement repin --requirement <requirement-id>   # externalのみ。source_revisionをhead時点のblob OIDへ更新
+markharness knowledge reconcile <intent-file>   # Requirement関連の追加・削除はUID付きFeatureのcontributes_toを全置換
+                                               # repinはUID付きRequirementのsource_revision: current
 markharness binding set --case-uid <case-uid> --mode automated --reference src/tests/login.spec.ts
 markharness binding set --case-uid <case-uid> --mode manual
 markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...]   # 選定リストを置換
@@ -204,7 +203,7 @@ markharness impact --base <ref> --head <ref> --format json
 markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref> --format json
 ```
 
-`requirement link`/`unlink`は`feature.yml`の`requirement_uids`を編集するコマンドであり、新しい格納先は作らない(§5.2)。出力はCLI/JSONのみとし、ローカルサーバーやダッシュボードはMVPに含めない(§8)。終了コード・JSON schemaのversioning方針は実装時に確定する。廃止するCLIは§9.1で扱う。
+FeatureとRequirementの関連は`feature.yml`の`requirement_uids`が正本であり、新しい格納先は作らない(§5.2)。その編集は[0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)により`knowledge reconcile`へ統合されている。出力はCLI/JSONのみとし、ローカルサーバーやダッシュボードはMVPに含めない(§8)。終了コード・JSON schemaのversioning方針は実装時に確定する。廃止するCLIは§9.1で扱う。
 
 ## 8. 非目標
 
@@ -240,7 +239,7 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 
 ### 9.1 既存CLI・既存データ・既存UIの扱い
 
-- **廃止するCLI**：`identity retire`/`restore`/`release`/`reissue`([0021](../decisions/0021-identity-retire-simplification.md))、`plan`([0026](../decisions/0026-module-inventory-and-plan-removal.md))、`execution record`(`binding set`へ置換、[0020](../decisions/0020-execution-status-lightweight-model.md)・[0025](../decisions/0025-v2-forward-compatible-evolution.md))、`serve`([0022](../decisions/0022-remove-stage3-dashboard.md))、`cache index`([0026](../decisions/0026-module-inventory-and-plan-removal.md))。削除範囲は実装時のチェックリストで確定する。
+- **廃止するCLI**：`identity retire`/`restore`/`release`/`reissue`([0021](../decisions/0021-identity-retire-simplification.md))、`plan`([0026](../decisions/0026-module-inventory-and-plan-removal.md))、`execution record`(`binding set`へ置換、[0020](../decisions/0020-execution-status-lightweight-model.md)・[0025](../decisions/0025-v2-forward-compatible-evolution.md))、`serve`([0022](../decisions/0022-remove-stage3-dashboard.md))、`cache index`([0026](../decisions/0026-module-inventory-and-plan-removal.md))、`knowledge add`/`scaffold`/`validate`/`apply`・`feature rename-id`・`requirement link`/`unlink`/`repin`(いずれも`knowledge reconcile`へ統合、[0028](../decisions/0028-consolidate-knowledge-authoring-commands.md))。削除範囲は実装時のチェックリストで確定する。
 - **既存データ**：**過去のスキーマ・データは最初から存在しなかったものとして扱う**([CLAUDE.md](../../../CLAUDE.md)の後方互換を想定しない設計ルール)。`ExecutionBinding`は新しい保存先`.markharness/bindings/`のみを読み、旧`.markharness/executions/`配下の実行記録は参照しない。廃止したevent種別は`IdentityMutation`から削除されるため、それを含むログは読み取り経路に存在しない。自動変換も、互換replayも、旧データを名指しする診断も実装しない——いずれも互換コードであり、本方針の排除対象である。旧ディレクトリがworktreeに残っていても新コードのどの経路も読まないため、動作には影響しない。同じ理由で`requirement.yml`の`source`は必須とし、省略時のdefaultを持たない(§5.2.1、AC09b)。
 - **既存dashboard**：`src/server.rs`・`ui/`・`markharness serve`・frontendのbinary同梱を削除する([0022](../decisions/0022-remove-stage3-dashboard.md))。削除は`plan`縮小と同じタイミングで行い、`tests/server.rs`等の関連テストも同時に削除する。リポジトリ外のviewerが`plan`出力を参照している場合は、Change Impact/Release Coverage出力への切替が必要になる。
 
@@ -367,7 +366,7 @@ MVPはM0〜M2とする。M0〜M2は2026-09-12に実装完了した(✅)。M3・M
 | AC15 | RequirementとTestCaseが同一PRで変更されているが、`Spec-Reviewed`が無い | 「追随変更あり」として出力し、「確認済み」とはしない(§5.3) |
 | AC16 | 対象を書かない`Spec-Reviewed`トレーラーを、複数Requirementに触れるコミットに付与する | どのRequirementも確認済みにならない(§5.3規則1) |
 | AC17 | shallow cloneなどで`base..head`のコミット履歴を取得できない | 診断付きで失敗する。履歴不足を「確認済み」として出力しない(§5.3規則5) |
-| AC18 | 同一PRで`.sdoc`を変更し、同じPR内で`requirement repin`も実行する | 仕様変更として検出される。repinは検知を打ち消さない(§6.1手順3) |
+| AC18 | 同一PRで`.sdoc`を変更し、同じPR内でrepin(`source_revision: current`)も実行する | 仕様変更として検出される。repinは検知を打ち消さない(§6.1手順3) |
 | AC19 | repin後、内容を変更しない次のPRを評価する | 新たな仕様変更としては報告されない。固定参照が古い場合のみstale pinとして出力する(§6.1手順3) |
 | AC20 | Requirementのみが変更され、関連Featureは変更されていない | 関連Feature・TestCaseを逆引きし、影響とAlignment checkを出力する(§6.1手順1) |
 | AC21 | RequirementにFeatureは関連付いているが、そのFeature配下にScenarioが一つもない | Release Coverageが当該Featureをcoverage gapとして明示する(§6.2) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (decided 2026-09-13; implementation not started). Execute this decision after the "ADR 0028 start gate" in [0027](0027-declarative-knowledge-reconciliation.md) is satisfied.
+Accepted (decided 2026-09-13; implemented 2026-09-13). Executed once the "ADR 0028 start gate" in [0027](0027-declarative-knowledge-reconciliation.md) was satisfied.
 
 ## Context
 

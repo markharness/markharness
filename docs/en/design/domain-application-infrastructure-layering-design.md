@@ -119,7 +119,7 @@ impl KnowledgeWorkspace {
     fn load(root: &Path) -> Result<Self>;
     fn validate(&self) -> ValidationReport;
     fn snapshot(&self) -> &KnowledgeSnapshot;
-    fn apply(&mut self, draft: KnowledgeDraft) -> Result<ApplyResult>;
+    fn reconcile(&mut self, intent: &IntentDocument) -> Result<ReconcileOutcome>;
 }
 ```
 

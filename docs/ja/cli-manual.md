@@ -1,9 +1,9 @@
 # markharness CLI マニュアル
 
 **Status**: Implemented(実装済みコマンドは1章)/ Draft(未実装コマンドの暫定案は2章)
-**関連ドキュメント**: [product-operation.md](./product-operation.md)(ユースケース対応)、[testcase-generation-design.md](./design/testcase-generation-design.md)(`generate`の生成規則)、[knowledge-apply-cli-spec.md](./design/knowledge-apply-cli-spec.md)(`knowledge validate`/`apply`の詳細設計)
+**関連ドキュメント**: [product-operation.md](./product-operation.md)(ユースケース対応)、[testcase-generation-design.md](./design/testcase-generation-design.md)(`generate`の生成規則)、[decisions/0027](./decisions/0027-declarative-knowledge-reconciliation.md)(`knowledge reconcile`の設計)
 
-**位置づけ**：本資料は `markharness` CLI の使用方法を、**実装済みコマンド**と**未実装(今後実装予定)のコマンド**に分けてまとめたものです。ユースケース(UC1〜UC8)の対応は `docs/product-operation.md` の「3. ユースケース記述」表に基づきます。実装済みコマンドの具体的な生成規則は `docs/design/testcase-generation-design.md` を参照してください(ただし `generate`/`verify` の現行実装は、同ドキュメント作成後に `feature → behavior → condition → expected` の4階層モデルへ刷新されており、詳細は本マニュアル 1.5/1.6 節を正としてください)。`knowledge validate`/`apply`(非対話・TTY非依存版、1.3/1.4節)の詳細設計は `docs/design/knowledge-apply-cli-spec.md` を正としてください。
+**位置づけ**：本資料は `markharness` CLI の使用方法を、**実装済みコマンド**と**未実装(今後実装予定)のコマンド**に分けてまとめたものです。ユースケース(UC1〜UC8)の対応は `docs/product-operation.md` の「3. ユースケース記述」表に基づきます。実装済みコマンドの具体的な生成規則は `docs/design/testcase-generation-design.md` を参照してください(ただし `generate`/`verify` の現行実装は、同ドキュメント作成後に `feature → behavior → condition → expected` の4階層モデルへ刷新されており、詳細は本マニュアル 1.3/1.4 節を正としてください)。
 
 ---
 
@@ -43,7 +43,7 @@ UC8(既存ツールからのインポート)は専用ディレクトリを持た
 **動作**
 
 - 各ディレクトリについて、存在しなければ作成し、既に存在すればそのまま(中身も含めて)何もしない冪等な処理。すでに初期化済みのプロジェクトで再実行してもエラーにはならず、不足しているディレクトリだけが追加で作成される。
-- `.markharness/config.toml`(`schema_version = 1` と `[knowledge]\nschema_version = 1` を含む、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))を作成する。トップレベルの`schema_version`は`init` 以外の全コマンドがプロジェクトルートを見つけるための目印であり、`--dir` 省略時は上位ディレクトリを遡って探索し、`--dir` 明示時もその実在を検証する(見つからなければ `markharness init` を促すエラーになる)。`[knowledge].schema_version`はこれとは独立したスコープを持つ値で、`changes compute`(1.12節)がKnowledgeスキーマの移行を検出するためにref単位で解決する。リポジトリにコミットする(`.gitignore` の対象にしない)。既に存在する場合は上書きしない。
+- `.markharness/config.toml`(`schema_version = 1` と `[knowledge]\nschema_version = 1` を含む、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))を作成する。トップレベルの`schema_version`は`init` 以外の全コマンドがプロジェクトルートを見つけるための目印であり、`--dir` 省略時は上位ディレクトリを遡って探索し、`--dir` 明示時もその実在を検証する(見つからなければ `markharness init` を促すエラーになる)。`[knowledge].schema_version`はこれとは独立したスコープを持つ値で、`changes compute`(1.9節)がKnowledgeスキーマの移行を検出するためにref単位で解決する。リポジトリにコミットする(`.gitignore` の対象にしない)。既に存在する場合は上書きしない。
 - 成功すると作成先のパスを標準出力に表示する。
 
 **使用例**
@@ -60,489 +60,129 @@ initialized .markharness/{knowledge,axes,generated,executions,changes,schema}/ u
 
 ---
 
-### 1.2 `markharness knowledge add` — 知識の対話的記述(UC1: 知識を記述する。Requirement → Feature → Behavior → Condition → ExpectedResult の順)
+### 1.2 `markharness knowledge reconcile` — Knowledge Intentの宣言的反映(UC1: 知識を記述する)
 
 ```text
-markharness knowledge add [--dir <path>]
+markharness knowledge reconcile <intent-file> [--check] [--json] [-d, --dir <path>]
+markharness knowledge reconcile --print-template
 ```
 
-**用途**: Test Designer が `Requirement` → `Feature` → `Behavior` → `Condition` → `ExpectedResult` の5階層を対話形式(標準入力への逐次プロンプト)で記述し、`.markharness/knowledge/` 配下に `.yml` ファイルを作成する。`Requirement` は Feature の親となる要求単位で、`Feature` は自身の `requirement:` フィールドで親を参照する。`Behavior` は「機能がどう振る舞うか」を表す必須の中間階層で、`generate` が組み立てる TestCase の `preconditions`(全Conditionに共通する前提)の元になる。条件ごとに異なる実際の操作手順は `Condition` の `steps` として、確認する結果は `ExpectedResult` の `results` として入力する([ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md))。
+**用途**: Knowledge Intent(望ましい状態を記述したYAML)を1ファイルで与え、現在のリポジトリ状態と突き合わせて、Requirement・Feature・Behavior・Scenarioの作成・更新・renameを単一トランザクションで反映する。Knowledge authoringの書込みInterfaceはこのコマンドだけであり、人もAIも同じ経路を使う([decisions/0027](./decisions/0027-declarative-knowledge-reconciliation.md)・[decisions/0028](./decisions/0028-consolidate-knowledge-authoring-commands.md))。
+
+Intentは**手続きではなく望ましい状態**を記述する。新規要素はドキュメント内ローカルな `key` で相互参照し(`key` は保存されない)、既存要素は `uid` で選択する。同じIntentを再実行しても、内容が一致する要素は `unchanged` となり書込みは発生しない。
 
 **オプション**
 
-| オプション         | 説明                                                                                                  |
-| ------------------ | ----------------------------------------------------------------------------------------------------- |
-| `-d, --dir <path>` | 対象プロジェクトディレクトリ(`.markharness/knowledge/` の親)を指定する(`.markharness/config.toml` の実在を検証する)。省略時はカレントディレクトリから上位へ `.markharness/config.toml` を探索して見つかったプロジェクトルートを対象にする。 |
-
-**使用例(カレントディレクトリ以外を対象にする)**
-
-```console
-$ markharness knowledge add --dir tmp/todo-sample
-Requirement name (e.g. task-management): task-management
-Requirement axis (comma separated, e.g. ui, validation): workflow
-Feature name (e.g. add-todo): add-todo
-Axis (comma separated, e.g. ui, validation): ui, validation
-Behavior name (e.g. add-task): add-task
-Behavior axis (comma separated, e.g. ui, validation): ui
-Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
-Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
-  step 1: Open the todo app.
-  step 2:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
-Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
-  step 1: Click the title field.
-  step 2: Press the add button.
-  step 3:
-Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
-  step 1:
-Expected result (e.g. shows a validation error): shows a validation error
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: A validation error is shown under the title field.
-  step 2:
-```
-
-→ `tmp/todo-sample/.markharness/knowledge/task-management/add-todo/...` にファイルが作成される。
-
-**アクター**: Test Designer(`docs/product-operation.md` UC1)
-
-**フロー**
-
-1. `Requirement name (e.g. task-management):` — Requirement の slug(小文字英数字とハイフンのみ)、または日本語ラベルを入力
-   - `.markharness/knowledge/` 配下に既存の Requirement が1件以上あれば、プロンプトの前に `N) id` 形式で番号付き一覧を表示する。番号を入力すると対応する Requirement を選択でき、既存の id をそのまま直接入力しても再利用できる。候補が0件の場合は一覧を表示しない。
-   - 既存の `.markharness/knowledge/<requirement_id>/requirement.yml` があれば再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Requirement axis (comma separated, e.g. ui, validation):` で観点をカンマ区切りで入力し、`requirement.yml` を新規作成する
-2. `Feature name (e.g. add-todo):` — Feature の slug(小文字英数字とハイフンのみ)、または日本語ラベルを入力
-   - 選択した Requirement 配下に既存の Feature が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
-   - 既存の `.markharness/knowledge/<requirement_id>/<feature_id>/feature.yml` があれば再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Axis (comma separated, e.g. ui, validation):` で観点をカンマ区切りで入力し、`feature.yml` を新規作成する(`requirement:` フィールドには選択・作成した Requirement の id が自動的に記録される)
-3. `Behavior name (e.g. add-task):` — Behavior の slug、または日本語ラベルを入力
-   - 選択した Feature 配下に既存の Behavior が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
-   - 既存の `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/behavior.yml` があれば再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Behavior axis (...)`・`Behavior description (...)`・`Behavior steps (...)`(1行1操作、空行で入力終了。少なくとも1つ必須)を入力し、`behavior.yml` を新規作成する
-4. `Condition name (e.g. empty-title):` — Condition の slug、または日本語ラベルを入力
-   - 選択した Behavior 配下に既存の Condition が1件以上あれば、同様に番号付き一覧を表示し、番号選択・直接入力のいずれも可能。
-   - 新規に作成する Condition id が `{behavior_id}-` で始まる場合(Behavior id を重複して含めてしまった場合)、その接頭辞を自動的に除去してから作成し、その旨を通知する(例: Behavior `add-task` に Condition id `add-task-empty-title` と入力すると `empty-title` として作成される)。ただし、入力された id そのままのディレクトリが既に存在する場合は除去せずそのまま再利用する(過去に手動で重複した名前のまま作成されたデータを壊さないため)。
-   - 既存の `.markharness/knowledge/<requirement_id>/<feature_id>/<behavior_id>/<condition_id>/condition.yml` があれば(除去後の id で判定し)再利用し、次のプロンプトへスキップする
-   - 新規の場合のみ `Scenario (...)`・`Condition steps (...)`(1行1操作、空行で入力終了。少なくとも1つ必須)・`Additional preconditions (...)`(1行1操作、空行で入力終了。0件も可)を入力し、`condition.yml` を新規作成する
-5. `Expected result (e.g. shows a validation error):` — 期待結果の要約テキストを入力し、続けて `Observable results (...)`(1行1つの観測可能な結果、空行で入力終了。少なくとも1つ必須)を入力して `expected/NNN.yml`(3桁連番、既存ファイル数+1)を作成する。Conditionを再利用する場合と異なり、ExpectedResultは常に新規追加のため、この2つのプロンプトは省略されない。
-
-**プロンプト文言について**: 各プロンプトは内部的には Feature/Behavior/Condition の `id`(ディレクトリ名・YAMLの `id` フィールド)を決めるものだが、人間が入力する際に「id」という抽象的な概念に迷わないよう、`Feature name` / `Behavior name` / `Condition name` のように分かりやすい英語表現と入力例を添えている。内部データモデル(`id`フィールド、通知メッセージ、コード上の変数名)は変更していない。
-
-**日本語ラベル入力(Feature name / Behavior name / Condition name)**
-
-各 name プロンプトでは、ASCII以外の文字を含む入力(日本語ラベルなど)を渡すと、id直接入力の代わりに以下のローマ字変換フローに切り替わる。ExpectedResult の id は自動連番のため対象外。
-
-1. 入力文字列に非ASCII文字が含まれるかを判定する。
-2. 含まれる場合、[`kakasi`](https://crates.io/crates/kakasi) crate で入力をローマ字に変換し、続けて正規化(小文字化・空白のハイフン化・連続ハイフンの圧縮・先頭/末尾ハイフン除去・許可されない記号の除去)を行った id 候補を1件提示する。
-3. `id候補: <候補> (Enterで採用、編集する場合は入力):`というプロンプトに対して空入力(Enter)のみを送るとその候補をそのまま id として採用する。何か文字列を入力すると、その入力を同じ正規化ルールに通した上で id として採用する(自由編集)。
-4. 正規化後の id が既存候補一覧(番号付き一覧に表示されているもの)と衝突する場合は警告を表示し、その階層の id 入力からやり直しになる(自動的な既存id流用はしない。既存idの意図的な再利用は番号選択で行う)。
-5. 日本語ラベル入力を経由して新規作成された Requirement/Feature/Behavior/Condition の `label` フィールドには、入力した日本語文字列がそのまま保存される。ASCII直接入力の場合や番号選択で既存を再利用した場合は入力値そのもの(= id と同じ文字列)が `label` として保存される。ExpectedResult は id が自動連番でありユーザーが名前を入力する対象ではないため、`label` フィールドは存在しない(入力した説明文はそのまま `description` に保存される)。
-
-**入力バリデーション**
-
-- id(Feature id / Behavior id / Condition id)は小文字英数字とハイフンのみ許可。不正な場合は再入力を促す。
-- 候補一覧が表示されている場合、1以上・候補件数以下の整数を入力すると対応する候補が選択される。範囲外の整数や非数値は通常のid入力(またはASCII以外を含む場合は日本語ラベル)として扱われる。
-- すべてのプロンプトで空入力(trim後に空)は再入力を促す。ただし日本語ラベル変換後の id候補提示に対する空入力は「候補をそのまま採用」を意味し、再入力を促す対象ではない。
-
-**生成されるファイル**(例: `task-management` / `add-todo` / `add-task` / `empty-title` / 1件目)
-
-```
-.markharness/knowledge/task-management/requirement.yml
-.markharness/knowledge/task-management/add-todo/feature.yml
-.markharness/knowledge/task-management/add-todo/add-task/behavior.yml
-.markharness/knowledge/task-management/add-todo/add-task/empty-title/condition.yml
-.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/001.yml
-```
-
-`requirement.yml`:
-
-```yaml
-id: task-management
-label: task-management
-axis: [workflow]
-```
-
-`feature.yml`:
-
-```yaml
-id: add-todo
-requirement: task-management
-label: add-todo
-axis: [ui, validation]
-```
-
-`behavior.yml`:
-
-```yaml
-id: add-task
-feature: add-todo
-label: add-task
-axis: [ui]
-description: |
-  User adds a new task to the list.
-preconditions:
-  - "Open the todo app."
-```
-
-`condition.yml`:
-
-```yaml
-id: empty-title
-behavior: add-task
-label: empty-title
-description: |
-  Submit the todo form with an empty title
-steps:
-  - "Click the title field."
-  - "Press the add button."
-additional_preconditions: []
-```
-
-`expected/001.yml`(id は `{condition_id}-{連番3桁}`):
-
-```yaml
-id: empty-title-001
-condition: empty-title
-description: |
-  shows a validation error
-results:
-  - "A validation error is shown under the title field."
-```
-
-**使用例(初回セッション)**
-
-```console
-$ markharness knowledge add
-Requirement name (e.g. task-management): task-management
-Requirement axis (comma separated, e.g. ui, validation): workflow
-Feature name (e.g. add-todo): add-todo
-Axis (comma separated, e.g. ui, validation): ui, validation
-Behavior name (e.g. add-task): add-task
-Behavior axis (comma separated, e.g. ui, validation): ui
-Behavior description (e.g. User adds a new task to the list.): User adds a new task to the list.
-Behavior steps (one operation per line, blank line to finish, e.g. Click the title field.):
-  step 1: Open the todo app.
-  step 2:
-Condition name (e.g. empty-title): empty-title
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with an empty title
-Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
-  step 1: Click the title field.
-  step 2: Press the add button.
-  step 3:
-Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
-  step 1:
-Expected result (e.g. shows a validation error): shows a validation error
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: A validation error is shown under the title field.
-  step 2:
-```
-
-**使用例(既存Requirement/Feature/Behavior/Conditionへの2件目のExpectedResult追加、番号選択)**
-
-```console
-$ markharness knowledge add
-Requirement name (e.g. task-management):
-  1) task-management
-1
-既存のRequirement 'task-management' を再利用します。
-Feature name (e.g. add-todo):
-  1) add-todo
-1
-既存のFeature 'add-todo' を再利用します。
-Behavior name (e.g. add-task):
-  1) add-task
-1
-既存のBehavior 'add-task' を再利用します。
-Condition name (e.g. empty-title):
-  1) empty-title
-1
-既存のCondition 'empty-title' を再利用します。
-Expected result (e.g. shows a validation error): highlights the title field in red
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: The title field is highlighted in red.
-  step 2:
-```
-
-→ `.markharness/knowledge/task-management/add-todo/add-task/empty-title/expected/002.yml` が作成される。番号の代わりに `task-management` / `add-todo` / `add-task` / `empty-title` を直接入力しても同じ結果になる。既存Conditionを再利用する場合、`Condition steps`/`Additional preconditions` のプロンプトはスキップされる(既存の `condition.yml` の値がそのまま使われる)。
-
-**使用例(Condition id の重複接頭辞を自動除去)**
-
-```console
-$ markharness knowledge add
-Requirement name (e.g. task-management): task-management
-既存のRequirement 'task-management' を再利用します。
-Feature name (e.g. add-todo): add-todo
-既存のFeature 'add-todo' を再利用します。
-Behavior name (e.g. add-task): add-task
-既存のBehavior 'add-task' を再利用します。
-Condition name (e.g. empty-title):
-  1) empty-title
-add-task-max-length
-Condition id 'add-task-max-length' から Behavior id 'add-task' と重複する接頭辞を除去し、'max-length' として作成します。
-Scenario (e.g. Submit the todo form with an empty title): Submit the todo form with a title longer than 200 characters
-Condition steps (one operation per line, blank line to finish, e.g. Leave the title field empty.):
-  step 1: Enter a title longer than 200 characters.
-  step 2: Press the add button.
-  step 3:
-Additional preconditions specific to this condition (one operation per line, blank line to finish, leave blank if none):
-  step 1:
-Expected result (e.g. shows a validation error): shows a length validation error
-Observable results (one per line, blank line to finish, e.g. Shows a validation error under the input field.):
-  step 1: A length validation error is shown under the title field.
-  step 2:
-```
-
-→ `.markharness/knowledge/task-management/add-todo/add-task/max-length/condition.yml` と `.markharness/knowledge/task-management/add-todo/add-task/max-length/expected/001.yml` が作成される(`add-task-max-length/` ディレクトリは作成されない)。
-
-**ユースケース対応**: UC1「知識を記述する」(手動記述、`docs/product-operation.md` 103行目)を対話形式で支援する。
-
----
-
-### 1.3 `markharness knowledge validate` — ドラフトYAMLの検証(UC1: 知識を記述する。非対話・TTY非依存)
-
-```text
-markharness knowledge validate <draft-file> [--json] [-d, --dir <path>]
-markharness knowledge validate --batch <dir> [--json] [-d, --dir <path>]
-```
-
-**用途**: `knowledge add`(1.2節)が前提とするTTY上での逐次プロンプトに依存せず、Requirement→Feature→Behavior→Condition→ExpectedResultの1チェーン分を1つのドラフトYAMLファイルとして与え、スキーマ・整合性を検証する。**副作用はなく、ファイルへの書き込みは一切行わない。** Claude Code等のAIエージェントによる非対話呼び出しや、将来のGUI実装からの利用を想定している。詳細な設計意図・バリデーションルール一覧は `docs/design/knowledge-apply-cli-spec.md` を正とする。
-
-**オプション**
-
-| オプション         | 説明                                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `<draft-file>`     | ドラフトYAMLファイルのパス。`--batch` と排他(いずれか一方が必須)                                          |
-| `--batch <dir>`    | `<dir>` 直下の `*.yml` を全部ドラフトとして扱い、ファイル名の昇順で累積的に検証する。下記「バッチモード」参照 |
-| `-d, --dir <path>` | 対象プロジェクトディレクトリ(`.markharness/knowledge/` の親)。省略時はプロジェクトルート(cwdから上位探索で自動検出)                              |
-| `--json`           | エラー・結果を1行のJSONで出力する。省略時は人間可読なテキストを出力する                                    |
-
-**バッチモード(`--batch <dir>`)**: `knowledge apply --batch`(1.4節)と同じ累積方式で複数ドラフトを検証する——ファイル名の昇順で、後続のドラフトは同じバッチ内で**先行するドラフトが新規作成するはずのRequirement/Feature/Behavior**を、実際に適用したときと同様に再利用できる。ただし`apply --batch`と異なり、1件のドラフトが失敗しても打ち切らず、**バッチ内の全ファイルを最後まで検証してから**結果をまとめて返す(「書き込み前に全件のエラーを一括で洗い出す」ことが本コマンドの狙いのため)。失敗したドラフトは、以降のドラフトから見た累積状態には反映されない(そのドラフトがバッチに存在しなかったものとして後続を検証する)。`--json`指定時、失敗があれば `{"ok":false,"failures":[{"file":"...","errors":[...]}, {"file":"...","error":"..."}]}` を出力する(`errors`はバリデーションエラー、`error`はパースエラー)。人間可読モードでも同様に、失敗したファイルすべてについてファイル名を付けてエラーを出力する。全ファイルが有効なら `{"ok":true}`。実ディスクへの書き込みは一切行わない(内部的に `.markharness/knowledge/`・`.markharness/axes/` を一時ディレクトリへコピーし、その上で検証する)。`<dir>` 直下に `*.yml` が1つも無い場合(拡張子を `.yaml` にしたドラフトしか無い場合を含む)はエラーとなり、終了コード2で `{"ok":false,"error":"no *.yml files found in batch directory <dir>"}` を返す(1.4節「バッチモード」と同じ挙動)。
-
-**ドラフトYAMLの形式**(1回の実行で1本のチェーンを検証する)。空の雛形は `markharness knowledge scaffold`(1.21節)で取得できる。IDE補完用の参考スキーマは `docs/knowledge_draft.schema.json` (実際の検証には使われない静的な参考ファイルで、`knowledge validate`/`apply` 自体の検証ルールは以下の表と `docs/design/knowledge-apply-cli-spec.md` を正とする)。
-
-```yaml
-requirement:
-  id: controls # 必須。ASCII slug
-  label: controls # 省略可(既存id再利用時は省略可)
-  axis: [gameplay] # 新規作成時は必須。既存id再利用時は省略可
-  description: null # 省略可
-
-feature:
-  id: player-jump
-  label: player-jump
-  axis: [gameplay, animation]
-
-behavior:
-  id: jump
-  label: jump
-  axis: [gameplay]
-  description: Player presses jump. # Behaviorのみdescriptionが必須(新規作成時)
-  steps: # 新規作成時は必須。空でない要素を1つ以上、1要素=1操作。全Conditionに共通する前提(内部的にはBehavior.preconditionsへ格納される)
-    - Press the jump button.
-
-condition:
-  id: ground
-  label: ground
-  description: Jump from the ground and land
-  steps: # 新規作成時は必須。空でない要素を1つ以上、1要素=1操作。この条件固有の操作手順
-    - Land on the ground.
-  additional_preconditions: [] # 省略可。手順だけでは到達できない、この条件固有の追加前提
-
-expected:
-  - description: lands safely
-    results: # 必須。空でない要素を1つ以上、1要素=1つの観測可能な結果
-      - Player is standing on the ground.
-  - description: takes fall damage if height > 3m
-    results:
-      - Player's health decreases.
-    additional_steps: # 省略可。この結果を確認する前に必要な追加操作
-      - Measure the fall height first.
-    implementation_note: applyFallDamage() is called when landing velocity exceeds a threshold. # 省略可。生成には使わない実装根拠メモ
-```
-
-`axis`/`label`/`description`/`steps`(Behavior/Condition双方)は、既存id(すでに `.markharness/knowledge/` 配下にファイルが存在するRequirement/Feature/Behavior/Condition)を再利用する場合は省略できる。省略されたフィールドは既存値との比較対象から除外され、指定されたフィールドのみ既存ファイルの値と突合される(`conflicting_existing_value` エラー)。`expected[].results` はExpectedResultが常に新規追加である性質上、既存id再利用による省略という概念自体がなく、常に必須。[ADR 0016](decisions/0016-behavior-condition-precondition-step-result-model.md)が定義するモデルの詳細(`additional_steps`のファイル名順=実行順序契約を含む)は同ADR本文を参照。
-
-**バリデーションルール(概要。詳細は spec §5)**
-
-| エラーコード                 | 内容                                                                                                             |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `invalid_slug`               | idが小文字英数字とハイフン以外を含む                                                                             |
-| `missing_axis`               | 新規作成のRequirement/Feature/Behaviorで `axis` が空・未指定。`.markharness/axes/*.yml` に1件以上登録がある場合は `suggestion` に登録済みaxis一覧(カンマ区切り)を提示、1件も登録が無い場合は `suggestion` は `null` のままで `message` に `axes add` での登録を促す文言が入る |
-| `missing_description`        | 新規作成のBehavior/Condition、または各ExpectedResultで `description` が空                                        |
-| `missing_steps`               | 新規作成のBehavior/Conditionで `steps` が空・未指定、または各ExpectedResultで `results` が空・未指定              |
-| `unknown_axis`               | `.markharness/axes/*.yml` レジストリに登録されていない観点値(近似候補があれば `suggestion` に提示)                            |
-| `redundant_prefix`           | `condition.id` が `{behavior.id}-` で始まる(`knowledge apply` の `--strip-redundant-prefix` 未指定時。1.4節参照) |
-| `conflicting_existing_value` | 既存id再利用時、指定した `label`/`axis`/`description` が既存ファイルの値と不一致                                 |
-| `parent_not_found`           | 既存ファイルに記録された親参照(例: `feature.yml` の `requirement:`)がドラフトのチェーンと矛盾                    |
-| `multiline_label`            | `requirement`/`feature`/`behavior`/`condition` の `label` に改行が含まれる(labelは単一行のプレーンスカラーとして出力するため) |
+| オプション         | 説明                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------- |
+| `<intent-file>`    | Knowledge Intent YAMLのパス。`--print-template` と排他(いずれか一方が必須)                               |
+| `--print-template` | 空のKnowledge Intent雛形を標準出力へ出す。他のオプションとは併用できない                                  |
+| `--check`          | 解析・照合・検証・mutation plan生成まで通常実行と同じ実装で行い、**書込みだけを行わない**                 |
+| `-d, --dir <path>` | 対象プロジェクトディレクトリ(`.markharness/knowledge/` の親)。省略時はプロジェクトルート(cwdから上位探索) |
+| `--json`           | 結果・診断を1行のJSONで出力する。省略時は人間可読なテキストを出力する                                     |
 
 **終了コード**
 
-| コード | 意味                                                                             |
-| ------ | -------------------------------------------------------------------------------- |
-| 0      | 成功(エラーなし)                                                                 |
-| 1      | バリデーションエラーあり(エラー内容はstderr、`--json`指定時はstdoutにJSONで出力) |
-| 2      | 使用方法エラー(ファイル不在・YAMLパース不能・`--batch <dir>` に `*.yml` が1つも無い) |
+| コード | 意味                                                                                     |
+| ------ | ---------------------------------------------------------------------------------------- |
+| 0      | 成功(通常実行は反映完了、`--check` は「変更不要」)                                       |
+| 1      | 検証エラー(診断を出力する)                                                               |
+| 3      | 他のidentity操作が進行中、または前回の操作の回復が保留されている                         |
+| 4      | `--check` で、反映すれば変更が生じる状態(スクリプトが「変更あり」を出力解析なしに判定可能) |
 
-**使用例(成功・人間可読)**
+`--check` は計画までを共有実装で行うが、その結果を後続書込みの許可証としては扱わない。通常実行はコミット直前に現在状態を再確認し、入力状態が変化していれば stale plan として停止する。
 
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample
-$ echo $?
-0
+**Knowledge Intentの形式**
+
+雛形は `markharness knowledge reconcile --print-template` で取得できる。
+
+```yaml
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_todo # ドキュメント内ローカルな参照名。保存されない
+    id: todo # 必須。ASCII slug
+    source: native # native | external
+    label: TODO management # source: native では必須
+    axis: [functional] # 登録済みaxisのみ。未登録は unknown_axis エラー
+    description: null # 省略可
+    related_issues: [] # 省略可
+
+features:
+  - key: feature_todo_add
+    id: todo-add
+    contributes_to: [req_todo] # Requirementの key(新規)または uid(既存)
+    label: Add a TODO
+    axis: [functional]
+    description: null # 省略可
+    forked_from: null # 省略可。概念的な派生元Featureのid(§3.1)。実在するFeatureのidであること
+    behaviors:
+      - id: add
+        label: Add
+        axis: [functional]
+        description: The user adds a TODO item. # Behaviorは新規作成時にdescription必須
+        procedures: # 省略可。このBehaviorが宣言する共通手順(ADR 0017)
+          - name: open-app
+            steps:
+              - Launch the application.
+        scenarios:
+          - id: empty-list
+            label: Empty list
+            description: Adding to an empty list
+            phases:
+              - steps:
+                  - use: open-app # procedures で宣言した共通手順の呼び出し
+                  - action: Type a title and submit. # 1要素=1操作
+                results:
+                  - The item appears in the list. # 1要素=1つの観測可能な結果
+            implementation_note: null # 省略可。実装根拠メモ。生成には使わない(ADR 0016)
 ```
 
-(標準出力・標準エラーとも何も出力しない)
+`mode` は初期版では `merge` のみを受け付ける(既存要素を削除しない)。`format` が `markharness/knowledge-intent/v1` 以外なら `invalid_format` エラーになる。
 
-**使用例(成功・`--json`)**
+文字列fieldを空文字列(または空白のみ)で与えることは、省略とは区別して `missing_required_field` で拒否される。`label: ""` は `label: ` として書き出されYAML nullとして読み戻るため保存ファイルが壊れ、空の `action` や `results` はTest Executorが実施・観測できない記述になるため。
 
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample --json
-{"ok":true}
+Requirementの`native`と`external`はfieldの集合が排他である(ADR 0023)。`native`は自身の内容を所有するため`label`を必須とし、`source_locator`を持てない。`external`は外部ドキュメントが内容を所有するため`label`と`description`のどちらも持てず、`source_locator`と`source_revision: current`が必須で、後者は実行時に現在のblob OIDへ解決される。`source`を切り替えるpatchでは、新しいmodeが持てないfieldは破棄され、新しいmodeが必須とするfieldがIntentにも現在値にも無ければ`missing_required_field`で停止する(例: externalからnativeへ切り替えるIntentは`label`を与える必要がある)。
+
+**既存要素の更新・rename**
+
+既存要素は `key`/`id` ではなく `uid` で選択する。UIDは反映成功時の出力、または `--json` のsnapshotから得る。
+
+```yaml
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: 01J8Z... # 既存Featureを選択
+    id: todo-create # display IDを変えるとrenameになる(uidは保持される)
+    label: Create a TODO # 省略したfieldは現在値を保つ
+    contributes_to: [01J8A..., 01J8B...] # collectionは全置換
 ```
 
-**使用例(失敗・人間可読)**
+- 値のcollection(`axis`・`contributes_to`・`procedures`)は、記述すると**全置換**される。省略すると現在値を保つ。空配列を明示すれば空になる。
+- renameは `uid` で選択した要素の `id` を変えるだけで行う。uidとidentity eventは保持される。
+- Scenarioの親Behaviorを変えるreparentは、`uid` で選択したScenarioを別のBehaviorの下に記述して行う。ファイルの移動は反映結果の `previous_path` で報告される。
+- FeatureとRequirementの関連の追加・削除は、`contributes_to` の全置換で表現する。
+- external Requirementの固定参照更新は `source_revision: current` で行う。現在のblob OIDへ再固定される。`source: native` に対して指定するとエラーになる。
 
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample
-error: unknown_axis: axis "validdation" is not registered (path=behavior.axis[0])
-error: redundant_prefix: condition.id "jump-ground" starts with behavior.id "jump-" prefix (suggested="ground", path=condition.id)
-$ echo $?
-1
-```
+**出力**
 
-**使用例(失敗・`--json`)**
-
-```console
-$ markharness knowledge validate draft.yml --dir tmp/todo-sample --json
-{"ok":false,"errors":[{"code":"unknown_axis","path":"behavior.axis[0]","value":"validdation","message":"axis \"validdation\" is not registered","suggestion":"validation"}]}
-$ echo $?
-1
-```
-
-**使用例(`--batch` で複数ドラフトを一括検証、一部失敗)**
-
-```console
-$ markharness knowledge validate --batch drafts/ --dir tmp/todo-sample --json
-{"ok":false,"failures":[{"file":"01-broken.yml","error":"failed to parse draft: ..."},{"file":"03-air.yml","errors":[{"code":"missing_description","path":"condition.description","value":null,"message":"condition.description must not be empty","suggestion":null}]}]}
-$ echo $?
-1
-```
-
-`02-*.yml` のように有効なファイルは `failures` に含まれない。`01-broken.yml`のパースエラーがあっても`03-air.yml`の検証は打ち切られず最後まで行われる。
-
-**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。1.2節の `knowledge add` と同じ検証ロジックを共有する。
-
----
-
-### 1.4 `markharness knowledge apply` — ドラフトYAMLの検証+書き込み(UC1: 知識を記述する。非対話・TTY非依存)
+人間可読モードでは、要素ごとに `created` / `updated` / `unchanged` の行を出力する(変化が一切なければ `no changes`)。
 
 ```text
-markharness knowledge apply <draft-file> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
-markharness knowledge apply --batch <dir> [--json] [-d, --dir <path>] [--strip-redundant-prefix] [--dry-run]
+created requirement 'todo' (uid 01J8A...) .markharness/knowledge/requirements/todo.yml
+updated feature 'todo-create' (uid 01J8Z...) .markharness/knowledge/features/todo-add.yml -> .markharness/knowledge/features/todo-create.yml
+unchanged behavior 'add' (uid 01J8C...) .markharness/knowledge/features/todo-create/behaviors/add.yml
 ```
 
-**用途**: `knowledge validate`(1.3節)と同じ検証を行い、問題がなければ `.markharness/knowledge/` 配下に**アトミックに**書き込む。5階層(Requirement〜ExpectedResult)のうち一部だけを新規作成する場合でも、全バリデーションが通過した後にまとめて書き込む(一時ファイル+リネーム。書き込み中にI/Oエラーが発生した場合は成功済みファイルも含めてロールバックする)。既存id(再利用)のファイルは上書きしない。
+`--json` では `{"ok":true,"created":[...],"updated":[...],"unchanged":[...]}` を1行で出力する。各要素は `kind` / `uid` / `id` / `path` を持ち、ファイルが実際に移動した場合のみ `previous_path` が付く。検証エラー時は `{"ok":false,...}` 形式で診断コード・位置・メッセージを返し、人間可読モードでは `error[<code>]: <message> (<location>)` を標準エラーへ出力する。
 
-**オプション**
+**原子的保存**: Knowledgeファイル群とidentity eventの書込みは単一トランザクションで行われ、途中で中断してもUIDなしKnowledgeや片側だけ更新された状態を後続コマンドへ公開しない。中断が検出された場合は終了コード3で回復が保留されている旨を報告するので、`--check` を付けずに一度実行して回復を完了させる。
 
-| オプション                 | 説明                                                                                                                                                                                                                                                                                     |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<draft-file>`             | ドラフトYAMLファイルのパス。形式は1.3節と共通。`--batch` と排他                                                                                                                                                                                                                          |
-| `--batch <dir>`            | `<dir>` 直下の `*.yml` を全部ドラフトとして扱い、ファイル名の昇順で1件ずつ検証・適用する。`<draft-file>` と排他。下記「バッチモード」参照                                                                                                                                               |
-| `-d, --dir <path>`         | 1.3節と同様                                                                                                                                                                                                                                                                              |
-| `--json`                   | 1.3節と同様。成功時は書き込んだファイル一覧を出力する(下記参照)                                                                                                                                                                                                                          |
-| `--strip-redundant-prefix` | `condition.id` が `{behavior.id}-` で始まる場合、確認なしで接頭辞を除去したidを採用する。未指定の場合は `redundant_prefix` エラーで停止する(1.3節参照)。除去後idと同名のディレクトリが既に存在する(レガシーデータ)場合は、`knowledge add` と同様に除去せず既存のものをそのまま再利用する |
-| `--dry-run`                | `knowledge validate` と同義(検証のみ行い書き込まない)。CI等での用途を想定した別名                                                                                                                                                                                                        |
+**前提**: Intentが参照するaxisは事前に `axes add`(1.4節)で登録しておく。未登録axisは `unknown_axis` エラーとして反映前に弾かれる。
 
-**バッチモード(`--batch <dir>`)**: 複数のConditionを1件ずつ`validate`→`apply`と手動で回す代わりに、スクラッチディレクトリに溜めた複数のドラフトYAMLを一括で適用する。
-
-- 各ドラフトはファイル名の昇順(例: `01-empty-title.yml`, `02-max-length.yml`, ...)で順番に検証・適用される。後続のドラフトは、同じバッチ内で**先に適用されたドラフトが新規作成したRequirement/Feature/Behavior**を、そのドラフトを個別に`apply`したときと同様に(id のみを指定して)再利用できる。依存関係の解決自体は行わないため、親を先に作るドラフトのファイル名が子より辞書順で先になるよう命名すること。
-- **全体としてall-or-nothing**: いずれか1件のドラフトが検証エラーまたはパースエラーで失敗した場合、それより前に適用済みだった(このバッチ呼び出し内で書き込まれた)ファイルもすべて削除され、`.markharness/knowledge/`はバッチ実行前の状態に戻る。ただし検証自体は各ドラフトをそれぞれの適用直前の`.markharness/knowledge/`の状態に対して行う(先行するドラフトの結果を踏まえて後続を検証する)ため、「全ドラフトを最初にまとめて検証してから書き込む」という意味の事前一括検証ではない点に注意。
-- `--dry-run --batch <dir>` は `knowledge validate --batch`(1.3節)と全く同じ実装を呼ぶ薄いエイリアスで、書き込みは一切行わない。1.3節と同じく累積方式(バッチ内の他ドラフトの適用をシミュレートする)かつ全ファイル検証(1件の失敗で打ち切らない)なので、実際に(`--dry-run`無しで)適用したときの結果と食い違うことはない。`--json`出力・終了コードの形式も1.3節「バッチモード」の説明を参照。
-- `<dir>` 直下に `*.yml` が1つも無い場合(例: 拡張子を `.yaml` にしたドラフトしか置いていない)はエラーとなり、終了コード2で `{"ok":false,"error":"no *.yml files found in batch directory <dir>"}` を返す(`--json`指定時。非指定時はstderrにテキストで同内容を出す)。「0件でも成功」扱いにすると、拡張子ミス等で意図せずファイルが1件もマッチしなかった場合に気づけないため。
-- バリデーションエラー・パースエラーの `--json` 出力(`--dry-run`無し、実際に書き込みを試みて失敗した場合)には、単体適用時の形式に `"file":"<ファイル名>"` を追加した `{"ok":false,"file":"...","errors":[...]}` (バリデーションエラー)または `{"ok":false,"file":"...","error":"..."}` (パースエラー)を用いる。こちらは1件目の失敗で打ち切られる点が `--dry-run`(1.3節の全件収集)と異なる——書き込みを伴う`apply`は失敗した時点で全ロールバックが必要なため、それ以上の検証を続ける意味がないことによる。人間可読モードでもエラーメッセージの先頭にファイル名を付加する。
-
-**終了コード**
-
-| コード | 意味                                                                                  |
-| ------ | ------------------------------------------------------------------------------------- |
-| 0      | 成功(書き込み成功。`--dry-run` 指定時はエラーなし)                                    |
-| 1      | バリデーションエラーあり(1.3節と同じ形式。ファイルは一切書き込まれない)               |
-| 2      | 使用方法エラー(ファイル不在・YAMLパース不能・`--batch <dir>` に `*.yml` が1つも無い) |
-| 3      | ファイルシステムエラー(書き込み失敗など)                                              |
-
-**使用例(成功・`--json`)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample --json
-{"ok":true,"written":[".markharness/knowledge/controls/player-jump/jump/ground/expected/002.yml"]}
-$ echo $?
-0
-```
-
-`written` には新規に書き込まれたファイルのみ(既存id再利用でスキップしたファイルは含まない)が、対象ディレクトリ(`--dir`)からの相対パスで列挙される。
-
-**使用例(`--strip-redundant-prefix` でCondition idの重複接頭辞を除去)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample --strip-redundant-prefix
-$ echo $?
-0
-```
-
-`draft.yml` の `condition.id: add-task-max-length`(Behavior id `add-task` と重複)は `max-length` として書き込まれる。`knowledge add`(1.2節)の自動除去と同じ挙動。
-
-**使用例(`--batch` で複数ドラフトを一括適用)**
-
-```console
-$ ls drafts/
-01-empty-title.yml  02-max-length.yml  03-duplicate-title.yml
-$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample --json
-{"ok":true,"written":[".markharness/knowledge/req-todo/todo/add-task/empty-title/condition.yml",".markharness/knowledge/req-todo/todo/add-task/empty-title/expected/001.yml",".markharness/knowledge/req-todo/todo/add-task/max-length/condition.yml",".markharness/knowledge/req-todo/todo/add-task/max-length/expected/001.yml",".markharness/knowledge/req-todo/todo/add-task/duplicate-title/condition.yml",".markharness/knowledge/req-todo/todo/add-task/duplicate-title/expected/001.yml"]}
-```
-
-`02-max-length.yml`/`03-duplicate-title.yml` は `01-empty-title.yml` が新規作成した `req-todo`/`todo`/`add-task` を `id` のみで参照して再利用している(単体`apply`で既存の親を再利用するのと同じ書き方)。
-
-**使用例(`--batch` でバリデーションエラーにより全体を書き込み拒否)**
-
-```console
-$ markharness knowledge apply --batch drafts/ --dir tmp/todo-sample
-error: 02-max-length.yml: missing_description: condition.description must not be empty (path=condition.description)
-$ echo $?
-1
-```
-
-(`01-empty-title.yml` が既に書き込んでいたファイルも含め、`.markharness/knowledge/` 配下には一切ファイルが残らない)
-
-**使用例(`--dry-run`)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample --dry-run --json
-{"ok":true}
-$ echo $?
-0
-```
-
-(ファイルは書き込まれない)
-
-**使用例(バリデーションエラーで書き込み拒否)**
-
-```console
-$ markharness knowledge apply draft.yml --dir tmp/todo-sample
-error: missing_description: behavior.description must not be empty (path=behavior.description)
-$ echo $?
-1
-```
-
-(`.markharness/knowledge/` 配下には一切ファイルが作成されない)
-
-**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)を、TTYに依存しない形で支援する。AIエージェント・将来のGUI実装が知識を確定登録するための共通エントリポイント。人間向けの `$EDITOR` 起動ラッパーは `knowledge add --edit`(1.10節)として実装済み。
-
----
-
-### 1.5 `markharness generate` — TestCase の決定的生成(UC2: TestCaseを決定的生成する)
+### 1.3 `markharness generate` — TestCase の決定的生成(UC2: TestCaseを決定的生成する)
 
 ```text
 markharness generate [--json] [-d, --dir <path>]
@@ -562,7 +202,7 @@ markharness generate [--json] [-d, --dir <path>]
 - `generated_from` に `requirement` / `feature` / `behavior` / `condition` の各 id と、集約元の `expected_results`(`expected/*.yml` の `id` の一覧)を記録する。
 - `axis`: `Requirement` / `Feature` / `Behavior` の `axis` を合成(union、重複除去のうえソート)した観点一覧(§3.4「axisの継承」)。
 - 出力は `serde_yaml_ng` によるシリアライズで、同一入力に対して常に同一の出力になる(決定性、CIでの差分検証の前提)。
-- `generate` は `.markharness/generated/testcases/*.yml` に加えて `.markharness/generated/traceability-index.json`(Requirement → Feature → Behavior → Condition → TestCase の対応関係を持つ機械可読索引。`serde_json` による整形済みJSON)も同時に再生成する。`markharness verify`(1.6節)はこのファイルも差分検証対象に含める。
+- `generate` は `.markharness/generated/testcases/*.yml` に加えて `.markharness/generated/traceability-index.json`(Requirement → Feature → Behavior → Condition → TestCase の対応関係を持つ機械可読索引。`serde_json` による整形済みJSON)も同時に再生成する。`markharness verify`(1.4節)はこのファイルも差分検証対象に含める。
 - `--dir` を省略すると、カレントディレクトリから上位へ `.markharness/config.toml` を探索して見つかったプロジェクトルートを対象にする(他のコマンドと同じ規約。以前は `generate` だけこのオプションを持たず常にカレントディレクトリ固定だった)。
 - `--json` を指定すると、人間可読メッセージの代わりに `{"ok":true,"generated":<件数>,"written":[<書き込んだファイルパスの一覧(traceability-index.jsonを含む)>]}` を出力する。表示上の件数と実際に書き込まれたファイル数が食い違っていないかを、呼び出し側が機械的に突き合わせられるようにするための出力。
 
@@ -598,11 +238,11 @@ phases:
 
 `.markharness/knowledge/` に何も無い場合は `.markharness/generated/testcases/` が空(0ファイル)になる。
 
-**ユースケース対応**: UC2「TestCaseを決定的生成する」(`docs/product-operation.md` 105行目)。CI上での差分検証(UC3)は 1.6 節の `markharness verify` で行う。
+**ユースケース対応**: UC2「TestCaseを決定的生成する」(`docs/product-operation.md` 105行目)。CI上での差分検証(UC3)は 1.4 節の `markharness verify` で行う。
 
 ---
 
-### 1.6 `markharness verify` — 生成物の差分検証(UC3: 生成物をレビュー・マージする)
+### 1.4 `markharness verify` — 生成物の差分検証(UC3: 生成物をレビュー・マージする)
 
 ```text
 markharness verify [--json] [-d, --dir <path>]
@@ -654,13 +294,13 @@ $ echo $?
 
 ---
 
-### 1.7 `markharness axes list` — 観点(axis)レジストリの一覧表示
+### 1.5 `markharness axes list` — 観点(axis)レジストリの一覧表示
 
 ```text
 markharness axes list [--json] [-d, --dir <path>]
 ```
 
-**用途**: `.markharness/axes/*.yml` に登録済みの観点一覧を、id昇順で出力する。`knowledge validate`/`apply` の `unknown_axis` エラーを事前に回避するための参照コマンド。
+**用途**: `.markharness/axes/*.yml` に登録済みの観点一覧を、id昇順で出力する。`knowledge reconcile` の `unknown_axis` エラーを事前に回避するための参照コマンド。
 
 **動作**: `--json` 未指定時は `id (label)`(label が id と同じ場合は id のみ)を1行ずつ表示し、登録が0件なら `no axes registered under .markharness/axes/` と表示する。`--json` 指定時は `[{"id":...,"label":...|null}]` を1行のJSONで出力する。
 
@@ -675,17 +315,17 @@ $ markharness axes list --dir tmp/todo-sample --json
 [{"id":"gameplay","label":"Gameplay"},{"id":"ui","label":null}]
 ```
 
-**ユースケース対応**: どのUCにも明示的には現れない補助コマンド(`docs/design/knowledge-apply-cli-spec.md` §8)。
+**ユースケース対応**: どのUCにも明示的には現れない補助コマンド。
 
 ---
 
-### 1.8 `markharness axes add` — 観点(axis)の非対話登録
+### 1.6 `markharness axes add` — 観点(axis)の非対話登録
 
 ```text
 markharness axes add <id> [--label <label>] [--json] [-d, --dir <path>]
 ```
 
-**用途**: `.markharness/axes/<id>.yml` を新規作成する。`knowledge add --edit`(1.10節)は未登録axisを対話編集フロー内で自動登録するが、それは `$VISUAL`/`$EDITOR` を起動できる対話的な利用者向けであり、AIエージェント等がJSON出力を見ながら非対話的にCLIを組み立てる用途には使えない。`axes add` はそのための、他のリソース(Requirement/Feature/Behavior/Condition)と対称的な単体の書き込みコマンド。
+**用途**: `.markharness/axes/<id>.yml` を新規作成する。Knowledge Intentが参照するaxisは登録済みである必要があり(未登録axisは `unknown_axis` エラーとして反映前に弾かれる)、`axes add` はそのための、他のリソース(Requirement/Feature/Behavior/Scenario)と対称的な単体の書き込みコマンド。
 
 **動作**
 
@@ -709,13 +349,13 @@ $ markharness axes add security --label Security --dir tmp/todo-sample --json
 {"ok":true,"written":["tmp/todo-sample/.markharness/axes/security.yml"]}
 ```
 
-**ユースケース対応**: `markharness axes list`(1.7節)と同じく、どのUCにも明示的には現れない補助コマンド。
+**ユースケース対応**: `markharness axes list`(1.5節)と同じく、どのUCにも明示的には現れない補助コマンド。
 
 ---
 
-### 1.9 `forked_from`(UC1b: 別Featureからの概念的派生を手動記述する)
+### 1.7 `forked_from`(UC1b: 別Featureからの概念的派生を手動記述する)
 
-専用コマンドはなく、`feature.yml` の `forked_from` フィールドに派生元Featureのidを直接記述する運用(§3.1)。`knowledge validate`/`apply`(1.3/1.4節)のドラフトYAMLでも `feature.forked_from` を受け付け、参照先のFeatureが `.markharness/knowledge/` 配下のどこにも存在しない場合は `unknown_forked_from` エラーで停止する。Git履歴からは自動導出できないドメイン知識のため、`derived_from`(同一Featureの版履歴、§3.2〜3.4)とは異なり検証のみ行い自動計算はしない。
+`knowledge reconcile`(1.2節)のKnowledge Intentで、Featureの `forked_from` に派生元Featureのidを記述する(§3.1)。参照先のFeatureが `.markharness/knowledge/` 配下のどこにも存在しない場合は `unknown_forked_from` エラーで停止する。Git履歴からは自動導出できないドメイン知識のため、`derived_from`(同一Featureの版履歴、§3.2〜3.4)とは異なり検証のみ行い自動計算はしない。
 
 ```yaml
 feature:
@@ -727,42 +367,13 @@ feature:
 
 ---
 
-### 1.10 `markharness knowledge add --edit` — ドラフトYAMLの$EDITOR編集(UC1: 知識を記述する)
-
-```text
-markharness knowledge add --edit [-d, --dir <path>]
-```
-
-**用途**: `knowledge add`(1.2節)の対話プロンプトの代わりに、空のドラフトYAMLテンプレート(1.3節と同じ形式)を一時ファイルに書き出して `$VISUAL`(未設定なら `$EDITOR`)を起動する。保存してエディタを終了すると `knowledge apply`(1.4節)と同じ検証・書き込みを行い、バリデーションエラーがあればエラー内容を表示したうえで同じファイルを再度エディタで開く(ループ)。`$VISUAL`/`$EDITOR` がいずれも未設定の場合はエラーを表示して終了コード `2` で終了する。
-
-**Windows/`code`コマンドについて**: VS Codeの `code` コマンドは実体が `.cmd`(バッチファイル)であり、Rustの `std::process::Command` は拡張子解決(PATHEXT)を行わないため `EDITOR=code --wait` は `program not found` になる。`cmd /c` 経由で起動するよう `EDITOR="cmd /c code --wait"` のように指定すること。
-
-**axisの自動登録**: `requirement.axis` / `feature.axis` / `behavior.axis` に、`.markharness/axes/*.yml` へ未登録の値が含まれていた場合、以下の条件をすべて満たす値だけを `.markharness/axes/<value>.yml`(`id`/`label` とも当該値)として自動的に新規登録し、メッセージを表示する。
-
-- 登録済みaxisとの編集距離(levenshtein距離)が2以下の近似候補が無い(タイポの可能性がある値は自動登録せず、従来通り `unknown_axis` エラーとして残し、`suggested="..."` で近似候補を提示する)
-- `id`として有効な形式(小文字英数字とハイフンのみ)である
-
-1回の検証で複数の未登録axis値がある場合、axisごとに独立して判定する(一部だけ自動登録され、近似候補がある値だけエラーとして残る)。この自動登録は `knowledge add --edit` 限定であり、対話式 `knowledge add`・`knowledge validate`/`apply`(非対話)では従来通り `unknown_axis` エラーのみで停止する。
-
-**使用例**
-
-```console
-$ EDITOR="cmd /c code --wait" markharness knowledge add --edit
-axis 'state' を新規登録しました (.markharness/axes/state.yml)
-wrote .markharness/knowledge/controls/player-jump/jump/ground/expected/001.yml
-```
-
-**ユースケース対応**: UC1「知識を記述する」(`docs/product-operation.md` 103行目)。`knowledge apply` の非対話検証ロジックをそのまま再利用する。
-
----
-
-### 1.11 `markharness cache rebuild` — idキャッシュの破棄(UC7: idキャッシュを破棄・再構築する)
+### 1.8 `markharness cache rebuild` — idキャッシュの破棄(UC7: idキャッシュを破棄・再構築する)
 
 ```text
 markharness cache rebuild [-d, --dir <path>]
 ```
 
-**用途**: `.markharness-cache/`(1.12節の `changes compute` が使う、Featureのid→tree SHA解決結果の非コミットキャッシュ。内容アドレス方式のキーで格納されており、`.markharness/knowledge/`の内容やツールのバージョンが変われば読み込み時に自動的に再計算されるため、通常は明示的な`rebuild`は不要)を丸ごと削除する。即時の再計算は行わない(次回 `changes compute` 実行時に遅延計算される)。キャッシュディレクトリが存在しない場合もエラーにならない(冪等)。
+**用途**: `.markharness-cache/`(1.9節の `changes compute` が使う、Featureのid→tree SHA解決結果の非コミットキャッシュ。内容アドレス方式のキーで格納されており、`.markharness/knowledge/`の内容やツールのバージョンが変われば読み込み時に自動的に再計算されるため、通常は明示的な`rebuild`は不要)を丸ごと削除する。即時の再計算は行わない(次回 `changes compute` 実行時に遅延計算される)。キャッシュディレクトリが存在しない場合もエラーにならない(冪等)。
 
 **使用例**
 
@@ -779,7 +390,7 @@ removed .markharness-cache/ under /path/to/project
 
 ---
 
-### 1.12 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
+### 1.9 `markharness changes compute` — ChangeEventの算出(UC5: ChangeEventを自動計算する)
 
 ```text
 markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--current-tree] [--granularity <feature|behavior|condition>] [-d, --dir <path>]
@@ -795,7 +406,7 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 
 - 比較を始める前に、`from-milestone`・`to-milestone`双方の`.markharness/config.toml`から`[knowledge].schema_version`を解決する([decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))。バージョンが記録されていないrefはlegacyスキーマバージョン1とみなし、その旨をwarningとして出力に含める(後述)。解決した2つのバージョンが異なる場合、またはいずれかがこのCLIビルドが知らない未来のバージョンである場合は、何も書き込まずエラー終了する — ChangeEventは生成されず、既存の`.markharness/changes/<to-milestone>.yaml`も変更されない(fail closed。スキーマバージョンをまたいだ生のtree SHA差分は、schema-only migrationをFeatureの変更として誤検出しうるため)。
 - Feature単位で `from_blob`/`to_blob` を比較し、一致すれば何もしない。片方にのみ存在すれば追加/削除、両方に存在し値が異なれば変更として `ChangeEvent` を1件生成する。
-- `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.5節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `.markharness/knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4も参照)。
+- `impacted_testcases` は、変更されたFeatureに由来する `TestCase.case_id` を、`generate`(1.3節)と同じ生成グラフ(§3.2(A)の構造的生成グラフ。版履歴は使わない)から列挙したもの。どの時点の `.markharness/knowledge/` からこの生成グラフを構築するかは2026-08以降2モードに分かれる(2026-08-12時点、[change-event-verification-tracking-spec.md](./design/change-event-verification-tracking-spec.md) §2.4も参照)。
   - **既定(`--current-tree`未指定)**：`to-milestone`タグが指す`.markharness/knowledge/`ツリーをGit blobから直接読み込んで構築する。同じ区間を後日再計算しても常に同じ結果になる。
   - **`--current-tree`指定時**：現在の作業ツリーの`.markharness/knowledge/`から構築する(従来動作)。作業ツリーが変化し続ける限り、同じ区間の再計算結果も変わりうる。
 - **`--granularity <feature|behavior|condition>`(既定: `feature`)**：`impacted_testcases`を絞り込む単位を選択する(issue #15)。
@@ -805,11 +416,11 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
   - `behavior`/`condition`はFeature単位の変更検出そのもの(どのFeatureに`ChangeEvent`を1件生成するか、rename追跡、`true_divergences`判定)には影響しない。影響するのは`impacted_testcases`の絞り込みのみ。
   - **注意(false negativeのリスク)**: Behavior/Conditionのスキーマには兄弟間の依存関係を表すフィールドが存在せず、本コマンドはそれを検出・推論しない。Feature境界には著者が暗黙に込めた関連性(共有のセットアップ、前提条件等)が含まれている可能性があり、`behavior`/`condition`はその関連性を意図的に無視した上で再現率(recall)を精度(precision)と引き換える機能である。この判断はツール側では保証できないため、利用者が個々のプロジェクトの実情に応じて選択する必要がある。
   - 選択した粒度と、絞り込みの根拠は算出された各`ChangeEvent`の`impact_reason`フィールド(`granularity`と`changed_paths`)に記録される(後述の出力例を参照)。`changed_paths`は`behavior`/`condition`のときのみ、実際にtree SHAが変化した(または追加/削除された)Behavior/Conditionのマーカーファイルパス(`behavior.yml`/`condition.yml`)の一覧であり、`feature`のときは空配列になる(Feature単位では個々のBehavior/Conditionを解決しないため)。
-- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.19節)で事後入力する運用(§3.5)。
-- `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.11節)。
+- `change_type`(仕様変更/バグ修正等)は算出時には `null` のまま出力する。人間が `markharness changes annotate`(1.15節)で事後入力する運用(§3.5)。
+- `--no-cache` を指定しない場合、Feature tree SHA解決結果を内容アドレス方式でキー化された `.markharness-cache/` に読み書きする(1.8節)。
 - 成功時、人間向け出力にはlegacyスキーマバージョン1へフォールバックした側ごとに`warning: ...`行が追加される。`--json`出力では同じメッセージが既存のJSON envelope内の`"warnings"`配列として含まれる。両refが`[knowledge].schema_version`を記録している場合はどちらも出力されない — JSON側の`"warnings"`キーは`[]`としてではなく、キー自体を省略する。同一`schema_version`内での追加はoptionalなフィールドに限られるため([verification-plan-canonical-model-design.md](./design/verification-plan-canonical-model-design.md)§5)。
 - `from-milestone`・`to-milestone`のいずれかに`.markharness/executions/<name>/milestone.yml`が存在し、その記録された`commit_oid`/`knowledge_schema_version`がそのtagの現在の解決結果と食い違っている場合(tagの移動、または手編集)、何も計算せずエラー終了する([decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))。これらのフィールドを持たない`milestone.yml`は検証対象外。
-- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.20節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
+- `from-milestone..to-milestone` の区間を `git rev-list --ancestry-path` で走査し、区間内に存在する全ての2親マージコミットそれぞれについて `git merge-base` を用いて1.16節の`lineage`判定ロジックを内部で実行する(古い順)。対象Featureがいずれかのマージで`true_divergence`(真の分岐)と判定されると、`true_divergences` フィールドに `merge_commit`(監査用のマージコミットSHA)と `parent_tree_shas: [P1, P2]` の組を、発生した順に追記する(§3.2)。同一Featureが区間内で複数回真の分岐を起こした場合もすべて記録される。通常の線形履歴、または区間内にマージが無い場合は空配列のまま。
 - **ブランチ戦略への依存に注意**：`from_tree_sha`/`to_tree_sha`の差分検出そのものはブランチ戦略(merge/squash/rebase/fast-forward)に依存しないが、`true_divergences`はマイルストーン区間内に2親を持つマージコミットが実際に残っていることが前提であり、squash mergeやrebase・fast-forward mergeでは元ブランチの分岐関係がコミットグラフから失われるため検出されない(空配列のまま。論文§3.4表2)。
 
 **出力例**(`.markharness/changes/m2.yaml`、線形履歴の場合)
@@ -875,26 +486,26 @@ markharness changes compute <from-milestone> <to-milestone> [--no-cache] [--curr
 
 ---
 
-### 1.13 `markharness backfill run` — 過去マイルストーンの一括処理(UC6: バックフィルを非同期実行する)
+### 1.10 `markharness backfill run` — 過去マイルストーンの一括処理(UC6: バックフィルを非同期実行する)
 
 ```text
 markharness backfill run [--no-cache] [--max-pairs <count>] [--time-budget <duration>] [-d, --dir <path>]
 ```
 
-**用途**: `.markharness/executions/*/milestone.yml` が存在するマイルストーンを対象に、対応する git tag のコミット日時(committer date)で新しい順に並べ、隣接する2マイルストーンごとに `changes compute`(1.12節)相当の処理を実行して `.markharness/changes/<milestone>.yaml` を生成する。1回の実行で全ペアを処理し終了する(常駐デーモンではない。CI等からの定期実行を想定)。
+**用途**: `.markharness/executions/*/milestone.yml` が存在するマイルストーンを対象に、対応する git tag のコミット日時(committer date)で新しい順に並べ、隣接する2マイルストーンごとに `changes compute`(1.9節)相当の処理を実行して `.markharness/changes/<milestone>.yaml` を生成する。1回の実行で全ペアを処理し終了する(常駐デーモンではない。CI等からの定期実行を想定)。
 
 **動作**
 
 - 最も古いマイルストーンは比較対象がないためスキップされる。
 - 各マイルストーン(to側)の処理完了は `git notes --ref=markharness-backfill` に記録され、次回実行時に同じペアは再計算されずスキップされる(§4.3)。
-- Knowledgeスキーマバージョンを安全に比較できないペア(`changes compute`と同じfail closedの判定、1.12節、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))は、run全体を中断せずそのペアだけスキップする — 残りのペアは処理が続く。このスキップは`git notes`には記録されないため、後続のrunで自動的に再試行される(例: 該当スキーマバージョンのconverterが実装された時点で)。スキップされた各ペアは`skipped <to-milestone>: <reason>`として出力される。`<reason>`はそのペアに対して`changes compute`が表示するのと同じfail-closedエラーそのもの(両側のスキーマバージョンと、CLI更新またはmigrationが必要であること — issue #29 §5)であり、汎用メッセージではない。手動で`changes compute`を再実行しなくても理由が分かるようにするため。1件でもスキップがあればコマンドは終了コード`1`で終了する — 非互換ペアを未処理のまま残したrunを、クリーンな成功として報告しない。
+- Knowledgeスキーマバージョンを安全に比較できないペア(`changes compute`と同じfail closedの判定、1.9節、[decisions/0014](./decisions/0014-knowledge-schema-version-persistence.md))は、run全体を中断せずそのペアだけスキップする — 残りのペアは処理が続く。このスキップは`git notes`には記録されないため、後続のrunで自動的に再試行される(例: 該当スキーマバージョンのconverterが実装された時点で)。スキップされた各ペアは`skipped <to-milestone>: <reason>`として出力される。`<reason>`はそのペアに対して`changes compute`が表示するのと同じfail-closedエラーそのもの(両側のスキーマバージョンと、CLI更新またはmigrationが必要であること — issue #29 §5)であり、汎用メッセージではない。手動で`changes compute`を再実行しなくても理由が分かるようにするため。1件でもスキップがあればコマンドは終了コード`1`で終了する — 非互換ペアを未処理のまま残したrunを、クリーンな成功として報告しない。
 - `milestone.yml`の記録された`commit_oid`/`knowledge_schema_version`が、そのtagの現在の解決結果と食い違っている場合(tagの移動、または手編集)は、そのペアに関してハードエラーとなる。上記のfail-closedスキップとは異なりrun全体が停止する — 古い・改ざんされた監査コピーは自動リトライではなく人間の確認を必要とするため。
 - ペア処理中に検出されたlegacyスキーマバージョンのwarning(そのrefに対して`changes compute`が表示するのと同じwarning)は`warning: ...`行として出力される。
 - `--no-cache` を指定しない場合、`changes compute` と同じ `.markharness-cache/` を共有する。
 - `--max-pairs`は1回の実行で新規処理するペア数を制限する。既処理としてスキップしたペアは件数に含めない。
 - `--time-budget`は未処理ペアの開始前に時間予算を判定する。単位は`ms`、`s`、`m`、`h`(例: `30s`、`5m`)。ペア処理中の強制中断は行わない。
 
-対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.12節と同じく解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
+対象プロジェクトディレクトリ(`-d`/`--dir`)がgitリポジトリのサブディレクトリの場合の制約は、1.9節と同じく解消済み([decisions/0006](./decisions/0006-nested-project-directory-support.md))。
 
 **終了コード**
 
@@ -915,13 +526,13 @@ backfill: 1 processed, 2 already up to date
 
 ---
 
-### 1.14 `markharness milestone init` — `.markharness/executions/<tag>/milestone.yml` の作成(UC4: マイルストーンをタグ付けする、の補助)
+### 1.11 `markharness milestone init` — `.markharness/executions/<tag>/milestone.yml` の作成(UC4: マイルストーンをタグ付けする、の補助)
 
 ```text
 markharness milestone init <tag> [--json] [-d, --dir <path>]
 ```
 
-**用途**: 既存の `git tag <tag>` に対応する `.markharness/executions/<tag>/milestone.yml` を作成する。UC4そのもの(リリースタイミングの意思決定として `git tag` を打つこと)は引き続き人間の判断ポイントであり本コマンドの対象外だが、そのタグを `backfill run`(1.13節)が認識できる形(`.markharness/executions/<name>/milestone.yml` というディレクトリ名がタグ名と一致すること、[src/backfill.rs:21-22](../../src/backfill.rs#L21-L22))に機械的にスキャフォールドする。
+**用途**: 既存の `git tag <tag>` に対応する `.markharness/executions/<tag>/milestone.yml` を作成する。UC4そのもの(リリースタイミングの意思決定として `git tag` を打つこと)は引き続き人間の判断ポイントであり本コマンドの対象外だが、そのタグを `backfill run`(1.10節)が認識できる形(`.markharness/executions/<name>/milestone.yml` というディレクトリ名がタグ名と一致すること、[src/backfill.rs:21-22](../../src/backfill.rs#L21-L22))に機械的にスキャフォールドする。
 
 **オプション**
 
@@ -975,7 +586,7 @@ $ echo $?
 
 ---
 
-### 1.15 `markharness binding set` / `list` — TestCaseの検証手段の宣言(ADR 0020・ADR 0025)
+### 1.12 `markharness binding set` / `list` — TestCaseの検証手段の宣言(ADR 0020・ADR 0025)
 
 ```text
 markharness binding set --case-uid <case-uid> --mode <automated|manual> [--reference <text>] [--json] [-d, --dir <path>]
@@ -1035,52 +646,7 @@ reference: tests/login.spec.ts
 
 ---
 
-### 1.16 `markharness requirement link` / `unlink` / `repin` — Requirementとの関連付けと固定参照の更新(ADR 0023)
-
-```text
-markharness requirement link --feature <feature-id> --requirement <requirement-id> [-d, --dir <path>]
-markharness requirement unlink --feature <feature-id> --requirement <requirement-id> [-d, --dir <path>]
-markharness requirement repin --requirement <requirement-id> [-d, --dir <path>]
-```
-
-**用途**: FeatureとRequirementの多対多関連を編集し、`source: external` のRequirementの固定参照を更新する。
-
-**関連の正本はFeature側**(ADR 0017 §1・§3)。`link`/`unlink` は `feature.yml` の `requirement_uids` を編集するのであって、新しい格納先を作らない。保存される値はRequirementの**uid**であり表示idではない(ADR 0013)。Requirementの `id:` を後からrenameしても関連が切れないようにするため。
-
-**Requirementの二モード**(ADR 0023)
-
-| モード | 正本 | 持てるフィールド | 変更検知 |
-| --- | --- | --- | --- |
-| `source: native` | markharness | `label`(必須)・`description`(任意) | `requirement.yml` 自体のbase/head差分 |
-| `source: external` | 外部 `.sdoc` | `source_locator`(必須)・`source_revision`(必須) | `source_locator` が指す `.sdoc` blobのbase/head差分 |
-
-`axis` は markharness 自身の分類であり外部正本の複製ではないため、両モードで保持する。`source` は**必須**で、省略は `validate` が拒否する。両モードのフィールドを併せ持つ、あるいはどちらとしても不完全な `requirement.yml` も拒否する。
-
-**`repin` の意味**: `source_revision` を、`source_locator` が指すファイルの現在のblob OIDへ移す。**repinは仕様変更を打ち消さない**。Change Impactは `.sdoc` blobのbase/head差分で仕様側変更を検知するため、同じ変更区間の中でrepinしても検知結果は変わらない(設計書§6.1、AC18・AC19)。repinは「人が見た」という記録であって、対応確認の代替でもない。
-
-**終了コード**
-
-| コード | 意味 |
-| --- | --- |
-| 0 | 成功(既に希望の状態だった場合も含む) |
-| 2 | Feature/Requirementが存在しない、Requirementに `uid` が無い(`identity migrate` 未実行)、`repin` 対象が `source: native`、`source_locator` が指すファイルが無い |
-| 3 | ファイルシステムエラー |
-
-**使用例**
-
-```console
-$ markharness requirement link --feature player-jump --requirement controls
-linked player-jump to controls
-
-$ markharness requirement repin --requirement controls
-repinned controls to 0123456789abcdef0123456789abcdef01234567 (docs/requirements.sdoc)
-```
-
-**ユースケース対応**: [markharness v2設計書](./design/markharness-v2-design.md)§5.2・§5.2.1。対話作成フロー(1.2節)が作るRequirementは常に `source: native` であり、externalは本コマンド群と手書きで扱う。
-
----
-
-### 1.17 `markharness impact` — Change Impactと対応確認(ADR 0019、設計書§5.3・§6.1)
+### 1.13 `markharness impact` — Change Impactと対応確認(ADR 0019、設計書§5.3・§6.1)
 
 ```text
 markharness impact --base <git-ref> --head <git-ref> [--format json] [--fail-on-findings] [-d, --dir <path>]
@@ -1130,7 +696,7 @@ Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-requ
 
 ---
 
-### 1.18 `markharness release scope` / `markharness coverage` — リリース選定リストとRelease Coverage(ADR 0024、設計書§6.2)
+### 1.14 `markharness release scope` / `markharness coverage` — リリース選定リストとRelease Coverage(ADR 0024、設計書§6.2)
 
 ```text
 markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...] [-d, --dir <path>]
@@ -1152,7 +718,7 @@ markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at 
 
 | フィールド | 意味 |
 | --- | --- |
-| `requirements[].cases[].binding_mode` / `binding_reference` | そのTestCaseの検証手段(1.15節)。**存在することは「実行済み」を意味しない** |
+| `requirements[].cases[].binding_mode` / `binding_reference` | そのTestCaseの検証手段(1.12節)。**存在することは「実行済み」を意味しない** |
 | `requirements[].cases[].selected` | `--release` 指定時のみ。選定リストに含まれるか |
 | `gaps[].kind = requirement_has_no_feature` | `contributes_to` するFeatureが1つも無い(AC08) |
 | `gaps[].kind = feature_has_no_case` | Featureは関連付いているが、その配下にScenarioが1つも無い(AC21) |
@@ -1183,13 +749,13 @@ $ markharness coverage --requirements all --release v1.2.0 --at v1.2.0
 
 ---
 
-### 1.19 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
+### 1.15 `markharness changes annotate` — change_type / related_eventsの事後入力(§3.5)
 
 ```text
 markharness changes annotate <event_id> [--type <spec-change|bug-fix|refactor|other>] [--related <event_id>]... [-d, --dir <path>]
 ```
 
-**用途**: `changes compute`(1.12節)が算出した `ChangeEvent` の `change_type` と `related_events` を、人間が事後に設定する。`.markharness/changes/` 配下の全 `*.yaml` ファイルを `event_id` で横断検索するため、呼び出し側はどのマイルストーン区間のファイルに含まれるかを事前に知る必要がない。
+**用途**: `changes compute`(1.9節)が算出した `ChangeEvent` の `change_type` と `related_events` を、人間が事後に設定する。`.markharness/changes/` 配下の全 `*.yaml` ファイルを `event_id` で横断検索するため、呼び出し側はどのマイルストーン区間のファイルに含まれるかを事前に知る必要がない。
 
 **動作**
 
@@ -1213,13 +779,13 @@ set related_events on player-jump--m2--m3
 
 ---
 
-### 1.20 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
+### 1.16 `markharness changes lineage` — merge-base祖先探索による系譜監査(§3.2、副次機能)
 
 ```text
 markharness changes lineage --commit <merge-commit-sha> [--json] [-d, --dir <path>]
 ```
 
-**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.12節)は、`from-milestone..to-milestone`区間内に存在する全ての2親マージコミットについて本コマンドと同じ判定ロジックを内部で呼び出し、結果を`true_divergences`に反映する。個別のマージコミット単体を人手で監査・確認したい場合は、本コマンドを独立に実行する。本コマンド自体は `.markharness/changes/*.yaml` への書き込みを行わない(読み取り専用の監査コマンド)。squash mergeやrebase・fast-forward mergeで運用されたリポジトリでは、そもそも対象となる2親マージコミットがコミットグラフ上に存在しないため、本コマンドで監査できる対象自体が無い(論文§3.4表2)。
+**用途**: 指定したマージコミットについて、その2親(P1・P2)と `git merge-base` によるマージベース(B)のtree SHAを比較し、各Feature idごとに§3.2の場合分け(`linear` / `true_divergence` / `single_parent`)を判定して出力する監査専用コマンド。`changes compute`(1.9節)は、`from-milestone..to-milestone`区間内に存在する全ての2親マージコミットについて本コマンドと同じ判定ロジックを内部で呼び出し、結果を`true_divergences`に反映する。個別のマージコミット単体を人手で監査・確認したい場合は、本コマンドを独立に実行する。本コマンド自体は `.markharness/changes/*.yaml` への書き込みを行わない(読み取り専用の監査コマンド)。squash mergeやrebase・fast-forward mergeで運用されたリポジトリでは、そもそも対象となる2親マージコミットがコミットグラフ上に存在しないため、本コマンドで監査できる対象自体が無い(論文§3.4表2)。
 
 **動作**
 
@@ -1237,7 +803,7 @@ player-jump: linear
 
 ---
 
-### 1.21 `markharness validate` — .markharness/knowledge/・.markharness/axes/・.markharness/bindings/ の構造検証(§3.5/§3.6)
+### 1.17 `markharness validate` — .markharness/knowledge/・.markharness/axes/・.markharness/bindings/ の構造検証(§3.5/§3.6)
 
 ```text
 markharness validate [--json] [-d, --dir <path>]
@@ -1245,9 +811,9 @@ markharness validate [--json] [-d, --dir <path>]
 
 **用途**: `.markharness/knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `.markharness/axes/*.yml`、および `.markharness/executions/<milestone>/results.yml` を、対応する `.markharness/schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `.markharness/axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか。
 
-**bindingの検証**: `.markharness/bindings/*.yml` は `ExecutionBinding` として読み取り可能であることを検証する(1.15節)。`result`・`executed_at`・`build`・`environment` のような実行事実フィールドを持つbindingは、未知フィールドとして拒否される(ADR 0025 §2)。
+**bindingの検証**: `.markharness/bindings/*.yml` は `ExecutionBinding` として読み取り可能であることを検証する(1.12節)。`result`・`executed_at`・`build`・`environment` のような実行事実フィールドを持つbindingは、未知フィールドとして拒否される(ADR 0025 §2)。
 
-**UID modeでの追加検証(ADR 0013、design doc §13 Phase 5)**: `.markharness/config.toml`の`[identity]`markerが`mode = "uid"`(1.26節`identity migrate`が全種類の移行完了時に書き込む)であるプロジェクトでは、Requirement/Feature/Behavior/Condition/ExpectedResultのいずれかが`uid:`を持たない場合、そのファイルパスと`markharness identity migrate`の実行を促すメッセージを検証issueとして報告する。copy/import/手編集でcutover後にuidなし要素が紛れ込んだことを検出するためのガードであり、cutover前(markerなし)のプロジェクトでは適用されない。
+**UID modeでの追加検証(ADR 0013、design doc §13 Phase 5)**: `.markharness/config.toml`の`[identity]`markerが`mode = "uid"`(1.21節`identity migrate`が全種類の移行完了時に書き込む)であるプロジェクトでは、Requirement/Feature/Behavior/Condition/ExpectedResultのいずれかが`uid:`を持たない場合、そのファイルパスと`markharness identity migrate`の実行を促すメッセージを検証issueとして報告する。copy/import/手編集でcutover後にuidなし要素が紛れ込んだことを検出するためのガードであり、cutover前(markerなし)のプロジェクトでは適用されない。
 
 **動作**
 
@@ -1267,7 +833,7 @@ $ echo $?
 
 ---
 
-### 1.22 `markharness --version` / `-V` — バージョン表示
+### 1.18 `markharness --version` / `-V` — バージョン表示
 
 ```text
 markharness --version
@@ -1285,7 +851,7 @@ markharness 0.3.1
 
 ---
 
-### 1.23 `markharness axes prune` — 未使用axisの検出・削除
+### 1.19 `markharness axes prune` — 未使用axisの検出・削除
 
 ```text
 markharness axes prune [--delete] [--json] [-d, --dir <path>]
@@ -1316,45 +882,11 @@ $ markharness axes list --dir tmp/todo-sample --json
 
 (`legacy-ui` が `.markharness/axes/` から削除され、以降 `axes list` に現れなくなる)
 
-**ユースケース対応**: `markharness axes add`(1.8節)と対になる補助コマンド。どのUCにも明示的には現れない。
+**ユースケース対応**: `markharness axes add`(1.6節)と対になる補助コマンド。どのUCにも明示的には現れない。
 
 ---
 
-### 1.24 `markharness knowledge scaffold` — 空のドラフトYAML雛形の出力
-
-```text
-markharness knowledge scaffold [--out <path>]
-```
-
-**用途**: `knowledge add --edit`(1.10節)が `$VISUAL`/`$EDITOR` に書き出すのと同じ空のドラフトYAMLチェーン(`EDIT_TEMPLATE`)を、エディタを起動せずそのまま出力する。AIエージェント等、非対話でdraftファイルの雛形だけを取得したい呼び出し元向け。内容は1.3節の「ドラフトYAMLの形式」と同じ5階層(Requirement〜ExpectedResult)の空チェーン。IDE補完用の参考スキーマは `docs/knowledge_draft.schema.json` を参照(実際の検証には使われない。1.3節冒頭参照)。
-
-**オプション**
-
-| オプション    | 説明                                                                             |
-| ------------- | -------------------------------------------------------------------------------- |
-| `--out <path>` | 標準出力の代わりにこのパスへ書き出す。出力先に既存ファイルがある場合は上書きせずエラー(終了コード `2`)で拒否する |
-
-**使用例(標準出力)**
-
-```console
-$ markharness knowledge scaffold > drafts/01-new-condition.yml
-```
-
-**使用例(`--out`)**
-
-```console
-$ markharness knowledge scaffold --out drafts/01-new-condition.yml
-$ markharness knowledge scaffold --out drafts/01-new-condition.yml
-error: cannot write drafts/01-new-condition.yml: ...(既に存在するため上書き拒否)
-$ echo $?
-2
-```
-
-**ユースケース対応**: UC1「知識を記述する」を補助する。1.4節の `knowledge apply --batch <dir>` と組み合わせ、`scaffold --out drafts/NN-xxx.yml` を繰り返してからまとめて適用する運用を想定している。
-
----
-
-### 1.25 `markharness import` — canonical snapshotの生成
+### 1.20 `markharness import` — canonical snapshotの生成
 
 ```text
 markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
@@ -1364,34 +896,7 @@ markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref
 
 ---
 
-### 1.26 `markharness feature rename-id` — Featureのidを変更する(uidは保持、ADR 0013)
-
-```text
-markharness feature rename-id <OLD> <NEW> [-d, --dir <path>]
-```
-
-**用途**: Featureの`id:`を`OLD`から`NEW`へ変更する。不変の`uid`(1.26節`identity migrate`で発行)は保持されるため、`changes compute`(1.12節)はrenameの前後を同一Featureとして扱い、delete+addではなく単一のChangeEventとして検出する(ADR 0013、Issue #17)。実体はcrash-recoverableなidentity operation(identity event追加→`feature.yml`書き換え)であり、確認プロンプトなしにそのまま実行される(取り消したい場合は再度`rename-id`で元のidへ戻せばよい)。
-
-**前提条件**: 対象Featureが`identity migrate`(1.26節)で既に`uid`を発行済みであること。
-
-**動作**
-
-- 成功時: `renamed Feature '<old>' to '<new>' (uid preserved)` を出力し終了コード `0`。
-- `<OLD>` のFeatureが存在しない、`<NEW>` が既に別Featureに使われている、対象Featureがまだmigrateされていない(`Run \`markharness identity migrate\` first` と案内)、`feature.yml` の `id:` とidentity eventのreplay結果が食い違っている(手動編集等で整合性が壊れている)、同時実行中の別identity operationを検知、のいずれも終了コード `2`。
-- ファイルシステムエラー: 終了コード `3`。
-
-**使用例**
-
-```console
-$ markharness feature rename-id todo todo-v2
-renamed Feature 'todo' to 'todo-v2' (uid preserved)
-```
-
-**ユースケース対応**: ADR 0013(不変uidモデル)、Issue #17(id変更をChangeEventが正しく追跡できない問題)。
-
----
-
-### 1.27 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
+### 1.21 `markharness identity migrate` — 全種類のKnowledge要素へuidを一括発行する(ADR 0013、design doc §12・§13 Phase 4/5)
 
 ```text
 markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
@@ -1399,7 +904,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 
 **用途**: `.markharness/knowledge/`配下のRequirement/Feature/Behavior/Condition/ExpectedResultのうち、まだ`uid:`を持たない要素全てへ新規UIDを発行し、root `Issued` identity eventを記録する。冪等な操作であり、copy/import/手編集で後からuidなし要素が混入した場合も安全に再実行できる。TestCaseの`case_id`→`case_uid`対応(migration manifest、`.markharness/identity-migration-manifest.yml`)もあわせて記録する。
 
-5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 1`・`mode = "uid"`を書き込み、UID modeへの公開cutoverを完了する(design doc §13 Phase 5)。cutover完了の判定は`schema_version`ではなく`mode`のみで行う(ADR 0018)。cutover後は`markharness validate`(1.21節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
+5種類全てにuidなし要素が0件になった時点で、`.markharness/config.toml`の`[identity]`markerへ`schema_version = 1`・`mode = "uid"`を書き込み、UID modeへの公開cutoverを完了する(design doc §13 Phase 5)。cutover完了の判定は`schema_version`ではなく`mode`のみで行う(ADR 0018)。cutover後は`markharness validate`(1.17節)が、uidなし要素の新規混入を検証issueとして報告するようになる。
 
 **前提条件**: 対象ディレクトリがgitリポジトリであること。legacy snapshot identityとして`.markharness/knowledge`のtree SHAをmigration manifestへ記録するため、内部で一時indexを使った`git write-tree`相当の処理を行う(実リポジトリのstaging areaは変更しない)。
 
@@ -1409,7 +914,7 @@ markharness identity migrate [--json] [--dry-run] [-d, --dir <path>]
 - 通常実行: 全kindを2パスで処理する(id/uid重複検出→問題なければ全kind分のIssued eventを1つのbatchとしてcrash-recoverableに記録)。kind間で同じidを使うのは許容されるが、kind内の重複idは競合として拒否される(終了コード `2`)。
 - 同時実行中の別identity operationを検知した場合: 終了コード `2`。
 - ファイルシステムエラー: 終了コード `3`。
-- `--json`: `{"audit_scope":"working_tree","dry_run":bool,"migrated":[{"kind","id","uid"}],"conflicts":[string],"changed_files":[string]}` を出力する。`audit_scope`は、`changes compute`・`verify`系(1.6/1.12節)の`"two_snapshot"`や`identity audit`(1.29節)の`"full_history"`と対比される値で、`identity migrate`が working tree 1点のみを検査する操作であることを示す機械可読フィールド(design doc §11)。
+- `--json`: `{"audit_scope":"working_tree","dry_run":bool,"migrated":[{"kind","id","uid"}],"conflicts":[string],"changed_files":[string]}` を出力する。`audit_scope`は、`changes compute`・`verify`系(1.4/1.9節)の`"two_snapshot"`や`identity audit`(1.23節)の`"full_history"`と対比される値で、`identity migrate`が working tree 1点のみを検査する操作であることを示す機械可読フィールド(design doc §11)。
 
 **使用例**
 
@@ -1441,7 +946,7 @@ $ markharness identity migrate --json
 
 ---
 
-### 1.28 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
+### 1.22 `markharness identity resolve` — branch divergenceを明示的に解決する(ADR 0013、design doc §7)
 
 ```text
 markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
@@ -1461,13 +966,13 @@ markharness identity resolve <KIND> <UID> --keep <EVENT_UID> [-d, --dir <path>]
 
 ---
 
-### 1.29 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
+### 1.23 `markharness identity audit` — commit history全体の同一性監査(IdentityAuditor、ADR 0013、design doc §11)
 
 ```text
 markharness identity audit [--json] [--ref <ref>] [-d, --dir <path>]
 ```
 
-**用途**: `<ref>`(既定`HEAD`)のfirst-parent history全体を走査し、`.markharness/identity-events/`が持つべき2つの性質を検証する: (1) identity eventはappend-onlyであること(一度commitされたeventファイルが後のcommitで消失・内容変更されていないか)、(2) 各commit時点のevent集合が矛盾なくreplayできること(causal chain contradiction)。`changes compute`・`verify`・`identity migrate`(1.6/1.12/1.26節)がいずれも高々2つの`.markharness` snapshotしか見ない軽量な比較であるのに対し、`identity audit`だけがGit commit history全体を走査する重い処理であり、独立したトップレベルコマンドとして分離されている(design doc §11)。
+**用途**: `<ref>`(既定`HEAD`)のfirst-parent history全体を走査し、`.markharness/identity-events/`が持つべき2つの性質を検証する: (1) identity eventはappend-onlyであること(一度commitされたeventファイルが後のcommitで消失・内容変更されていないか)、(2) 各commit時点のevent集合が矛盾なくreplayできること(causal chain contradiction)。`changes compute`・`verify`・`identity migrate`(1.4/1.9/1.21節)がいずれも高々2つの`.markharness` snapshotしか見ない軽量な比較であるのに対し、`identity audit`だけがGit commit history全体を走査する重い処理であり、独立したトップレベルコマンドとして分離されている(design doc §11)。
 
 走査は現在checkoutしているbranchのfirst-parent history(`git log --first-parent`相当)に限定される。まだmergeされていないside branch上の変更はこのプロジェクトの公開履歴ではないため、対象に含めない。
 
@@ -1502,7 +1007,7 @@ $ echo $?
 
 ---
 
-### 1.30 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
+### 1.24 `markharness identity sync` — Knowledge fileのid:/uid:をidentity event logから再同期する
 
 ```text
 markharness identity sync <KIND> <UID> [-d, --dir <path>]
@@ -1510,7 +1015,7 @@ markharness identity sync <KIND> <UID> [-d, --dir <path>]
 
 **用途**: `<UID>`のidentity eventを現在の状態までreplayし、その結果の`id`を持つKnowledge fileへ`uid:`を書き戻す(欠けていれば追加、古ければ訂正)。新しいidentity eventは一切記録しない — 既にdurableなevent logからファイル状態を再導出するだけの操作。`identity migrate`をはじめ他の全identity操作が内部で行っている「roll-forwardによるKnowledge file同期」を、単体で呼び出せるようにしたもの。
 
-**前提条件**: Knowledge fileをGit履歴から復元・再作成した場合など、他の操作の副作用としては同期が起きなかったケースを埋めるためのコマンド。`rename-id`(1.25節)はFeatureにしか存在せず、かつファイルが既に`uid:`を持っていることを要求するため、uidなしファイルの汎用的な再同期手段にはならない — `identity sync`は5種類全kindに対応し、ファイルがuidを持っているかどうかを問わない。
+**前提条件**: Knowledge fileをGit履歴から復元・再作成した場合など、他の操作の副作用としては同期が起きなかったケースを埋めるためのコマンド。`knowledge reconcile`(1.2節)のrenameは対象を`uid`で選択するため、`uid:`を持たないファイルの再同期手段にはならない — `identity sync`は5種類全kindに対応し、ファイルがuidを持っているかどうかを問わない。
 
 **動作**
 
@@ -1549,7 +1054,7 @@ uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
 
 ## 3. 動作確認・テスト
 
-実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/interactive.rs` / `src/knowledge_draft.rs` / `src/knowledge_apply.rs` / `src/knowledge_edit.rs` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge validate`/`apply` の終了コード・出力を検証する `tests/knowledge_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`CONTRIBUTING.md`)に従い、コミット前に以下を実行すること:
+実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge reconcile` の終了コード・出力を検証する `tests/knowledge_reconcile_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`CONTRIBUTING.md`)に従い、コミット前に以下を実行すること:
 
 ```bash
 cargo test

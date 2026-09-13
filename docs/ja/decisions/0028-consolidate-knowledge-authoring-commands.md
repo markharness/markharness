@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted（2026-09-13決定、実装未着手）。[0027](0027-declarative-knowledge-reconciliation.md)の「ADR 0028開始ゲート」を満たした後に実行する。
+Accepted（2026-09-13決定、2026-09-13実装完了）。[0027](0027-declarative-knowledge-reconciliation.md)の「ADR 0028開始ゲート」を満たしたうえで実行した。
 
 ## 背景
 

@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted（2026-09-13決定、実装未着手）。
+Accepted（2026-09-13決定、2026-09-13実装完了）。`knowledge reconcile`本体の機能、crash-recoverableな原子的保存、[0028](0028-consolidate-knowledge-authoring-commands.md)の実行、および関連文書の更新をすべて満たした。
 
 ## 背景
 

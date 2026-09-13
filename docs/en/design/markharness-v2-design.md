@@ -1,7 +1,7 @@
 # markharness v2 Design
 
 Written: 2026-09-11 (original). Corrected the same day against the existing implementation under `src/` (§5.2.1, §6.1, §9.1). Rewritten in full the same day after a redesign session (grilling) deliberately not anchored to the existing design or vocabulary. Contracts that preserve an evolution path after real StrictDoc → markharness → Playwright operation were then added in §9.2 and [ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md).
-Status: **the MVP (M0–M2) is implemented** (2026-09-12; see `checklist-v2-core.md`). The types, CLI, and decision rules this document specifies exist in the code. M3 and M4 are not started, so anything about them remains a proposal.
+Status: **the MVP (M0–M2) is implemented** (2026-09-12; see `checklist-v2-core.md`). The types and decision rules this document specifies exist in the code. Its CLI surface has changed since the first edition — [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md) consolidated Knowledge authoring into `knowledge reconcile` — and §7 and §9.1 reflect that. M3 and M4 are not started, so anything about them remains a proposal.
 
 ## 1. Conclusion and Product Thesis
 
@@ -129,7 +129,7 @@ The many-to-many relation from Feature to Requirement reuses the existing `featu
 | `source_locator`/`source_revision` | Absent | Required in external mode, not allowed in native mode. Missing or mixed fields are rejected by `validate` |
 | `axis` | Held | Kept in both modes (markharness's own classification, not a copy of external content) |
 | `uid` / `feature.requirement_uids` | ADR 0013 UID and the many-to-many relation | Kept as-is |
-| The interactive authoring flow's Requirement prompts (`src/interactive.rs`, `knowledge_draft.rs`) | Prompt for `label`/`axis` | Unchanged for native; only when external is chosen does it switch to a `source_locator` prompt (to stay consistent with AC02) |
+| Requirement authoring | An interactive flow prompts for `label`/`axis` | [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md) removed the interactive flow. Each mode's fields are written in a Knowledge Intent instead (native: `label`; external: `source_locator` plus `source_revision: current`, consistent with AC02) |
 | `traceability.rs`'s Requirement index and `GeneratedFrom.requirement_ids`/`requirement_uids` | Implemented | Kept |
 
 `source` is required and has no default. [0023](../decisions/0023-requirement-native-and-external-source.md) §1's "omitted means native" existed to let existing files pass unchanged, so it does not apply under the rule that treats the past as never having existed ([0026](../decisions/0026-module-inventory-and-plan-removal.md) §7). Moving a Requirement to external mode is a human rewrite; no automatic conversion is built (§2, no backward compatibility).
@@ -164,11 +164,11 @@ On top of the Feature-revision comparison between base and head (reusing the cur
 2. **Detects spec-side change from the base/head diff.** In both modes the comparison is "content at base" versus "content at head".
    - `source: native`: the base/head diff of `requirement.yml` itself. Granularity is per Requirement and no external tool is involved.
    - `source: external`: the base/head diff of the `.sdoc` blob named by `source_locator`. This assumes the `.sdoc` file is **managed in the same Git repository as markharness**, and requires no `.sdoc` parsing. Granularity is per file: a change to another Requirement in the same file also reads as "changed" (false positives are accepted; per-Requirement granularity waits for M3's `.sdoc` parsing).
-3. **Reports a stale pin as its own item.** In external mode, when `source_revision` does not match the blob OID at head, that is output as "pinned reference is stale." It is independent of step 2: advancing the pin with `requirement repin` must never cancel out detection of a spec change (changing the `.sdoc` and repinning inside the same PR still leaves the step-2 diff intact).
+3. **Reports a stale pin as its own item.** In external mode, when `source_revision` does not match the blob OID at head, that is output as "pinned reference is stale." It is independent of step 2: advancing the pin with `source_revision: current` must never cancel out detection of a spec change (changing the `.sdoc` and repinning inside the same PR still leaves the step-2 diff intact).
 4. Computes the Alignment-check state (the three values of §5.3) for each changed TestCase and Requirement.
 5. Outputs the affected TestCase list, the related Requirement list, the alignment states, and the stale-pin list.
 
-With this mechanism, Change Impact (M1) depends neither on the `.sdoc` parser (M3) nor on whether StrictDoc is adopted at all. `repin` merely advances a pinned reference to its current value; it is not a substitute for an alignment check (only the §5.3 trailer records that). In the next, unchanged PR there is no base/head diff, so nothing is reported as a new spec change.
+With this mechanism, Change Impact (M1) depends neither on the `.sdoc` parser (M3) nor on whether StrictDoc is adopted at all. Re-pinning (`source_revision: current`) merely advances a pinned reference to its current value; it is not a substitute for an alignment check (only the §5.3 trailer records that). In the next, unchanged PR there is no base/head diff, so nothing is reported as a new spec change.
 
 ### 6.2 Release Coverage (per release)
 
@@ -193,9 +193,8 @@ Question 3 in §1 (which tests were in the verification scope of the previous re
 ## 7. CLI Proposal
 
 ```text
-markharness requirement link --feature <feature-id> --requirement <requirement-id>
-markharness requirement unlink --feature <feature-id> --requirement <requirement-id>
-markharness requirement repin --requirement <requirement-id>   # external mode only; advance source_revision to the blob OID at head
+markharness knowledge reconcile <intent-file>   # relating a Feature to Requirements replaces a uid-selected Feature's contributes_to
+                                               # re-pinning is a uid-selected Requirement's source_revision: current
 markharness binding set --case-uid <case-uid> --mode automated --reference src/tests/login.spec.ts
 markharness binding set --case-uid <case-uid> --mode manual
 markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...]   # replaces the selection list
@@ -204,7 +203,7 @@ markharness impact --base <ref> --head <ref> --format json
 markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref> --format json
 ```
 
-`requirement link`/`unlink` edit `feature.yml`'s `requirement_uids`; they introduce no new store (§5.2). Output is CLI/JSON only; no local server or dashboard is in the MVP (§8). Exit codes and JSON schema versioning policy are settled at implementation time. Commands that are removed are covered in §9.1.
+`feature.yml`'s `requirement_uids` remains the record of a Feature-to-Requirement relation, and no new store is introduced (§5.2); editing it was consolidated into `knowledge reconcile` by [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md). Output is CLI/JSON only; no local server or dashboard is in the MVP (§8). Exit codes and JSON schema versioning policy are settled at implementation time. Commands that are removed are covered in §9.1.
 
 ## 8. Non-Goals
 
@@ -240,7 +239,7 @@ markharness coverage --requirements <requirement-ids-or-all> [--release <release
 
 ### 9.1 Existing CLI, data, and UI
 
-- **Commands removed**: `identity retire`/`restore`/`release`/`reissue` ([0021](../decisions/0021-identity-retire-simplification.md)), `plan` ([0026](../decisions/0026-module-inventory-and-plan-removal.md)), `execution record` (replaced by `binding set`; [0020](../decisions/0020-execution-status-lightweight-model.md), [0025](../decisions/0025-v2-forward-compatible-evolution.md)), `serve` ([0022](../decisions/0022-remove-stage3-dashboard.md)), and `cache index` ([0026](../decisions/0026-module-inventory-and-plan-removal.md)). The exact removal scope is settled in the implementation checklist.
+- **Commands removed**: `identity retire`/`restore`/`release`/`reissue` ([0021](../decisions/0021-identity-retire-simplification.md)), `plan` ([0026](../decisions/0026-module-inventory-and-plan-removal.md)), `execution record` (replaced by `binding set`; [0020](../decisions/0020-execution-status-lightweight-model.md), [0025](../decisions/0025-v2-forward-compatible-evolution.md)), `serve` ([0022](../decisions/0022-remove-stage3-dashboard.md)), `cache index` ([0026](../decisions/0026-module-inventory-and-plan-removal.md)), and `knowledge add`/`scaffold`/`validate`/`apply`, `feature rename-id` and `requirement link`/`unlink`/`repin` (all consolidated into `knowledge reconcile`; [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)). The exact removal scope is settled in the implementation checklist.
 - **Existing data**: **earlier schemas and data are treated as never having existed** (the no-backward-compatibility design rule in [CLAUDE.md](../../../CLAUDE.md)). `ExecutionBinding` reads only the new location `.markharness/bindings/`; the execution records under the old `.markharness/executions/` are never consulted. The removed event kinds are deleted from `IdentityMutation`, so a log containing them has no read path at all. No automatic conversion, no compatibility replay, and no diagnostic that names old data is built — each of those is compatibility code, which this rule excludes. An old directory left in the worktree changes nothing, because no code path reads it. For the same reason `requirement.yml`'s `source` is required and has no default (§5.2.1, AC09b).
 - **The existing dashboard**: `src/server.rs`, `ui/`, `markharness serve`, and the embedded frontend assets are deleted ([0022](../decisions/0022-remove-stage3-dashboard.md)). The removal happens at the same time as the `plan` reduction, together with the related tests (`tests/server.rs` and friends). A viewer outside this repository that reads `plan` output has to switch to Change Impact / Release Coverage output.
 
@@ -367,7 +366,7 @@ The MVP is M0–M2, and M0–M2 were completed on 2026-09-12 (✅). M3 and M4 ar
 | AC15 | A Requirement and a TestCase both change in the same PR, with no `Spec-Reviewed` | Reported as "followed", never as "confirmed" (§5.3) |
 | AC16 | A targetless `Spec-Reviewed` trailer on a commit touching several Requirements | None of those Requirements becomes confirmed (§5.3 rule 1) |
 | AC17 | The `base..head` commit history is unavailable (shallow clone) | The run fails with a diagnostic; missing history is never reported as "confirmed" (§5.3 rule 5) |
-| AC18 | A PR changes a `.sdoc` and also runs `requirement repin` in the same PR | The spec change is still detected; repin does not cancel detection (§6.1 step 3) |
+| AC18 | A PR changes a `.sdoc` and also re-pins (`source_revision: current`) in the same PR | The spec change is still detected; repin does not cancel detection (§6.1 step 3) |
 | AC19 | Evaluate the next PR, which changes nothing, after that repin | Nothing is reported as a new spec change; only a stale pin, if the reference is behind (§6.1 step 3) |
 | AC20 | Only a Requirement changed; no related Feature changed | Related Features and TestCases are found by reverse lookup, and impact plus alignment state is reported (§6.1 step 1) |
 | AC21 | A Requirement has a related Feature, but that Feature has no Scenario at all | Release Coverage names that Feature as a coverage gap (§6.2) |
