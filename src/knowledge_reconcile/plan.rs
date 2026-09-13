@@ -215,21 +215,13 @@ pub struct Plan {
     pub state_fingerprint: Option<String>,
 }
 
-/// Hashes every file under the trees a plan is built against — the
-/// Knowledge itself and the Axis registry `unknown_axis` resolves against
-/// — into one opaque token (relative path + content). Two calls returning
-/// the same token mean nothing in that input state changed between them:
-/// the basis for detecting a [`Plan`] gone stale (ADR 0027 §6) between
-/// when [`build_plan`] read current state and when a caller later commits
-/// it. The Axis registry belongs here because `axes` is edited without the
-/// identity lock, so an Axis can disappear after the plan validated
-/// against it.
-///
-/// Scoped to the state markharness owns, so it deliberately excludes the
-/// `.sdoc` files `source_revision: current` resolves against — ADR 0029
-/// records why that exclusion is a decision rather than an oversight, what
-/// it accepts (a concurrent edit can store a pre-edit blob OID), and what
-/// would make it worth revisiting.
+/// Hashes every file under the trees a plan is built against — Knowledge
+/// and the Axis registry — into one opaque token (relative path +
+/// content). Two calls returning the same token mean nothing in that
+/// input state changed between them: the basis for `stale_plan` (ADR 0027
+/// §6) between when [`build_plan`] read current state and when a caller
+/// later commits it. ADR 0029 fixes which trees those are — the state
+/// markharness owns, excluding the `.sdoc` a `source_locator` points at.
 pub(crate) fn state_fingerprint(root: &Path) -> io::Result<String> {
     let markharness_dir = root.join(crate::project_root::MARKHARNESS_DIR);
     let mut entries: Vec<(String, String)> = Vec::new();
@@ -634,11 +626,8 @@ fn apply_requirement_patch(
 /// literal `current` is rejected — this Intent field is not a place to
 /// write an arbitrary OID directly.
 ///
-/// "Right now" means the moment of this call, not the moment of the
-/// commit: a `.sdoc` edited in between leaves the stored OID naming the
-/// pre-edit content, and [`state_fingerprint`] does not detect it. ADR
-/// 0029 records that as an accepted outcome — the pin is valid state, and
-/// `impact` reports the mismatch as a stale pin.
+/// "Right now" is the moment of this call, not of the commit; ADR 0029
+/// scopes that gap out of `stale_plan`.
 fn resolve_source_revision(
     root: &Path,
     location: &str,
@@ -3542,13 +3531,9 @@ features:
         assert_eq!(after.state_fingerprint, unchanged.state_fingerprint);
     }
 
-    /// ADR 0027 §6 scopes `stale_plan` to the *input* state, and the Axis
-    /// registry is part of it: `unknown_axis` is checked against
-    /// `.markharness/axes` before the plan is built, but nothing holds the
-    /// identity lock while `axes` is edited. Without the registry in the
-    /// fingerprint, an Axis removed after that check would let this module
-    /// commit Knowledge referencing an Axis that no longer exists —
-    /// state `validate` rejects. It must read as stale instead.
+    /// The Axis registry is in `stale_plan`'s scope (ADR 0029 §1): `axes`
+    /// is edited without the identity lock, so an Axis can vanish between
+    /// the plan and the commit.
     #[test]
     fn the_state_fingerprint_changes_when_the_axis_registry_does() {
         let dir = init_project();
@@ -3578,14 +3563,9 @@ label: Priority
         assert_ne!(added.state_fingerprint, removed.state_fingerprint);
     }
 
-    /// ADR 0027 §4 ("Axisは登録済みのものだけを参照できる") is a check
-    /// against repository state, so it belongs to the same locked read as
-    /// the rest of the plan. Reading `axes` earlier, outside the lock,
-    /// leaves a window in which the Axis is removed after being approved
-    /// and before the plan is built — a commit referencing an Axis that no
-    /// longer exists, which `markharness validate` then rejects. Owning
-    /// the check here is what closes it; [`state_fingerprint`] covers only
-    /// the remaining build-to-commit window.
+    /// `unknown_axis` reads repository state, so `build_plan` owns it
+    /// rather than `validate_static`: reading `axes` earlier, outside the
+    /// lock, leaves a window [`state_fingerprint`] cannot cover.
     #[test]
     fn build_plan_rejects_an_axis_that_is_not_registered() {
         let dir = init_project();

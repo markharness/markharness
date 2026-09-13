@@ -196,13 +196,10 @@ pub fn check_creation(
     outcome
 }
 
-/// Re-reads the current input-state fingerprint (Knowledge plus the Axis
-/// registry) and compares it to the one `plan` was built against
-/// (ADR 0027 §6 `stale_plan`). `plan`
-/// carries no fingerprint (`state_fingerprint: None`) when it was not
-/// produced by [`build_plan`] itself (e.g. a hand-built `Plan::default()`
-/// in a test) — nothing to compare against, so this passes it through
-/// rather than treating the absence as either fresh or stale.
+/// Re-reads the current [`state_fingerprint`] and compares it to the one
+/// `plan` was built against (ADR 0027 §6 `stale_plan`). Passes a `plan`
+/// carrying no fingerprint through unchecked, for the reason
+/// `Plan::state_fingerprint` documents.
 fn check_not_stale(root: &Path, plan: &Plan) -> io::Result<Option<Diagnostic>> {
     let Some(expected) = &plan.state_fingerprint else {
         return Ok(None);

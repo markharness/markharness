@@ -292,10 +292,10 @@ fn check_unknown_local_references(doc: &IntentDocument, out: &mut Vec<Diagnostic
     }
 }
 
-/// ADR 0027 §4: "Axisは登録済みのものだけを参照できる". Called from
-/// `plan::build_plan` rather than [`validate_static`] so the registry is
-/// read inside the same locked, fingerprinted window as the rest of the
-/// state the plan is built from.
+/// ADR 0027 §4: "Axisは登録済みのものだけを参照できる". Lives here beside
+/// the other Intent checks, but is called from `plan::build_plan` so the
+/// registry is read inside the same locked, fingerprinted window as the
+/// rest of the state the plan is built from.
 pub(crate) fn check_unknown_axes(
     doc: &IntentDocument,
     known_axes: &HashSet<String>,
