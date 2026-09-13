@@ -147,7 +147,8 @@ requirements:
     # uid: <ULID>              # 既存 Requirement を変更する場合のみ。key と排他
     id: <requirement-slug>
     source: native             # native | external
-    label: <label>             # source: native では新規作成時に必須
+    label: <label>             # source: native では必須。source: external では書けない
+    # source: external では source_locator と source_revision: current が必須(§6.3)
     axis: [<axis-id>, ...]
     description: <text or null>          # 省略可
     related_issues: []                   # 省略可
@@ -403,7 +404,7 @@ markharness generate     # 2回目。N が同じで差分が出ないことを�
 
 - `features[].forked_from` — 他の Feature の真の派生である場合のみ
 - `scenarios[].implementation_note` — 実装根拠メモ。生成には使われない
-- `requirements[].source: external` と `source_revision: current` — 外部ドキュメントを出典とする Requirement の固定参照更新
+- `requirements[].source: external` — 外部ドキュメント(`.sdoc` 等)を出典とする Requirement。`native` とは field の集合が排他で、`label` は書けず、`source_locator`(リポジトリ内のパス)と `source_revision: current`(実行時に現在の blob OID へ解決される)が必須
 - `markharness axes prune` — 未参照 axis の報告
 - `markharness identity sync` / `audit` / `resolve` / `migrate` — identity 履歴の修復・監査
 

@@ -364,24 +364,128 @@ fn canonical_description(text: &str) -> String {
 /// (ADR 0027 §3's "正規化後の内容が完全一致する" unchanged row) — *not* for
 /// a UID-selected patch, which keeps omitted fields at their current
 /// value instead (see [`apply_requirement_patch`]).
+/// Builds a brand-new Requirement's content. ADR 0023 gives `native` and
+/// `external` disjoint field sets — native owns its own `label`, external
+/// is owned by the document at `source_locator` and pinned by
+/// `source_revision` — and `markharness validate` rejects a saved file
+/// that mixes them. Since `knowledge reconcile` is the only thing that
+/// saves Knowledge, building such a file here would let the one authoring
+/// path commit state its own validation immediately fails, so each mode's
+/// required fields are demanded and the other mode's are refused.
 fn build_requirement_content(
+    root: &Path,
     location: &str,
     id: &str,
     uid: &str,
     intent: &RequirementIntent,
-) -> Result<Requirement, Diagnostic> {
-    let source = parse_source(location, intent.source.as_deref())?;
-    Ok(Requirement {
+) -> io::Result<Result<Requirement, Diagnostic>> {
+    let source = match parse_source(location, intent.source.as_deref()) {
+        Ok(source) => source,
+        Err(d) => return Ok(Err(d)),
+    };
+    let (label, source_locator, source_revision) = match source {
+        RequirementSource::Native => {
+            if let Some(field) = ["source_locator", "source_revision"]
+                .into_iter()
+                .find(|field| match *field {
+                    "source_locator" => intent.source_locator.is_some(),
+                    _ => intent.source_revision.is_some(),
+                })
+            {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::ConflictingExistingValue,
+                    format!("{location}.{field}"),
+                    format!(
+                        "source: native must not carry `{field}` (that belongs to source: external)"
+                    ),
+                )));
+            }
+            (
+                Some(intent.label.clone().unwrap_or_else(|| id.to_string())),
+                None,
+                None,
+            )
+        }
+        RequirementSource::External => {
+            if intent.label.is_some() {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::ConflictingExistingValue,
+                    format!("{location}.label"),
+                    "source: external must not carry `label` — the external document owns the content",
+                )));
+            }
+            let Some(locator) = intent.source_locator.clone() else {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::MissingRequiredField,
+                    format!("{location}.source_locator"),
+                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                )));
+            };
+            // A brand-new external Requirement has no prior pin to keep,
+            // so the Intent must say `current`; anything else is refused
+            // by `resolve_new_source_revision` itself.
+            if intent.source_revision.is_none() {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::MissingRequiredField,
+                    format!("{location}.source_revision"),
+                    "source: external requires `source_revision: current` to pin the .sdoc's current blob OID",
+                )));
+            }
+            match resolve_new_source_revision(root, location, &locator, &intent.source_revision)? {
+                Ok(revision) => (None, Some(locator), Some(revision)),
+                Err(d) => return Ok(Err(d)),
+            }
+        }
+    };
+    Ok(Ok(Requirement {
         id: id.to_string(),
         source,
-        label: Some(intent.label.clone().unwrap_or_else(|| id.to_string())),
+        label,
         axis: intent.axis.clone().unwrap_or_default(),
         description: intent.description.as_deref().map(canonical_description),
-        source_locator: intent.source_locator.clone(),
-        source_revision: None,
+        source_locator,
+        source_revision,
         related_issues: intent.related_issues.clone().unwrap_or_default(),
         uid: Some(uid.to_string()),
-    })
+    }))
+}
+
+/// Resolves a brand-new external Requirement's `source_revision`. Unlike
+/// [`resolve_source_revision`], there is no current pin to fall back on,
+/// so the only accepted instruction is `current` (ADR 0027 §5).
+fn resolve_new_source_revision(
+    root: &Path,
+    location: &str,
+    locator: &str,
+    intent_source_revision: &Option<String>,
+) -> io::Result<Result<String, Diagnostic>> {
+    match intent_source_revision.as_deref() {
+        Some("current") => {
+            if !root.join(locator).is_file() {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::InvalidSourceRevision,
+                    location,
+                    format!("locator '{locator}' does not exist in the working tree"),
+                )));
+            }
+            match crate::git::hash_object(root, locator) {
+                Ok(oid) => Ok(Ok(oid)),
+                Err(e) => Ok(Err(Diagnostic::new(
+                    DiagnosticCode::InvalidSourceRevision,
+                    location,
+                    format!("failed to resolve the current blob OID for '{locator}': {e}"),
+                ))),
+            }
+        }
+        other => Ok(Err(Diagnostic::new(
+            DiagnosticCode::InvalidSourceRevision,
+            format!("{location}.source_revision"),
+            format!(
+                "source_revision must be 'current' (an Intent-only instruction), got '{}'",
+                other.unwrap_or("nothing")
+            ),
+        ))),
+    }
 }
 
 /// Builds a UID-selected Requirement's patched content: a field present in
@@ -581,7 +685,7 @@ fn plan_requirement(
                 return Ok(None);
             }
             let uid = ulid::Ulid::new().to_string();
-            match build_requirement_content(&location, id, &uid, req) {
+            match build_requirement_content(root, &location, id, &uid, req)? {
                 Ok(canonical) => Ok(Some(RequirementOutcome::New { uid, canonical })),
                 Err(d) => {
                     diagnostics.push(d);
@@ -599,13 +703,14 @@ fn plan_requirement(
                 ));
                 return Ok(None);
             };
-            let candidate = match build_requirement_content(&location, id, &existing_uid, req) {
-                Ok(c) => c,
-                Err(d) => {
-                    diagnostics.push(d);
-                    return Ok(None);
-                }
-            };
+            let candidate =
+                match build_requirement_content(root, &location, id, &existing_uid, req)? {
+                    Ok(c) => c,
+                    Err(d) => {
+                        diagnostics.push(d);
+                        return Ok(None);
+                    }
+                };
             if candidate == current {
                 Ok(Some(RequirementOutcome::Unchanged {
                     uid: existing_uid,
@@ -3431,5 +3536,151 @@ features:
                 .as_deref(),
             Some("Guarded in app.js#addTodo\n")
         );
+    }
+
+    /// ADR 0023's Requirement rules are enforced by `markharness validate`
+    /// on what is already saved; `knowledge reconcile` is now the only way
+    /// anything gets saved, so it must not be able to write a Requirement
+    /// that validation would immediately reject. An external Requirement
+    /// owns none of its own content: the external document supplies it, so
+    /// a `label` is a contradiction.
+    #[test]
+    fn a_new_external_requirement_carrying_a_label_is_rejected() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(
+            dir.path().join("spec.sdoc"),
+            "spec
+",
+        )
+        .unwrap();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    label: controls
+    axis: []
+    source_locator: spec.sdoc
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].location, "requirements[0].label");
+    }
+
+    #[test]
+    fn a_new_external_requirement_without_a_source_locator_is_rejected() {
+        let dir = init_project();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    axis: []
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(
+            diagnostics[0].code,
+            DiagnosticCode::MissingRequiredField,
+            "{diagnostics:?}"
+        );
+        assert_eq!(diagnostics[0].location, "requirements[0].source_locator");
+    }
+
+    /// `source_revision` is required on a saved external Requirement, and a
+    /// brand-new one has no current value to fall back on, so the Intent
+    /// has to say `current`.
+    #[test]
+    fn a_new_external_requirement_without_a_source_revision_is_rejected() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(
+            dir.path().join("spec.sdoc"),
+            "spec
+",
+        )
+        .unwrap();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    axis: []
+    source_locator: spec.sdoc
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].location, "requirements[0].source_revision");
+    }
+
+    #[test]
+    fn a_new_external_requirement_is_pinned_to_its_current_blob_oid() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(
+            dir.path().join("spec.sdoc"),
+            "spec
+",
+        )
+        .unwrap();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    axis: []
+    source_locator: spec.sdoc
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let RequirementOutcome::New { canonical, .. } = &plan.requirements[0] else {
+            panic!("expected New, got {:?}", plan.requirements[0]);
+        };
+        assert_eq!(canonical.label, None);
+        assert_eq!(canonical.source_locator.as_deref(), Some("spec.sdoc"));
+        assert_eq!(
+            canonical.source_revision,
+            Some(crate::git::hash_object(dir.path(), "spec.sdoc").unwrap())
+        );
+    }
+
+    /// The mirror rule: a native Requirement owns its own content, so the
+    /// external-document fields are a contradiction there.
+    #[test]
+    fn a_new_native_requirement_carrying_external_fields_is_rejected() {
+        let dir = init_project();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: native
+    label: controls
+    axis: []
+    source_locator: spec.sdoc
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].location, "requirements[0].source_locator");
     }
 }

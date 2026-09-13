@@ -141,6 +141,8 @@ features:
 
 `mode` は初期版では `merge` のみを受け付ける(既存要素を削除しない)。`format` が `markharness/knowledge-intent/v1` 以外なら `invalid_format` エラーになる。
 
+Requirementの`native`と`external`はfieldの集合が排他である(ADR 0023)。`native`は`label`を必須とし`source_locator`/`source_revision`を持てない。`external`は逆に`label`を持てず、`source_locator`と`source_revision: current`が必須で、後者は実行時に現在のblob OIDへ解決される。
+
 **既存要素の更新・rename**
 
 既存要素は `key`/`id` ではなく `uid` で選択する。UIDは反映成功時の出力、または `--json` のsnapshotから得る。

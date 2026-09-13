@@ -141,6 +141,8 @@ features:
 
 `mode` accepts only `merge` in the initial version (it never deletes existing elements). A `format` other than `markharness/knowledge-intent/v1` is an `invalid_format` error.
 
+A Requirement's `native` and `external` modes have disjoint field sets (ADR 0023). `native` requires `label` and can carry neither `source_locator` nor `source_revision`. `external` is the reverse: it can carry no `label`, and requires both `source_locator` and `source_revision: current`, the latter being resolved to the current blob OID at run time.
+
 **Updating and renaming existing elements**
 
 Existing elements are selected by `uid`, not by `key`/`id`. UIDs come from a successful run's output or from a `--json` snapshot.

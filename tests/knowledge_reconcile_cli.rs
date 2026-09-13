@@ -918,3 +918,83 @@ line two about baz.js: qux()
         "{\"ok\":true}"
     );
 }
+
+/// `knowledge reconcile` is the only way Knowledge gets saved (ADR 0028
+/// §1), so anything it writes must satisfy `markharness validate`. ADR
+/// 0023 gives native and external Requirements disjoint field sets, and an
+/// earlier version of this command wrote every new Requirement with a
+/// `label` and no `source_revision` — producing an external Requirement
+/// that validation rejected the moment it was written.
+#[test]
+fn a_new_external_requirement_is_written_in_a_state_project_validation_accepts() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        run(&["init", "--dir", dir.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(&args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    fs::write(
+        dir.path().join("spec.sdoc"),
+        "the external spec
+",
+    )
+    .unwrap();
+
+    let intent_path = dir.path().join("intent.yml");
+    fs::write(
+        &intent_path,
+        "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    axis: []
+    source_locator: spec.sdoc
+    source_revision: current
+",
+    )
+    .unwrap();
+
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        intent_path.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+
+    let written = fs::read_to_string(
+        dir.path()
+            .join(".markharness/knowledge/requirements/controls/requirement.yml"),
+    )
+    .unwrap();
+    assert!(
+        !written.contains("label:"),
+        "an external Requirement must carry no label: {written}"
+    );
+    assert!(written.contains("source_revision: "), "{written}");
+
+    let validate_output = run(&["validate", "--dir", dir.path().to_str().unwrap(), "--json"]);
+    assert_eq!(
+        validate_output.status.code(),
+        Some(0),
+        "{validate_output:?}"
+    );
+}
