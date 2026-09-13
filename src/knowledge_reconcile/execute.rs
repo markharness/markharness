@@ -11,7 +11,8 @@ use crate::identity::{EntityKind, IdentityEvent, IdentityMutation, feature_ops, 
 use crate::knowledge;
 use crate::time::iso8601_utc_now;
 
-use super::plan::Plan;
+use super::intent::IntentDocument;
+use super::plan::{Plan, PlanError, build_plan};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedElement {
@@ -34,6 +35,32 @@ impl From<io::Error> for ExecuteError {
     }
 }
 
+/// Why [`reconcile_creation`] could not complete.
+#[derive(Debug)]
+pub enum ReconcileError {
+    Diagnostics(Vec<super::diagnostics::Diagnostic>),
+    /// See [`PlanError::NotYetSupported`] — not a stable ADR 0027 §7 code.
+    NotYetSupported(String),
+    OperationInProgress,
+    Io(io::Error),
+}
+
+impl From<io::Error> for ReconcileError {
+    fn from(e: io::Error) -> Self {
+        ReconcileError::Io(e)
+    }
+}
+
+impl From<PlanError> for ReconcileError {
+    fn from(e: PlanError) -> Self {
+        match e {
+            PlanError::Diagnostics(d) => ReconcileError::Diagnostics(d),
+            PlanError::NotYetSupported(m) => ReconcileError::NotYetSupported(m),
+            PlanError::Io(e) => ReconcileError::Io(e),
+        }
+    }
+}
+
 fn relative_path_string(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -41,9 +68,51 @@ fn relative_path_string(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// The safe entry point for ADR 0027 Phase 2: builds the creation plan
+/// against current state and commits it under one continuous hold of the
+/// identity lock, exactly like `feature_ops::rename_id`/
+/// `resolve_divergence`/`migrate_entities` do for their own state reads.
+///
+/// Building a [`Plan`] with [`build_plan`] and only *later* calling
+/// [`execute_creation_plan`] — as an earlier version of this module's CLI
+/// caller did — reopens the TOCTOU gap those functions' own doc comments
+/// warn about: a second `reconcile` (or any other identity operation)
+/// could create a same-id element between the unlocked state read and the
+/// eventual commit, and this module would then overwrite it. Call this
+/// function instead of that two-step sequence for any real repository.
+pub fn reconcile_creation(
+    root: &Path,
+    doc: &IntentDocument,
+) -> Result<Vec<CreatedElement>, ReconcileError> {
+    let held_lock = match recovery::run_startup_recovery(root, |intent| {
+        feature_ops::roll_forward(root, intent)
+    })? {
+        recovery::StartupRecovery::OperationInProgress => {
+            return Err(ReconcileError::OperationInProgress);
+        }
+        recovery::StartupRecovery::Ready { lock, .. } => lock,
+    };
+    let outcome = (|| {
+        let plan = build_plan(root, doc)?;
+        commit_plan(root, &plan).map_err(ReconcileError::from)
+    })();
+    held_lock.release()?;
+    outcome
+}
+
 /// Commits every new element in `plan` as one crash-recoverable batch and
 /// returns what was created. An empty plan writes nothing and returns an
 /// empty list.
+///
+/// Acquires the identity lock itself, but — unlike [`reconcile_creation`]
+/// — does *not* re-check current state under that lock: `plan` was already
+/// built from whatever state was current when its caller built it. Calling
+/// this with a `Plan` built separately, and possibly stale, from
+/// [`build_plan`] reopens the TOCTOU gap [`reconcile_creation`]'s own doc
+/// comment describes. Safe to use only when nothing else can concurrently
+/// mutate the same repository between `build_plan` and this call (e.g. a
+/// test against an isolated, single-threaded fixture); production callers
+/// must use [`reconcile_creation`] instead.
 pub fn execute_creation_plan(
     root: &Path,
     plan: &Plan,
@@ -61,12 +130,12 @@ pub fn execute_creation_plan(
         }
         recovery::StartupRecovery::Ready { lock, .. } => lock,
     };
-    let outcome = commit_plan(root, plan);
+    let outcome = commit_plan(root, plan).map_err(ExecuteError::Io);
     held_lock.release()?;
     outcome
 }
 
-fn commit_plan(root: &Path, plan: &Plan) -> Result<Vec<CreatedElement>, ExecuteError> {
+fn commit_plan(root: &Path, plan: &Plan) -> io::Result<Vec<CreatedElement>> {
     if plan.is_empty() {
         return Ok(Vec::new());
     }
@@ -167,6 +236,108 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".markharness/knowledge")).unwrap();
         dir
+    }
+
+    /// Regression test for the TOCTOU gap a reviewer flagged in an earlier
+    /// version of this module's caller: it built a `Plan` with `build_plan`
+    /// while unlocked, then only acquired the lock inside a later, separate
+    /// `execute_creation_plan` call — leaving a window where a second
+    /// concurrent reconcile (or any other identity operation) could create
+    /// the same-id element before the first one's commit, and get silently
+    /// overwritten. `reconcile_creation` must hold the lock across *both*
+    /// the state read and the commit, so a caller who already holds it (as
+    /// a genuinely concurrent operation would) is refused up front and
+    /// never reaches `build_plan` or `commit_plan` at all.
+    #[test]
+    fn reconcile_creation_refuses_to_read_or_write_while_the_lock_is_held_elsewhere() {
+        let dir = init_project();
+        let held_lock = crate::identity::lock::IdentityLock::acquire(dir.path()).unwrap();
+
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+
+        let err = reconcile_creation(dir.path(), &doc).unwrap_err();
+        assert!(matches!(err, ReconcileError::OperationInProgress));
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml")
+                .is_file(),
+            "must not have read-then-written state while the lock was held elsewhere"
+        );
+
+        held_lock.release().unwrap();
+        let created = reconcile_creation(dir.path(), &doc).unwrap();
+        assert_eq!(created.len(), 1);
+    }
+
+    /// Two real concurrent callers racing the exact same creation must
+    /// never both succeed in creating the same id — the lock must
+    /// serialize them so the loser's `build_plan` (now running *inside*
+    /// the lock it acquired after the winner released) sees the winner's
+    /// already-committed Requirement and reports `ambiguous_identity`
+    /// instead of overwriting it.
+    #[test]
+    fn concurrent_reconcile_creation_never_creates_the_same_id_twice() {
+        let dir = init_project();
+        let root = dir.path();
+        const ATTEMPTS: usize = 4;
+        let barrier = std::sync::Barrier::new(ATTEMPTS);
+        let results: Vec<Result<Vec<CreatedElement>, ReconcileError>> =
+            std::thread::scope(|scope| {
+                let barrier = &barrier;
+                let handles: Vec<_> = (0..ATTEMPTS)
+                    .map(|_| {
+                        scope.spawn(move || {
+                            let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: native
+    label: TODO management
+    axis: []
+";
+                            let doc = parse_intent(yaml).unwrap();
+                            barrier.wait();
+                            reconcile_creation(root, &doc)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+
+        let successes: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .filter(|created| !created.is_empty())
+            .collect();
+        assert_eq!(
+            successes.len(),
+            1,
+            "exactly one concurrent attempt must actually create 'todo', got {results:?}"
+        );
+
+        let events = crate::identity::registry::load_events_from_working_tree(
+            root,
+            EntityKind::Requirement,
+            &successes[0][0].uid,
+        )
+        .unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "the winning Requirement must have exactly one Issued event, not one per racing attempt"
+        );
     }
 
     #[test]

@@ -20,9 +20,8 @@ use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, Dra
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
 use crate::knowledge_reconcile::diagnostics::Diagnostic as ReconcileDiagnostic;
-use crate::knowledge_reconcile::execute::{CreatedElement, ExecuteError, execute_creation_plan};
+use crate::knowledge_reconcile::execute::{CreatedElement, ReconcileError, reconcile_creation};
 use crate::knowledge_reconcile::intent::{IntentParseError, parse_intent};
-use crate::knowledge_reconcile::plan::{PlanError, build_plan};
 use crate::knowledge_reconcile::validate::validate_static;
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
@@ -857,28 +856,24 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 report_reconcile_diagnostics(&diagnostics, json);
                 unreachable!("report_reconcile_diagnostics exits the process on error");
             }
-            let plan = match build_plan(&root, &doc) {
-                Ok(plan) => plan,
-                Err(PlanError::Diagnostics(diagnostics)) => {
-                    report_reconcile_diagnostics(&diagnostics, json);
-                    unreachable!("report_reconcile_diagnostics exits the process on error");
-                }
-                Err(PlanError::NotYetSupported(message)) => {
-                    eprintln!("error: {message}");
-                    std::process::exit(2);
-                }
-                Err(PlanError::Io(e)) => return Err(e),
-            };
-            match execute_creation_plan(&root, &plan) {
+            match reconcile_creation(&root, &doc) {
                 Ok(created) => {
                     report_reconcile_created(&created, json);
                     Ok(())
                 }
-                Err(ExecuteError::OperationInProgress) => {
+                Err(ReconcileError::Diagnostics(diagnostics)) => {
+                    report_reconcile_diagnostics(&diagnostics, json);
+                    unreachable!("report_reconcile_diagnostics exits the process on error");
+                }
+                Err(ReconcileError::NotYetSupported(message)) => {
+                    eprintln!("error: {message}");
+                    std::process::exit(2);
+                }
+                Err(ReconcileError::OperationInProgress) => {
                     eprintln!("error: a concurrent identity operation is in progress; retry later");
                     std::process::exit(3);
                 }
-                Err(ExecuteError::Io(e)) => Err(e),
+                Err(ReconcileError::Io(e)) => Err(e),
             }
         }
         Command::Generate { dir, json } => {
