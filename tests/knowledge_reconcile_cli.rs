@@ -825,3 +825,96 @@ fn print_template_cannot_be_combined_with_an_intent_file_or_other_options() {
         assert!(!output.status.success(), "{args:?} -> {output:?}");
     }
 }
+
+/// Ported from the deleted `knowledge apply` suite (ADR 0028 §2 keeps the
+/// coverage, not the command): a multi-line description whose lines
+/// contain `": "` must survive the round trip through the canonical block
+/// scalar and still satisfy `markharness validate`. It pairs with the
+/// `multiline_label` check — `description` is written as a block scalar and
+/// may wrap, `label` is a plain scalar and may not.
+#[test]
+fn a_multiline_description_reparses_and_passes_project_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let init_output = run(&["init", "--dir", dir.path().to_str().unwrap()]);
+    assert!(init_output.status.success(), "{init_output:?}");
+    fs::write(
+        dir.path().join(".markharness/axes/gameplay.yml"),
+        "id: gameplay
+label: gameplay
+",
+    )
+    .unwrap();
+
+    let intent_path = dir.path().join("intent.yml");
+    fs::write(
+        &intent_path,
+        "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_controls
+    id: controls
+    source: native
+    label: controls
+    axis: [gameplay]
+
+features:
+  - key: feature_player_jump
+    id: player-jump
+    contributes_to: [req_controls]
+    label: player-jump
+    axis: [gameplay]
+    behaviors:
+      - id: jump
+        label: jump
+        axis: [gameplay]
+        description: |
+          line one about foo.js: bar()
+          line two about baz.js: qux()
+        scenarios:
+          - id: ground
+            label: ground
+            description: Jump from the ground and land
+            phases:
+              - steps:
+                  - action: Do it.
+                results:
+                  - lands safely
+",
+    )
+    .unwrap();
+
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        intent_path.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+
+    let written = fs::read_to_string(
+        dir.path()
+            .join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
+    )
+    .unwrap();
+    let behavior = markharness::knowledge::parse_behavior(&written).unwrap();
+    assert_eq!(
+        behavior.description,
+        "line one about foo.js: bar()
+line two about baz.js: qux()
+"
+    );
+
+    let validate_output = run(&["validate", "--dir", dir.path().to_str().unwrap(), "--json"]);
+    assert_eq!(
+        validate_output.status.code(),
+        Some(0),
+        "{validate_output:?}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&validate_output.stdout).trim(),
+        "{\"ok\":true}"
+    );
+}

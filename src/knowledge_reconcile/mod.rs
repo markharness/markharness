@@ -14,5 +14,5 @@ pub use execute::{
     CreatedElement, ExecuteError, ReconcileError, ReconcileOutcome, UnchangedElement,
     UpdatedElement, check_creation, execute_creation_plan, reconcile_creation,
 };
-pub use intent::{INTENT_TEMPLATE, IntentDocument, IntentParseError, write_intent_scaffold};
+pub use intent::{INTENT_TEMPLATE, IntentDocument, IntentParseError};
 pub use plan::{BehaviorOutcome, Plan, PlanError, build_plan};

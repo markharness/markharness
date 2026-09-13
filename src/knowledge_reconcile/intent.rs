@@ -3,12 +3,7 @@
 //! (`crate::knowledge`). New elements are referenced by a document-local
 //! `key` that is never persisted; existing elements are referenced by UID.
 
-use std::io::{self, Write};
-use std::path::Path;
-
 use serde::Deserialize;
-
-use crate::fs_safety::create_new_no_follow;
 
 /// The only `format` value `knowledge reconcile` accepts (ADR 0027 §2).
 pub const INTENT_FORMAT_V1: &str = "markharness/knowledge-intent/v1";
@@ -64,17 +59,6 @@ features:
                 results:
                   - Describe the expected result
 ";
-
-/// Writes [`INTENT_TEMPLATE`] to `out`: refuses to overwrite a file
-/// already at `out` (a symlink there is refused too, rather than
-/// followed), and `out`
-/// is a caller-chosen path outside any managed `root`, so this uses
-/// `create_new_no_follow` directly rather than `fs_safety::replace_file`'s
-/// root-scoped guards.
-pub fn write_intent_scaffold(out: &Path) -> io::Result<()> {
-    let mut file = create_new_no_follow(out)?;
-    file.write_all(INTENT_TEMPLATE.as_bytes())
-}
 
 /// The initial version supports only non-deleting `merge` (ADR 0027 §4).
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -294,24 +278,6 @@ requirements:
         assert_eq!(doc.features.len(), 1);
         assert_eq!(doc.features[0].behaviors.len(), 1);
         assert_eq!(doc.features[0].behaviors[0].scenarios.len(), 1);
-    }
-
-    #[test]
-    fn write_intent_scaffold_writes_the_template_to_a_new_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("intent.yml");
-        write_intent_scaffold(&out).unwrap();
-        assert_eq!(std::fs::read_to_string(&out).unwrap(), INTENT_TEMPLATE);
-    }
-
-    #[test]
-    fn write_intent_scaffold_refuses_to_overwrite_an_existing_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("intent.yml");
-        std::fs::write(&out, "existing content\n").unwrap();
-        let err = write_intent_scaffold(&out).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!(std::fs::read_to_string(&out).unwrap(), "existing content\n");
     }
 
     #[test]
