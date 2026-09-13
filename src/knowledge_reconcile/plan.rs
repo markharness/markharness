@@ -224,6 +224,12 @@ pub struct Plan {
 /// it. The Axis registry belongs here because `axes` is edited without the
 /// identity lock, so an Axis can disappear after the plan validated
 /// against it.
+///
+/// Scoped to the state markharness owns, so it deliberately excludes the
+/// `.sdoc` files `source_revision: current` resolves against — ADR 0029
+/// records why that exclusion is a decision rather than an oversight, what
+/// it accepts (a concurrent edit can store a pre-edit blob OID), and what
+/// would make it worth revisiting.
 pub(crate) fn state_fingerprint(root: &Path) -> io::Result<String> {
     let markharness_dir = root.join(crate::project_root::MARKHARNESS_DIR);
     let mut entries: Vec<(String, String)> = Vec::new();
@@ -623,11 +629,16 @@ fn apply_requirement_patch(
 /// Resolves a UID-selected Requirement's `source_revision` (ADR 0027 §5).
 /// `current` is never persisted as-is: it is an Intent-only instruction to
 /// advance the pin to whatever blob OID `source_locator` resolves to right
-/// now, mirroring the existing standalone `requirement repin` command's
-/// `blob OID` validation (same locator-exists and `git hash-object`
-/// checks). Omitting the field keeps the current pin; any value other
-/// than the literal `current` is rejected — this Intent field is not a
-/// place to write an arbitrary OID directly.
+/// now (the locator must exist, and `git hash-object` must resolve it).
+/// Omitting the field keeps the current pin; any value other than the
+/// literal `current` is rejected — this Intent field is not a place to
+/// write an arbitrary OID directly.
+///
+/// "Right now" means the moment of this call, not the moment of the
+/// commit: a `.sdoc` edited in between leaves the stored OID naming the
+/// pre-edit content, and [`state_fingerprint`] does not detect it. ADR
+/// 0029 records that as an accepted outcome — the pin is valid state, and
+/// `impact` reports the mismatch as a stale pin.
 fn resolve_source_revision(
     root: &Path,
     location: &str,
