@@ -107,7 +107,7 @@ pub enum StepItem {
 
 /// ADR 0017 §2: Scenarioが所有する順序付き操作・確認の単位。実行順の正本は
 /// 配列順であり、独立UID・独立ライフサイクルを持たない。
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Phase {
     pub steps: Vec<StepItem>,
     pub results: Vec<String>,
@@ -128,7 +128,7 @@ pub enum GeneratedBy {
 /// A human review gate on a `Scenario`. Omitting the whole `verified_by`
 /// field means not (yet) reviewed; `human_review` is required whenever the
 /// object is present (no ambiguous partial state).
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VerifiedBy {
     pub human_review: bool,
 }

@@ -20,7 +20,9 @@ use crate::time::iso8601_utc_now;
 
 use super::intent::IntentDocument;
 use super::paths::{behavior_path, feature_path, requirement_path, scenario_path};
-use super::plan::{FeatureOutcome, Plan, PlanError, RequirementOutcome, build_plan};
+use super::plan::{
+    FeatureOutcome, Plan, PlanError, RequirementOutcome, ScenarioOutcome, build_plan,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedElement {
@@ -418,6 +420,43 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
         }
     }
 
+    // Scenario reparent/content-patch (ADR 0027 §3): no `IdentityMutation`
+    // event exists for this — `feature`/`behavior` fields are content, not
+    // identity-tracked lifecycle, and `plan_scenario_reparents` already
+    // refuses an accompanying `id` change (the one Scenario edit that
+    // *would* need an event) — so these never join `batch_events`, only
+    // `scenario_moves`/`direct_writes`.
+    let mut scenario_moves: Vec<(PathBuf, PathBuf, String)> = Vec::new();
+    for scenario in &plan.scenario_updates {
+        match scenario {
+            ScenarioOutcome::Unchanged { uid, id } => {
+                outcome.unchanged.push(UnchangedElement {
+                    kind: EntityKind::Scenario,
+                    uid: uid.clone(),
+                    id: id.clone(),
+                });
+            }
+            ScenarioOutcome::Updated {
+                uid,
+                canonical,
+                existing_path,
+                new_path,
+            } => {
+                let contents = knowledge::serialize_scenario(canonical);
+                if new_path == existing_path {
+                    direct_writes.push((existing_path.clone(), contents));
+                } else {
+                    scenario_moves.push((existing_path.clone(), new_path.clone(), contents));
+                }
+                outcome.updated.push(UpdatedElement {
+                    kind: EntityKind::Scenario,
+                    uid: uid.clone(),
+                    id: canonical.id.clone(),
+                });
+            }
+        }
+    }
+
     if !batch_events.is_empty() {
         let intent = recovery::begin_batch_with_payload(
             root,
@@ -431,6 +470,19 @@ fn commit_plan(root: &Path, plan: &Plan) -> io::Result<ReconcileOutcome> {
 
     for (path, contents) in direct_writes {
         crate::fs_safety::replace_file(root, &path, contents.as_bytes())?;
+    }
+
+    for (from, to, contents) in scenario_moves {
+        // Move first, so at every instant exactly one file represents this
+        // Scenario (never both old and new, never neither) — then write
+        // its full new content at the destination. A crash between these
+        // two steps leaves the file at `to` with stale (pre-patch)
+        // content; re-running the same reconcile finds it already moved
+        // (`new_path == existing_path` on the next plan) and simply
+        // finishes the content write, so this is self-correcting on retry
+        // without needing its own staging/batch machinery.
+        crate::fs_safety::rename_no_follow(root, &from, &to)?;
+        crate::fs_safety::replace_file(root, &to, contents.as_bytes())?;
     }
 
     Ok(outcome)
@@ -1110,5 +1162,183 @@ requirements:
         .unwrap();
         assert!(content.contains("id: todo"));
         assert!(content.contains(&requirement_uid));
+    }
+
+    /// End-to-end regression test for ADR 0027 §3's explicit Scenario
+    /// reparent: creates a Feature with two Behaviors and a Scenario under
+    /// the first, then `reconcile_creation`s a reparent into the second.
+    /// The physical file must actually move (old path gone, new path has
+    /// the content, `behavior:` field updated) — a leftover at the old
+    /// path would mean this reused the same buggy "leave the old file
+    /// where it was" shortcut the reviewer already flagged once for
+    /// Requirement/Feature rename.
+    #[test]
+    fn reconcile_creation_physically_moves_a_reparented_scenarios_file() {
+        let dir = init_project();
+        let create_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+      - id: review
+        description: Review a TODO.
+";
+        let doc = parse_intent(create_yaml).unwrap();
+        let created = reconcile_creation(dir.path(), &doc).unwrap();
+        let feature_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Feature)
+            .unwrap()
+            .uid
+            .clone();
+        let review_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Behavior && e.id == "review")
+            .unwrap()
+            .uid
+            .clone();
+        let scenario_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Scenario)
+            .unwrap()
+            .uid
+            .clone();
+
+        let old_path = dir.path().join(
+            ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml",
+        );
+        let new_path = dir.path().join(
+            ".markharness/knowledge/features/todo-management/review/empty-title/scenario.yml",
+        );
+        assert!(old_path.is_file());
+        assert!(!new_path.is_file());
+
+        let reparent_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {review_uid}
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let outcome =
+            reconcile_creation(dir.path(), &parse_intent(&reparent_yaml).unwrap()).unwrap();
+        assert_eq!(outcome.updated.len(), 1);
+
+        assert!(
+            !old_path.is_file(),
+            "the old file must be gone after reparent"
+        );
+        assert!(new_path.is_file(), "the new file must exist after reparent");
+        let content = std::fs::read_to_string(&new_path).unwrap();
+        let scenario = knowledge::parse_scenario(&content).unwrap();
+        assert_eq!(scenario.behavior, "review");
+        assert_eq!(scenario.uid, Some(scenario_uid));
+    }
+
+    /// Reparenting alongside an unrelated new Requirement in the same
+    /// Intent must not corrupt either: the reparent is not part of the
+    /// identity-event batch (no `IdentityMutation` exists for a Scenario's
+    /// `behavior:` change), so it must still complete correctly even when
+    /// a real batch commit also happens in the same `reconcile_creation`
+    /// call.
+    #[test]
+    fn reparenting_a_scenario_alongside_an_unrelated_new_requirement_in_one_call() {
+        let dir = init_project();
+        let create_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: capture
+        description: Capture a TODO.
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+      - id: review
+        description: Review a TODO.
+";
+        let created = reconcile_creation(dir.path(), &parse_intent(create_yaml).unwrap()).unwrap();
+        let feature_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Feature)
+            .unwrap()
+            .uid
+            .clone();
+        let review_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Behavior && e.id == "review")
+            .unwrap()
+            .uid
+            .clone();
+        let scenario_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Scenario)
+            .unwrap()
+            .uid
+            .clone();
+
+        let combined_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: unrelated
+    source: native
+    label: Unrelated requirement
+    axis: []
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {review_uid}
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let outcome =
+            reconcile_creation(dir.path(), &parse_intent(&combined_yaml).unwrap()).unwrap();
+        assert_eq!(outcome.created.len(), 1, "the unrelated Requirement");
+        assert_eq!(outcome.updated.len(), 1, "the reparented Scenario");
+
+        let new_path = dir.path().join(
+            ".markharness/knowledge/features/todo-management/review/empty-title/scenario.yml",
+        );
+        assert!(new_path.is_file());
     }
 }

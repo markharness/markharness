@@ -70,6 +70,29 @@ pub struct NewScenario {
     pub canonical: Scenario,
 }
 
+/// An existing Scenario reached by UID while walking a Feature's
+/// `behaviors` (ADR 0027 §3): content-only update, or an explicit
+/// reparent to a different Behavior — both keep the Scenario's UID and
+/// are represented identically here, since ADR 0027 §3 handles them with
+/// the same rule ("effective contentに応じてCase revisionを再計算する").
+/// A Case's revision itself is never stored — `identity::derived_uid::
+/// case_revision` derives it purely from `Scenario.phases` whenever a
+/// later command reads it, so this module has nothing further to persist
+/// for that part of the ADR requirement.
+#[derive(Debug)]
+pub enum ScenarioOutcome {
+    Unchanged {
+        uid: String,
+        id: String,
+    },
+    Updated {
+        uid: String,
+        canonical: Box<Scenario>,
+        existing_path: PathBuf,
+        new_path: PathBuf,
+    },
+}
+
 #[derive(Debug)]
 pub enum FeatureOutcome {
     New {
@@ -93,6 +116,12 @@ pub enum FeatureOutcome {
 pub struct Plan {
     pub requirements: Vec<RequirementOutcome>,
     pub features: Vec<FeatureOutcome>,
+    /// Existing Scenarios reached by UID while walking any Feature's
+    /// `behaviors` — content updates and/or reparents (see
+    /// [`ScenarioOutcome`]). Kept separate from `features` because these
+    /// are not new elements of the Feature/Behavior tree being built, but
+    /// edits to Scenarios that already exist elsewhere in the tree.
+    pub scenario_updates: Vec<ScenarioOutcome>,
 }
 
 /// Why [`build_plan`] could not produce a [`Plan`].
@@ -130,10 +159,16 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
     }
 
     let mut feature_outcomes = Vec::new();
+    let mut scenario_updates = Vec::new();
     for (i, feature) in doc.features.iter().enumerate() {
-        if let Some(outcome) =
-            plan_feature(root, i, feature, &requirement_uid_by_key, &mut diagnostics)?
-        {
+        if let Some(outcome) = plan_feature(
+            root,
+            i,
+            feature,
+            &requirement_uid_by_key,
+            &mut diagnostics,
+            &mut scenario_updates,
+        )? {
             feature_outcomes.push(outcome);
         }
     }
@@ -144,6 +179,7 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
     Ok(Plan {
         requirements: requirement_outcomes,
         features: feature_outcomes,
+        scenario_updates,
     })
 }
 
@@ -494,15 +530,11 @@ fn plan_feature(
     feature: &FeatureIntent,
     requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
+    scenario_updates: &mut Vec<ScenarioOutcome>,
 ) -> Result<Option<FeatureOutcome>, PlanError> {
     let location = format!("features[{i}]");
 
     if let Some(uid) = &feature.uid {
-        if !feature.behaviors.is_empty() {
-            return Err(PlanError::NotYetSupported(format!(
-                "{location}.behaviors: adding Behaviors to an existing Feature is not supported yet"
-            )));
-        }
         let Some(found) = knowledge_walk::find_by_uid(root, EntityKind::Feature, uid)? else {
             diagnostics.push(Diagnostic::new(
                 DiagnosticCode::UnknownUid,
@@ -512,6 +544,15 @@ fn plan_feature(
             return Ok(None);
         };
         let current = parse_feature_file(&found.path)?;
+        if !feature.behaviors.is_empty() {
+            scenario_updates.extend(plan_scenario_reparents(
+                root,
+                &location,
+                &current.id,
+                &feature.behaviors,
+                diagnostics,
+            )?);
+        }
         let resolved_requirement_uids = match &feature.contributes_to {
             Some(refs) => Some(resolve_contributes_to(
                 root,
@@ -576,7 +617,7 @@ fn plan_feature(
                 None => Vec::new(),
             };
             let canonical = build_feature_content(id, &uid, requirement_uids, feature);
-            let behaviors = plan_new_behaviors(&location, id, &feature.behaviors, diagnostics);
+            let behaviors = plan_new_behaviors(&location, id, &feature.behaviors, diagnostics)?;
             Ok(Some(FeatureOutcome::New {
                 uid,
                 canonical,
@@ -584,9 +625,16 @@ fn plan_feature(
             }))
         }
         Some(found) => {
+            // Unlike the UID-selected branch above, this Feature was only
+            // matched by `id` — no UID was given. ADR 0027 §3 never infers
+            // identity from content/id similarity alone, so mutating scope
+            // relationships (which Behavior owns which Scenario) here,
+            // without the caller having explicitly named this Feature's
+            // UID, would be exactly that kind of inference. Reparenting
+            // requires selecting the Feature by UID.
             if !feature.behaviors.is_empty() {
                 return Err(PlanError::NotYetSupported(format!(
-                    "{location}.behaviors: adding Behaviors to an existing Feature is not supported yet"
+                    "{location}.behaviors: reparenting Scenarios requires selecting the Feature by uid"
                 )));
             }
             let current = parse_feature_file(&found.path)?;
@@ -638,10 +686,27 @@ fn plan_new_behaviors(
     feature_id: &str,
     behaviors: &[BehaviorIntent],
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<NewBehavior> {
+) -> Result<Vec<NewBehavior>, PlanError> {
     let mut planned = Vec::new();
     for (j, behavior) in behaviors.iter().enumerate() {
         let location = format!("{feature_location}.behaviors[{j}]");
+        if let Some(uid) = &behavior.uid {
+            // The parent Feature is brand-new in this same Intent, so it
+            // cannot already own an existing Behavior — a uid-given entry
+            // here can only be a scope conflict (ADR 0027 §3), never a
+            // legitimate reparent target (Behavior reparenting itself is
+            // not supported; only nested Scenarios can move, and only
+            // between Behaviors reached under their own current Feature —
+            // see `plan_scenario_reparents`).
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ConflictingScope,
+                location,
+                format!(
+                    "Behavior '{uid}' cannot belong to a Feature that does not exist yet; Behavior reparenting is not supported"
+                ),
+            ));
+            continue;
+        }
         let Some(id) = &behavior.id else {
             diagnostics.push(Diagnostic::new(
                 DiagnosticCode::MissingRequiredField,
@@ -668,14 +733,14 @@ fn plan_new_behaviors(
             procedures: std::collections::BTreeMap::new(),
             uid: Some(uid.clone()),
         };
-        let scenarios = plan_new_scenarios(&location, id, &behavior.scenarios, diagnostics);
+        let scenarios = plan_new_scenarios(&location, id, &behavior.scenarios, diagnostics)?;
         planned.push(NewBehavior {
             uid,
             canonical,
             scenarios,
         });
     }
-    planned
+    Ok(planned)
 }
 
 fn plan_new_scenarios(
@@ -683,10 +748,23 @@ fn plan_new_scenarios(
     behavior_id: &str,
     scenarios: &[super::intent::ScenarioIntent],
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<NewScenario> {
+) -> Result<Vec<NewScenario>, PlanError> {
     let mut planned = Vec::new();
     for (k, scenario) in scenarios.iter().enumerate() {
         let location = format!("{behavior_location}.scenarios[{k}]");
+        if scenario.uid.is_some() {
+            // Reparenting an existing Scenario into a brand-new Behavior is
+            // plausible under ADR 0027 §3 ("別のFeatureまたはBehaviorへ配置
+            // される" does not require the destination to already exist),
+            // but this function only ever builds genuinely-new Scenarios;
+            // routing a uid-given entry to the reparent path
+            // (`plan_scenario_reparents`) as well would need its own
+            // `scenario_updates`/diagnostics threading through this
+            // brand-new-parent path. Not yet supported.
+            return Err(PlanError::NotYetSupported(format!(
+                "{location}: reparenting a Scenario into a brand-new Behavior is not supported yet"
+            )));
+        }
         let Some(id) = &scenario.id else {
             diagnostics.push(Diagnostic::new(
                 DiagnosticCode::MissingRequiredField,
@@ -726,7 +804,191 @@ fn plan_new_scenarios(
         };
         planned.push(NewScenario { uid, canonical });
     }
-    planned
+    Ok(planned)
+}
+
+fn parse_behavior_file(path: &Path) -> io::Result<Behavior> {
+    let content = fs::read_to_string(path)?;
+    knowledge::parse_behavior(&content).map_err(io::Error::other)
+}
+
+fn parse_scenario_file(path: &Path) -> io::Result<Scenario> {
+    let content = fs::read_to_string(path)?;
+    knowledge::parse_scenario(&content).map_err(io::Error::other)
+}
+
+/// Walks `behaviors` (a UID-selected Feature's `behaviors` list, ADR 0027
+/// §3) looking for existing Scenarios to update or reparent. Each
+/// `BehaviorIntent` here must itself carry a `uid` naming a Behavior that
+/// *already belongs to* `feature_current_id` — it identifies an existing
+/// Behavior to use as reparent-target context, not a new one to create
+/// (creating new Behaviors under an existing Feature remains unsupported,
+/// same as before this function existed). A `BehaviorIntent` without a
+/// `uid` here is rejected as not-yet-supported for the same reason.
+fn plan_scenario_reparents(
+    root: &Path,
+    feature_location: &str,
+    feature_current_id: &str,
+    behaviors: &[BehaviorIntent],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Vec<ScenarioOutcome>, PlanError> {
+    let mut outcomes = Vec::new();
+    for (j, behavior) in behaviors.iter().enumerate() {
+        let location = format!("{feature_location}.behaviors[{j}]");
+        let Some(behavior_uid) = &behavior.uid else {
+            return Err(PlanError::NotYetSupported(format!(
+                "{location}: adding a new Behavior to an existing Feature is not supported yet"
+            )));
+        };
+        let Some(found_behavior) =
+            knowledge_walk::find_by_uid(root, EntityKind::Behavior, behavior_uid)?
+        else {
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::UnknownUid,
+                location,
+                format!("no Behavior with uid '{behavior_uid}' exists"),
+            ));
+            continue;
+        };
+        let current_behavior = parse_behavior_file(&found_behavior.path)?;
+        if current_behavior.feature != feature_current_id {
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ConflictingScope,
+                location,
+                format!(
+                    "Behavior '{}' currently belongs to Feature '{}', not '{feature_current_id}'; Behavior reparenting is not supported, only Scenario reparenting",
+                    current_behavior.id, current_behavior.feature
+                ),
+            ));
+            continue;
+        }
+
+        for (k, scenario) in behavior.scenarios.iter().enumerate() {
+            let scenario_location = format!("{location}.scenarios[{k}]");
+            let Some(scenario_uid) = &scenario.uid else {
+                return Err(PlanError::NotYetSupported(format!(
+                    "{scenario_location}: creating a new Scenario under an existing Behavior is not supported yet"
+                )));
+            };
+            let Some(found_scenario) =
+                knowledge_walk::find_by_uid(root, EntityKind::Scenario, scenario_uid)?
+            else {
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::UnknownUid,
+                    scenario_location,
+                    format!("no Scenario with uid '{scenario_uid}' exists"),
+                ));
+                continue;
+            };
+            let current_scenario = parse_scenario_file(&found_scenario.path)?;
+            if let Some(new_id) = &scenario.id
+                && new_id != &current_scenario.id
+            {
+                // Changing a Scenario's `id` here would move its file
+                // without recording an `IdentityMutation::Renamed` event —
+                // unlike Requirement/Feature rename, which does record one
+                // (`execute::push_renamed`) — leaving the identity event
+                // log's replayed `current_id` diverged from the file's
+                // actual `id:`. Not supported yet; only `behavior`
+                // (reparent) and other content fields change here.
+                return Err(PlanError::NotYetSupported(format!(
+                    "{scenario_location}.id: renaming a Scenario during reparent is not supported yet"
+                )));
+            }
+            let candidate = match apply_scenario_patch(
+                &scenario_location,
+                &current_scenario,
+                scenario,
+                &current_behavior.id,
+            ) {
+                Ok(c) => c,
+                Err(d) => {
+                    diagnostics.push(d);
+                    continue;
+                }
+            };
+            let new_path = super::paths::scenario_path(
+                root,
+                feature_current_id,
+                &current_behavior.id,
+                &candidate.id,
+            );
+            if candidate == current_scenario && new_path == found_scenario.path {
+                outcomes.push(ScenarioOutcome::Unchanged {
+                    uid: scenario_uid.clone(),
+                    id: current_scenario.id.clone(),
+                });
+                continue;
+            }
+            if new_path != found_scenario.path && new_path.is_file() {
+                // Same reasoning as `plan_requirement`/`plan_feature`'s
+                // path-collision check: a renamed/reparented Scenario's
+                // old file is never moved automatically by an unrelated
+                // write, so the target path could already be occupied.
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ConflictingExistingValue,
+                    scenario_location,
+                    format!(
+                        "a file already exists at the target path ({}); choose a different id or target Behavior",
+                        new_path.display()
+                    ),
+                ));
+                continue;
+            }
+            outcomes.push(ScenarioOutcome::Updated {
+                uid: scenario_uid.clone(),
+                canonical: Box::new(candidate),
+                existing_path: found_scenario.path,
+                new_path,
+            });
+        }
+    }
+    Ok(outcomes)
+}
+
+/// Builds a UID-selected Scenario's patched content (ADR 0027 §5: present
+/// replaces, omitted keeps current) and sets `behavior` to
+/// `target_behavior_id` — the Behavior this Scenario is explicitly placed
+/// under in this Intent, whether that is where it already was
+/// (content-only update) or a different Behavior (reparent, ADR 0027 §3).
+/// `case_revision` is never computed or stored here: `identity::
+/// derived_uid::case_revision` derives it purely from `phases` on demand.
+fn apply_scenario_patch(
+    location: &str,
+    current: &Scenario,
+    intent: &super::intent::ScenarioIntent,
+    target_behavior_id: &str,
+) -> Result<Scenario, Diagnostic> {
+    let phases = match &intent.phases {
+        Some(phases) => {
+            if phases.is_empty() {
+                return Err(Diagnostic::new(
+                    DiagnosticCode::MissingRequiredField,
+                    format!("{location}.phases"),
+                    "at least one phase is required",
+                ));
+            }
+            phases.clone().into_iter().map(convert_phase).collect()
+        }
+        None => current.phases.clone(),
+    };
+    Ok(Scenario {
+        id: intent.id.clone().unwrap_or_else(|| current.id.clone()),
+        behavior: target_behavior_id.to_string(),
+        label: intent
+            .label
+            .clone()
+            .unwrap_or_else(|| current.label.clone()),
+        description: intent
+            .description
+            .clone()
+            .unwrap_or_else(|| current.description.clone()),
+        phases,
+        implementation_note: current.implementation_note.clone(),
+        generated_by: current.generated_by,
+        verified_by: current.verified_by.clone(),
+        uid: current.uid.clone(),
+    })
 }
 
 fn convert_phase(phase: PhaseIntent) -> KnowledgePhase {
@@ -1366,6 +1628,395 @@ requirements:
                 );
             }
             other => panic!("expected Updated, got {other:?}"),
+        }
+    }
+
+    /// A Feature `todo-management` with two Behaviors, `capture` (owning
+    /// Scenario `empty-title`) and `review`, plus an unrelated Feature
+    /// `other` with its own Behavior `unrelated`. Returns
+    /// (dir, feature_uid, capture_behavior_uid, review_behavior_uid,
+    /// scenario_uid, other_feature_uid, unrelated_behavior_uid).
+    #[allow(clippy::type_complexity)]
+    fn reparent_fixture() -> (
+        tempfile::TempDir,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) {
+        let dir = init_project();
+        let feature_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE00".to_string();
+        let capture_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE01".to_string();
+        let review_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE02".to_string();
+        let scenario_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE03".to_string();
+        let other_feature_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE04".to_string();
+        let unrelated_behavior_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE05".to_string();
+
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/capture/empty-title"),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/review"),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/features/other/unrelated"),
+        )
+        .unwrap();
+
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/feature.yml"),
+            format!(
+                "id: todo-management\nrequirement_uids: []\nlabel: TODO management\naxis: []\nuid: {feature_uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/capture/behavior.yml"),
+            format!(
+                "id: capture\nfeature: todo-management\nlabel: capture\naxis: []\ndescription: Capture a TODO.\nprocedures: {{}}\nuid: {capture_uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/review/behavior.yml"),
+            format!(
+                "id: review\nfeature: todo-management\nlabel: review\naxis: []\ndescription: Review a TODO.\nprocedures: {{}}\nuid: {review_uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(
+                ".markharness/knowledge/features/todo-management/capture/empty-title/scenario.yml",
+            ),
+            format!(
+                "id: empty-title\nbehavior: capture\nlabel: empty-title\ndescription: An empty title cannot be added\nphases:\n  - steps:\n      - action: Attempt to add an empty title\n    results:\n      - No TODO is added\nuid: {scenario_uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/other/feature.yml"),
+            format!(
+                "id: other\nrequirement_uids: []\nlabel: other\naxis: []\nuid: {other_feature_uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/other/unrelated/behavior.yml"),
+            format!(
+                "id: unrelated\nfeature: other\nlabel: unrelated\naxis: []\ndescription: Unrelated.\nprocedures: {{}}\nuid: {unrelated_behavior_uid}\n"
+            ),
+        )
+        .unwrap();
+
+        (
+            dir,
+            feature_uid,
+            capture_uid,
+            review_uid,
+            scenario_uid,
+            other_feature_uid,
+            unrelated_behavior_uid,
+        )
+    }
+
+    #[test]
+    fn reparents_a_scenario_to_a_different_behavior_under_the_same_feature() {
+        let (dir, feature_uid, _capture_uid, review_uid, scenario_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {review_uid}
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        assert_eq!(plan.scenario_updates.len(), 1);
+        match &plan.scenario_updates[0] {
+            ScenarioOutcome::Updated {
+                canonical,
+                existing_path,
+                new_path,
+                ..
+            } => {
+                assert_eq!(canonical.behavior, "review");
+                assert_ne!(existing_path, new_path);
+                assert!(new_path.ends_with("review/empty-title/scenario.yml"));
+            }
+            other => panic!("expected Updated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reparents_a_scenario_to_a_behavior_under_a_different_feature() {
+        let (
+            dir,
+            _feature_uid,
+            _capture_uid,
+            _review_uid,
+            scenario_uid,
+            other_feature_uid,
+            unrelated_behavior_uid,
+        ) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {other_feature_uid}
+    behaviors:
+      - uid: {unrelated_behavior_uid}
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        assert_eq!(plan.scenario_updates.len(), 1);
+        match &plan.scenario_updates[0] {
+            ScenarioOutcome::Updated {
+                canonical,
+                new_path,
+                ..
+            } => {
+                assert_eq!(canonical.behavior, "unrelated");
+                assert!(new_path.ends_with("other/unrelated/empty-title/scenario.yml"));
+            }
+            other => panic!("expected Updated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_scenario_placed_back_under_its_current_behavior_with_no_content_change_is_unchanged() {
+        let (dir, feature_uid, capture_uid, _review_uid, scenario_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        assert_eq!(plan.scenario_updates.len(), 1);
+        assert!(matches!(
+            &plan.scenario_updates[0],
+            ScenarioOutcome::Unchanged { .. }
+        ));
+    }
+
+    #[test]
+    fn reparenting_also_applies_a_content_patch_in_the_same_operation() {
+        let (dir, feature_uid, _capture_uid, review_uid, scenario_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {review_uid}
+        scenarios:
+          - uid: {scenario_uid}
+            label: Renamed label
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        match &plan.scenario_updates[0] {
+            ScenarioOutcome::Updated { canonical, .. } => {
+                assert_eq!(canonical.behavior, "review");
+                assert_eq!(canonical.label, "Renamed label");
+            }
+            other => panic!("expected Updated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn referencing_a_behavior_that_belongs_to_a_different_feature_reports_conflicting_scope() {
+        let (
+            dir,
+            feature_uid,
+            _capture_uid,
+            _review_uid,
+            scenario_uid,
+            _other_feature_uid,
+            unrelated_behavior_uid,
+        ) = reparent_fixture();
+        // `unrelated_behavior_uid` actually belongs to Feature "other", not
+        // to the Feature named by `feature_uid` here.
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {unrelated_behavior_uid}
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics[0].code, DiagnosticCode::ConflictingScope);
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_behavior_uid_during_reparent_reports_unknown_uid() {
+        let (dir, feature_uid, .., scenario_uid, _other_feature_uid, _unrelated_behavior_uid) =
+            reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: 01ARZ3NDEKTSV4RRFFQ69G5FFFF
+        scenarios:
+          - uid: {scenario_uid}
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics[0].code, DiagnosticCode::UnknownUid);
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_scenario_uid_during_reparent_reports_unknown_uid() {
+        let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        scenarios:
+          - uid: 01ARZ3NDEKTSV4RRFFQ69G5FFFF
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics[0].code, DiagnosticCode::UnknownUid);
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_new_behavior_under_an_existing_feature_is_not_yet_supported() {
+        let (dir, feature_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - id: brand-new
+        description: A brand new Behavior.
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        assert!(matches!(err, PlanError::NotYetSupported(_)));
+    }
+
+    #[test]
+    fn a_new_scenario_under_an_existing_behavior_is_not_yet_supported() {
+        let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        scenarios:
+          - id: brand-new
+            description: A brand new Scenario.
+            phases:
+              - steps:
+                  - action: Do it.
+                results:
+                  - Confirmed.
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        assert!(matches!(err, PlanError::NotYetSupported(_)));
+    }
+
+    #[test]
+    fn a_uid_given_behavior_under_a_brand_new_feature_reports_conflicting_scope() {
+        let (dir, _feature_uid, capture_uid, ..) = reparent_fixture();
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: brand-new-feature
+    label: Brand new feature
+    axis: []
+    behaviors:
+      - uid: {capture_uid}
+"
+        );
+        let doc = parse_intent(&yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics[0].code, DiagnosticCode::ConflictingScope);
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
         }
     }
 }

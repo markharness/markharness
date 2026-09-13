@@ -440,6 +440,29 @@ pub fn replace_dir_from_staging(root: &Path, staging: &Path, target: &Path) -> i
     Ok(())
 }
 
+/// Moves a single file from `from` to `to`, refusing to follow a
+/// symlink/junction at either path or any of their ancestors. Used by
+/// `knowledge_reconcile::execute` to relocate a Scenario file when its
+/// `behavior:` (parent) changes (ADR 0027 §3 explicit reparent) — unlike
+/// `replace_file`'s write-then-atomically-rename-into-place, this moves an
+/// *existing* file whole, so its content need not be re-read and
+/// re-written just to change its path. `to`'s parent directory is created
+/// if missing, mirroring `replace_dir_from_staging`'s same accommodation
+/// (unlike `replace_file`, `fs::rename`'s destination requires an existing
+/// parent). Fails with `NotFound` if `from` does not exist — callers that
+/// want idempotent crash-recovery replay (a retry after `from` was already
+/// moved) must check for that themselves, mirroring how
+/// `remove_file_no_follow`'s own idempotence is a deliberate, separate
+/// design choice from this function's plain `fs::rename` semantics.
+pub fn rename_no_follow(root: &Path, from: &Path, to: &Path) -> io::Result<()> {
+    ensure_no_symlink_ancestor(root, from)?;
+    ensure_no_symlink_ancestor(root, to)?;
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(from, to)
+}
+
 /// Removes the single file at `target`, refusing to follow a symlink/junction
 /// at `target` itself or any of its ancestors. A missing `target` is treated
 /// as success (removal is idempotent), mirroring `remove_dir_all_no_follow`.
@@ -1107,6 +1130,35 @@ mod tests {
             .join("missing.yml");
 
         assert!(remove_file_no_follow(root, &target).is_ok());
+    }
+
+    #[test]
+    fn rename_no_follow_moves_a_file_creating_the_destination_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let from = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge/features/f/a/s/scenario.yml");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "id: s\nbehavior: a\n").unwrap();
+        let to = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge/features/f/b/s/scenario.yml");
+
+        rename_no_follow(root, &from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(&to).unwrap(), "id: s\nbehavior: a\n");
+    }
+
+    #[test]
+    fn rename_no_follow_fails_when_the_source_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let from = root.join(".markharness/knowledge/does-not-exist.yml");
+        let to = root.join(".markharness/knowledge/target.yml");
+
+        assert!(rename_no_follow(root, &from, &to).is_err());
     }
 
     #[test]
