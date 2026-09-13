@@ -717,6 +717,7 @@ fn plan_feature(
         if candidate.id != current.id {
             collect_behavior_back_reference_fixups(
                 root,
+                found.path.parent().unwrap_or(&found.path),
                 &current.id,
                 &candidate.id,
                 &handled_behavior_uids,
@@ -1216,6 +1217,7 @@ fn plan_existing_behaviors(
         if current_behavior.id != found_behavior.id {
             collect_scenario_back_reference_fixups(
                 root,
+                &behavior_dir,
                 &found_behavior.id,
                 &current_behavior.id,
                 &handled_scenario_uids,
@@ -1248,18 +1250,33 @@ fn behavior_id_taken_within_feature(
     Ok(None)
 }
 
+/// Whether the element at `path` is a direct child of `parent_dir` —
+/// children live one directory down, as `<parent dir>/<child id>/<child
+/// file>`. Ownership has to be decided by location, not by the child's
+/// back-reference value: a Behavior's display id is unique only within its
+/// own Feature, so an unrelated Feature can hold a Behavior (and
+/// Scenarios) with the very same id, and matching on the id alone would
+/// rewrite those too.
+fn is_direct_child_of(path: &Path, parent_dir: &Path) -> bool {
+    path.parent()
+        .and_then(Path::parent)
+        .is_some_and(|grandparent| grandparent == parent_dir)
+}
+
 fn collect_behavior_back_reference_fixups(
     root: &Path,
+    feature_dir: &Path,
     old_feature_id: &str,
     new_feature_id: &str,
     already_handled: &HashSet<String>,
     fixups: &mut Vec<BackReferenceFixup>,
 ) -> io::Result<()> {
     for found in knowledge_walk::list_entities(root, EntityKind::Behavior)? {
-        if found
-            .uid
-            .as_deref()
-            .is_some_and(|uid| already_handled.contains(uid))
+        if !is_direct_child_of(&found.path, feature_dir)
+            || found
+                .uid
+                .as_deref()
+                .is_some_and(|uid| already_handled.contains(uid))
         {
             continue;
         }
@@ -1279,16 +1296,18 @@ fn collect_behavior_back_reference_fixups(
 
 fn collect_scenario_back_reference_fixups(
     root: &Path,
+    behavior_dir: &Path,
     old_behavior_id: &str,
     new_behavior_id: &str,
     already_handled: &HashSet<String>,
     fixups: &mut Vec<BackReferenceFixup>,
 ) -> io::Result<()> {
     for found in knowledge_walk::list_entities(root, EntityKind::Scenario)? {
-        if found
-            .uid
-            .as_deref()
-            .is_some_and(|uid| already_handled.contains(uid))
+        if !is_direct_child_of(&found.path, behavior_dir)
+            || found
+                .uid
+                .as_deref()
+                .is_some_and(|uid| already_handled.contains(uid))
         {
             continue;
         }
@@ -2529,6 +2548,66 @@ features:
         };
         assert_eq!(canonical.id, "empty-title");
         assert_eq!(canonical.behavior, "recorded");
+    }
+
+    /// A Behavior's display id is only unique within its own Feature —
+    /// that is exactly why renaming one needs a scope-aware conflict check
+    /// — so the sweep that carries a renamed Behavior's Scenarios along
+    /// must be scope-aware too. Matching on the `behavior:` value alone
+    /// would rewrite an identically-named Behavior's Scenarios in an
+    /// unrelated Feature, pointing them at a Behavior that does not exist
+    /// there.
+    #[test]
+    fn renaming_a_behavior_leaves_a_same_named_behavior_in_another_feature_alone() {
+        let (dir, feature_uid, capture_uid, ..) = reparent_fixture();
+        // Give the unrelated Feature a Behavior that happens to share the
+        // display id being renamed away from, with a Scenario under it.
+        let other_capture_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE06";
+        let other_scenario_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE07";
+        fs::create_dir_all(
+            dir.path()
+                .join(".markharness/knowledge/features/other/capture/its-own-scenario"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/other/capture/behavior.yml"),
+            format!(
+                "id: capture\nfeature: other\nlabel: capture\naxis: []\ndescription: Another capture.\nprocedures: {{}}\nuid: {other_capture_uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/other/capture/its-own-scenario/scenario.yml"),
+            format!(
+                "id: its-own-scenario\nbehavior: capture\nlabel: its-own-scenario\ndescription: Unrelated.\nphases:\n  - steps:\n      - action: Do something\n    results:\n      - Something happened\nuid: {other_scenario_uid}\n"
+            ),
+        )
+        .unwrap();
+
+        let yaml = format!(
+            "format: markharness/knowledge-intent/v1\nmode: merge\n\nfeatures:\n  - uid: {feature_uid}\n    behaviors:\n      - uid: {capture_uid}\n        id: recorded\n"
+        );
+        let plan = build_plan(dir.path(), &parse_intent(&yaml).unwrap()).unwrap();
+
+        assert_eq!(
+            plan.back_reference_fixups.len(),
+            1,
+            "only the renamed Behavior's own Scenario may be rewritten: {:?}",
+            plan.back_reference_fixups
+        );
+        let BackReferenceFixup::Scenario {
+            canonical, path, ..
+        } = &plan.back_reference_fixups[0]
+        else {
+            panic!("expected a Scenario fixup");
+        };
+        assert_eq!(canonical.id, "empty-title");
+        assert!(
+            path.ends_with("todo-management/capture/empty-title/scenario.yml"),
+            "{path:?}"
+        );
     }
 
     /// Two Behaviors under the same Feature must not end up sharing a
