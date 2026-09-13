@@ -3,8 +3,12 @@
 //! `identity::feature_ops`, keeping the Interface reusable by a future GUI.
 
 pub mod diagnostics;
+pub mod execute;
 pub mod intent;
+pub mod plan;
 pub mod validate;
 
 pub use diagnostics::{Diagnostic, DiagnosticCode};
+pub use execute::{CreatedElement, ExecuteError, execute_creation_plan};
 pub use intent::{IntentDocument, IntentParseError};
+pub use plan::{Plan, PlanError, build_plan};

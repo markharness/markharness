@@ -17,6 +17,11 @@ pub enum DiagnosticCode {
     InvalidSourceRevision,
     StalePlan,
     InvariantViolation,
+    /// Not one of ADR 0027 §7's 13 named codes — that list is a stated
+    /// minimum ("少なくとも"), not exhaustive. A new element omits a field
+    /// with no reasonable default (e.g. a Requirement's `source`) and no
+    /// other listed code names that specific failure.
+    MissingRequiredField,
 }
 
 impl DiagnosticCode {
@@ -35,6 +40,7 @@ impl DiagnosticCode {
             DiagnosticCode::InvalidSourceRevision => "invalid_source_revision",
             DiagnosticCode::StalePlan => "stale_plan",
             DiagnosticCode::InvariantViolation => "invariant_violation",
+            DiagnosticCode::MissingRequiredField => "missing_required_field",
         }
     }
 }
@@ -102,6 +108,10 @@ mod tests {
         assert_eq!(
             DiagnosticCode::InvariantViolation.as_str(),
             "invariant_violation"
+        );
+        assert_eq!(
+            DiagnosticCode::MissingRequiredField.as_str(),
+            "missing_required_field"
         );
     }
 }

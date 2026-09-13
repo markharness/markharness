@@ -96,7 +96,7 @@ fn valid_intent_exits_zero() {
 }
 
 #[test]
-fn valid_intent_with_json_reports_ok_true() {
+fn valid_intent_with_json_reports_created_elements() {
     let dir = setup_root_with_axes(&["functional"]);
     let intent_file = write_intent(&dir, VALID_INTENT);
 
@@ -111,7 +111,70 @@ fn valid_intent_with_json_reports_ok_true() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "{\"ok\":true}");
+    assert!(stdout.contains("\"kind\":\"requirement\""), "{stdout}");
+    assert!(stdout.contains("\"kind\":\"feature\""), "{stdout}");
+}
+
+#[test]
+fn valid_intent_writes_canonical_knowledge_files_with_uid_embedded() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert!(output.status.success());
+
+    let requirement = fs::read_to_string(
+        dir.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge/requirements/todo/requirement.yml"),
+    )
+    .unwrap();
+    assert!(requirement.contains("uid:"), "{requirement}");
+
+    let feature = fs::read_to_string(
+        dir.path()
+            .join(markharness::project_root::MARKHARNESS_DIR)
+            .join("knowledge/features/todo-management/feature.yml"),
+    )
+    .unwrap();
+    assert!(feature.contains("uid:"), "{feature}");
+}
+
+#[test]
+fn rerunning_reconcile_against_an_already_created_requirement_reports_ambiguous_identity() {
+    let dir = setup_root_with_axes(&["functional"]);
+    let intent_file = write_intent(&dir, VALID_INTENT);
+
+    let first = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert!(first.status.success());
+
+    let second = run(&[
+        "knowledge",
+        "reconcile",
+        intent_file.to_str().unwrap(),
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--json",
+    ]);
+
+    assert!(!second.status.success());
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        stdout.contains("\"code\":\"ambiguous_identity\""),
+        "{stdout}"
+    );
 }
 
 #[test]

@@ -20,7 +20,9 @@ use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, Dra
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
 use crate::knowledge_reconcile::diagnostics::Diagnostic as ReconcileDiagnostic;
+use crate::knowledge_reconcile::execute::{CreatedElement, ExecuteError, execute_creation_plan};
 use crate::knowledge_reconcile::intent::{IntentParseError, parse_intent};
+use crate::knowledge_reconcile::plan::{PlanError, build_plan};
 use crate::knowledge_reconcile::validate::validate_static;
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
@@ -851,8 +853,33 @@ pub fn run(cli: Cli) -> io::Result<()> {
             let known_axes: std::collections::HashSet<String> =
                 axes::list_axes(&root).into_iter().map(|a| a.id).collect();
             let diagnostics = validate_static(&doc, &known_axes);
-            report_reconcile_diagnostics(&diagnostics, json);
-            Ok(())
+            if !diagnostics.is_empty() {
+                report_reconcile_diagnostics(&diagnostics, json);
+                unreachable!("report_reconcile_diagnostics exits the process on error");
+            }
+            let plan = match build_plan(&root, &doc) {
+                Ok(plan) => plan,
+                Err(PlanError::Diagnostics(diagnostics)) => {
+                    report_reconcile_diagnostics(&diagnostics, json);
+                    unreachable!("report_reconcile_diagnostics exits the process on error");
+                }
+                Err(PlanError::NotYetSupported(message)) => {
+                    eprintln!("error: {message}");
+                    std::process::exit(2);
+                }
+                Err(PlanError::Io(e)) => return Err(e),
+            };
+            match execute_creation_plan(&root, &plan) {
+                Ok(created) => {
+                    report_reconcile_created(&created, json);
+                    Ok(())
+                }
+                Err(ExecuteError::OperationInProgress) => {
+                    eprintln!("error: a concurrent identity operation is in progress; retry later");
+                    std::process::exit(3);
+                }
+                Err(ExecuteError::Io(e)) => Err(e),
+            }
         }
         Command::Generate { dir, json } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
@@ -1986,6 +2013,33 @@ fn report_reconcile_diagnostics(diagnostics: &[ReconcileDiagnostic], json: bool)
         }
     }
     std::process::exit(1);
+}
+
+/// Reports `knowledge reconcile`'s created elements (ADR 0027 §7: `--json`
+/// returns at least `created`/`updated`/`unchanged`). Phase 2 only ever
+/// produces `created` entries; `updated`/`unchanged` land with Phase 3.
+fn report_reconcile_created(created: &[CreatedElement], json: bool) {
+    if json {
+        let items: Vec<String> = created
+            .iter()
+            .map(|c| {
+                format!(
+                    "{{\"kind\":\"{}\",\"uid\":\"{}\",\"id\":\"{}\"}}",
+                    c.kind.as_str(),
+                    json_escape(&c.uid),
+                    json_escape(&c.id),
+                )
+            })
+            .collect();
+        println!("{{\"ok\":true,\"created\":[{}]}}", items.join(","));
+    } else {
+        for c in created {
+            println!("created {} '{}' (uid {})", c.kind.as_str(), c.id, c.uid);
+        }
+        if created.is_empty() {
+            println!("no changes");
+        }
+    }
 }
 
 fn reconcile_diagnostics_to_json(diagnostics: &[ReconcileDiagnostic]) -> String {

@@ -50,8 +50,23 @@ impl From<io::Error> for RenameError {
 /// idempotent and safe to redo from just the identity event log. Kind-
 /// generic (design doc §3.2): the only kind-specific part —
 /// which struct to parse/serialize — lives in `knowledge_walk`.
-fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result<()> {
+pub(crate) fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result<()> {
     recovery::complete_batch_commits(root, intent)?;
+    // `knowledge_reconcile::execute` is the only caller whose new elements
+    // have no pre-existing Knowledge file for `roll_forward_entity` below
+    // to find and patch (design doc §6.1 assumes a file already exists;
+    // reconcile's "new" row does not). Writing these first means the
+    // subsequent `roll_forward_entity` loop finds them already correct and
+    // is a harmless no-op verification rather than silently doing nothing.
+    if let Some(recovery::IntentPayload::KnowledgeReconcile(files)) = &intent.caller_payload {
+        for file in files {
+            crate::fs_safety::replace_file(
+                root,
+                &root.join(&file.relative_path),
+                file.contents.as_bytes(),
+            )?;
+        }
+    }
     if intent.batch_events.is_empty() {
         roll_forward_entity(root, intent.entity_kind, &intent.entity_uid)?;
     } else {

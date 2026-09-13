@@ -82,6 +82,25 @@ pub enum IntentPayload {
     /// survives a crash between the commit point and the migration
     /// manifest being updated.
     IdentityMigration(std::collections::BTreeMap<String, String>),
+    /// `knowledge_reconcile::execute`'s brand-new canonical Knowledge files
+    /// (ADR 0027): unlike every other caller of this recovery protocol,
+    /// which patches a Knowledge file that already exists in the working
+    /// tree, reconcile's new elements have no file to patch yet. Their
+    /// full contents (already carrying the freshly issued `uid`) are
+    /// captured here *before* the batch's commit point, so a crash between
+    /// that point and the files actually being written is recovered by
+    /// writing them from this durable copy instead of losing them.
+    KnowledgeReconcile(Vec<PendingKnowledgeFile>),
+}
+
+/// One canonical Knowledge file `knowledge_reconcile::execute` still needs
+/// to write after its batch's logical commit point (see
+/// `IntentPayload::KnowledgeReconcile`). `relative_path` is root-relative,
+/// forward-slash-normalized (mirrors `feature_ops::relative_path_string`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingKnowledgeFile {
+    pub relative_path: String,
+    pub contents: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
