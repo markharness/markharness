@@ -907,6 +907,12 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     eprintln!("error: a concurrent identity operation is in progress; retry later");
                     std::process::exit(3);
                 }
+                Err(ReconcileError::RecoveryPending) => {
+                    eprintln!(
+                        "error: a previous operation left recovery pending; run `knowledge reconcile` without --check (or any other identity command) once to complete it, then retry --check"
+                    );
+                    std::process::exit(3);
+                }
                 Err(ReconcileError::Io(e)) => Err(e),
             }
         }

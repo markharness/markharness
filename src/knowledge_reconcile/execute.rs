@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::identity::{
-    EntityKind, IdentityEvent, IdentityMutation, feature_ops, recovery, registry,
+    EntityKind, IdentityEvent, IdentityMutation, feature_ops, lock, recovery, registry,
 };
 use crate::knowledge;
 use crate::time::iso8601_utc_now;
@@ -82,6 +82,12 @@ pub enum ReconcileError {
     /// See [`PlanError::NotYetSupported`] — not a stable ADR 0027 §7 code.
     NotYetSupported(String),
     OperationInProgress,
+    /// [`check_creation`] only: a previous operation's staging entry is
+    /// still on disk, and resolving it (discard or roll-forward) is itself
+    /// a write `--check` must never perform. Run a real (non-`--check`)
+    /// `knowledge reconcile`, or any other identity command — all of them
+    /// run startup recovery — to complete it, then retry.
+    RecoveryPending,
     Io(io::Error),
 }
 
@@ -151,21 +157,32 @@ pub fn reconcile_creation(
 /// forbids treating it as a permit for a later write, since state can
 /// change in between (that gap is exactly what [`ExecuteError::Diagnostics`]'s
 /// `stale_plan` covers on the later real run).
+///
+/// Deliberately does *not* call [`recovery::run_startup_recovery`]:
+/// finishing a leftover staging entry from an earlier crash — discarding
+/// it or rolling it forward — writes real repository state (Knowledge
+/// files, identity events), which `--check` must never do. Instead this
+/// acquires the lock directly and only *peeks* at whether recovery is
+/// pending ([`recovery::has_incomplete_operations`]); if so, it refuses
+/// with [`ReconcileError::RecoveryPending`] rather than resolving it.
 pub fn check_creation(
     root: &Path,
     doc: &IntentDocument,
 ) -> Result<ReconcileOutcome, ReconcileError> {
-    let held_lock = match recovery::run_startup_recovery(root, |intent| {
-        feature_ops::roll_forward(root, intent)
-    })? {
-        recovery::StartupRecovery::OperationInProgress => {
+    let held_lock = match lock::IdentityLock::acquire(root) {
+        Ok(held_lock) => held_lock,
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
             return Err(ReconcileError::OperationInProgress);
         }
-        recovery::StartupRecovery::Ready { lock, .. } => lock,
+        Err(e) => return Err(ReconcileError::Io(e)),
     };
-    let outcome = build_plan(root, doc)
-        .map(|plan| plan_outcome(&plan))
-        .map_err(ReconcileError::from);
+    let outcome = (|| {
+        if recovery::has_incomplete_operations(root)? {
+            return Err(ReconcileError::RecoveryPending);
+        }
+        let plan = build_plan(root, doc)?;
+        Ok(plan_outcome(&plan))
+    })();
     held_lock.release()?;
     outcome
 }
@@ -1426,6 +1443,97 @@ requirements:
         assert!(preview.created.is_empty());
         assert!(preview.updated.is_empty());
         assert_eq!(preview.unchanged.len(), 1);
+    }
+
+    /// Regression test for the reviewer-flagged bug: `check_creation` used
+    /// to call `recovery::run_startup_recovery`, which — on finding a
+    /// leftover staging entry from an earlier crash whose identity event
+    /// is already committed (as this test's own setup leaves it, matching
+    /// the crash point in `a_subsequent_command_rolls_forward_pending_files_
+    /// after_a_kill_right_after_commit`) — would itself roll it forward,
+    /// writing the pending Knowledge file, before `--check` ever got to
+    /// `build_plan`. `--check` must refuse instead: the pending Requirement
+    /// file must stay unwritten and the staging entry itself untouched
+    /// (still resolvable by a later real command), not silently resolved
+    /// as a side effect of a read-only call.
+    #[test]
+    fn check_creation_refuses_rather_than_resolving_a_pending_crash_recovery() {
+        let dir = init_project();
+        let requirement_uid = "01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string();
+        let event_uid = "01ARZ3NDEKTSV4RRFFQ69G5FE0".to_string();
+        let event = IdentityEvent {
+            identity_event_uid: event_uid.clone(),
+            entity_uid: requirement_uid.clone(),
+            entity_kind: EntityKind::Requirement,
+            previous_identity_event_uid: None,
+            previous_identity_event_uids: Vec::new(),
+            recorded_at: "2026-09-13T00:00:00Z".to_string(),
+            mutation: IdentityMutation::Issued {
+                id: "todo".to_string(),
+            },
+        };
+        let requirement = crate::knowledge::Requirement {
+            id: "todo".to_string(),
+            source: crate::knowledge::RequirementSource::Native,
+            label: Some("TODO management".to_string()),
+            axis: Vec::new(),
+            description: None,
+            source_locator: None,
+            source_revision: None,
+            related_issues: Vec::new(),
+            uid: Some(requirement_uid.clone()),
+        };
+        let staged_intent = recovery::begin_batch_with_payload(
+            dir.path(),
+            vec![recovery::BatchEvent {
+                entity_kind: EntityKind::Requirement,
+                entity_uid: requirement_uid.clone(),
+                identity_event_uid: event_uid.clone(),
+                event_yaml: serde_yaml_ng::to_string(&event).unwrap(),
+            }],
+            Some(recovery::IntentPayload::KnowledgeReconcile(vec![
+                recovery::PendingKnowledgeFile {
+                    relative_path: ".markharness/knowledge/requirements/todo/requirement.yml"
+                        .to_string(),
+                    contents: knowledge::serialize_requirement(&requirement),
+                },
+            ])),
+        )
+        .unwrap();
+        recovery::commit_batch(dir.path(), &staged_intent).unwrap();
+        // Deliberately no roll_forward/finish: the crash point, exactly
+        // like `a_subsequent_command_rolls_forward_pending_files_after_a_kill_right_after_commit`
+        // — except this time the next call is `--check`, not a real run.
+
+        let doc = parse_intent(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: unrelated
+    source: native
+    label: An unrelated new Requirement
+    axis: []
+",
+        )
+        .unwrap();
+        let err = check_creation(dir.path(), &doc).unwrap_err();
+        assert!(matches!(err, ReconcileError::RecoveryPending));
+
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/requirements/todo/requirement.yml")
+                .is_file(),
+            "--check must not roll the pending Requirement file forward"
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/.identity-staging")
+                .join(&staged_intent.operation_id)
+                .is_dir(),
+            "--check must leave the staging entry itself for a real command to resolve"
+        );
     }
 
     /// ADR 0027 §6 `stale_plan`: a `Plan` built with [`build_plan`] and

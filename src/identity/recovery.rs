@@ -259,6 +259,31 @@ pub enum RecoveryOutcome {
     RolledForward { operation_id: String },
 }
 
+/// Reports whether any staging entry is left under
+/// `.markharness/.identity-staging/`, without resolving it either way —
+/// unlike [`recover_incomplete_operations`], this never discards or rolls
+/// anything forward, so it is safe for a caller that must not write
+/// anything to the repository (`knowledge reconcile --check`, ADR 0027
+/// §6) to call under its own held lock instead of running full recovery.
+/// Such a caller must still refuse to proceed when this returns `true`
+/// (recovery is a mutating operation another, non-`--check` command needs
+/// to run) rather than silently completing someone else's pending crash
+/// recovery on their behalf.
+pub fn has_incomplete_operations(root: &Path) -> io::Result<bool> {
+    let dir = staging_root(root);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    for entry in entries {
+        if entry?.file_type()?.is_dir() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The startup recovery scan (design doc §6.1): for every leftover
 /// `.markharness/.identity-staging/<operation-id>/`, either discards it
 /// (event never committed) or calls `roll_forward` once and then removes
@@ -434,6 +459,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let outcomes = recover_incomplete_operations(dir.path(), |_| Ok(())).unwrap();
         assert!(outcomes.is_empty());
+    }
+
+    #[test]
+    fn has_incomplete_operations_is_false_when_no_staging_directory_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!has_incomplete_operations(dir.path()).unwrap());
+    }
+
+    /// A caller that must never write anything (`knowledge reconcile
+    /// --check`, ADR 0027 §6) needs to detect pending recovery without
+    /// resolving it — `has_incomplete_operations` must report `true` but
+    /// leave the staging entry (and, if already committed, its identity
+    /// event) exactly as it found them, unlike `recover_incomplete_
+    /// operations`.
+    #[test]
+    fn has_incomplete_operations_is_true_and_does_not_resolve_a_staged_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let intent = begin(dir.path(), EntityKind::Feature, "uid-1", "event-1").unwrap();
+        commit(dir.path(), &intent, "identity_event_uid: event-1\n").unwrap();
+
+        assert!(has_incomplete_operations(dir.path()).unwrap());
+        assert!(staging_dir(dir.path(), &intent.operation_id).is_dir());
+
+        // Calling it again changes nothing either — it is a pure peek.
+        assert!(has_incomplete_operations(dir.path()).unwrap());
+        assert!(staging_dir(dir.path(), &intent.operation_id).is_dir());
     }
 
     /// Simulates a process kill before the commit point (design doc
