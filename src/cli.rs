@@ -19,6 +19,9 @@ use crate::interactive;
 use crate::knowledge_apply::{self, ApplyError, ApplyOptions, DraftFileError, DraftValidation};
 use crate::knowledge_draft::{self, ValidateOptions, ValidationError};
 use crate::knowledge_edit::{self, EditFlowError};
+use crate::knowledge_reconcile::diagnostics::Diagnostic as ReconcileDiagnostic;
+use crate::knowledge_reconcile::intent::{IntentParseError, parse_intent};
+use crate::knowledge_reconcile::validate::validate_static;
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::presentation::{self, HumanPresenter, JsonPresenter, Presenter};
@@ -641,6 +644,17 @@ pub enum KnowledgeCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Reconcile a Knowledge Intent against the repository's current state (ADR 0027)
+    Reconcile {
+        /// Path to the Knowledge Intent YAML file
+        intent_file: PathBuf,
+        /// Target project directory containing knowledge/ and axes/. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Shared error handling for `changes annotate`'s two writers
@@ -814,6 +828,31 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     std::process::exit(3);
                 }
             }
+        }
+        Command::Knowledge(KnowledgeCommand::Reconcile {
+            intent_file,
+            dir,
+            json,
+        }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            let yaml = fs::read_to_string(&intent_file)?;
+            let doc = match parse_intent(&yaml) {
+                Ok(doc) => doc,
+                Err(e) => {
+                    let diagnostic = ReconcileDiagnostic::new(
+                        crate::knowledge_reconcile::DiagnosticCode::InvalidFormat,
+                        "<document>",
+                        intent_parse_error_message(&e),
+                    );
+                    report_reconcile_diagnostics(&[diagnostic], json);
+                    unreachable!("report_reconcile_diagnostics exits the process on error");
+                }
+            };
+            let known_axes: std::collections::HashSet<String> =
+                axes::list_axes(&root).into_iter().map(|a| a.id).collect();
+            let diagnostics = validate_static(&doc, &known_axes);
+            report_reconcile_diagnostics(&diagnostics, json);
+            Ok(())
         }
         Command::Generate { dir, json } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
@@ -1923,6 +1962,45 @@ fn report_validation_outcome(errors: &[ValidationError], json: bool) {
         print_errors_human(errors);
     }
     std::process::exit(1);
+}
+
+fn intent_parse_error_message(e: &IntentParseError) -> String {
+    e.to_string()
+}
+
+/// Reports `knowledge reconcile` diagnostics (ADR 0027 §7) and exits 1 when
+/// any are present, mirroring `report_validation_outcome`'s contract for the
+/// older draft commands.
+fn report_reconcile_diagnostics(diagnostics: &[ReconcileDiagnostic], json: bool) {
+    if diagnostics.is_empty() {
+        if json {
+            println!("{{\"ok\":true}}");
+        }
+        return;
+    }
+    if json {
+        println!("{}", reconcile_diagnostics_to_json(diagnostics));
+    } else {
+        for d in diagnostics {
+            eprintln!("error[{}]: {} ({})", d.code.as_str(), d.message, d.location);
+        }
+    }
+    std::process::exit(1);
+}
+
+fn reconcile_diagnostics_to_json(diagnostics: &[ReconcileDiagnostic]) -> String {
+    let items: Vec<String> = diagnostics
+        .iter()
+        .map(|d| {
+            format!(
+                "{{\"code\":\"{}\",\"location\":\"{}\",\"message\":\"{}\"}}",
+                d.code.as_str(),
+                json_escape(&d.location),
+                json_escape(&d.message),
+            )
+        })
+        .collect();
+    format!("{{\"ok\":false,\"diagnostics\":[{}]}}", items.join(","))
 }
 
 fn print_errors_human(errors: &[ValidationError]) {
