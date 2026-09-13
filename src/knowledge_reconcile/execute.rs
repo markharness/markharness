@@ -745,6 +745,174 @@ requirements:
         assert!(content.contains("label: Renamed label"));
     }
 
+    /// ADR 0027 §5: replacing a UID-selected Feature's `contributes_to`
+    /// expresses both addition and removal of Requirement relationships
+    /// without a separate command — this exercises both directions in one
+    /// patch (drop `req_a`, add `req_c`, keep `req_b`).
+    #[test]
+    fn uid_selected_contributes_to_replacement_adds_and_removes_requirement_relationships() {
+        let dir = init_project();
+        let setup_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_a
+    id: req-a
+    source: native
+    label: Requirement A
+    axis: []
+  - key: req_b
+    id: req-b
+    source: native
+    label: Requirement B
+    axis: []
+  - key: req_c
+    id: req-c
+    source: native
+    label: Requirement C
+    axis: []
+
+features:
+  - key: feature_todo
+    id: todo-management
+    contributes_to: [req_a, req_b]
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(setup_yaml).unwrap();
+        let created = reconcile_creation(dir.path(), &doc).unwrap();
+        let requirement_uid = |id: &str| -> String {
+            created
+                .created
+                .iter()
+                .find(|e| e.kind == EntityKind::Requirement && e.id == id)
+                .unwrap()
+                .uid
+                .clone()
+        };
+        let uid_a = requirement_uid("req-a");
+        let uid_b = requirement_uid("req-b");
+        let uid_c = requirement_uid("req-c");
+        let feature_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Feature)
+            .unwrap()
+            .uid
+            .clone();
+
+        let patch_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    contributes_to: [{uid_b}, {uid_c}]
+"
+        );
+        let patch_doc = parse_intent(&patch_yaml).unwrap();
+        let outcome = reconcile_creation(dir.path(), &patch_doc).unwrap();
+        assert_eq!(outcome.updated.len(), 1);
+
+        let feature_content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/feature.yml"),
+        )
+        .unwrap();
+        let feature = knowledge::parse_feature(&feature_content).unwrap();
+        assert_eq!(feature.requirement_uids, vec![uid_b.clone(), uid_c.clone()]);
+        assert!(!feature.requirement_uids.contains(&uid_a));
+    }
+
+    /// ADR 0027 §5: omitting `contributes_to` on a UID-selected patch keeps
+    /// the current `requirement_uids` untouched; explicitly setting it to
+    /// `[]` clears every relationship. These are typed as `Option<Vec<_>>`
+    /// (omitted vs. explicit-empty), so both are distinguishable — unlike
+    /// `label`/`description`'s known `Option<String>` limitation.
+    #[test]
+    fn uid_selected_patch_omitting_contributes_to_keeps_it_and_explicit_empty_clears_it() {
+        let dir = init_project();
+        let setup_yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_a
+    id: req-a
+    source: native
+    label: Requirement A
+    axis: []
+
+features:
+  - key: feature_todo
+    id: todo-management
+    contributes_to: [req_a]
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(setup_yaml).unwrap();
+        let created = reconcile_creation(dir.path(), &doc).unwrap();
+        let feature_uid = created
+            .created
+            .iter()
+            .find(|e| e.kind == EntityKind::Feature)
+            .unwrap()
+            .uid
+            .clone();
+
+        // Omitting contributes_to while patching an unrelated field keeps
+        // the existing relationship.
+        let keep_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    label: TODO management (renamed)
+"
+        );
+        reconcile_creation(dir.path(), &parse_intent(&keep_yaml).unwrap()).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/feature.yml"),
+        )
+        .unwrap();
+        assert_eq!(
+            knowledge::parse_feature(&content)
+                .unwrap()
+                .requirement_uids
+                .len(),
+            1
+        );
+
+        // Explicit empty list clears every relationship.
+        let clear_yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    contributes_to: []
+"
+        );
+        reconcile_creation(dir.path(), &parse_intent(&clear_yaml).unwrap()).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path()
+                .join(".markharness/knowledge/features/todo-management/feature.yml"),
+        )
+        .unwrap();
+        assert!(
+            knowledge::parse_feature(&content)
+                .unwrap()
+                .requirement_uids
+                .is_empty()
+        );
+    }
+
     #[test]
     fn uid_selected_rename_writes_a_renamed_identity_event() {
         let dir = init_project();

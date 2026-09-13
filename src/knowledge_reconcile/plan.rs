@@ -188,16 +188,17 @@ fn build_requirement_content(
 /// `intent` replaces the current value; an omitted field keeps it (ADR
 /// 0027 §5). `axis`/`related_issues` are value collections — replaced
 /// wholesale when present, kept wholesale when omitted.
+/// `source`/`source_revision` are resolved by the caller ([`resolve_source_revision`]
+/// needs filesystem/Git access this function does not have) — every other
+/// field follows ordinary patch semantics (ADR 0027 §5: present replaces,
+/// omitted keeps current).
 fn apply_requirement_patch(
-    location: &str,
     current: &Requirement,
     intent: &RequirementIntent,
-) -> Result<Requirement, Diagnostic> {
-    let source = match &intent.source {
-        Some(_) => parse_source(location, intent.source.as_deref())?,
-        None => current.source,
-    };
-    Ok(Requirement {
+    source: RequirementSource,
+    source_revision: Option<String>,
+) -> Requirement {
+    Requirement {
         id: intent.id.clone().unwrap_or_else(|| current.id.clone()),
         source,
         label: intent.label.clone().or_else(|| current.label.clone()),
@@ -210,13 +211,71 @@ fn apply_requirement_patch(
             .source_locator
             .clone()
             .or_else(|| current.source_locator.clone()),
-        source_revision: current.source_revision.clone(),
+        source_revision,
         related_issues: intent
             .related_issues
             .clone()
             .unwrap_or_else(|| current.related_issues.clone()),
         uid: current.uid.clone(),
-    })
+    }
+}
+
+/// Resolves a UID-selected Requirement's `source_revision` (ADR 0027 §5).
+/// `current` is never persisted as-is: it is an Intent-only instruction to
+/// advance the pin to whatever blob OID `source_locator` resolves to right
+/// now, mirroring the existing standalone `requirement repin` command's
+/// `blob OID` validation (same locator-exists and `git hash-object`
+/// checks). Omitting the field keeps the current pin; any value other
+/// than the literal `current` is rejected — this Intent field is not a
+/// place to write an arbitrary OID directly.
+fn resolve_source_revision(
+    root: &Path,
+    location: &str,
+    current: &Requirement,
+    effective_source: RequirementSource,
+    intent_source_revision: &Option<String>,
+) -> io::Result<Result<Option<String>, Diagnostic>> {
+    match intent_source_revision.as_deref() {
+        None => Ok(Ok(current.source_revision.clone())),
+        Some("current") => {
+            if effective_source != RequirementSource::External {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::InvalidSourceRevision,
+                    location,
+                    "source_revision: current applies only to source: external Requirements",
+                )));
+            }
+            let Some(locator) = current.source_locator.clone() else {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::InvalidSourceRevision,
+                    location,
+                    "source: external Requirement has no source_locator to resolve",
+                )));
+            };
+            if !root.join(&locator).is_file() {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::InvalidSourceRevision,
+                    location,
+                    format!("locator '{locator}' does not exist in the working tree"),
+                )));
+            }
+            match crate::git::hash_object(root, &locator) {
+                Ok(oid) => Ok(Ok(Some(oid))),
+                Err(e) => Ok(Err(Diagnostic::new(
+                    DiagnosticCode::InvalidSourceRevision,
+                    location,
+                    format!("failed to resolve the current blob OID for '{locator}': {e}"),
+                ))),
+            }
+        }
+        Some(other) => Ok(Err(Diagnostic::new(
+            DiagnosticCode::InvalidSourceRevision,
+            location,
+            format!(
+                "source_revision must be 'current' (an Intent-only instruction), got '{other}'"
+            ),
+        ))),
+    }
 }
 
 fn parse_source(location: &str, source: Option<&str>) -> Result<RequirementSource, Diagnostic> {
@@ -249,13 +308,30 @@ fn plan_requirement(
             return Ok(None);
         };
         let current = parse_requirement_file(&found.path)?;
-        let candidate = match apply_requirement_patch(&location, &current, req) {
-            Ok(c) => c,
+        let effective_source = match &req.source {
+            Some(_) => match parse_source(&location, req.source.as_deref()) {
+                Ok(s) => s,
+                Err(d) => {
+                    diagnostics.push(d);
+                    return Ok(None);
+                }
+            },
+            None => current.source,
+        };
+        let source_revision = match resolve_source_revision(
+            root,
+            &location,
+            &current,
+            effective_source,
+            &req.source_revision,
+        )? {
+            Ok(v) => v,
             Err(d) => {
                 diagnostics.push(d);
                 return Ok(None);
             }
         };
+        let candidate = apply_requirement_patch(&current, req, effective_source, source_revision);
         if candidate == current {
             return Ok(Some(RequirementOutcome::Unchanged {
                 uid: uid.clone(),
@@ -689,6 +765,34 @@ mod tests {
         .unwrap();
     }
 
+    fn init_git_repo(dir: &Path) {
+        let status = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .unwrap()
+        };
+        assert!(status(&["init", "-q"]).success());
+        assert!(status(&["config", "user.email", "test@example.com"]).success());
+        assert!(status(&["config", "user.name", "Test"]).success());
+        assert!(status(&["config", "core.autocrlf", "false"]).success());
+    }
+
+    fn write_external_requirement(dir: &Path, id: &str, uid: &str, locator: &str, revision: &str) {
+        fs::create_dir_all(dir.join(".markharness/knowledge/requirements").join(id)).unwrap();
+        fs::write(
+            dir.join(".markharness/knowledge/requirements")
+                .join(id)
+                .join("requirement.yml"),
+            format!(
+                "id: {id}\nsource: external\naxis: []\nsource_locator: {locator}\nsource_revision: {revision}\nuid: {uid}\n"
+            ),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn plans_a_new_requirement_and_feature_resolving_contributes_to_by_local_key() {
         let dir = init_project();
@@ -1109,5 +1213,159 @@ features:
         let doc = parse_intent(yaml).unwrap();
         let err = build_plan(dir.path(), &doc).unwrap_err();
         assert!(matches!(err, PlanError::NotYetSupported(_)));
+    }
+
+    #[test]
+    fn source_revision_current_repins_an_external_requirement_to_its_blob_oid() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(dir.path().join("requirements.sdoc"), "original text\n").unwrap();
+        write_external_requirement(
+            dir.path(),
+            "controls",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "requirements.sdoc",
+            "0000000000000000000000000000000000000000",
+        );
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        match &plan.requirements[0] {
+            RequirementOutcome::Updated { canonical, .. } => {
+                let expected = crate::git::hash_object(dir.path(), "requirements.sdoc").unwrap();
+                assert_eq!(canonical.source_revision, Some(expected));
+                assert_ne!(
+                    canonical.source_revision,
+                    Some("0000000000000000000000000000000000000000".to_string())
+                );
+            }
+            other => panic!("expected Updated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn source_revision_current_is_rejected_for_a_native_requirement() {
+        let dir = init_project();
+        write_requirement(
+            dir.path(),
+            "todo",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "TODO management",
+        );
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics[0].code, DiagnosticCode::InvalidSourceRevision);
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn source_revision_current_is_rejected_when_the_locator_is_missing() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        write_external_requirement(
+            dir.path(),
+            "controls",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "does-not-exist.sdoc",
+            "0000000000000000000000000000000000000000",
+        );
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics[0].code, DiagnosticCode::InvalidSourceRevision);
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn source_revision_other_than_current_is_rejected() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(dir.path().join("requirements.sdoc"), "text\n").unwrap();
+        write_external_requirement(
+            dir.path(),
+            "controls",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "requirements.sdoc",
+            "0000000000000000000000000000000000000000",
+        );
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    source_revision: deadbeef00000000000000000000000000000000
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        match err {
+            PlanError::Diagnostics(diagnostics) => {
+                assert_eq!(diagnostics[0].code, DiagnosticCode::InvalidSourceRevision);
+            }
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn omitting_source_revision_keeps_the_current_pin() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(dir.path().join("requirements.sdoc"), "text\n").unwrap();
+        write_external_requirement(
+            dir.path(),
+            "controls",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "requirements.sdoc",
+            "0000000000000000000000000000000000000000",
+        );
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - uid: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+    label: unrelated patch
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        match &plan.requirements[0] {
+            RequirementOutcome::Updated { canonical, .. } => {
+                assert_eq!(
+                    canonical.source_revision,
+                    Some("0000000000000000000000000000000000000000".to_string())
+                );
+            }
+            other => panic!("expected Updated, got {other:?}"),
+        }
     }
 }
