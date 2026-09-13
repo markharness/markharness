@@ -651,6 +651,27 @@ fn resolve_contributes_to(
     Ok(resolved)
 }
 
+/// ADR 0028 §2: `forked_from` records a conceptual derivation Git history
+/// cannot show, so its target is validated but never inferred. Matching is
+/// by display id because that is what the field stores.
+fn check_forked_from(
+    root: &Path,
+    location: &str,
+    intent: &FeatureIntent,
+) -> Result<Option<Diagnostic>, PlanError> {
+    let Some(forked_from) = &intent.forked_from else {
+        return Ok(None);
+    };
+    if knowledge_walk::find_by_id(root, EntityKind::Feature, forked_from)?.is_some() {
+        return Ok(None);
+    }
+    Ok(Some(Diagnostic::new(
+        DiagnosticCode::UnknownForkedFrom,
+        format!("{location}.forked_from"),
+        format!("no Feature with id '{forked_from}' exists"),
+    )))
+}
+
 fn build_feature_content(
     id: &str,
     uid: &str,
@@ -663,7 +684,7 @@ fn build_feature_content(
         label: intent.label.clone().unwrap_or_else(|| id.to_string()),
         axis: intent.axis.clone().unwrap_or_default(),
         description: intent.description.as_deref().map(canonical_description),
-        forked_from: None,
+        forked_from: intent.forked_from.clone(),
         uid: Some(uid.to_string()),
     }
 }
@@ -687,7 +708,10 @@ fn apply_feature_patch(
             .as_deref()
             .map(canonical_description)
             .or_else(|| current.description.clone()),
-        forked_from: current.forked_from.clone(),
+        forked_from: intent
+            .forked_from
+            .clone()
+            .or_else(|| current.forked_from.clone()),
         uid: current.uid.clone(),
     }
 }
@@ -701,6 +725,10 @@ fn plan_feature(
     edits: &mut ExistingElementEdits,
 ) -> Result<Option<FeatureOutcome>, PlanError> {
     let location = format!("features[{i}]");
+    if let Some(diagnostic) = check_forked_from(root, &location, feature)? {
+        diagnostics.push(diagnostic);
+        return Ok(None);
+    }
 
     if let Some(uid) = &feature.uid {
         let Some(found) = knowledge_walk::find_by_uid(root, EntityKind::Feature, uid)? else {
@@ -1068,6 +1096,19 @@ fn build_new_scenario(
         ));
         return None;
     };
+    // ADR 0028 §2: a Scenario already lives under its Behavior's
+    // directory, so repeating that id as a prefix only makes the
+    // generated `case_id` stutter. Checked here, on the create path
+    // alone, so an id already saved that way can still be restated and
+    // reported `unchanged`.
+    if let Some(stripped) = knowledge::strip_redundant_scenario_prefix(behavior_id, id) {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::RedundantPrefix,
+            format!("{location}.id"),
+            format!("'{id}' repeats its Behavior's id as a prefix; use '{stripped}' instead"),
+        ));
+        return None;
+    }
     let Some(description) = &scenario.description else {
         diagnostics.push(Diagnostic::new(
             DiagnosticCode::MissingRequiredField,
@@ -1100,7 +1141,10 @@ fn build_new_scenario(
             label: scenario.label.clone().unwrap_or_else(|| id.clone()),
             description: canonical_description(description),
             phases: converted_phases,
-            implementation_note: None,
+            implementation_note: scenario
+                .implementation_note
+                .as_deref()
+                .map(canonical_description),
             generated_by: None,
             verified_by: None,
             uid: Some(uid.clone()),
@@ -1710,7 +1754,11 @@ fn apply_scenario_patch(
             .map(canonical_description)
             .unwrap_or_else(|| current.description.clone()),
         phases,
-        implementation_note: current.implementation_note.clone(),
+        implementation_note: intent
+            .implementation_note
+            .as_deref()
+            .map(canonical_description)
+            .or_else(|| current.implementation_note.clone()),
         generated_by: current.generated_by,
         verified_by: current.verified_by.clone(),
         uid: current.uid.clone(),
@@ -1776,6 +1824,24 @@ mod tests {
                 .join(id)
                 .join("requirement.yml"),
             format!("id: {id}\nsource: native\nlabel: {label}\naxis: []\nuid: {uid}\n"),
+        )
+        .unwrap();
+    }
+
+    fn write_feature(dir: &Path, id: &str, uid: &str) {
+        fs::create_dir_all(dir.join(".markharness/knowledge/features").join(id)).unwrap();
+        fs::write(
+            dir.join(".markharness/knowledge/features")
+                .join(id)
+                .join("feature.yml"),
+            format!(
+                "id: {id}
+requirement_uids: []
+label: {id}
+axis: []
+uid: {uid}
+"
+            ),
         )
         .unwrap();
     }
@@ -3130,10 +3196,7 @@ features:
     /// ADR 0027 §5's value-collection replace rule applies to a Behavior's
     /// `procedures` the same as `axis`/`contributes_to`; declaring one on a
     /// brand-new Behavior makes it immediately usable by a `use:` step in
-    /// a Scenario nested under that same Behavior in this Intent — the
-    /// same capability `knowledge_draft`'s `apply_draft` already has for a
-    /// new Behavior (never for an existing one, which is why this stays
-    /// scoped to `plan_new_behaviors`).
+    /// a Scenario nested under that same Behavior in this Intent.
     #[test]
     fn a_new_behaviors_procedures_are_usable_by_a_use_step_in_its_own_new_scenario() {
         let dir = init_project();
@@ -3239,5 +3302,134 @@ features:
 
         let unchanged = build_plan(dir.path(), &empty_doc).unwrap();
         assert_eq!(after.state_fingerprint, unchanged.state_fingerprint);
+    }
+
+    /// ADR 0028 §2: the `redundant_prefix` rule the deleted KnowledgeDraft
+    /// validator owned. A Scenario already lives under its Behavior's
+    /// directory, so repeating the Behavior's id in its own id only makes
+    /// the generated `case_id` stutter. Checked when the Scenario is
+    /// actually being created, so an id already saved that way can still
+    /// be restated and reported `unchanged`.
+    #[test]
+    fn a_new_scenario_repeating_its_behavior_id_as_a_prefix_is_rejected() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: add-todo-empty-title
+            description: An empty title cannot be added
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].code, DiagnosticCode::RedundantPrefix);
+        assert!(
+            diagnostics[0].message.contains("empty-title"),
+            "the message should suggest the stripped id, got {:?}",
+            diagnostics[0].message
+        );
+    }
+
+    /// ADR 0028 §2 keeps `forked_from` expressible: the Intent is the only
+    /// authoring interface left, so a field the canonical model stores
+    /// must be settable through it.
+    #[test]
+    fn a_new_feature_records_its_forked_from() {
+        let dir = init_project();
+        write_feature(dir.path(), "todo-management", "01ARZ3NDEKTSV4RRFFQ69G5FE0");
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-archive
+    label: TODO archive
+    axis: []
+    forked_from: todo-management
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let FeatureOutcome::New { canonical, .. } = &plan.features[0] else {
+            panic!("expected New, got {:?}", plan.features[0]);
+        };
+        assert_eq!(canonical.forked_from.as_deref(), Some("todo-management"));
+    }
+
+    #[test]
+    fn a_forked_from_naming_no_existing_feature_is_rejected() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-archive
+    label: TODO archive
+    axis: []
+    forked_from: does-not-exist
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].code, DiagnosticCode::UnknownForkedFrom);
+        assert_eq!(diagnostics[0].location, "features[0].forked_from");
+    }
+
+    /// The same reasoning as `forked_from`, for the Scenario field ADR
+    /// 0016 added.
+    #[test]
+    fn a_new_scenario_records_its_implementation_note() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            implementation_note: Guarded in app.js#addTodo
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let FeatureOutcome::New { behaviors, .. } = &plan.features[0] else {
+            panic!("expected New, got {:?}", plan.features[0]);
+        };
+        assert_eq!(
+            behaviors[0].scenarios[0]
+                .canonical
+                .implementation_note
+                .as_deref(),
+            Some("Guarded in app.js#addTodo\n")
+        );
     }
 }

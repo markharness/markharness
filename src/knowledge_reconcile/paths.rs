@@ -1,8 +1,8 @@
-//! Canonical Knowledge file paths (matches `knowledge_apply::apply_draft`'s
-//! convention: `<kind-plural>/<id>/...`, and for Behavior/Scenario, nested
-//! under their parent's own `<id>` directory). Shared by [`super::plan`]
-//! (to detect a stale path collision before planning a "new" element) and
-//! [`super::execute`] (to know where to write).
+//! Canonical Knowledge file paths (`<kind-plural>/<id>/...`, and for
+//! Behavior/Scenario, nested under their parent's own `<id>` directory).
+//! Shared by [`super::plan`] (to detect a stale path collision before
+//! planning a "new" element) and [`super::execute`] (to know where to
+//! write).
 
 use std::path::{Path, PathBuf};
 

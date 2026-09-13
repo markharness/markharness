@@ -29,7 +29,56 @@ pub fn validate_static(doc: &IntentDocument, known_axes: &HashSet<String>) -> Ve
     check_duplicate_uids(doc, &mut diagnostics);
     check_unknown_local_references(doc, &mut diagnostics);
     check_unknown_axes(doc, known_axes, &mut diagnostics);
+    check_display_ids_and_labels(doc, &mut diagnostics);
     diagnostics
+}
+
+/// ADR 0028 §2: the display-id and label rules the deleted KnowledgeDraft
+/// validator owned. A display id becomes a directory name and the key
+/// other elements are matched by, and `knowledge::serialize_*` writes
+/// `label:` as a plain scalar — a newline there produces a file that no
+/// longer parses back.
+fn check_display_ids_and_labels(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
+    let mut check = |id: &Option<String>, label: &Option<String>, location: String| {
+        if let Some(id) = id
+            && !crate::knowledge::is_valid_slug(id)
+        {
+            out.push(Diagnostic::new(
+                DiagnosticCode::InvalidSlug,
+                format!("{location}.id"),
+                format!(
+                    "'{id}' is not a valid id (lowercase ASCII letters, digits and hyphen only)"
+                ),
+            ));
+        }
+        if let Some(label) = label
+            && (label.contains('\n') || label.contains('\r'))
+        {
+            out.push(Diagnostic::new(
+                DiagnosticCode::MultilineLabel,
+                format!("{location}.label"),
+                "label must be a single line",
+            ));
+        }
+    };
+
+    for (i, req) in doc.requirements.iter().enumerate() {
+        check(&req.id, &req.label, format!("requirements[{i}]"));
+    }
+    for (i, feature) in doc.features.iter().enumerate() {
+        check(&feature.id, &feature.label, format!("features[{i}]"));
+        for (j, behavior) in feature.behaviors.iter().enumerate() {
+            let location = format!("features[{i}].behaviors[{j}]");
+            check(&behavior.id, &behavior.label, location.clone());
+            for (k, scenario) in behavior.scenarios.iter().enumerate() {
+                check(
+                    &scenario.id,
+                    &scenario.label,
+                    format!("{location}.scenarios[{k}]"),
+                );
+            }
+        }
+    }
 }
 
 fn record_key<'a>(
@@ -361,5 +410,137 @@ features:
                 .iter()
                 .all(|d| d.code == DiagnosticCode::UnknownAxis)
         );
+    }
+
+    /// ADR 0028 §2: the display-id format rule the old KnowledgeDraft
+    /// validator owned moves here rather than disappearing with it. A
+    /// display id becomes a directory name and a reference key, so it
+    /// cannot be left unchecked.
+    #[test]
+    fn detects_an_invalid_slug_on_every_kind_of_display_id() {
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req
+    id: Todo_Management
+    source: native
+    label: TODO
+    axis: []
+
+features:
+  - key: feature
+    id: Add Todo
+    contributes_to: [req]
+    label: Add
+    axis: []
+    behaviors:
+      - id: ADD
+        label: Add
+        axis: []
+        description: Adds.
+        scenarios:
+          - id: empty~title
+            label: Empty
+            description: Empty title.
+            phases:
+              - steps:
+                  - action: Submit
+                results:
+                  - Rejected
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc, &axes(&[]));
+
+        let slugs: Vec<&str> = diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::InvalidSlug)
+            .map(|d| d.location.as_str())
+            .collect();
+        assert_eq!(
+            slugs,
+            vec![
+                "requirements[0].id",
+                "features[0].id",
+                "features[0].behaviors[0].id",
+                "features[0].behaviors[0].scenarios[0].id",
+            ]
+        );
+    }
+
+    /// ADR 0028 §2: `knowledge::serialize_*` writes `label:` as a plain
+    /// scalar, so a label carrying a newline produces a file that no
+    /// longer round-trips. The old KnowledgeDraft validator was what kept
+    /// that invariant; without this check, deleting it would let a broken
+    /// file be written.
+    #[test]
+    fn detects_a_multiline_label_on_every_kind() {
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req
+    id: todo
+    source: native
+    label: \"line one\\nline two\"
+    axis: []
+
+features:
+  - key: feature
+    id: add-todo
+    contributes_to: [req]
+    label: \"add\\ntodo\"
+    axis: []
+    behaviors:
+      - id: add
+        label: \"a\\nb\"
+        axis: []
+        description: Adds.
+        scenarios:
+          - id: empty-title
+            label: \"c\\nd\"
+            description: Empty title.
+            phases:
+              - steps:
+                  - action: Submit
+                results:
+                  - Rejected
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc, &axes(&[]));
+
+        let labels: Vec<&str> = diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::MultilineLabel)
+            .map(|d| d.location.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                "requirements[0].label",
+                "features[0].label",
+                "features[0].behaviors[0].label",
+                "features[0].behaviors[0].scenarios[0].label",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_valid_intent_reports_no_slug_or_label_diagnostics() {
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req
+    id: todo-management
+    source: native
+    label: TODO management
+    axis: []
+";
+        let doc = parse_intent(yaml).unwrap();
+        assert!(validate_static(&doc, &axes(&[])).is_empty());
     }
 }

@@ -215,8 +215,8 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
     if let Some(revision) = &requirement.source_revision {
         out.push_str(&format!("source_revision: {revision}\n"));
     }
-    // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
-    // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
+    // label はプレーンスカラーで出力するため単一行が前提。
+    // knowledge_reconcile::validate の multiline_label チェックが保証する。
     if let Some(label) = &requirement.label {
         out.push_str(&format!("label: {label}\n"));
     }
@@ -231,8 +231,8 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
 
 pub fn serialize_feature(feature: &Feature) -> String {
     let mut out = format!(
-        // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
-        // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
+        // label はプレーンスカラーで出力するため単一行が前提。
+        // knowledge_reconcile::validate の multiline_label チェックが保証する。
         "id: {}\nrequirement_uids: {}\nlabel: {}\naxis: {}\n",
         feature.id,
         yaml_flow_array(&feature.requirement_uids),
@@ -252,8 +252,8 @@ pub fn serialize_feature(feature: &Feature) -> String {
 
 pub fn serialize_behavior(behavior: &Behavior) -> String {
     let mut out = format!(
-        // label はプレーンスカラーで出力するため単一行が前提。呼び出し側
-        // (knowledge_draft::validate_draft の MultilineLabel チェック)が保証する。
+        // label はプレーンスカラーで出力するため単一行が前提。
+        // knowledge_reconcile::validate の multiline_label チェックが保証する。
         "id: {}\nfeature: {}\nlabel: {}\naxis: {}\ndescription: |\n",
         behavior.id,
         behavior.feature,

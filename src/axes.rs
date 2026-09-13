@@ -15,7 +15,7 @@ pub struct AxisEntry {
 }
 
 /// Reads `root/axes/*.yml` and returns entries sorted by id. Returns an
-/// empty list when `axes/` is missing (mirrors `knowledge_draft::load_axis_registry`).
+/// empty list when `axes/` is missing.
 pub fn list_axes(root: &Path) -> Vec<AxisEntry> {
     let axes_dir = root.join(crate::project_root::MARKHARNESS_DIR).join("axes");
     let Ok(entries) = fs::read_dir(&axes_dir) else {
@@ -35,7 +35,7 @@ pub fn list_axes(root: &Path) -> Vec<AxisEntry> {
 
 /// Creates `root/axes/<id>.yml` with `label` defaulted to `id`, mirroring
 /// the default-label-equals-id convention used elsewhere (e.g.
-/// `knowledge_apply::apply_draft`). Creates `axes/` if it does not exist yet.
+/// `knowledge_reconcile`). Creates `axes/` if it does not exist yet.
 /// Used by `knowledge add --edit`'s axis auto-registration.
 pub fn create_axis(root: &Path, id: &str) -> io::Result<PathBuf> {
     let path = root

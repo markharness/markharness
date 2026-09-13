@@ -16,8 +16,7 @@ pub const INTENT_FORMAT_V1: &str = "markharness/knowledge-intent/v1";
 /// A blank Knowledge Intent for non-interactive callers (ADR 0027 §7's
 /// "Intent雛形" / 0028 start gate) to start from — one new Requirement,
 /// referenced by document-local `key` from one new Feature, which in turn
-/// declares one new Behavior and Scenario, mirroring `knowledge_edit::
-/// EDIT_TEMPLATE`'s role for the older `KnowledgeDraft` chain. Scalars
+/// declares one new Behavior and Scenario. Scalars
 /// left blank (`id:` with nothing after the colon) parse as YAML `null` →
 /// `None`, but fail `validate_static`/`build_plan`'s required-field
 /// checks until filled in — `--check` against this file reports exactly
@@ -66,9 +65,9 @@ features:
                   - Describe the expected result
 ";
 
-/// Writes [`INTENT_TEMPLATE`] to `out`, mirroring `knowledge_edit::
-/// write_scaffold`'s contract: refuses to overwrite a file already at
-/// `out` (a symlink there is refused too, rather than followed), and `out`
+/// Writes [`INTENT_TEMPLATE`] to `out`: refuses to overwrite a file
+/// already at `out` (a symlink there is refused too, rather than
+/// followed), and `out`
 /// is a caller-chosen path outside any managed `root`, so this uses
 /// `create_new_no_follow` directly rather than `fs_safety::replace_file`'s
 /// root-scoped guards.
@@ -140,6 +139,13 @@ pub struct FeatureIntent {
     pub axis: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The Feature this one is conceptually derived from (ADR 0027 §2's
+    /// "情報を失わず" requirement: the canonical model stores it, so the
+    /// only authoring interface must be able to set it). Names an
+    /// existing Feature's display id, not a UID — this is a hand-recorded
+    /// domain fact, validated but never derived.
+    #[serde(default)]
+    pub forked_from: Option<String>,
     #[serde(default)]
     pub behaviors: Vec<BehaviorIntent>,
 }
@@ -161,11 +167,7 @@ pub struct BehaviorIntent {
     /// Common procedures this Behavior declares (ADR 0017 §2), replacing
     /// the whole collection when present, same as `axis`/`contributes_to`
     /// (ADR 0027 §5's value-collection rule). Only meaningful when this
-    /// `BehaviorIntent` creates a brand-new Behavior — `knowledge_draft`'s
-    /// own `apply_draft` never lets an *existing* Behavior's `procedures`
-    /// be extended either (a mismatch there is rejected as a conflict, not
-    /// merged), so nothing already expressible is lost by not supporting
-    /// that here.
+    /// `BehaviorIntent` creates a brand-new Behavior.
     #[serde(default)]
     pub procedures: Option<Vec<ProcedureIntent>>,
     #[serde(default)]
@@ -194,6 +196,11 @@ pub struct ScenarioIntent {
     pub description: Option<String>,
     #[serde(default)]
     pub phases: Option<Vec<PhaseIntent>>,
+    /// Implementation rationale note (ADR 0016). Never consumed by
+    /// generation; stored so the canonical model stays expressible
+    /// through the Intent.
+    #[serde(default)]
+    pub implementation_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

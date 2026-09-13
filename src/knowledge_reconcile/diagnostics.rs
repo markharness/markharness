@@ -17,6 +17,16 @@ pub enum DiagnosticCode {
     InvalidSourceRevision,
     StalePlan,
     InvariantViolation,
+    /// ADR 0028 §2: display-id format, single-line labels and the
+    /// redundant-id-prefix rule were owned by the KnowledgeDraft
+    /// validator that ADR 0028 deletes. `MultilineLabel` in particular
+    /// guards a serializer invariant — `knowledge::serialize_*` writes
+    /// `label:` as a plain scalar, which a newline would break.
+    InvalidSlug,
+    MultilineLabel,
+    RedundantPrefix,
+    /// A Feature's `forked_from` names a Feature that does not exist.
+    UnknownForkedFrom,
     /// Not one of ADR 0027 §7's 13 named codes — that list is a stated
     /// minimum ("少なくとも"), not exhaustive. A new element omits a field
     /// with no reasonable default (e.g. a Requirement's `source`) and no
@@ -40,6 +50,10 @@ impl DiagnosticCode {
             DiagnosticCode::InvalidSourceRevision => "invalid_source_revision",
             DiagnosticCode::StalePlan => "stale_plan",
             DiagnosticCode::InvariantViolation => "invariant_violation",
+            DiagnosticCode::InvalidSlug => "invalid_slug",
+            DiagnosticCode::MultilineLabel => "multiline_label",
+            DiagnosticCode::RedundantPrefix => "redundant_prefix",
+            DiagnosticCode::UnknownForkedFrom => "unknown_forked_from",
             DiagnosticCode::MissingRequiredField => "missing_required_field",
         }
     }
@@ -112,6 +126,13 @@ mod tests {
         assert_eq!(
             DiagnosticCode::MissingRequiredField.as_str(),
             "missing_required_field"
+        );
+        assert_eq!(DiagnosticCode::InvalidSlug.as_str(), "invalid_slug");
+        assert_eq!(DiagnosticCode::MultilineLabel.as_str(), "multiline_label");
+        assert_eq!(DiagnosticCode::RedundantPrefix.as_str(), "redundant_prefix");
+        assert_eq!(
+            DiagnosticCode::UnknownForkedFrom.as_str(),
+            "unknown_forked_from"
         );
     }
 }
