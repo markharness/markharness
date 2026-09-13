@@ -254,7 +254,7 @@ commit point自体の書き込み(`replace_file`の単一`rename`)はOSのatomic
 - `markharness validate`(および`changes compute`等の中核パス)は、divergent headを検出すると曖昧性エラーで処理を止める。
 - 人間が`markharness identity resolve <entity-uid>`を実行する。このコマンドは、divergent headのうちどちらを正とするか(または新たな`id`を指定するか)を引数で受け取り、`resolved` event(`previous_identity_event_uids`に両headのevent UIDを列挙)を新規発行して解決する。
 
-merge driverを使わない理由:各開発者のローカル環境ごとの個別登録が必要でテストしにくく、「cloneすればそのまま動く」というGitの前提を壊すため。本プロジェクトは`rename-id`など同一性に関わる操作を常に明示的なCLIコマンドとして扱っており、競合解決もこの方針に揃える。
+merge driverを使わない理由:各開発者のローカル環境ごとの個別登録が必要でテストしにくく、「cloneすればそのまま動く」というGitの前提を壊すため。本プロジェクトは同一性に関わる操作(renameや`identity resolve`)を常に明示的なCLI実行として扱っており、競合解決もこの方針に揃える。
 
 ## 8. `case_uid`/`change_event_uid`のalgorithm
 

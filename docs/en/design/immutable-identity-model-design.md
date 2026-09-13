@@ -254,7 +254,7 @@ When two branches independently generate identity events for the same entity and
 - `markharness validate` (and core paths such as `changes compute`) detect the divergent heads and stop with an ambiguity error.
 - A human runs `markharness identity resolve <entity-uid>`. This command takes an argument specifying which divergent head wins (or a fresh `id` to use instead), and issues a new `resolved` event whose `previous_identity_event_uids` lists both heads' event UIDs.
 
-Why not a merge driver: it requires per-developer local registration, is hard to test, and breaks the "clone and it just works" assumption Git otherwise provides. This project already treats identity-affecting operations — `rename-id`, for instance — as always explicit CLI commands; conflict resolution follows the same policy.
+Why not a merge driver: it requires per-developer local registration, is hard to test, and breaks the "clone and it just works" assumption Git otherwise provides. This project already treats identity-affecting operations — a rename, or `identity resolve` — as always explicit CLI invocations; conflict resolution follows the same policy.
 
 ## 8. Algorithm for `case_uid`/`change_event_uid`
 

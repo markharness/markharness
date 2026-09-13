@@ -33,32 +33,15 @@ pub fn list_axes(root: &Path) -> Vec<AxisEntry> {
     axes
 }
 
-/// Creates `root/axes/<id>.yml` with `label` defaulted to `id`, mirroring
-/// the default-label-equals-id convention used elsewhere (e.g.
-/// `knowledge_reconcile`). Creates `axes/` if it does not exist yet.
-/// Used by `knowledge add --edit`'s axis auto-registration.
-pub fn create_axis(root: &Path, id: &str) -> io::Result<PathBuf> {
-    let path = root
-        .join(crate::project_root::MARKHARNESS_DIR)
-        .join("axes")
-        .join(format!("{id}.yml"));
-    replace_file(root, &path, format!("id: {id}\nlabel: {id}\n").as_bytes())?;
-    Ok(path)
-}
-
-/// Why `axes add` can fail (`markharness axes add`, the non-interactive
-/// counterpart to `knowledge add --edit`'s auto-registration).
+/// Why `axes add` can fail (`markharness axes add`).
 #[derive(Debug)]
 pub enum AddAxisError {
     /// `id` is not a plain slug. Rejected before it can become a path
     /// component of `axes/<id>.yml` (path-traversal defense, mirroring
     /// `generate::generate_testcases`'s slug checks).
     InvalidId,
-    /// `axes/<id>.yml` already exists. Unlike `create_axis` (used by the
-    /// interactive `knowledge add --edit` flow, which only ever calls it for
-    /// ids already filtered out of the registry), `axes add` is a standalone
-    /// creation command and refuses to silently overwrite an existing axis's
-    /// label.
+    /// `axes/<id>.yml` already exists. `axes add` refuses to silently
+    /// overwrite an existing axis's label.
     AlreadyExists,
     Io(io::Error),
 }
@@ -341,43 +324,6 @@ mod tests {
                 label: None,
             }]
         );
-    }
-
-    #[test]
-    fn create_axis_writes_id_and_label_defaulted_to_id() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(
-            dir.path()
-                .join(crate::project_root::MARKHARNESS_DIR)
-                .join("axes"),
-        )
-        .unwrap();
-
-        create_axis(dir.path(), "state").unwrap();
-
-        assert_eq!(
-            fs::read_to_string(dir.path().join(".markharness/axes/state.yml")).unwrap(),
-            "id: state\nlabel: state\n"
-        );
-    }
-
-    #[test]
-    fn create_axis_creates_axes_dir_when_missing() {
-        let dir = tempfile::tempdir().unwrap();
-
-        create_axis(dir.path(), "state").unwrap();
-
-        assert!(dir.path().join(".markharness/axes/state.yml").is_file());
-    }
-
-    #[test]
-    fn create_axis_makes_it_discoverable_by_list_axes() {
-        let dir = tempfile::tempdir().unwrap();
-
-        create_axis(dir.path(), "state").unwrap();
-        let axes = list_axes(dir.path());
-
-        assert!(axes.iter().any(|a| a.id == "state"));
     }
 
     #[test]
