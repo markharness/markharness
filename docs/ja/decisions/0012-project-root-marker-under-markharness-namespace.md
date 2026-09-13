@@ -47,4 +47,4 @@ ADR [0011](./0011-markharness-dot-directory-namespace.md) は「`.markharness/` 
 - `src/init.rs`: `ensure_project_root_marker` の書き込み先を `.markharness/config.toml` に変更した(`.markharness/` は `run_init`内で先にサブディレクトリ作成が走るため、書き込み時点で親ディレクトリは既に存在する)。
 - `src/cli.rs`: `import --source junit` はプロジェクトルートを使わないため、`project_root::resolve()` の呼び出しを `--source native` の分岐内に限定した(以前は `Import` コマンド全体で無条件に呼んでおり、マーカー実在検証を追加すると本来ルート不要なjunitインポートまで巻き込んで失敗する不具合を誘発するところだった)。
 - テストフィクスチャ(`tests/knowledge_cli.rs`・`tests/plan_cli.rs`)のうち、`markharness init` を経由せず手作業で `.markharness/knowledge`・`axes` 等を組み立てていた箇所に、マーカーファイルの書き込みを追加した(実プロジェクトなら `init` 済みであるはずの状態を正しくシミュレートするための修正であり、検証ロジック側を緩めるものではない)。
-- ドキュメント(`docs/ja/cli-manual.md`、`docs/en/cli-manual.md`、`docs/ja/knowledge-from-code.standalone.md`)の `.markharness.toml` への言及を `.markharness/config.toml` に更新した。
+- ドキュメント(`docs/ja/cli-manual.md`、`docs/en/cli-manual.md`、`docs/ja/knowledge-from-code.standalone.md`。後者は2026-09-12に `docs/knowledge-from-code.ai.md` へ一本化され削除済み)の `.markharness.toml` への言及を `.markharness/config.toml` に更新した。
