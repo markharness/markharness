@@ -206,7 +206,7 @@ pub struct Plan {
     /// Brand-new Scenarios under Behaviors that already exist (see
     /// [`NewChildScenario`]).
     pub new_scenarios: Vec<NewChildScenario>,
-    /// A snapshot of `.markharness/knowledge`'s on-disk content taken as
+    /// A snapshot of the input state ([`state_fingerprint`]) taken as
     /// [`build_plan`] started reading it (ADR 0027 §6's `stale_plan`).
     /// `None` for a `Plan` no caller built with [`build_plan`] (e.g.
     /// `Plan::default()` in tests) — there is nothing to compare staleness
@@ -215,26 +215,31 @@ pub struct Plan {
     pub state_fingerprint: Option<String>,
 }
 
-/// Hashes every file under `.markharness/knowledge` (relative path +
-/// content) into one opaque token. Two calls returning the same token mean
-/// nothing under that tree changed between them — the basis for detecting
-/// a [`Plan`] gone stale (ADR 0027 §6) between when [`build_plan`] read
-/// current state and when a caller later commits it.
+/// Hashes every file under the trees a plan is built against — the
+/// Knowledge itself and the Axis registry `unknown_axis` resolves against
+/// — into one opaque token (relative path + content). Two calls returning
+/// the same token mean nothing in that input state changed between them:
+/// the basis for detecting a [`Plan`] gone stale (ADR 0027 §6) between
+/// when [`build_plan`] read current state and when a caller later commits
+/// it. The Axis registry belongs here because `axes` is edited without the
+/// identity lock, so an Axis can disappear after the plan validated
+/// against it.
 pub(crate) fn state_fingerprint(root: &Path) -> io::Result<String> {
-    let knowledge_root = root.join(".markharness/knowledge");
+    let markharness_dir = root.join(crate::project_root::MARKHARNESS_DIR);
     let mut entries: Vec<(String, String)> = Vec::new();
-    collect_knowledge_files(&knowledge_root, &knowledge_root, &mut entries)?;
+    // Stripped against `.markharness` itself, not each tree, so the keys
+    // stay distinct: `knowledge/x.yml` and `axes/x.yml` must not hash the
+    // same.
+    for tree in ["knowledge", "axes"] {
+        collect_files(&markharness_dir, &markharness_dir.join(tree), &mut entries)?;
+    }
     entries.sort();
     let mut hasher = DefaultHasher::new();
     entries.hash(&mut hasher);
     Ok(format!("{:016x}", hasher.finish()))
 }
 
-fn collect_knowledge_files(
-    root: &Path,
-    dir: &Path,
-    out: &mut Vec<(String, String)>,
-) -> io::Result<()> {
+fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> io::Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -242,7 +247,7 @@ fn collect_knowledge_files(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_knowledge_files(root, &path, out)?;
+            collect_files(root, &path, out)?;
         } else {
             let relative = path
                 .strip_prefix(root)
@@ -3508,6 +3513,42 @@ features:
 
         let unchanged = build_plan(dir.path(), &empty_doc).unwrap();
         assert_eq!(after.state_fingerprint, unchanged.state_fingerprint);
+    }
+
+    /// ADR 0027 §6 scopes `stale_plan` to the *input* state, and the Axis
+    /// registry is part of it: `unknown_axis` is checked against
+    /// `.markharness/axes` before the plan is built, but nothing holds the
+    /// identity lock while `axes` is edited. Without the registry in the
+    /// fingerprint, an Axis removed after that check would let this module
+    /// commit Knowledge referencing an Axis that no longer exists —
+    /// state `validate` rejects. It must read as stale instead.
+    #[test]
+    fn the_state_fingerprint_changes_when_the_axis_registry_does() {
+        let dir = init_project();
+        let empty_doc = parse_intent(
+            "format: markharness/knowledge-intent/v1
+mode: merge
+",
+        )
+        .unwrap();
+        let before = build_plan(dir.path(), &empty_doc).unwrap();
+
+        let axes_dir = dir.path().join(".markharness/axes");
+        fs::create_dir_all(&axes_dir).unwrap();
+        fs::write(
+            axes_dir.join("priority.yml"),
+            "id: priority
+label: Priority
+",
+        )
+        .unwrap();
+
+        let added = build_plan(dir.path(), &empty_doc).unwrap();
+        assert_ne!(before.state_fingerprint, added.state_fingerprint);
+
+        fs::remove_file(axes_dir.join("priority.yml")).unwrap();
+        let removed = build_plan(dir.path(), &empty_doc).unwrap();
+        assert_ne!(added.state_fingerprint, removed.state_fingerprint);
     }
 
     /// ADR 0028 §2: the `redundant_prefix` rule the deleted KnowledgeDraft

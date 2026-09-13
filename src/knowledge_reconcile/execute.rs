@@ -196,8 +196,9 @@ pub fn check_creation(
     outcome
 }
 
-/// Re-reads `.markharness/knowledge`'s current fingerprint and compares it
-/// to the one `plan` was built against (ADR 0027 §6 `stale_plan`). `plan`
+/// Re-reads the current input-state fingerprint (Knowledge plus the Axis
+/// registry) and compares it to the one `plan` was built against
+/// (ADR 0027 §6 `stale_plan`). `plan`
 /// carries no fingerprint (`state_fingerprint: None`) when it was not
 /// produced by [`build_plan`] itself (e.g. a hand-built `Plan::default()`
 /// in a test) — nothing to compare against, so this passes it through
@@ -213,7 +214,7 @@ fn check_not_stale(root: &Path, plan: &Plan) -> io::Result<Option<Diagnostic>> {
     Ok(Some(Diagnostic::new(
         DiagnosticCode::StalePlan,
         "<document>",
-        "the repository's Knowledge changed since this plan was built; re-run reconcile to build a fresh plan before committing",
+        "the repository's Knowledge or Axis registry changed since this plan was built; re-run reconcile to build a fresh plan before committing",
     )))
 }
 
