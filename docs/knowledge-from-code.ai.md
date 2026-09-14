@@ -477,5 +477,10 @@ markharness coverage --requirements all --format json
 ```
 
 - `impact` は `.sdoc` の構文解析をしません。`source_locator` が指すファイル単位での base/head 差分で仕様変更を検知します(同一ファイル内の無関係な変更も「変更あり」として検出される偽陽性を許容します)。
-- 対応確認(「仕様変更を見てTestCaseを確認した」という記録)は、コミットメッセージの `Spec-Reviewed: no-change-required (<requirement-id-or-uid>, <case-uid>)` トレーラーで行います。これは `knowledge reconcile` の外で、通常の `git commit` に書き添えるものです。
+- 対応確認(「仕様変更を見てTestCaseを確認した」という記録)は、コミットメッセージの `Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-required` トレーラーで行います(`reason` は省略時 `no-change-required` になります)。`requirement=` と `case=` はどちらも表示ID(コミット時点のもの。`case=` には `tc-` で始まる `case_id` を書く)で、両方揃っていない・キーが`requirement=`/`case=`/`reason=`以外だと確認として採用されません。これは `knowledge reconcile` の外で、通常の `git commit` メッセージに書き添えるものです。
+
+  ```
+  Spec-Reviewed: requirement=req-login case=tc-todo-add-task-empty-input reason=no-change-required
+  ```
+
 - これらのコマンドの詳細な判定規則(対応確認の三値、stale pinの扱い等)は本ファイルの範囲外です。`impact --help` / `coverage --help` の出力と、実際の診断メッセージを手がかりにしてください。
