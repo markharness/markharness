@@ -192,9 +192,14 @@ fn yaml_flow_array(items: &[String]) -> String {
 /// (`: `, quotes, newlines, a leading `-`/`#`) that plain-scalar output
 /// would corrupt or that would fail to parse back.
 fn yaml_scalar_line(value: &str) -> String {
-    serde_yaml_ng::to_string(value)
-        .expect("a string always serializes to YAML")
-        .trim_end_matches('\n')
+    let doc = serde_yaml_ng::to_string(value).expect("a string always serializes to YAML");
+    // `to_string` always terminates the document with exactly one `\n`;
+    // strip only that one. A block scalar preserving a trailing newline in
+    // `value` itself (keep-style `|+`) ends in *further* `\n`s that belong
+    // to the content, not the document terminator — `trim_end_matches`
+    // would eat those too and corrupt the value on reparse.
+    doc.strip_suffix('\n')
+        .expect("serde_yaml_ng always terminates a document with \\n")
         .to_string()
 }
 
@@ -599,6 +604,9 @@ mod tests {
             "# looks like a comment",  // leading "#"
             "trailing space ",         // trailing whitespace
             "",                        // empty string
+            "abc\n",                   // single trailing newline
+            "abc\n\n",                 // multiple trailing newlines
+            "\n",                      // newline only
         ];
 
         for value in tricky_values {
