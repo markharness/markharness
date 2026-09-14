@@ -182,6 +182,22 @@ fn yaml_flow_array(items: &[String]) -> String {
     format!("[{}]", items.join(", "))
 }
 
+/// Renders `value` as a YAML scalar suitable for `key: <this>\n`, quoting
+/// or block-styling it only when the plain form would not round trip.
+/// Delegates to `serde_yaml_ng`'s own emitter (serializing `value` as a
+/// standalone document) rather than reimplementing YAML's plain-scalar
+/// rules by hand. Needed for `source_key` (ADR 0030): unlike markharness's
+/// own slug-constrained ids, it holds StrictDoc's UID verbatim with no
+/// charset restriction, so it can contain YAML-significant characters
+/// (`: `, quotes, newlines, a leading `-`/`#`) that plain-scalar output
+/// would corrupt or that would fail to parse back.
+fn yaml_scalar_line(value: &str) -> String {
+    serde_yaml_ng::to_string(value)
+        .expect("a string always serializes to YAML")
+        .trim_end_matches('\n')
+        .to_string()
+}
+
 /// Appends a trailing `uid: <value>\n` line when `uid` is present, shared
 /// by every `serialize_*` function (ADR 0013: all persistent Knowledge
 /// element kinds carry the same optional `uid:` field, always written last).
@@ -221,7 +237,7 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
         out.push_str(&format!("source_revision: {revision}\n"));
     }
     if let Some(key) = &requirement.source_key {
-        out.push_str(&format!("source_key: {key}\n"));
+        out.push_str(&format!("source_key: {}\n", yaml_scalar_line(key)));
     }
     // label はプレーンスカラーで出力するため単一行が前提。
     // knowledge_reconcile::validate の multiline_label チェックが保証する。
@@ -565,6 +581,50 @@ mod tests {
         let reparsed: Requirement = parse_requirement(&yaml).unwrap();
         assert_eq!(reparsed, requirement);
         assert_eq!(reparsed.source_key.as_deref(), Some("REQ-Login-01"));
+    }
+
+    /// ADR 0030: `source_key` carries no charset restriction (unlike
+    /// markharness's own slug-constrained ids), so StrictDoc UIDs
+    /// containing YAML-significant characters must still round trip
+    /// through serialize/parse exactly, instead of producing invalid or
+    /// silently altered YAML.
+    #[test]
+    fn round_trips_source_key_values_containing_yaml_significant_characters() {
+        let tricky_values = [
+            "REQ: Login-01",           // colon-space: would end the mapping value
+            "line one\nline two",      // embedded newline
+            "has \"double\" quotes",   // double quotes
+            "has 'single' quotes",     // single quotes
+            "- looks like a sequence", // leading "- "
+            "# looks like a comment",  // leading "#"
+            "trailing space ",         // trailing whitespace
+            "",                        // empty string
+        ];
+
+        for value in tricky_values {
+            let requirement = Requirement {
+                id: "account-management".to_string(),
+                source: RequirementSource::External,
+                label: None,
+                axis: vec!["security".to_string()],
+                description: None,
+                source_locator: Some("specs/account.sdoc".to_string()),
+                source_revision: Some("deadbeef".to_string()),
+                source_key: Some(value.to_string()),
+                related_issues: Vec::new(),
+                uid: None,
+            };
+
+            let yaml = serialize_requirement(&requirement);
+            let reparsed: Requirement = parse_requirement(&yaml)
+                .unwrap_or_else(|e| panic!("{value:?} produced invalid YAML: {e}\n{yaml}"));
+
+            assert_eq!(
+                reparsed.source_key.as_deref(),
+                Some(value),
+                "source_key did not round trip for {value:?}, got YAML:\n{yaml}"
+            );
+        }
     }
 
     #[test]
