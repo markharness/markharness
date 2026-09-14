@@ -2150,6 +2150,7 @@ features:
             description: None,
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: Some(requirement_uid.clone()),
         };
@@ -2395,6 +2396,7 @@ requirements:
             description: None,
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: Some(requirement_uid.clone()),
         };
@@ -2545,6 +2547,7 @@ requirements:
             description: None,
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: Some(requirement_uid.clone()),
         };

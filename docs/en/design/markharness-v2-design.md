@@ -1,6 +1,6 @@
 # markharness v2 Design
 
-Written: 2026-09-11 (original). Corrected the same day against the existing implementation under `src/` (§5.2.1, §6.1, §9.1). Rewritten in full the same day after a redesign session (grilling) deliberately not anchored to the existing design or vocabulary. Contracts that preserve an evolution path after real StrictDoc → markharness → Playwright operation were then added in §9.2 and [ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md).
+Written: 2026-09-11 (original). Corrected the same day against the existing implementation under `src/` (§5.2.1, §6.1, §9.1). Rewritten in full the same day after a redesign session (grilling) deliberately not anchored to the existing design or vocabulary. Contracts that preserve an evolution path after real StrictDoc → markharness → Playwright operation were then added in §9.2 and [ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md). On 2026-09-15, after a traceability incident caused by StrictDoc UID spelling variance, the "external key" §9.2.1 had reserved as a forward-compatible contract was implemented ahead of schedule as `source_key`, updating §5.2, §5.2.1, §9.2.1, and §11 ([ADR 0030](../decisions/0030-external-requirement-source-key.md)).
 Status: **the MVP (M0–M2) is implemented** (2026-09-12; see `checklist-v2-core.md`). The types and decision rules this document specifies exist in the code. Its CLI surface has changed since the first edition — [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md) consolidated Knowledge authoring into `knowledge reconcile` — and §7 and §9.1 reflect that. M3 and M4 are not started, so anything about them remains a proposal.
 
 ## 1. Conclusion and Product Thesis
@@ -98,6 +98,7 @@ Requirement {
   // required when source = external; not allowed in native mode
   source_locator,        // the .sdoc path, inside the same Git repository
   source_revision,       // the Git blob OID pinned at link time
+  source_key,            // StrictDoc's own UID string, held verbatim; never case-normalized on write (ADR 0030)
 }
 
 ExecutionBinding {
@@ -127,6 +128,7 @@ The many-to-many relation from Feature to Requirement reuses the existing `featu
 | `source` | Absent | Added and **required**: a `requirement.yml` without it is rejected by `validate` ([0026](../decisions/0026-module-inventory-and-plan-removal.md) §7, AC09b) |
 | `requirement.yml`'s `label`/`description` | markharness holds body-equivalent content | Kept in native mode. Not allowed in external mode (P1 — when a display name is needed, the M3 StrictDoc Adapter fetches it on demand) |
 | `source_locator`/`source_revision` | Absent | Required in external mode, not allowed in native mode. Missing or mixed fields are rejected by `validate` |
+| `source_key` | Absent | Required in external mode, not allowed in native mode. Holds StrictDoc's UID verbatim with no normalization on write. Comparison (duplicate detection, search) is out of scope (ADR 0030) |
 | `axis` | Held | Kept in both modes (markharness's own classification, not a copy of external content) |
 | `uid` / `feature.requirement_uids` | ADR 0013 UID and the many-to-many relation | Kept as-is |
 | Requirement authoring | An interactive flow prompts for `label`/`axis` | [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md) removed the interactive flow. Each mode's fields are written in a Knowledge Intent instead (native: `label`; external: `source_locator` plus `source_revision: current`, consistent with AC02) |
@@ -254,7 +256,7 @@ V2 stabilizes the following contracts:
 - Requirement, Feature, Behavior, and Scenario use kind-distinguished UIDs, separating identity from display id, label, and path.
 - One Scenario equals one TestCase, with Case UID derived deterministically from Scenario UID.
 - Case revision is calculated from effective verification content and excludes Requirement relations, execution results, Release Scope, and display information.
-- An external Requirement distinguishes its external key, same-repository locator, and fixed revision. Even when V2 detects changes at file granularity, it retains the identity needed for a later StrictDoc Adapter to resolve Requirement-level content.
+- An external Requirement distinguishes its external key (`source_key`), same-repository locator, and fixed revision. Even when V2 detects changes at file granularity, it retains the identity needed for a later StrictDoc Adapter to resolve Requirement-level content. `source_key` itself was implemented ahead of schedule on 2026-09-15 (ADR 0030, §5.2). It only holds the raw value; comparison (duplicate detection, search) is left for separate design once demand is confirmed, no earlier than M3.
 - A Playwright relation uses Case UID, not test title or filename. `reference` is a movable navigation hint, not the identity used for matching.
 - Public Change Impact and Release Coverage JSON has a top-level `schema_version` and includes resolved full Git commit ids, input schema versions, and rule versions that affect the result. Another AI, CLI, or CI process can therefore reproduce the basis of the judgment.
 
@@ -385,3 +387,6 @@ The MVP is M0–M2, and M0–M2 were completed on 2026-09-12 (✅). M3 and M4 ar
 | AC35 | One Case UID resolves to zero or multiple entries in a Playwright report | Record it explicitly in the operational observations; never choose an arbitrary entry automatically (§9.2.4) |
 | AC36 | An element was deleted and reappeared during V2 before a future complete Identity lifecycle begins | Unless an explicit migration manifest says otherwise, do not infer retire/restore; treat the pre-cutover lifecycle as `legacy` or `unknown` (§9.2.5) |
 | AC37 | Recompute Change Impact with the same base/head and rule versions | The JSON includes `schema_version`, resolved commit ids, and rule versions and reproduces the same judgment (§9.2.1) |
+| AC38 | Place a `source: external` `requirement.yml` with no `source_key` | `validate` rejects it (ADR 0030) |
+| AC39 | Place a `source: native` `requirement.yml` carrying `source_key` | `validate` rejects it (ADR 0030) |
+| AC40 | Set `source_key` to a StrictDoc UID containing uppercase letters (e.g. `REQ-Login-01`) | Stored and accepted verbatim; markharness performs no case conversion (ADR 0030) |

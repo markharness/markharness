@@ -220,6 +220,7 @@ mod tests {
                     description: Some("d".to_string()),
                     source_locator: None,
                     source_revision: None,
+                    source_key: Some("REQ-Account-01".to_string()),
                     related_issues: vec!["issue-2".to_string()],
                     uid: Some(UID.to_string()),
                 })

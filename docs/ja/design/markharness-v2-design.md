@@ -1,6 +1,6 @@
 # markharness v2 設計書
 
-作成日：2026-09-11(初版)。2026-09-11、既存の設計・概念に引っ張られない再検討(grillingセッション)により全面書き直し。同日、既存実装(`src/`)との突合結果を反映して§5.2.1・§6.1・§9.1等を訂正。さらに、StrictDoc→markharness→Playwrightの実運用後に完全モデルへ進めるための契約を§9.2と[ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md)へ追加した。
+作成日：2026-09-11(初版)。2026-09-11、既存の設計・概念に引っ張られない再検討(grillingセッション)により全面書き直し。同日、既存実装(`src/`)との突合結果を反映して§5.2.1・§6.1・§9.1等を訂正。さらに、StrictDoc→markharness→Playwrightの実運用後に完全モデルへ進めるための契約を§9.2と[ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md)へ追加した。2026-09-15、StrictDoc UIDの表記ゆれによるトレーサビリティ事故を受け、§9.2.1が前方互換契約として予約していた「外部key」を`source_key`として前倒し実装し、§5.2・§5.2.1・§9.2.1・§11を更新した([ADR 0030](../decisions/0030-external-requirement-source-key.md))。
 状態：**MVP(M0〜M2)実装済み**(2026-09-12、`checklist-v2-core.md`参照)。本書が定める型・判定規則は実装されている。CLI表面は[0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)がKnowledge authoringを`knowledge reconcile`へ統合したため本書の初版から変わっており、§7・§9.1に反映済みである。M3・M4は未着手であり、これらに関する記述は引き続き提案である。
 
 ## 1. 結論と製品の命題
@@ -98,6 +98,7 @@ Requirement {
   // source = external のとき必須、nativeでは書けない
   source_locator,        // 同一Gitリポジトリ内の`.sdoc`パス
   source_revision,       // 取込時に固定したGit blob OID
+  source_key,            // StrictDoc側のUID文字列をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない(ADR 0030)
 }
 
 ExecutionBinding {
@@ -127,6 +128,7 @@ FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型�
 | `source` | 無し | 追加。**必須**とし、省略した`requirement.yml`は`validate`で拒否する([0026](../decisions/0026-module-inventory-and-plan-removal.md)§7、AC09b) |
 | `requirement.yml`の`label`/`description` | markharnessが本文相当を保持 | nativeでは維持。externalでは書けない(P1。表示名が必要になった時点でM3のStrictDoc Adapterが都度取得する) |
 | `source_locator`/`source_revision` | 無し | externalで必須、nativeでは書けない。欠落・混在は`validate`で拒否する |
+| `source_key` | 無し | externalで必須、nativeでは書けない。StrictDoc側のUIDを生値のまま保持し、書き込み時の正規化は行わない。比較(重複検出・検索)は対象外(ADR 0030) |
 | `axis` | 保持 | 両モードで保持(markharness自身の分類であり外部正本の複製ではない) |
 | `uid`・`feature.requirement_uids` | ADR 0013のUID・多対多関連 | そのまま維持 |
 | Requirement authoring | 対話フローで`label`/`axis`を入力 | [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)により対話フローは廃止。Knowledge Intentへ`source`ごとのfieldを書く(nativeは`label`、externalは`source_locator`と`source_revision: current`。AC02と整合) |
@@ -254,7 +256,7 @@ V2の時点で、次の契約を安定させる。
 - Requirement、Feature、Behavior、Scenarioにはkindを区別したUIDを持たせ、表示ID・label・pathと同一性を分離する。
 - 1 Scenario = 1 TestCaseとし、Case UIDはScenario UIDから決定的に導出する。
 - Case revisionは実効的な検証内容から計算し、Requirement関連、実行結果、Release Scope、表示情報を混ぜない。
-- external Requirementは、外部key、同一Git内のlocator、固定revisionを区別する。V2の変更検知がファイル単位でも、将来のStrictDoc AdapterがRequirement単位の内容を解決できる識別情報を失わない。
+- external Requirementは、外部key(`source_key`)、同一Git内のlocator、固定revisionを区別する。V2の変更検知がファイル単位でも、将来のStrictDoc AdapterがRequirement単位の内容を解決できる識別情報を失わない。`source_key`自体は2026-09-15に前倒しで実装済み(ADR 0030、§5.2)。生値を保持するのみで、比較(重複検出・検索)はM3以降の需要確認後に別途設計する。
 - Playwrightとの対応にはtest titleやファイル名ではなくCase UIDを使う。`reference`は移動可能な案内であり、照合のIdentityにはしない。
 - Change ImpactとRelease Coverageの公開JSONはtop-levelに`schema_version`を持ち、解決済みの完全なGit commit ID、入力schema version、判定に影響する規則versionを含める。同じ入力を別のAI・CLI・CIが読んでも判定根拠を再現できる形にする。
 
@@ -385,3 +387,6 @@ MVPはM0〜M2とする。M0〜M2は2026-09-12に実装完了した(✅)。M3・M
 | AC35 | Playwright report内で一つのCase UIDが0件または複数件へ解決される | 実運用観測へ明示的に記録し、自動的に任意の1件を選ばない(§9.2.4) |
 | AC36 | 将来の完全なIdentity lifecycle導入前に、V2で削除・再登場した要素がある | migration manifestで明示されない限りretire/restoreを推定せず、cutover前のlifecycleを`legacy`または`unknown`として扱う(§9.2.5) |
 | AC37 | 同じbase/headと規則versionでChange Impactを再計算する | JSONの`schema_version`、解決済みcommit ID、規則versionを含めて同じ判定を再現できる(§9.2.1) |
+| AC38 | `source: external`のRequirementで`source_key`を持たない`requirement.yml`を置く | `validate`が拒否する(ADR 0030) |
+| AC39 | `source: native`のRequirementで`source_key`を持つ`requirement.yml`を置く | `validate`が拒否する(ADR 0030) |
+| AC40 | 大文字を含むStrictDoc UID(例:`REQ-Login-01`)を`source_key`に指定する | 生値のまま保存・受理される。markharnessは大文字小文字の変換を行わない(ADR 0030) |

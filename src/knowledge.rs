@@ -34,6 +34,11 @@ pub struct Requirement {
     /// `.sdoc` the locator names.
     #[serde(default)]
     pub source_revision: Option<String>,
+    /// Present only for `source: external`: StrictDoc's own UID string,
+    /// stored verbatim (ADR 0030). Never normalized on write, and never
+    /// used for identity or rename-tolerance — those remain `uid`'s job.
+    #[serde(default)]
+    pub source_key: Option<String>,
     #[serde(default)]
     pub related_issues: Vec<String>,
     /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
@@ -214,6 +219,9 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
     }
     if let Some(revision) = &requirement.source_revision {
         out.push_str(&format!("source_revision: {revision}\n"));
+    }
+    if let Some(key) = &requirement.source_key {
+        out.push_str(&format!("source_key: {key}\n"));
     }
     // label はプレーンスカラーで出力するため単一行が前提。
     // knowledge_reconcile::validate の multiline_label チェックが保証する。
@@ -421,6 +429,7 @@ mod tests {
             description: None,
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -443,6 +452,7 @@ mod tests {
             description: Some("Account related requirements.".to_string()),
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -467,6 +477,7 @@ mod tests {
             ),
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -512,6 +523,7 @@ mod tests {
             description: None,
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
         };
@@ -524,6 +536,35 @@ mod tests {
         );
         let reparsed: Requirement = parse_requirement(&yaml).unwrap();
         assert_eq!(reparsed, requirement);
+    }
+
+    /// ADR 0030: `source_key` holds StrictDoc's own UID verbatim, including
+    /// uppercase letters that `id`'s slug rule would reject. It must round
+    /// trip through serialize/parse without any case change.
+    #[test]
+    fn serializes_and_reparses_requirement_source_key_verbatim() {
+        let requirement = Requirement {
+            id: "account-management".to_string(),
+            source: RequirementSource::External,
+            label: None,
+            axis: vec!["security".to_string()],
+            description: None,
+            source_locator: Some("specs/account.sdoc".to_string()),
+            source_revision: Some("deadbeef".to_string()),
+            source_key: Some("REQ-Login-01".to_string()),
+            related_issues: Vec::new(),
+            uid: None,
+        };
+
+        let yaml = serialize_requirement(&requirement);
+
+        assert_eq!(
+            yaml,
+            "id: account-management\nsource: external\nsource_locator: specs/account.sdoc\nsource_revision: deadbeef\nsource_key: REQ-Login-01\naxis: [security]\n"
+        );
+        let reparsed: Requirement = parse_requirement(&yaml).unwrap();
+        assert_eq!(reparsed, requirement);
+        assert_eq!(reparsed.source_key.as_deref(), Some("REQ-Login-01"));
     }
 
     #[test]

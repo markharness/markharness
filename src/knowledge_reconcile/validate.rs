@@ -58,6 +58,7 @@ fn check_blank_strings(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
             format!("{location}.source_locator"),
             out,
         );
+        check(&req.source_key, format!("{location}.source_key"), out);
         for (j, issue) in req.related_issues.iter().flatten().enumerate() {
             if issue.trim().is_empty() {
                 push_blank(format!("{location}.related_issues[{j}]"), out);
@@ -698,6 +699,31 @@ requirements:
             diagnostics
                 .iter()
                 .any(|d| d.location == "requirements[0].source_locator"
+                    && d.code == DiagnosticCode::MissingRequiredField),
+            "{diagnostics:?}"
+        );
+    }
+
+    /// ADR 0030: a blank `source_key` is as invalid as an omitted one.
+    #[test]
+    fn a_blank_source_key_is_reported() {
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: todo
+    source: external
+    axis: []
+    source_locator: spec.sdoc
+    source_revision: current
+    source_key: \"\"
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.location == "requirements[0].source_key"
                     && d.code == DiagnosticCode::MissingRequiredField),
             "{diagnostics:?}"
         );
