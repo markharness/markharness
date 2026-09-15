@@ -425,14 +425,25 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                     scenario: repo_relative_path(knowledge_root, &scenario_path),
                 };
 
+                // ADR 0031: a Scenario's own `contributes_to` answers more
+                // precisely than its Feature's, so when it names at least
+                // one Requirement, it replaces the Feature's set outright
+                // rather than being merged into it — otherwise the
+                // Feature's coarser, unrelated Requirements would still
+                // leak onto this Scenario's TestCase.
+                let effective_requirement_uids = if scenario.requirement_uids.is_empty() {
+                    &feature.requirement_uids
+                } else {
+                    &scenario.requirement_uids
+                };
+
                 // Informational only (ADR 0017 §1・§3): never part of case
                 // identity or axis, so an entry that doesn't resolve to a
                 // known Requirement — pre-migration, `requirement_uids` may
                 // still hold a Requirement *display id* rather than its
                 // uid (Issue #44) — falls back to the raw stored value
                 // rather than failing generation entirely.
-                let requirement_ids = feature
-                    .requirement_uids
+                let requirement_ids = effective_requirement_uids
                     .iter()
                     .map(|uid| {
                         requirement_uid_index
@@ -444,7 +455,7 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
 
                 cases.push(KnowledgeCaseSnapshot {
                     requirement_ids,
-                    requirement_uids: feature.requirement_uids.clone(),
+                    requirement_uids: effective_requirement_uids.clone(),
                     feature_id: feature.id.clone(),
                     feature_uid: feature.uid.clone(),
                     feature_axis: feature.axis.clone(),
@@ -906,6 +917,81 @@ mod tests {
                 ],
                 results: vec!["Shows a validation error.".to_string()],
             }]
+        );
+    }
+
+    /// ADR 0031: a Feature `contributes_to` two Requirements, but only one
+    /// Scenario under it overrides with a precise, single-Requirement
+    /// `contributes_to`. That Scenario's TestCase must carry only the
+    /// Requirement it names — not both of the Feature's — while a sibling
+    /// Scenario with no override still falls back to the Feature's full set.
+    #[test]
+    fn a_scenario_level_contributes_to_overrides_the_feature_level_one() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-task-management", &["functional"]);
+        write_requirement(dir.path(), "req-persistence", &["persistence"]);
+        let feature_dir = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge/features/todo-management");
+        fs::create_dir_all(&feature_dir).unwrap();
+        fs::write(
+            feature_dir.join("feature.yml"),
+            "id: todo-management\nrequirement_uids: [req-task-management, req-persistence]\nlabel: todo-management\naxis: [functional]\n",
+        )
+        .unwrap();
+        write_behavior(
+            dir.path(),
+            "todo-management",
+            "add-todo",
+            "User adds a task.",
+        );
+        // Overrides to just req-task-management: this Scenario has nothing
+        // to do with persistence.
+        let blank_text_dir = feature_dir.join("add-todo/blank-text");
+        fs::create_dir_all(&blank_text_dir).unwrap();
+        fs::write(
+            blank_text_dir.join("scenario.yml"),
+            "id: blank-text\nbehavior: add-todo\nlabel: blank-text\ndescription: |\n  Blank input.\nphases:\n  - steps:\n      - action: Submit blank text.\n    results:\n      - Nothing is added.\nrequirement_uids: [req-task-management]\n",
+        )
+        .unwrap();
+        // No override: falls back to the Feature's full set.
+        write_scenario(
+            dir.path(),
+            "todo-management",
+            "add-todo",
+            "valid-text",
+            "Valid input.",
+            &[(&["Submit valid text."], &["A task is added."])],
+        );
+
+        let testcases = generate_testcases(
+            &dir.path()
+                .join(crate::project_root::MARKHARNESS_DIR)
+                .join("knowledge"),
+        )
+        .unwrap();
+
+        let blank_text = testcases
+            .iter()
+            .find(|tc| tc.generated_from.scenario == "blank-text")
+            .expect("blank-text testcase must be generated");
+        assert_eq!(
+            blank_text.generated_from.requirement_ids,
+            vec!["req-task-management".to_string()]
+        );
+
+        let valid_text = testcases
+            .iter()
+            .find(|tc| tc.generated_from.scenario == "valid-text")
+            .expect("valid-text testcase must be generated");
+        assert_eq!(
+            valid_text.generated_from.requirement_ids,
+            vec![
+                "req-task-management".to_string(),
+                "req-persistence".to_string()
+            ]
         );
     }
 

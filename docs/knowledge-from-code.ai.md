@@ -178,6 +178,7 @@ features:
             # uid: <ULID>           # 既存 Scenario を変更/reparent する場合のみ
             label: <label>
             description: <このパスを引き起こす具体的な入力/状態 + 出所(ファイルパス#関数名)>
+            contributes_to: [<requirement key または uid>, ...]   # 省略可。全置換(§7.2b)
             phases:                 # 新規作成時は必須。最低1件
               - steps:
                   - action: <人間が手作業で行える操作>    # ← マッピング。`- <文字列>` は不可(§3.3a)
@@ -189,7 +190,7 @@ features:
 
 **値のcollection(`axis` / `contributes_to` / `procedures`)は全置換です。** 記述すればその内容で置き換わり、省略すれば現在値を保ち、空配列を明示すれば空になります。
 
-**Requirement と Feature を同じ Intent で新規作成できます。** Feature の `contributes_to` に Requirement の `key` を書けば、同じ反映の中で発行された UID へ解決されます。
+**Requirement と Feature を同じ Intent で新規作成できます。** Feature の `contributes_to` に Requirement の `key` を書けば、同じ反映の中で発行された UID へ解決されます。Scenario の `contributes_to` も同様に `key` を解決できます(§7.2b)。
 
 ### 3.3 書式の落とし穴(**必読 — ここで確実に一度は詰まります**)
 
@@ -446,6 +447,36 @@ requirements:
 - **`source_key` での重複検出・検索は markharness には実装されていません。** 同じ MID を指す Requirement が複数できていないかは、`grep -rn "source_key:" .markharness/knowledge/requirements/` などで人間/AI が確認してください。
 - `source_revision: current` は反映(`knowledge reconcile intent.yml --json`)の瞬間に `source_locator` が指すファイルの Git blob OID を解決して固定します。値を直接 OID で書くことはできません(`invalid_source_revision`)。
 - 反映後に `.sdoc` が更新され固定参照が古くなった場合(stale pin)は、同じ `source_revision: current` を含む Intent を再度反映すれば固定参照が現在の内容へ進みます。これは仕様変更の確認そのものではありません(§7.4)。
+
+### 7.2b High-Level / Low-Level Requirementがある場合: Scenario単位のcontributes_to
+
+StrictDocではHigh-Level Requirement(HLR、Featureに相当する粒度)の下に、1つの具体的な振る舞い(=1 Scenario相当の粒度)で書かれたLow-Level Requirement(LLR)がぶら下がる構成がよくあります。この場合、**LLRもHLRと同じ手順(§7.2)でmarkharnessの`Requirement`として作成してください。** markharnessはHLR/LLRという概念やStrictDoc側のParent関係を一切知らず、どちらも同じ形の`Requirement`(生成元が`.sdoc`のどの`[REQUIREMENT]`かを`source_locator`+`source_key`で特定する)として扱います。
+
+**このとき、`contributes_to`はFeatureではなくScenarioに書いてください。**
+
+```yaml
+features:
+  - id: todo-management
+    contributes_to: [hlr_task_mgmt]  # Featureには最低1件必要(下記の注意参照)。ここではHLR相当を1つだけ
+    label: TODO management
+    axis: [functional]
+    behaviors:
+      - id: add-todo
+        label: Add a task
+        axis: [functional]
+        description: Adds a task to the list.
+        scenarios:
+          - id: blank-text
+            label: Blank input is rejected
+            description: Rejects blank input.
+            contributes_to: [llr_add_blank]   # このScenarioが対応するLLRのRequirement key/uid
+            phases: [...]
+```
+
+- **注意: `Feature.contributes_to`(保存後は`requirement_uids`)は最低1件必須です。** `markharness validate`は空配列を`schema`違反として拒否します(`feature.schema.json`の`minItems: 1`)。「Feature単位の関連が不要だから空にする」ことはできません。Feature全体に関係する上位のRequirement(HLR相当)を最低1つ選んで書いてください。個々のLLRとの精密な対応は下記の通りScenario側の`contributes_to`で行います。
+- **理由: 1つのFeatureが複数のLLRに`contributes_to`すると、そのFeature配下の全TestCaseに無関係なLLRまで付与されます。** 例えば「タスク管理」Featureの下に「空白入力の抑止」と「破損データからの復旧」という別々のLLRに対応するScenarioが両方あるとき、Feature単位で両方のLLRに`contributes_to`すると、「空白入力の抑止」のTestCaseが「破損データからの復旧」のRequirementとも関連付いてしまう、という誤りが生じます(実際に報告された事例)。
+- **合成規則: Scenarioの`contributes_to`が1件以上あれば、そのScenarioから生成されるTestCaseはそちらだけを使います(Featureの`contributes_to`は無視されます)。** Scenarioの`contributes_to`が空(省略)の場合のみ、Featureの`contributes_to`にフォールバックします。両方を書いて食い違っていても`validate`は検出しません(著者の責任)。
+- `markharness coverage --requirements <LLRのid>`を実行すると、そのLLRを実際に検証するTestCase(Scenarioで明示的に`contributes_to`したものだけ)が正確に一覧されます。Feature単位のcontributes_toしか無い場合と異なり、無関係なTestCaseは含まれません。
 
 ### 7.3 Playwright がある場合の TestCase 紐付け
 

@@ -308,7 +308,18 @@ pub fn compute(
         let mut covered_features = BTreeSet::new();
         let mut case_coverage = Vec::new();
         for case in &cases {
-            if !feature_ids.contains(&case.generated_from.feature) {
+            // ADR 0031: matched directly against this TestCase's own
+            // requirement_uids (which already resolves any Scenario-level
+            // override) rather than by Feature membership — a case under a
+            // Feature that `contributes_to` this Requirement is not
+            // necessarily itself related to it once a sibling Scenario has
+            // been given a more precise `contributes_to`.
+            let related = case
+                .generated_from
+                .requirement_uids
+                .as_ref()
+                .is_some_and(|uids| uids.contains(&requirement_uid));
+            if !related {
                 continue;
             }
             covered_features.insert(case.generated_from.feature.clone());

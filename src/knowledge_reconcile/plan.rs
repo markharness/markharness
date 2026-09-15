@@ -1003,6 +1003,7 @@ fn plan_feature(
                 &candidate.id,
                 found.path.parent().unwrap_or(&found.path),
                 &feature.behaviors,
+                requirement_uid_by_key,
                 diagnostics,
                 edits,
             )?
@@ -1081,6 +1082,7 @@ fn plan_feature(
                 id,
                 &feature_dir,
                 &feature.behaviors,
+                requirement_uid_by_key,
                 diagnostics,
                 edits,
             )?;
@@ -1137,6 +1139,7 @@ fn plan_feature(
                     &current.id,
                     found.path.parent().unwrap_or(&found.path),
                     &feature.behaviors,
+                    requirement_uid_by_key,
                     diagnostics,
                     edits,
                 )?;
@@ -1156,12 +1159,14 @@ fn plan_feature(
 /// entry simply gets a fresh UID. A nested Scenario *may* still carry a
 /// uid, which reparents an existing Scenario into one of these brand-new
 /// Behaviors (ADR 0027 §3), hence `root`/`feature_dir`/`edits`.
+#[allow(clippy::too_many_arguments)]
 fn plan_new_behaviors(
     root: &Path,
     feature_location: &str,
     feature_id: &str,
     feature_dir: &Path,
     behaviors: &[BehaviorIntent],
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<Vec<NewBehavior>, PlanError> {
@@ -1191,6 +1196,7 @@ fn plan_new_behaviors(
             feature_id,
             feature_dir,
             behavior,
+            requirement_uid_by_key,
             diagnostics,
             edits,
         )?
@@ -1207,12 +1213,14 @@ fn plan_new_behaviors(
 /// [`plan_existing_behaviors`] (parent Feature already on disk) so both
 /// paths mint identical content, events and child Scenarios. `None` means
 /// a diagnostic was recorded and this entry contributes nothing.
+#[allow(clippy::too_many_arguments)]
 fn build_new_behavior(
     root: &Path,
     location: &str,
     feature_id: &str,
     feature_dir: &Path,
     behavior: &BehaviorIntent,
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<Option<NewBehavior>, PlanError> {
@@ -1256,6 +1264,7 @@ fn build_new_behavior(
         &feature_dir.join(id),
         &procedures,
         &behavior.scenarios,
+        requirement_uid_by_key,
         diagnostics,
         edits,
     )?;
@@ -1278,6 +1287,7 @@ fn plan_new_scenarios(
     behavior_dir: &Path,
     behavior_procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
     scenarios: &[super::intent::ScenarioIntent],
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<Vec<NewScenario>, PlanError> {
@@ -1297,16 +1307,28 @@ fn plan_new_scenarios(
                 behavior_dir,
                 behavior_procedures,
                 scenario,
+                requirement_uid_by_key,
                 diagnostics,
                 edits,
             )?;
             continue;
         }
+        let requirement_uids = match &scenario.contributes_to {
+            Some(refs) => resolve_contributes_to(
+                root,
+                &format!("{location}.contributes_to"),
+                refs,
+                requirement_uid_by_key,
+                diagnostics,
+            )?,
+            None => Vec::new(),
+        };
         if let Some(planned_scenario) = build_new_scenario(
             &location,
             behavior_id,
             behavior_procedures,
             scenario,
+            requirement_uids,
             diagnostics,
         ) {
             planned.push(planned_scenario);
@@ -1324,6 +1346,7 @@ fn build_new_scenario(
     behavior_id: &str,
     behavior_procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
     scenario: &super::intent::ScenarioIntent,
+    requirement_uids: Vec<String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<NewScenario> {
     let Some(id) = &scenario.id else {
@@ -1385,6 +1408,7 @@ fn build_new_scenario(
                 .map(canonical_description),
             generated_by: None,
             verified_by: None,
+            requirement_uids,
             uid: Some(uid.clone()),
         },
         uid,
@@ -1462,6 +1486,7 @@ fn plan_existing_behaviors(
     feature_effective_id: &str,
     feature_dir: &Path,
     behaviors: &[BehaviorIntent],
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<HashSet<String>, PlanError> {
@@ -1475,6 +1500,7 @@ fn plan_existing_behaviors(
                 feature_effective_id,
                 feature_dir,
                 behavior,
+                requirement_uid_by_key,
                 diagnostics,
                 edits,
             )?;
@@ -1559,6 +1585,7 @@ fn plan_existing_behaviors(
             &current_behavior,
             &behavior_dir,
             &behavior.scenarios,
+            requirement_uid_by_key,
             diagnostics,
             edits,
         )?;
@@ -1585,12 +1612,14 @@ fn plan_existing_behaviors(
 /// held by *different* content stops with `ambiguous_identity` demanding
 /// the uid. Ownership is decided by the parent's directory, since a
 /// Behavior's display id is unique only within its own Feature.
+#[allow(clippy::too_many_arguments)]
 fn plan_uid_less_behavior(
     root: &Path,
     location: &str,
     feature_effective_id: &str,
     feature_dir: &Path,
     behavior: &BehaviorIntent,
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<(), PlanError> {
@@ -1610,6 +1639,7 @@ fn plan_uid_less_behavior(
             feature_effective_id,
             feature_dir,
             behavior,
+            requirement_uid_by_key,
             diagnostics,
             edits,
         )? {
@@ -1656,6 +1686,7 @@ fn plan_uid_less_behavior(
         &current,
         &behavior_dir,
         &behavior.scenarios,
+        requirement_uid_by_key,
         diagnostics,
         edits,
     )?;
@@ -1667,12 +1698,14 @@ fn plan_uid_less_behavior(
 /// Scenario (patched in place, or reparented here from elsewhere), no
 /// `uid` means the same three-row match by display id the Behaviors
 /// themselves get. Returns the uids it handled explicitly.
+#[allow(clippy::too_many_arguments)]
 fn plan_scenarios_of_existing_behavior(
     root: &Path,
     behavior_location: &str,
     behavior: &Behavior,
     behavior_dir: &Path,
     scenarios: &[super::intent::ScenarioIntent],
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<HashSet<String>, PlanError> {
@@ -1687,6 +1720,7 @@ fn plan_scenarios_of_existing_behavior(
                 behavior_dir,
                 &behavior.procedures,
                 scenario,
+                requirement_uid_by_key,
                 diagnostics,
                 edits,
             )? {
@@ -1695,10 +1729,12 @@ fn plan_scenarios_of_existing_behavior(
             continue;
         }
         if let Some(uid) = plan_uid_less_scenario(
+            root,
             &location,
             behavior,
             behavior_dir,
             scenario,
+            requirement_uid_by_key,
             diagnostics,
             edits,
         )? {
@@ -1712,11 +1748,14 @@ fn plan_scenarios_of_existing_behavior(
 /// Behavior. Returns the uid of an existing Scenario it matched, so the
 /// caller can exclude it from a parent rename's back-reference sweep; a
 /// newly created one has no such prior file to sweep.
+#[allow(clippy::too_many_arguments)]
 fn plan_uid_less_scenario(
+    root: &Path,
     location: &str,
     behavior: &Behavior,
     behavior_dir: &Path,
     scenario: &super::intent::ScenarioIntent,
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<Option<String>, PlanError> {
@@ -1730,11 +1769,22 @@ fn plan_uid_less_scenario(
     };
     let existing_path = behavior_dir.join(id).join("scenario.yml");
     if !existing_path.is_file() {
+        let requirement_uids = match &scenario.contributes_to {
+            Some(refs) => resolve_contributes_to(
+                root,
+                &format!("{location}.contributes_to"),
+                refs,
+                requirement_uid_by_key,
+                diagnostics,
+            )?,
+            None => Vec::new(),
+        };
         if let Some(planned) = build_new_scenario(
             location,
             &behavior.id,
             &behavior.procedures,
             scenario,
+            requirement_uids,
             diagnostics,
         ) {
             edits.new_scenarios.push(NewChildScenario {
@@ -1754,7 +1804,23 @@ fn plan_uid_less_scenario(
         ));
         return Ok(None);
     };
-    let candidate = match apply_scenario_patch(location, &current, scenario, &behavior.id) {
+    let resolved_requirement_uids = match &scenario.contributes_to {
+        Some(refs) => Some(resolve_contributes_to(
+            root,
+            &format!("{location}.contributes_to"),
+            refs,
+            requirement_uid_by_key,
+            diagnostics,
+        )?),
+        None => None,
+    };
+    let candidate = match apply_scenario_patch(
+        location,
+        &current,
+        scenario,
+        &behavior.id,
+        resolved_requirement_uids,
+    ) {
         Ok(c) => c,
         Err(d) => {
             diagnostics.push(d);
@@ -1791,6 +1857,7 @@ fn plan_scenario_under_existing_behavior(
     behavior_dir: &Path,
     behavior_procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
     scenario: &super::intent::ScenarioIntent,
+    requirement_uid_by_key: &HashMap<&str, String>,
     diagnostics: &mut Vec<Diagnostic>,
     edits: &mut ExistingElementEdits,
 ) -> Result<Option<String>, PlanError> {
@@ -1809,7 +1876,23 @@ fn plan_scenario_under_existing_behavior(
         return Ok(None);
     };
     let current_scenario = parse_scenario_file(&found_scenario.path)?;
-    let candidate = match apply_scenario_patch(location, &current_scenario, scenario, behavior_id) {
+    let resolved_requirement_uids = match &scenario.contributes_to {
+        Some(refs) => Some(resolve_contributes_to(
+            root,
+            &format!("{location}.contributes_to"),
+            refs,
+            requirement_uid_by_key,
+            diagnostics,
+        )?),
+        None => None,
+    };
+    let candidate = match apply_scenario_patch(
+        location,
+        &current_scenario,
+        scenario,
+        behavior_id,
+        resolved_requirement_uids,
+    ) {
         Ok(c) => c,
         Err(d) => {
             diagnostics.push(d);
@@ -1965,6 +2048,7 @@ fn apply_scenario_patch(
     current: &Scenario,
     intent: &super::intent::ScenarioIntent,
     target_behavior_id: &str,
+    resolved_requirement_uids: Option<Vec<String>>,
 ) -> Result<Scenario, Diagnostic> {
     let phases = match &intent.phases {
         Some(phases) => {
@@ -1999,6 +2083,8 @@ fn apply_scenario_patch(
             .or_else(|| current.implementation_note.clone()),
         generated_by: current.generated_by,
         verified_by: current.verified_by.clone(),
+        requirement_uids: resolved_requirement_uids
+            .unwrap_or_else(|| current.requirement_uids.clone()),
         uid: current.uid.clone(),
     })
 }
@@ -2512,6 +2598,65 @@ features:
         assert_eq!(behaviors[0].scenarios.len(), 1);
         assert_eq!(behaviors[0].scenarios[0].canonical.id, "empty-title");
         assert_eq!(behaviors[0].scenarios[0].canonical.behavior, "add-todo");
+    }
+
+    /// ADR 0031: a new Scenario's `contributes_to` resolves a same-Intent
+    /// local Requirement `key`, exactly like `FeatureIntent.contributes_to`
+    /// already does, and is stored independently of the Feature's own
+    /// (here empty) `requirement_uids`.
+    #[test]
+    fn a_new_scenarios_contributes_to_resolves_a_local_requirement_key() {
+        let dir = init_project();
+        let yaml = "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req_blank
+    id: req-blank-input
+    source: native
+    label: Blank input is rejected
+    axis: []
+
+features:
+  - id: todo-management
+    label: TODO management
+    axis: []
+    behaviors:
+      - id: add-todo
+        description: Add a TODO
+        scenarios:
+          - id: empty-title
+            description: An empty title cannot be added
+            contributes_to: [req_blank]
+            phases:
+              - steps:
+                  - action: Attempt to add an empty title
+                results:
+                  - No TODO is added
+";
+        let doc = parse_intent(yaml).unwrap();
+        let plan = build_plan(dir.path(), &doc).unwrap();
+        let RequirementOutcome::New {
+            uid: requirement_uid,
+            ..
+        } = &plan.requirements[0]
+        else {
+            panic!("expected New, got {:?}", plan.requirements[0]);
+        };
+        let FeatureOutcome::New {
+            canonical,
+            behaviors,
+            ..
+        } = &plan.features[0]
+        else {
+            panic!("expected New");
+        };
+        assert_eq!(canonical.requirement_uids, Vec::<String>::new());
+        assert_eq!(
+            behaviors[0].scenarios[0].canonical.requirement_uids,
+            vec![requirement_uid.clone()]
+        );
     }
 
     #[test]

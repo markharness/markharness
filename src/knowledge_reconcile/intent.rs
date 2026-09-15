@@ -190,6 +190,11 @@ pub struct ScenarioIntent {
     /// through the Intent.
     #[serde(default)]
     pub implementation_note: Option<String>,
+    /// Requirement UIDs this Scenario contributes to (ADR 0031), mirroring
+    /// `FeatureIntent.contributes_to`. Present replaces, omitted keeps
+    /// current (ADR 0027 §5) — a whole-collection replace, not a merge.
+    #[serde(default)]
+    pub contributes_to: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

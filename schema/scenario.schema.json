@@ -62,6 +62,11 @@
       "required": ["human_review"],
       "additionalProperties": false
     },
+    "requirement_uids": {
+      "description": "Requirement UIDs this Scenario contributes to (ADR 0031). When non-empty, the generated TestCase uses only these instead of falling back to the Feature's own requirement_uids.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "uid": { "type": ["string", "null"], "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
   },
   "required": ["id", "behavior", "label", "description", "phases"],

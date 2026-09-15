@@ -1,6 +1,6 @@
 # markharness v2 設計書
 
-作成日：2026-09-11(初版)。2026-09-11、既存の設計・概念に引っ張られない再検討(grillingセッション)により全面書き直し。同日、既存実装(`src/`)との突合結果を反映して§5.2.1・§6.1・§9.1等を訂正。さらに、StrictDoc→markharness→Playwrightの実運用後に完全モデルへ進めるための契約を§9.2と[ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md)へ追加した。2026-09-15、StrictDoc UIDの表記ゆれによるトレーサビリティ事故を受け、§9.2.1が前方互換契約として予約していた「外部key」を`source_key`として前倒し実装し、§5.2・§5.2.1・§9.2.1・§11を更新した([ADR 0030](../decisions/0030-external-requirement-source-key.md))。
+作成日：2026-09-11(初版)。2026-09-11、既存の設計・概念に引っ張られない再検討(grillingセッション)により全面書き直し。同日、既存実装(`src/`)との突合結果を反映して§5.2.1・§6.1・§9.1等を訂正。さらに、StrictDoc→markharness→Playwrightの実運用後に完全モデルへ進めるための契約を§9.2と[ADR 0025](../decisions/0025-v2-forward-compatible-evolution.md)へ追加した。2026-09-15、StrictDoc UIDの表記ゆれによるトレーサビリティ事故を受け、§9.2.1が前方互換契約として予約していた「外部key」を`source_key`として前倒し実装し、§5.2・§5.2.1・§9.2.1・§11を更新した([ADR 0030](../decisions/0030-external-requirement-source-key.md))。同日、実運用報告(1つのFeatureが複数Requirementに寄与する場合の無関係な対応付け)を受け、`Scenario`にも`contributes_to`を持てるようにする拡張を§5.2・§11へ追加した([ADR 0031](../decisions/0031-scenario-level-requirement-contribution.md))。
 状態：**MVP(M0〜M2)実装済み**(2026-09-12、`checklist-v2-core.md`参照)。本書が定める型・判定規則は実装されている。CLI表面は[0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)がKnowledge authoringを`knowledge reconcile`へ統合したため本書の初版から変わっており、§7・§9.1に反映済みである。M3・M4は未着手であり、これらに関する記述は引き続き提案である。
 
 ## 1. 結論と製品の命題
@@ -116,6 +116,8 @@ ReleaseScope {
 `source: external`の`Requirement`はStrictDoc側の内容を複製しない。markharnessが保持するのは固定参照だけであり、本文・受け入れ条件等はStrictDoc側を都度参照する(P1)。`source: native`では従来どおりmarkharnessが`label`/`description`の正本を持つ。両方のフィールドを併せ持つ、あるいはどちらも欠く`requirement.yml`は`validate`で拒否する([0023](../decisions/0023-requirement-native-and-external-source.md))。
 
 FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型・格納先を作らず、現行の`feature.requirement_uids`をそのまま用いる(正本はFeature側、逆方向一覧は派生。[0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md)§1・§3)。「実現に寄与する」ことを示すのみで、検証済みの証明ではない。既存フィールドで足りるため新規型を作らないのはP6(YAGNI)に従う判断である。
+
+同じ関連を`Scenario`にも`requirement_uids`として持てる([0031](../decisions/0031-scenario-level-requirement-contribution.md))。StrictDocのLow-Level Requirementは1つの具体的な振る舞い(=1 Scenario)の粒度で書かれることが多く、Feature単位の関連だけでは「1つのFeatureが複数Requirementに寄与する場合、そのFeature配下の全TestCaseに無関係なRequirementまで付与される」という誤りが生じる。生成されるTestCaseの`generated_from.requirement_uids`は、Scenario側に1件以上あればそちらだけを使い、無ければFeature側にフォールバックする(和集合はしない)。両者の内容が食い違っていても`validate`は検出しない。markharnessはStrictDoc側のRequirement階層(HLR/LLR・Parent関係)を一切知らず、フラットな`Requirement`の集合として扱う(P5)。
 
 `ReleaseScope`は「そのリリースで何を検証対象に選んだか」だけを記録する([0024](../decisions/0024-release-scope-selection-list.md))。選定日時・担当者・承認状態・合否は持たず、内容は人がCLIで記録する。`.markharness/releases/<release_id>.yml`としてGit管理下に置くため、`--at <ref>`で過去時点の選定も再現できる。`release_id`はこのパスの**単一の構成要素**になるため、現行`generate.rs`の`require_valid_slug`が`id:`に課しているのと同じ理由で文字集合を制限する：ASCII小文字英数字・ハイフン・ドットのみを許し、空文字、`.`と`..`そのもの、先頭がドットの値、パス区切り(`/`・`\`)やドライブ指定を含む値は書き込み前に拒否する(`v1.2.0`のようなtag名は通り、`../../etc/passwd`は通らない)。書き込み自体も`fs_safety`の原子的置換経路を通す。選定リストが無いリリースについては、Release Coverageは従来どおり登録状態の一覧だけを返す(§6.2)。
 
@@ -390,3 +392,6 @@ MVPはM0〜M2とする。M0〜M2は2026-09-12に実装完了した(✅)。M3・M
 | AC38 | `source: external`のRequirementで`source_key`を持たない`requirement.yml`を置く | `validate`が拒否する(ADR 0030) |
 | AC39 | `source: native`のRequirementで`source_key`を持つ`requirement.yml`を置く | `validate`が拒否する(ADR 0030) |
 | AC40 | 大文字を含むStrictDoc UID(例:`REQ-Login-01`)を`source_key`に指定する | 生値のまま保存・受理される。markharnessは大文字小文字の変換を行わない(ADR 0030) |
+| AC41 | Feature Fが2つのRequirement R1・R2に`contributes_to`し、F配下のScenario SにR1だけの`contributes_to`を設定する | Sから生成されるTestCaseの`generated_from.requirement_uids`はR1のみになる(ADR 0031) |
+| AC42 | Feature配下のScenarioが`contributes_to`を持たない(省略・空配列) | 生成されるTestCaseはFeatureの`requirement_uids`をそのまま引き継ぐ(ADR 0031) |
+| AC43 | `coverage --requirements R2`を実行する(AC41のR1のみ指定したScenario Sしか存在しないFeature Fに対して) | Sは`cases`に現れない。FがR2に`contributes_to`していても、その配下に実際にR2を検証するTestCaseが無いため`feature_has_no_case`のgapとして報告される(ADR 0031) |

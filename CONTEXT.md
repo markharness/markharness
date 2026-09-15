@@ -4,11 +4,11 @@ Gitネイティブなテスト知識管理と、外部の仕様(StrictDoc)・テ
 
 ## Language
 
-**Feature**：利用者に提供する能力を表す、`knowledge/`配下で管理する仕様上の概念。実装コードそのものではない。複数のRequirementへ`contributes_to`で関連付けられる。
+**Feature**：利用者に提供する能力を表す、`knowledge/`配下で管理する仕様上の概念。実装コードそのものではない。複数のRequirementへ`contributes_to`で関連付けられる(Scenario側にも同じ関連を持てる、ADR 0031)。
 
 **Behavior**：特定条件下で観測可能な振る舞い。一つのFeatureに所属し、共通手順を定義する。
 
-**Scenario**：前提・操作・期待結果が具体化された一つの検証例。一つのBehaviorに所属し、一つのTestCaseと1対1で対応する(1 Scenario = 1 TestCase)。
+**Scenario**：前提・操作・期待結果が具体化された一つの検証例。一つのBehaviorに所属し、一つのTestCaseと1対1で対応する(1 Scenario = 1 TestCase)。Featureと同様、複数のRequirementへ`contributes_to`で関連付けられる(ADR 0031)。
 
 **TestCase**：Scenarioから決定的に生成される、検証すべき対象の単位。
 
@@ -24,7 +24,7 @@ _Avoid_：仕様、Spec(用語を`Requirement`に統一する)。
 **外部key(`source_key`)**：`source: external`のRequirementが保持する、StrictDoc側の識別子をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない。推奨する値はStrictDocのMID(各ノードに自動生成される、常に小文字16進の機械生成識別子)であり、事故の原因になった自由記述の`UID:`フィールドではない(MIDは表記ゆれが構造的に発生しない)。`uid`(ADR 0013)とは独立しており、Requirementの同一性判定・rename耐性のロジックには一切使わない。比較(重複検出・検索)が必要になった場合は大文字正規化して比較する方針のみ定め、実装は将来の課題とする(ADR 0030)。
 _Avoid_：`external_id`(`src/canonical.rs`のJUnitインポート等に使われる無関係な概念と紛らわしいため使わない)。
 
-**Contributes-to関連**：FeatureからRequirementへの多対多の関連。「実現に寄与する」ことを示すのみで、検証済みの証明ではない。正本はFeature側が持ち、実体は現行の`feature.requirement_uids`(新しい型・格納先は作らない)。
+**Contributes-to関連**：FeatureまたはScenarioからRequirementへの多対多の関連。「実現に寄与する」ことを示すのみで、検証済みの証明ではない。Feature側は`feature.requirement_uids`、Scenario側は`scenario.requirement_uids`が実体で(新しい型・格納先は作らない)、markharnessはRequirement同士の階層(StrictDoc側のHLR/LLR・Parent関係)を一切知らずフラットな集合として扱う(ADR 0031、P5)。生成されるTestCaseの関連は、Scenario側に1件以上あればそちらだけを使い、無ければFeature側にフォールバックする(和集合はしない)。両者の内容が食い違っていても`validate`は検出しない(著者の責任)。
 _Avoid_：`implements`／`verifies`(厳密な検証済み証明という誤解を招くため使わない)。
 
 **対応確認(Alignment check)**：仕様(Requirement)またはTestCaseの一方が変更されたとき、他方が追随したか、追随不要かを検出する機能。両方向(仕様→TestCase、TestCase→仕様)を対象とする。

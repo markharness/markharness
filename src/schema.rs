@@ -277,6 +277,7 @@ mod tests {
                     implementation_note: Some("saveState() persists position.".to_string()),
                     generated_by: Some(crate::knowledge::GeneratedBy::Manual),
                     verified_by: Some(crate::knowledge::VerifiedBy { human_review: true }),
+                    requirement_uids: vec!["01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()],
                     uid: Some(UID.to_string()),
                 })
                 .unwrap(),
