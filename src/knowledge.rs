@@ -34,9 +34,13 @@ pub struct Requirement {
     /// `.sdoc` the locator names.
     #[serde(default)]
     pub source_revision: Option<String>,
-    /// Present only for `source: external`: StrictDoc's own UID string,
-    /// stored verbatim (ADR 0030). Never normalized on write, and never
-    /// used for identity or rename-tolerance — those remain `uid`'s job.
+    /// Present only for `source: external`: StrictDoc's own MID — the
+    /// machine-generated, always-lowercase-hex node identifier — stored
+    /// verbatim (ADR 0030). Not StrictDoc's free-text `UID:` field: that is
+    /// what caused this field's originating incident (case variance), and
+    /// MID has no such variance by construction. Never normalized on
+    /// write, and never used for identity or rename-tolerance — those
+    /// remain `uid`'s job.
     #[serde(default)]
     pub source_key: Option<String>,
     #[serde(default)]
@@ -571,7 +575,9 @@ mod tests {
         assert_eq!(reparsed, requirement);
     }
 
-    /// ADR 0030: `source_key` holds StrictDoc's own UID verbatim, including
+    /// ADR 0030: `source_key` is a generic, unconstrained field — it holds
+    /// whatever StrictDoc identifier it is given verbatim (in practice a
+    /// MID, but the type itself does not enforce that), including
     /// uppercase letters that `id`'s slug rule would reject. It must round
     /// trip through serialize/parse without any case change.
     #[test]

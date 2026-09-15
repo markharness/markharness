@@ -98,7 +98,7 @@ Requirement {
   // source = external のとき必須、nativeでは書けない
   source_locator,        // 同一Gitリポジトリ内の`.sdoc`パス
   source_revision,       // 取込時に固定したGit blob OID
-  source_key,            // StrictDoc側のUID文字列をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない(ADR 0030)
+  source_key,            // StrictDoc側の識別子をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない。推奨値はStrictDocのMID(機械生成のため表記ゆれが無い)であり、事故の原因になった自由記述の`UID:`フィールドではない(ADR 0030)
 }
 
 ExecutionBinding {
@@ -130,7 +130,7 @@ FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型�
 | `source` | 無し | 追加。**必須**とし、省略した`requirement.yml`は`validate`で拒否する([0026](../decisions/0026-module-inventory-and-plan-removal.md)§7、AC09b) |
 | `requirement.yml`の`label`/`description` | markharnessが本文相当を保持 | nativeでは維持。externalでは書けない(P1。表示名が必要になった時点でM3のStrictDoc Adapterが都度取得する) |
 | `source_locator`/`source_revision` | 無し | externalで必須、nativeでは書けない。欠落・混在は`validate`で拒否する |
-| `source_key` | 無し | externalで必須、nativeでは書けない。StrictDoc側のUIDを生値のまま保持し、書き込み時の正規化は行わない。比較(重複検出・検索)は対象外(ADR 0030) |
+| `source_key` | 無し | externalで必須、nativeでは書けない。StrictDoc側の識別子(推奨値はMID。自由記述の`UID:`ではない)を生値のまま保持し、書き込み時の正規化は行わない。比較(重複検出・検索)は対象外(ADR 0030) |
 | `axis` | 保持 | 両モードで保持(markharness自身の分類であり外部正本の複製ではない) |
 | `uid`・`feature.requirement_uids` | ADR 0013のUID・多対多関連 | そのまま維持 |
 | Requirement authoring | 対話フローで`label`/`axis`を入力 | [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)により対話フローは廃止。Knowledge Intentへ`source`ごとのfieldを書く(nativeは`label`、externalは`source_locator`と`source_revision: current`。AC02と整合) |

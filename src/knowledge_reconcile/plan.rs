@@ -448,7 +448,7 @@ fn check_requirement_required_fields(
             } else if candidate.source_key.is_none() {
                 (
                     "source_key",
-                    "source: external requires `source_key` (StrictDoc's own UID, held verbatim)",
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)",
                 )
             } else {
                 return None;
@@ -535,7 +535,7 @@ fn build_requirement_content(
                 return Ok(Err(Diagnostic::new(
                     DiagnosticCode::MissingRequiredField,
                     format!("{location}.source_key"),
-                    "source: external requires `source_key` (StrictDoc's own UID, held verbatim)",
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)",
                 )));
             };
             match resolve_new_source_revision(root, location, &locator, &intent.source_revision)? {

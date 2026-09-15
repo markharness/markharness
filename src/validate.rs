@@ -190,7 +190,7 @@ fn check_requirement_source_mode(
             }
             if requirement.source_key.is_none() {
                 report(
-                    "source: external requires `source_key` (StrictDoc's own UID, held verbatim)"
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)"
                         .to_string(),
                 );
             }
