@@ -98,7 +98,7 @@ Requirement {
   // required when source = external; not allowed in native mode
   source_locator,        // the .sdoc path, inside the same Git repository
   source_revision,       // the Git blob OID pinned at link time
-  source_key,            // StrictDoc's own UID string, held verbatim; never case-normalized on write (ADR 0030)
+  source_key,            // StrictDoc's own identifier, held verbatim; never case-normalized on write. Recommended value is StrictDoc's MID (machine-generated, no spelling variance), not the free-text `UID:` field that caused the originating incident (ADR 0030)
 }
 
 ExecutionBinding {
@@ -128,7 +128,7 @@ The many-to-many relation from Feature to Requirement reuses the existing `featu
 | `source` | Absent | Added and **required**: a `requirement.yml` without it is rejected by `validate` ([0026](../decisions/0026-module-inventory-and-plan-removal.md) §7, AC09b) |
 | `requirement.yml`'s `label`/`description` | markharness holds body-equivalent content | Kept in native mode. Not allowed in external mode (P1 — when a display name is needed, the M3 StrictDoc Adapter fetches it on demand) |
 | `source_locator`/`source_revision` | Absent | Required in external mode, not allowed in native mode. Missing or mixed fields are rejected by `validate` |
-| `source_key` | Absent | Required in external mode, not allowed in native mode. Holds StrictDoc's UID verbatim with no normalization on write. Comparison (duplicate detection, search) is out of scope (ADR 0030) |
+| `source_key` | Absent | Required in external mode, not allowed in native mode. Holds StrictDoc's own identifier verbatim (recommended: MID, not the free-text `UID:`) with no normalization on write. Comparison (duplicate detection, search) is out of scope (ADR 0030) |
 | `axis` | Held | Kept in both modes (markharness's own classification, not a copy of external content) |
 | `uid` / `feature.requirement_uids` | ADR 0013 UID and the many-to-many relation | Kept as-is |
 | Requirement authoring | An interactive flow prompts for `label`/`axis` | [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md) removed the interactive flow. Each mode's fields are written in a Knowledge Intent instead (native: `label`; external: `source_locator` plus `source_revision: current`, consistent with AC02) |

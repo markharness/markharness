@@ -22,7 +22,9 @@ Under the current design, `source: external` always means StrictDoc (`.sdoc`); a
 
 ### 2. Store the raw value verbatim; no normalization on write
 
-`source_key` stores StrictDoc's UID string as-is, case included. markharness performs no automatic conversion or forced normalization on write, and imposes no character-set restriction (the `id` field's `is_valid_slug` constraint does not apply here). Preserving the original spelling is what makes manual cross-checking and grepping against StrictDoc possible in the first place.
+`source_key` stores StrictDoc's own identifier as-is, case included. markharness performs no automatic conversion or forced normalization on write, and imposes no character-set restriction (the `id` field's `is_valid_slug` constraint does not apply here). Preserving the original spelling is what makes manual cross-checking and grepping against StrictDoc possible in the first place.
+
+**The recommended value is StrictDoc's MID (Model ID), not the free-text `UID:` field whose spelling variance caused this ADR's originating incident.** MID is a machine-generated identifier StrictDoc assigns to every node — always lowercase hex, written into the `.sdoc` source via `ENABLE_MID: True` or an explicit per-node `MID:` line — and by construction has no human-authored spelling to vary. `source_key` itself does not enforce which StrictDoc identifier it holds (it stays a generic, verbatim-storage field); MID is simply the recommended practice.
 
 ### 3. Comparison (duplicate detection, search) is out of scope for this ADR
 
@@ -46,6 +48,7 @@ Per the existing policy in §9.2.2 of [markharness-v2-design.md](../design/markh
 - **Reuse `id` (the display id) to hold the StrictDoc UID**: the option that actually caused this incident. `id` is not Requirement-specific; it is reused, project-wide, for other purposes such as filenames, and its `is_valid_slug` constraint exists for the safety of all of those uses. Loosening it would compromise every other entity and use of `id`. A separate field dedicated to the StrictDoc UID avoids that.
 - **Force-uppercase the value on write**: this would diverge from StrictDoc's original spelling and make visual/grep cross-checking harder, not easier. Normalizing only where comparison is actually needed is sufficient; there is no reason to alter the stored value itself.
 - **Implement duplicate detection and a search command in the same change**: this ADR is scoped to holding the StrictDoc UID verbatim. Duplicate detection and search are separate features to be considered in their own ADR once demand is confirmed.
+- **Keep recommending the free-text `UID:` field**: sufficient for the original incident response ("hold the original spelling verbatim"), but `UID:` remains human-authored free text and could still drift the same way again. MID is machine-generated and has no such variance by construction, so the recommendation moved to it once that option was identified.
 
 ## Triggers to revisit
 
