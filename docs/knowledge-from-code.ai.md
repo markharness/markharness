@@ -435,12 +435,15 @@ requirements:
     axis: [functional]
     source_locator: docs/requirements.sdoc   # このGitリポジトリ内の.sdocパス
     source_revision: current                 # Intent専用の指示。反映時に現在のblob OIDへ解決される
-    source_key: REQ-Login-01                 # StrictDoc側のUIDを生値のまま。大文字小文字を変換しない
+    source_key: 507cbf66c9674b20b646840408afc46d   # StrictDoc側のMIDを生値のまま
 ```
 
 - **`label` と `description` は書けません。** `source: native` 用のフィールドであり、書くと `conflicting_existing_value`/`missing_required_field` で拒否されます。本文が必要な場面では `.sdoc` を直接開いて参照してください。
-- **`source_key` は StrictDoc 側の UID をそのまま書き写します。** `REQ-Login-01` のように大文字を含んでいても構いません。`id`(`req-login`)とは別物です — `id` は markharness 内の表示IDで小文字英数字とハイフンのみ(`invalid_slug`)、`source_key` はその制約を受けず StrictDoc の表記をそのまま保持します。両者を混同して `source_key` の値を小文字化しないでください。目視・grep での StrictDoc 側との突き合わせができなくなります。
-- **`source_key` での重複検出・検索は markharness には実装されていません。** 同じ StrictDoc UID を指す Requirement が複数できていないかは、`grep -rn "source_key:" .markharness/knowledge/requirements/` などで人間/AI が確認してください。
+- **`source_key` には StrictDoc の MID(Model ID)を書き写します。自由記述の `UID:` フィールドではありません。** MIDはStrictDocが各ノードに自動生成する、常に小文字16進の機械生成識別子です。`.sdoc`内で`MID: <値>`という行として見つかります(`[DOCUMENT]`に`ENABLE_MID: True`を指定しているプロジェクトでは各`[REQUIREMENT]`に自動的に付与されます)。`UID:`フィールドは人間が自由に書く表示名であり大文字小文字を含め表記ゆれが起こり得るため、`source_key`の値としては使わないでください。
+  - `.sdoc`のプロジェクトで`ENABLE_MID`が有効になっていない、または対象の`[REQUIREMENT]`にまだ`MID:`行が無い場合は、`.sdoc`を直接開いて確認するか、StrictDoc側で有効化してから作業してください。markharness側では代替や自動補完を行いません。
+  - `source_key` はStrictDoc側の値を生値のまま保持する汎用フィールドで、値の書式を強制しません。**が、MID以外の値(特に`UID:`のような自由記述)を書くと、将来同じ表記ゆれの問題が再発し得ます。**
+  - `id`(`req-login`)とは別物です — `id` は markharness 内の表示IDで小文字英数字とハイフンのみ(`invalid_slug`)、`source_key` はその制約を受けず StrictDoc の表記をそのまま保持します。両者を混同しないでください。
+- **`source_key` での重複検出・検索は markharness には実装されていません。** 同じ MID を指す Requirement が複数できていないかは、`grep -rn "source_key:" .markharness/knowledge/requirements/` などで人間/AI が確認してください。
 - `source_revision: current` は反映(`knowledge reconcile intent.yml --json`)の瞬間に `source_locator` が指すファイルの Git blob OID を解決して固定します。値を直接 OID で書くことはできません(`invalid_source_revision`)。
 - 反映後に `.sdoc` が更新され固定参照が古くなった場合(stale pin)は、同じ `source_revision: current` を含む Intent を再度反映すれば固定参照が現在の内容へ進みます。これは仕様変更の確認そのものではありません(§7.4)。
 

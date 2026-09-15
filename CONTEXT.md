@@ -21,7 +21,7 @@ Gitネイティブなテスト知識管理と、外部の仕様(StrictDoc)・テ
 **Requirement**：検証対象の要件。`source: native`ではmarkharnessが`label`/`description`の正本を持ち、`source: external`では仕様書(StrictDoc、`.sdoc`としてGit管理)が正本で、markharnessは内容を編集・複製せず固定参照(id・版)だけを保持する(ADR 0023)。StrictDocを導入しない運用ではnativeのみで完結する。
 _Avoid_：仕様、Spec(用語を`Requirement`に統一する)。
 
-**外部key(`source_key`)**：`source: external`のRequirementが保持する、StrictDoc側のUID文字列をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない。`uid`(ADR 0013)とは独立しており、Requirementの同一性判定・rename耐性のロジックには一切使わない。比較(重複検出・検索)が必要になった場合は大文字正規化して比較する方針のみ定め、実装は将来の課題とする(ADR 0030)。
+**外部key(`source_key`)**：`source: external`のRequirementが保持する、StrictDoc側の識別子をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない。推奨する値はStrictDocのMID(各ノードに自動生成される、常に小文字16進の機械生成識別子)であり、事故の原因になった自由記述の`UID:`フィールドではない(MIDは表記ゆれが構造的に発生しない)。`uid`(ADR 0013)とは独立しており、Requirementの同一性判定・rename耐性のロジックには一切使わない。比較(重複検出・検索)が必要になった場合は大文字正規化して比較する方針のみ定め、実装は将来の課題とする(ADR 0030)。
 _Avoid_：`external_id`(`src/canonical.rs`のJUnitインポート等に使われる無関係な概念と紛らわしいため使わない)。
 
 **Contributes-to関連**：FeatureからRequirementへの多対多の関連。「実現に寄与する」ことを示すのみで、検証済みの証明ではない。正本はFeature側が持ち、実体は現行の`feature.requirement_uids`(新しい型・格納先は作らない)。
