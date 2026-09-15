@@ -36,5 +36,6 @@ pub mod requirement;
 pub mod schema;
 pub mod time;
 pub mod traceability;
+pub mod traceability_index;
 pub mod validate;
 pub mod verify;

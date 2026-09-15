@@ -1,6 +1,6 @@
 # テストケース自動生成の実現方法：設計ドキュメント
 
-**Status**: Implemented(`src/generate.rs` / `src/traceability.rs`)。本資料は元々UC2の実現方法を事前検討した設計ドラフトだったが、実装(`src/generate.rs`)は細部で本資料の初期案と異なる形に落ち着いた。本版は実装に合わせて全面的に書き直したものであり、初期案からの差分は各節末の「実装時の変更」に残す。
+**Status**: Implemented(`src/generate.rs` / `src/traceability_index.rs`)。本資料は元々UC2の実現方法を事前検討した設計ドラフトだったが、実装(`src/generate.rs`)は細部で本資料の初期案と異なる形に落ち着いた。本版は実装に合わせて全面的に書き直したものであり、初期案からの差分は各節末の「実装時の変更」に残す。
 **関連ドキュメント**: [テスト知識管理のGit-nativeモデル_統合版.md](../テスト知識管理のGit-nativeモデル_統合版.md)(以下「論文」)、[product-operation.md](../product-operation.md)
 
 **位置づけ**：本資料は論文および「プロダクト運用イメージ」(`docs/product-operation.md`)を踏まえ、UC2「TestCaseを決定的生成する」の**具体的な実現方法**を記述したものです。論文本文に明記されている箇所には該当節番号を付し、製品化にあたって補った箇所は「(製品化提案、論文本文には明記なし)」と明記します。
@@ -132,7 +132,7 @@ phases        = [Phase{steps: (condition.steps + (e.additional_steps or [])) if 
 
 ### 3.4 axisの継承
 
-`REQUIREMENT`・`FEATURE`・`BEHAVIOR`それぞれの`axis`フィールド(§3.1、`axes/*.yml`でレジストリ管理)を**合成(union)**し、重複除去のうえソートしたものを生成された`TestCase.axis`とする(`generate.rs::union_axis`)。当初案の「Featureのaxisのみ継承」から、3階層分の合成に変更した。これにより`generated/traceability-index.json`(`src/traceability.rs`、§3.5のディレクトリ構造)側で「観点(Axis)ごとのTestCase一覧」を再構築でき、横断的観点をFeature側だけでなくTestCase側からも引けるようにする(製品化提案、論文本文には明記なし)。`traceability-index.json`は`TraceabilityEntry{case_id, requirement, feature, behavior, condition, expected_results, axis}`の配列を持つ実装済みの形式であり、当初案の時点では中身が未定義だった。
+`REQUIREMENT`・`FEATURE`・`BEHAVIOR`それぞれの`axis`フィールド(§3.1、`axes/*.yml`でレジストリ管理)を**合成(union)**し、重複除去のうえソートしたものを生成された`TestCase.axis`とする(`generate.rs::union_axis`)。当初案の「Featureのaxisのみ継承」から、3階層分の合成に変更した。これにより`generated/traceability-index.json`(`src/traceability_index.rs`、§3.5のディレクトリ構造)側で「観点(Axis)ごとのTestCase一覧」を再構築でき、横断的観点をFeature側だけでなくTestCase側からも引けるようにする(製品化提案、論文本文には明記なし)。`traceability-index.json`は`TraceabilityEntry{case_id, requirement, feature, behavior, condition, expected_results, axis}`の配列を持つ実装済みの形式であり、当初案の時点では中身が未定義だった。
 
 ---
 

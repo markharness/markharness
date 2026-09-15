@@ -1040,6 +1040,64 @@ uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
 
 ---
 
+### 1.25 `markharness traceability` — Requirement・Feature・Behavior・Scenario・TestCaseの関係を読む(ADR 0032、設計書 cli-read-model-design.md §5)
+
+```text
+markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
+```
+
+**用途**: 指定したGit ref時点のKnowledgeと生成済みTestCaseから、Requirement・Feature・Behavior・Scenario・TestCaseの関係を読み取り専用で出力する。`markharness-view`などの外部ツールが、Knowledgeや`.markharness/`を直接読まずにこの出力だけを入力にできるようにする(ADR 0032)。`impact`・`coverage`と同じく`CommandOutcome`/`Presenter`を経由せず、専用モジュールの構造体を直接JSONへシリアライズする。
+
+**`--at`は省略可、既定`HEAD`**。`generate`のように生成物を書き込むことはない。
+
+**出力**: `schema_version: 1`・`record_kind: traceability`に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`)、`features`(`feature_id`・`feature_uid`)、`behaviors`(`behavior_id`・`feature_id`。`behavior_uid`は現状のKnowledge読み取り経路では取得できず常に`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。
+
+**動作**
+
+- Feature・Requirementは`generate`が生成するTestCaseの有無に関わらず、Knowledgeに存在する全件を出力する(`coverage`のAC21と同じ理由で、対応するTestCaseが無いFeatureも可視化する)。
+- Behavior・Scenario・TestCaseは、生成される全TestCaseから導出する(空のPhaseを持つScenarioは`generate`が拒否するため、実在するScenarioは必ず1件のTestCaseに対応する)。
+
+**終了コード**
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 成功 |
+| 2 | Knowledgeファイルの構文・内容エラー |
+| 3 | ファイルシステムエラー |
+
+**使用例**
+
+```console
+$ markharness traceability --at HEAD
+{
+  "schema_version": 1,
+  "record_kind": "traceability",
+  "at": "HEAD",
+  "requirements": [
+    { "requirement_id": "controls", "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "source": "native" }
+  ],
+  "features": [
+    { "feature_id": "player-jump", "feature_uid": null }
+  ],
+  "behaviors": [
+    { "behavior_id": "jump", "behavior_uid": null, "feature_id": "player-jump" }
+  ],
+  "scenarios": [
+    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump" }
+  ],
+  "test_cases": [
+    { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground" }
+  ],
+  "relations": [
+    { "from_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "kind": "contributes_to" }
+  ]
+}
+```
+
+**ユースケース対応**: [cli-read-model-design.md](./design/cli-read-model-design.md)§5の`TraceabilityReadModel`、[ADR 0032](./decisions/0032-cli-read-model-seam.md)。
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。
@@ -1054,7 +1112,7 @@ uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
 
 ## 3. 動作確認・テスト
 
-実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge reconcile` の終了コード・出力を検証する `tests/knowledge_reconcile_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`CONTRIBUTING.md`)に従い、コミット前に以下を実行すること:
+実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability_index.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge reconcile` の終了コード・出力を検証する `tests/knowledge_reconcile_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`CONTRIBUTING.md`)に従い、コミット前に以下を実行すること:
 
 ```bash
 cargo test
