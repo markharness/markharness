@@ -336,7 +336,22 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
 
             for scenario_dir in find_dirs_with_marker(&behavior_dir, "scenario.yml")? {
                 let scenario_path = scenario_dir.join("scenario.yml");
-                validate_file(root, "scenario.schema.json", &scenario_path, &mut issues)?;
+                if let Some(content) =
+                    validate_file(root, "scenario.schema.json", &scenario_path, &mut issues)?
+                    && let Ok(scenario) = knowledge::parse_scenario(&content)
+                    && uid_mode
+                {
+                    for uid in &scenario.requirement_uids {
+                        if !known_requirement_uids.contains(uid) {
+                            issues.push(ValidationIssue {
+                                path: rel(root, &scenario_path),
+                                message: format!(
+                                    "requirement_uids references unknown requirement uid '{uid}'"
+                                ),
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -565,6 +580,33 @@ mod tests {
             issues.iter().any(|i| i.path.contains("feature.yml")
                 && i.message.contains("requirement_uids")
                 && i.message.contains("controls")),
+            "expected a dangling requirement_uids reference issue, got: {issues:?}"
+        );
+    }
+
+    /// ADR 0031: `Scenario.requirement_uids` is checked the same way
+    /// `Feature.requirement_uids` is (§ same rationale) — a dangling
+    /// reference must not silently pass just because it lives on a
+    /// Scenario instead of its Feature.
+    #[test]
+    fn flags_a_scenario_requirement_uid_that_matches_no_requirement_once_in_uid_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        fs::write(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+            "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - action: \"Do it.\"\n    results:\n      - \"lands safely\"\nrequirement_uids: [no-such-requirement]\n",
+        )
+        .unwrap();
+        crate::identity::marker::mark_uid_mode(dir.path()).unwrap();
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(
+            issues.iter().any(|i| i.path.contains("scenario.yml")
+                && i.message.contains("requirement_uids")
+                && i.message.contains("no-such-requirement")),
             "expected a dangling requirement_uids reference issue, got: {issues:?}"
         );
     }
