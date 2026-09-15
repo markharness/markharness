@@ -99,12 +99,12 @@ If reading past formats is ever needed, that is handled by adding a separate rec
 
 Provides the relations among Requirement, Feature, Behavior, Scenario, and TestCase in a form external tools can browse.
 
-### 5.2 Structure
+### 5.2 Structure (implemented: `src/traceability.rs`)
 
 ```rust
 struct TraceabilityReadModel {
-    record_kind: "traceability",
-    schema_version: 1,
+    schema_version: u32,       // already emitted alongside "record_kind": "traceability"
+    record_kind: &'static str,
     at: String,
     requirements: Vec<RequirementNode>,
     features: Vec<FeatureNode>,
@@ -115,26 +115,61 @@ struct TraceabilityReadModel {
 }
 ```
 
-Each Node carries at least a display ID and a UID. TestCase additionally carries the Case revision and its generated path.
+Each Node carries at least a display ID and a UID (the UID may be `None` for an element `identity migrate` hasn't run on yet). TestCase additionally carries the Case revision and its generated path.
 
 ```rust
+struct RequirementNode {
+    requirement_id: String,
+    requirement_uid: Option<String>,
+    source: &'static str, // "native" | "external"
+}
+
+struct FeatureNode {
+    feature_id: String,
+    feature_uid: Option<String>,
+}
+
+struct BehaviorNode {
+    behavior_id: String,
+    // Always None in the current implementation. The generated TestCases
+    // (KnowledgeCaseSnapshot) never carry a Behavior UID; obtaining one
+    // would need a separate read of behavior.yml. Not added until a
+    // concrete need for it is confirmed (YAGNI).
+    behavior_uid: Option<String>,
+    feature_id: String,
+}
+
+struct ScenarioNode {
+    scenario_id: String,
+    scenario_uid: Option<String>,
+    behavior_id: String,
+}
+
 struct TestCaseNode {
-    case_uid: String,
-    case_revision: u64,
-    display_id: String,
+    case_id: String,             // display id; matches the existing term (TestCase.case_id) used elsewhere (generate.rs etc.)
+    case_uid: Option<CaseUid>,
+    case_revision: CaseRevision, // a hash-string type, not u64
     relative_path: String,
+    scenario_id: String,
 }
 ```
 
 Relations are expressed as explicit Relation entries rather than each Node duplicating an array of the other side.
 
 ```rust
+enum RelationKind {
+    ContributesTo, // Feature or Scenario to Requirement
+    GeneratedFrom, // TestCase to Scenario
+}
+
 struct TraceabilityRelation {
     from_uid: String,
     to_uid: String,
     kind: RelationKind,
 }
 ```
+
+An element with no UID (not yet migrated) never appears on either side of a relation: relating two UID-less values would give an external reader nothing to match against a later re-run.
 
 Example:
 
@@ -147,6 +182,8 @@ Example:
 ```
 
 `TraceabilityReadModel` does not include Binding presence or Coverage judgment results; those are `ReleaseCoverageReadModel`'s responsibility.
+
+`requirements` and `features` cover everything in Knowledge, regardless of whether a generated TestCase exists (the same reasoning as coverage's AC21: a Feature with nothing underneath it yet is still made visible). `behaviors`, `scenarios`, and `test_cases` are derived from every generated TestCase; since `generate` rejects a Scenario with empty phases at generation time, an existing Scenario always corresponds to exactly one TestCase, so this derivation cannot miss one.
 
 ### 5.4 Relationship to the editing Intent
 

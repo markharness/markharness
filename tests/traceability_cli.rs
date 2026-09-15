@@ -122,6 +122,10 @@ fn traceability_reports_the_envelope_and_full_hierarchy_at_head() {
 
     assert_eq!(value["behaviors"][0]["behavior_id"], "jump");
     assert_eq!(value["behaviors"][0]["feature_id"], "player-jump");
+    // Known limitation (design doc §5.2): the generated-TestCase path this
+    // read model derives Behavior nodes from carries no Behavior UID today,
+    // even though `behavior.yml` itself has one.
+    assert!(value["behaviors"][0]["behavior_uid"].is_null());
 
     assert_eq!(value["scenarios"][0]["scenario_id"], "ground");
     assert_eq!(value["scenarios"][0]["scenario_uid"], SCENARIO_UID);

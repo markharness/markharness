@@ -99,12 +99,12 @@ release_coverage
 
 Requirement・Feature・Behavior・Scenario・TestCaseの関係を、外部ツールが閲覧できる形で提供する。
 
-### 5.2 構造
+### 5.2 構造(実装済み: `src/traceability.rs`)
 
 ```rust
 struct TraceabilityReadModel {
-    record_kind: "traceability",
-    schema_version: 1,
+    schema_version: u32,        // "record_kind": "traceability" と共に出力
+    record_kind: &'static str,
     at: String,
     requirements: Vec<RequirementNode>,
     features: Vec<FeatureNode>,
@@ -115,26 +115,60 @@ struct TraceabilityReadModel {
 }
 ```
 
-各Nodeには、少なくとも表示IDとUIDを含める。テストケースには、さらにCase revisionと生成パスを含める。
+各Nodeには、少なくとも表示IDとUIDを含める(UIDは`identity migrate`未実行の要素では`None`になりうる)。テストケースには、さらにCase revisionと生成パスを含める。
 
 ```rust
+struct RequirementNode {
+    requirement_id: String,
+    requirement_uid: Option<String>,
+    source: &'static str, // "native" | "external"
+}
+
+struct FeatureNode {
+    feature_id: String,
+    feature_uid: Option<String>,
+}
+
+struct BehaviorNode {
+    behavior_id: String,
+    // 現状の実装では常にNone。生成済みTestCase(KnowledgeCaseSnapshot)は
+    // Behavior UIDを保持しておらず、これを得るには別途behavior.ymlを
+    // 読む経路が必要。具体的な必要性が確認されるまで追加しない(YAGNI)。
+    behavior_uid: Option<String>,
+    feature_id: String,
+}
+
+struct ScenarioNode {
+    scenario_id: String,
+    scenario_uid: Option<String>,
+    behavior_id: String,
+}
+
 struct TestCaseNode {
-    case_uid: String,
-    case_revision: u64,
-    display_id: String,
+    case_id: String,             // 表示ID。generate.rs等の既存コードと同じ用語(TestCase.case_id)に揃える
+    case_uid: Option<CaseUid>,
+    case_revision: CaseRevision, // ハッシュ値の文字列型。u64ではない
     relative_path: String,
+    scenario_id: String,
 }
 ```
 
 関係は、各Nodeに相手側の配列を重複して持たせず、明示的なRelationとして表す。
 
 ```rust
+enum RelationKind {
+    ContributesTo, // Feature または Scenario から Requirement へ
+    GeneratedFrom, // TestCase から Scenario へ
+}
+
 struct TraceabilityRelation {
     from_uid: String,
     to_uid: String,
     kind: RelationKind,
 }
 ```
+
+UIDを持たない要素(未migrate)は、`relations`のいずれの側にも現れない。UIDのない値同士を関連付けても、外部の読み取り側が再実行間で同一性を確認できないためである。
 
 例：
 
@@ -147,6 +181,8 @@ struct TraceabilityRelation {
 ```
 
 `TraceabilityReadModel`には、Bindingの有無やCoverageの判定結果を含めない。それらは`ReleaseCoverageReadModel`の責務とする。
+
+`requirements`・`features`はKnowledgeに存在する全件を対象とする(生成されたTestCaseの有無を問わない。`coverage`のAC21と同じ理由で、対応するTestCaseがまだ無いFeatureも可視化する)。`behaviors`・`scenarios`・`test_cases`は生成される全TestCaseから導出する。空のPhaseを持つScenarioは`generate`が生成時に拒否するため、実在するScenarioは必ず1件のTestCaseに対応し、この導出に抜け漏れは生じない。
 
 ### 5.4 編集用Intentとの関係
 
