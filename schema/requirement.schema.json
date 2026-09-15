@@ -35,6 +35,10 @@
       "type": "string",
       "minLength": 1
     },
+    "source_key": {
+      "type": "string",
+      "minLength": 1
+    },
     "related_issues": {
       "type": "array",
       "items": {

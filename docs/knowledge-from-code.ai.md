@@ -412,3 +412,78 @@ markharness generate     # 2回目。N が同じで差分が出ないことを�
 ### 6.4 外部状態への依存
 
 Scenario の結果がコードだけでは決まらない外部状態(I/O・並行性・設定・時刻)に依存する場合は、単一の決定的な結果を断定せず、その旨を `description` に記載してください。
+
+---
+
+## 7. StrictDoc / Playwright がある場合の手順
+
+このプロジェクトが仕様書に StrictDoc(`.sdoc`)、テスト実行に Playwright を使っている場合の追加手順です。**§1〜§6 の基本フローは変わりません。** ここで説明するのは、その中で StrictDoc/Playwright を使う箇所だけです。§1 冒頭の「外部依存は `markharness` CLI のみ」は変わりません — `.sdoc`・Playwright のテストファイルは markharness が構文解析するのではなく、AI/人間が直接読んで参照情報を書き写す対象です。
+
+### 7.1 前提: markharness は `.sdoc` の中身を読まない
+
+markharness に `.sdoc` パーサはありません(v2 設計の M3、未着手)。StrictDoc 側の Requirement 本文・受け入れ条件を markharness にコピーすることはできず、してもいけません。markharness が保持できるのは固定参照(§7.2)だけで、本文は常に `.sdoc` 側を直接参照してください。
+
+### 7.2 StrictDoc がある場合の Requirement 作成
+
+`requirements[].source` は `native` ではなく `external` を使います(§3.2 のコメントで存在は示唆されていましたが、ここで詳しく説明します)。
+
+```yaml
+requirements:
+  - key: login-requirement          # 新規作成時。既存を変更する場合は uid を使う(§6.2)
+    id: req-login
+    source: external
+    axis: [functional]
+    source_locator: docs/requirements.sdoc   # このGitリポジトリ内の.sdocパス
+    source_revision: current                 # Intent専用の指示。反映時に現在のblob OIDへ解決される
+    source_key: 507cbf66c9674b20b646840408afc46d   # StrictDoc側のMIDを生値のまま
+```
+
+- **`label` と `description` は書けません。** `source: native` 用のフィールドであり、書くと `conflicting_existing_value`/`missing_required_field` で拒否されます。本文が必要な場面では `.sdoc` を直接開いて参照してください。
+- **`source_key` には StrictDoc の MID(Model ID)を書き写します。自由記述の `UID:` フィールドではありません。** MIDはStrictDocが各ノードに自動生成する、常に小文字16進の機械生成識別子です。`.sdoc`内で`MID: <値>`という行として見つかります(`[DOCUMENT]`に`ENABLE_MID: True`を指定しているプロジェクトでは各`[REQUIREMENT]`に自動的に付与されます)。`UID:`フィールドは人間が自由に書く表示名であり大文字小文字を含め表記ゆれが起こり得るため、`source_key`の値としては使わないでください。
+  - `.sdoc`のプロジェクトで`ENABLE_MID`が有効になっていない、または対象の`[REQUIREMENT]`にまだ`MID:`行が無い場合は、`.sdoc`を直接開いて確認するか、StrictDoc側で有効化してから作業してください。markharness側では代替や自動補完を行いません。
+  - `source_key` はStrictDoc側の値を生値のまま保持する汎用フィールドで、値の書式を強制しません。**が、MID以外の値(特に`UID:`のような自由記述)を書くと、将来同じ表記ゆれの問題が再発し得ます。**
+  - `id`(`req-login`)とは別物です — `id` は markharness 内の表示IDで小文字英数字とハイフンのみ(`invalid_slug`)、`source_key` はその制約を受けず StrictDoc の表記をそのまま保持します。両者を混同しないでください。
+- **`source_key` での重複検出・検索は markharness には実装されていません。** 同じ MID を指す Requirement が複数できていないかは、`grep -rn "source_key:" .markharness/knowledge/requirements/` などで人間/AI が確認してください。
+- `source_revision: current` は反映(`knowledge reconcile intent.yml --json`)の瞬間に `source_locator` が指すファイルの Git blob OID を解決して固定します。値を直接 OID で書くことはできません(`invalid_source_revision`)。
+- 反映後に `.sdoc` が更新され固定参照が古くなった場合(stale pin)は、同じ `source_revision: current` を含む Intent を再度反映すれば固定参照が現在の内容へ進みます。これは仕様変更の確認そのものではありません(§7.4)。
+
+### 7.3 Playwright がある場合の TestCase 紐付け
+
+`markharness generate` で TestCase を生成した後、対応する Playwright テストを `ExecutionBinding` として宣言します。これは「自動テストで検証する」という宣言であり、実行結果(合否・実行日時)は保持しません。
+
+```bash
+# 1. 対象 TestCase の case_uid を確認する(表示idではなくUIDで指定する — リネームに強くするため)
+grep case_uid .markharness/generated/testcases/todo/todo-add-task/todo-add-task-empty-input.yml
+
+# 2. Playwright テストファイルへの紐付けを記録する
+markharness binding set \
+  --case-uid <生成物のcase_uid> \
+  --mode automated \
+  --reference tests/e2e/todo-add-task.spec.ts
+```
+
+- **`--case-uid` には必ず Case UID を渡してください。** `case_id`(`tc-todo-todo-add-task-empty-input` のような表示ID)ではありません。表示IDは Scenario の rename で変わり得ますが、Case UID は変わりません。
+- `--reference` は自由記述で、markharness はその内容を検証・解釈しません(パスが実在するかもチェックしません)。Playwright 側のファイルパスをそのまま書いてください。
+- 1つの Case UID に対応する Playwright テストが 0 件・複数件になる場合の扱い(parameterized test、複数 project 等)は markharness の対象外です。テスト設計側で解決してください。
+- 手動でしか検証できない TestCase には `--mode manual` を使います(`--reference` は省略可)。
+
+### 7.4 Change Impact / Release Coverage の確認(参考)
+
+StrictDoc・Playwright を使っている場合、次のコマンドで「仕様変更に対してTestCaseが追随しているか」「リリース対象に検証手段があるか」を確認できます。これらは知識の**導出**作業そのものではなく、導出後の確認・レビュー支援コマンドです。
+
+```bash
+# base..head間で変更されたRequirement/Featureと、対応確認(Spec-Reviewedトレーラー)の状態を一覧する
+markharness impact --base <base-ref> --head <head-ref> --format json
+
+# 指定したRequirement集合について、ExecutionBindingの有無・coverage gapを一覧する
+markharness coverage --requirements all --format json
+```
+
+- `impact` は `.sdoc` の構文解析をしません。`source_locator` が指すファイル単位での base/head 差分で仕様変更を検知します(同一ファイル内の無関係な変更も「変更あり」として検出される偽陽性を許容します)。
+- 対応確認(「仕様変更を見てTestCaseを確認した」という記録)は、コミットメッセージの `Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-required` トレーラーで行います(`reason` は省略時 `no-change-required` になります)。`requirement=` と `case=` はどちらも表示ID(コミット時点のもの。`case=` には `tc-` で始まる `case_id` を書く)で、両方揃っていない・キーが`requirement=`/`case=`/`reason=`以外だと確認として採用されません。これは `knowledge reconcile` の外で、通常の `git commit` メッセージに書き添えるものです。
+
+  ```
+  Spec-Reviewed: requirement=req-login case=tc-todo-add-task-empty-input reason=no-change-required
+  ```
+
+- これらのコマンドの詳細な判定規則(対応確認の三値、stale pinの扱い等)は本ファイルの範囲外です。`impact --help` / `coverage --help` の出力と、実際の診断メッセージを手がかりにしてください。

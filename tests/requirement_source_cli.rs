@@ -103,11 +103,68 @@ fn an_external_requirement_with_a_locator_and_revision_is_valid() {
     write_requirement(
         dir.path(),
         "controls",
-        "id: controls\nsource: external\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\naxis: [gameplay]\n",
+        "id: controls\nsource: external\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\nsource_key: REQ-Controls-01\naxis: [gameplay]\n",
     );
 
     let output = validate(dir.path());
     assert!(output.status.success(), "{output:?}");
+}
+
+/// ADR 0030: `source_key` is required for external, mirroring
+/// `source_locator`/`source_revision`.
+#[test]
+fn an_external_requirement_without_a_source_key_is_rejected() {
+    let dir = project();
+    write_requirement(
+        dir.path(),
+        "controls",
+        "id: controls\nsource: external\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\naxis: [gameplay]\n",
+    );
+
+    let output = validate(dir.path());
+    assert!(!output.status.success(), "{output:?}");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(combined.contains("source_key"), "{combined}");
+}
+
+/// ADR 0030: `source_key` holds StrictDoc's UID verbatim — including
+/// uppercase, which `id`'s slug rule would otherwise reject.
+#[test]
+fn an_external_requirement_with_an_uppercase_source_key_is_valid() {
+    let dir = project();
+    write_requirement(
+        dir.path(),
+        "controls",
+        "id: controls\nsource: external\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\nsource_key: REQ-Controls-01\naxis: [gameplay]\n",
+    );
+
+    let output = validate(dir.path());
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// ADR 0030: `source_key` belongs to external, mirroring
+/// `source_locator`/`source_revision`'s exclusivity (AC09c-style).
+#[test]
+fn a_native_requirement_carrying_a_source_key_is_rejected() {
+    let dir = project();
+    write_requirement(
+        dir.path(),
+        "controls",
+        "id: controls\nsource: native\nlabel: controls\nsource_key: REQ-Controls-01\naxis: [gameplay]\n",
+    );
+
+    let output = validate(dir.path());
+    assert!(!output.status.success(), "{output:?}");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(combined.contains("source_key"), "{combined}");
 }
 
 /// AC02: external never duplicates the external owner's content.
@@ -178,7 +235,7 @@ fn an_unregistered_axis_is_still_caught_on_an_external_requirement() {
     write_requirement(
         dir.path(),
         "controls",
-        "id: controls\nsource: external\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\naxis: [not-registered]\n",
+        "id: controls\nsource: external\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\nsource_key: REQ-Controls-01\naxis: [not-registered]\n",
     );
 
     let output = validate(dir.path());

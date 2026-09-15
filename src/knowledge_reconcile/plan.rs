@@ -390,7 +390,10 @@ fn check_requirement_mode_fields(
     intent: &RequirementIntent,
 ) -> Option<Diagnostic> {
     let forbidden: &[(&str, bool)] = match source {
-        RequirementSource::Native => &[("source_locator", intent.source_locator.is_some())],
+        RequirementSource::Native => &[
+            ("source_locator", intent.source_locator.is_some()),
+            ("source_key", intent.source_key.is_some()),
+        ],
         RequirementSource::External => &[
             ("label", intent.label.is_some()),
             ("description", intent.description.is_some()),
@@ -442,6 +445,11 @@ fn check_requirement_required_fields(
                     "source_revision",
                     "source: external requires `source_revision: current` to pin the .sdoc's current blob OID",
                 )
+            } else if candidate.source_key.is_none() {
+                (
+                    "source_key",
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)",
+                )
             } else {
                 return None;
             }
@@ -463,6 +471,7 @@ fn clear_fields_foreign_to_source(requirement: &mut Requirement) {
         RequirementSource::Native => {
             requirement.source_locator = None;
             requirement.source_revision = None;
+            requirement.source_key = None;
         }
         RequirementSource::External => {
             requirement.label = None;
@@ -488,7 +497,7 @@ fn build_requirement_content(
     if let Some(diagnostic) = check_requirement_mode_fields(location, source, intent) {
         return Ok(Err(diagnostic));
     }
-    let (label, source_locator, source_revision) = match source {
+    let (label, source_locator, source_revision, source_key) = match source {
         RequirementSource::Native => {
             if intent.source_revision.is_some() {
                 return Ok(Err(Diagnostic::new(
@@ -499,6 +508,7 @@ fn build_requirement_content(
             }
             (
                 Some(intent.label.clone().unwrap_or_else(|| id.to_string())),
+                None,
                 None,
                 None,
             )
@@ -521,8 +531,15 @@ fn build_requirement_content(
                     "source: external requires `source_revision: current` to pin the .sdoc's current blob OID",
                 )));
             }
+            let Some(key) = intent.source_key.clone() else {
+                return Ok(Err(Diagnostic::new(
+                    DiagnosticCode::MissingRequiredField,
+                    format!("{location}.source_key"),
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)",
+                )));
+            };
             match resolve_new_source_revision(root, location, &locator, &intent.source_revision)? {
-                Ok(revision) => (None, Some(locator), Some(revision)),
+                Ok(revision) => (None, Some(locator), Some(revision), Some(key)),
                 Err(d) => return Ok(Err(d)),
             }
         }
@@ -538,6 +555,7 @@ fn build_requirement_content(
         description: intent.description.as_deref().map(canonical_description),
         source_locator,
         source_revision,
+        source_key,
         related_issues: intent.related_issues.clone().unwrap_or_default(),
         uid: Some(uid.to_string()),
     }))
@@ -610,6 +628,10 @@ fn apply_requirement_patch(
             .clone()
             .or_else(|| current.source_locator.clone()),
         source_revision,
+        source_key: intent
+            .source_key
+            .clone()
+            .or_else(|| current.source_key.clone()),
         related_issues: intent
             .related_issues
             .clone()
@@ -2095,7 +2117,7 @@ uid: {uid}
                 .join(id)
                 .join("requirement.yml"),
             format!(
-                "id: {id}\nsource: external\naxis: []\nsource_locator: {locator}\nsource_revision: {revision}\nuid: {uid}\n"
+                "id: {id}\nsource: external\naxis: []\nsource_locator: {locator}\nsource_revision: {revision}\nsource_key: REQ-{id}-01\nuid: {uid}\n"
             ),
         )
         .unwrap();
@@ -3859,6 +3881,36 @@ requirements:
         assert_eq!(diagnostics[0].location, "requirements[0].source_revision");
     }
 
+    /// ADR 0030: `source_key` is required on a saved external Requirement,
+    /// mirroring `source_locator`/`source_revision`.
+    #[test]
+    fn a_new_external_requirement_without_a_source_key_is_rejected() {
+        let dir = init_project();
+        init_git_repo(dir.path());
+        fs::write(
+            dir.path().join("spec.sdoc"),
+            "spec
+",
+        )
+        .unwrap();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: external
+    axis: []
+    source_locator: spec.sdoc
+    source_revision: current
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].location, "requirements[0].source_key");
+    }
+
     #[test]
     fn a_new_external_requirement_is_pinned_to_its_current_blob_oid() {
         let dir = init_project();
@@ -3878,6 +3930,7 @@ requirements:
     axis: []
     source_locator: spec.sdoc
     source_revision: current
+    source_key: REQ-Controls-01
 ";
         let doc = parse_intent(yaml).unwrap();
         let plan = build_plan(dir.path(), &doc).unwrap();
@@ -3913,6 +3966,29 @@ requirements:
             panic!("expected diagnostics, got {err:?}");
         };
         assert_eq!(diagnostics[0].location, "requirements[0].source_locator");
+    }
+
+    /// ADR 0030: `source_key` belongs to external, mirroring
+    /// `source_locator`/`source_revision`'s exclusivity.
+    #[test]
+    fn a_new_native_requirement_carrying_a_source_key_is_rejected() {
+        let dir = init_project();
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - id: controls
+    source: native
+    label: controls
+    axis: []
+    source_key: REQ-Controls-01
+";
+        let doc = parse_intent(yaml).unwrap();
+        let err = build_plan(dir.path(), &doc).unwrap_err();
+        let PlanError::Diagnostics(diagnostics) = err else {
+            panic!("expected diagnostics, got {err:?}");
+        };
+        assert_eq!(diagnostics[0].location, "requirements[0].source_key");
     }
 
     #[test]
@@ -4050,6 +4126,7 @@ requirements:
     source: external
     source_locator: spec.sdoc
     source_revision: current
+    source_key: REQ-Controls-01
 ";
         let doc = parse_intent(yaml).unwrap();
         let plan = build_plan(dir.path(), &doc).unwrap();

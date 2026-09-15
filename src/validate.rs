@@ -168,6 +168,12 @@ fn check_requirement_source_mode(
                         .to_string(),
                 );
             }
+            if requirement.source_key.is_some() {
+                report(
+                    "source: native must not carry `source_key` (that belongs to source: external)"
+                        .to_string(),
+                );
+            }
         }
         knowledge::RequirementSource::External => {
             if requirement.source_locator.is_none() {
@@ -179,6 +185,12 @@ fn check_requirement_source_mode(
             if requirement.source_revision.is_none() {
                 report(
                     "source: external requires `source_revision` (the pinned blob OID of that .sdoc)"
+                        .to_string(),
+                );
+            }
+            if requirement.source_key.is_none() {
+                report(
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)"
                         .to_string(),
                 );
             }

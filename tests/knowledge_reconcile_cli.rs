@@ -967,6 +967,7 @@ requirements:
     axis: []
     source_locator: spec.sdoc
     source_revision: current
+    source_key: REQ-Controls-01
 ",
     )
     .unwrap();
@@ -1056,6 +1057,7 @@ requirements:
     axis: []
     source_locator: spec.sdoc
     source_revision: current
+    source_key: REQ-Controls-01
 ",
     )
     .unwrap();

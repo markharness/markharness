@@ -34,6 +34,15 @@ pub struct Requirement {
     /// `.sdoc` the locator names.
     #[serde(default)]
     pub source_revision: Option<String>,
+    /// Present only for `source: external`: StrictDoc's own MID — the
+    /// machine-generated, always-lowercase-hex node identifier — stored
+    /// verbatim (ADR 0030). Not StrictDoc's free-text `UID:` field: that is
+    /// what caused this field's originating incident (case variance), and
+    /// MID has no such variance by construction. Never normalized on
+    /// write, and never used for identity or rename-tolerance — those
+    /// remain `uid`'s job.
+    #[serde(default)]
+    pub source_key: Option<String>,
     #[serde(default)]
     pub related_issues: Vec<String>,
     /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
@@ -177,6 +186,27 @@ fn yaml_flow_array(items: &[String]) -> String {
     format!("[{}]", items.join(", "))
 }
 
+/// Renders `value` as a YAML scalar suitable for `key: <this>\n`, quoting
+/// or block-styling it only when the plain form would not round trip.
+/// Delegates to `serde_yaml_ng`'s own emitter (serializing `value` as a
+/// standalone document) rather than reimplementing YAML's plain-scalar
+/// rules by hand. Needed for `source_key` (ADR 0030): unlike markharness's
+/// own slug-constrained ids, it holds StrictDoc's UID verbatim with no
+/// charset restriction, so it can contain YAML-significant characters
+/// (`: `, quotes, newlines, a leading `-`/`#`) that plain-scalar output
+/// would corrupt or that would fail to parse back.
+fn yaml_scalar_line(value: &str) -> String {
+    let doc = serde_yaml_ng::to_string(value).expect("a string always serializes to YAML");
+    // `to_string` always terminates the document with exactly one `\n`;
+    // strip only that one. A block scalar preserving a trailing newline in
+    // `value` itself (keep-style `|+`) ends in *further* `\n`s that belong
+    // to the content, not the document terminator — `trim_end_matches`
+    // would eat those too and corrupt the value on reparse.
+    doc.strip_suffix('\n')
+        .expect("serde_yaml_ng always terminates a document with \\n")
+        .to_string()
+}
+
 /// Appends a trailing `uid: <value>\n` line when `uid` is present, shared
 /// by every `serialize_*` function (ADR 0013: all persistent Knowledge
 /// element kinds carry the same optional `uid:` field, always written last).
@@ -214,6 +244,9 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
     }
     if let Some(revision) = &requirement.source_revision {
         out.push_str(&format!("source_revision: {revision}\n"));
+    }
+    if let Some(key) = &requirement.source_key {
+        out.push_str(&format!("source_key: {}\n", yaml_scalar_line(key)));
     }
     // label はプレーンスカラーで出力するため単一行が前提。
     // knowledge_reconcile::validate の multiline_label チェックが保証する。
@@ -421,6 +454,7 @@ mod tests {
             description: None,
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -443,6 +477,7 @@ mod tests {
             description: Some("Account related requirements.".to_string()),
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -467,6 +502,7 @@ mod tests {
             ),
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: None,
         };
@@ -512,6 +548,7 @@ mod tests {
             description: None,
             source_locator: None,
             source_revision: None,
+            source_key: None,
             related_issues: Vec::new(),
             uid: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()),
         };
@@ -524,6 +561,84 @@ mod tests {
         );
         let reparsed: Requirement = parse_requirement(&yaml).unwrap();
         assert_eq!(reparsed, requirement);
+    }
+
+    /// ADR 0030: `source_key` is a generic, unconstrained field — it holds
+    /// whatever StrictDoc identifier it is given verbatim (in practice a
+    /// MID, but the type itself does not enforce that), including
+    /// uppercase letters that `id`'s slug rule would reject. It must round
+    /// trip through serialize/parse without any case change.
+    #[test]
+    fn serializes_and_reparses_requirement_source_key_verbatim() {
+        let requirement = Requirement {
+            id: "account-management".to_string(),
+            source: RequirementSource::External,
+            label: None,
+            axis: vec!["security".to_string()],
+            description: None,
+            source_locator: Some("specs/account.sdoc".to_string()),
+            source_revision: Some("deadbeef".to_string()),
+            source_key: Some("REQ-Login-01".to_string()),
+            related_issues: Vec::new(),
+            uid: None,
+        };
+
+        let yaml = serialize_requirement(&requirement);
+
+        assert_eq!(
+            yaml,
+            "id: account-management\nsource: external\nsource_locator: specs/account.sdoc\nsource_revision: deadbeef\nsource_key: REQ-Login-01\naxis: [security]\n"
+        );
+        let reparsed: Requirement = parse_requirement(&yaml).unwrap();
+        assert_eq!(reparsed, requirement);
+        assert_eq!(reparsed.source_key.as_deref(), Some("REQ-Login-01"));
+    }
+
+    /// ADR 0030: `source_key` carries no charset restriction (unlike
+    /// markharness's own slug-constrained ids), so StrictDoc UIDs
+    /// containing YAML-significant characters must still round trip
+    /// through serialize/parse exactly, instead of producing invalid or
+    /// silently altered YAML.
+    #[test]
+    fn round_trips_source_key_values_containing_yaml_significant_characters() {
+        let tricky_values = [
+            "REQ: Login-01",           // colon-space: would end the mapping value
+            "line one\nline two",      // embedded newline
+            "has \"double\" quotes",   // double quotes
+            "has 'single' quotes",     // single quotes
+            "- looks like a sequence", // leading "- "
+            "# looks like a comment",  // leading "#"
+            "trailing space ",         // trailing whitespace
+            "",                        // empty string
+            "abc\n",                   // single trailing newline
+            "abc\n\n",                 // multiple trailing newlines
+            "\n",                      // newline only
+        ];
+
+        for value in tricky_values {
+            let requirement = Requirement {
+                id: "account-management".to_string(),
+                source: RequirementSource::External,
+                label: None,
+                axis: vec!["security".to_string()],
+                description: None,
+                source_locator: Some("specs/account.sdoc".to_string()),
+                source_revision: Some("deadbeef".to_string()),
+                source_key: Some(value.to_string()),
+                related_issues: Vec::new(),
+                uid: None,
+            };
+
+            let yaml = serialize_requirement(&requirement);
+            let reparsed: Requirement = parse_requirement(&yaml)
+                .unwrap_or_else(|e| panic!("{value:?} produced invalid YAML: {e}\n{yaml}"));
+
+            assert_eq!(
+                reparsed.source_key.as_deref(),
+                Some(value),
+                "source_key did not round trip for {value:?}, got YAML:\n{yaml}"
+            );
+        }
     }
 
     #[test]

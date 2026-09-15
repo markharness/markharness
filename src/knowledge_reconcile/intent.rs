@@ -101,6 +101,11 @@ pub struct RequirementIntent {
     /// never persisted as-is.
     #[serde(default)]
     pub source_revision: Option<String>,
+    /// Present only for `source: external`: StrictDoc's own MID (a
+    /// machine-generated, always-lowercase-hex identifier), held verbatim
+    /// (ADR 0030). Never normalized.
+    #[serde(default)]
+    pub source_key: Option<String>,
     #[serde(default)]
     pub related_issues: Option<Vec<String>>,
 }
