@@ -206,6 +206,65 @@ fn a_feature_with_no_case_is_a_gap() {
     assert_eq!(gaps[0]["feature_id"], "player-duck");
 }
 
+/// ADR 0031: a Feature `contributes_to` two Requirements, but its only
+/// Scenario overrides with just one of them (`contributes_to` at the
+/// Scenario level). `coverage` must not report that Scenario as covering
+/// the Requirement it no longer names, even though its Feature still does.
+#[test]
+fn a_scenario_level_override_narrows_which_requirement_a_case_covers() {
+    const SECOND_REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC2";
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/persistence/requirement.yml"),
+        &format!(
+            "id: persistence\nsource: native\nlabel: persistence\naxis: [gameplay]\nuid: {SECOND_REQUIREMENT_UID}\n"
+        ),
+    );
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
+        &format!(
+            "id: player-jump\nrequirement_uids: [{REQUIREMENT_UID}, {SECOND_REQUIREMENT_UID}]\nlabel: player-jump\naxis: [gameplay]\n"
+        ),
+    );
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+        &format!(
+            "id: ground\nbehavior: jump\nlabel: ground\nuid: {SCENARIO_UID}\ndescription: |\n  From the ground.\nphases:\n  - steps:\n      - action: \"Presses jump.\"\n    results:\n      - \"Rises.\"\nrequirement_uids: [{REQUIREMENT_UID}]\n"
+        ),
+    );
+    commit(
+        dir.path(),
+        "docs: add a second requirement and override ground's scope",
+    );
+
+    // The Requirement the Scenario still names: its one case is covered.
+    let controls = coverage_json(dir.path(), &["--requirements", "controls"]);
+    assert_eq!(controls["gaps"].as_array().unwrap().len(), 0, "{controls}");
+    assert_eq!(
+        controls["requirements"][0]["cases"][0]["case_id"],
+        "tc-player-jump-jump-ground"
+    );
+
+    // The Requirement the Scenario no longer names: the Feature still
+    // contributes to it, but the override leaves it with no covering case.
+    let persistence = coverage_json(dir.path(), &["--requirements", "persistence"]);
+    let gaps = persistence["gaps"].as_array().unwrap();
+    assert_eq!(gaps.len(), 1, "{persistence}");
+    assert_eq!(gaps[0]["kind"], "feature_has_no_case");
+    assert_eq!(gaps[0]["feature_id"], "player-jump");
+    assert_eq!(
+        persistence["requirements"][0]["cases"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "{persistence}"
+    );
+}
+
 /// AC24: a recorded scope reproduces what that release selected.
 #[test]
 fn a_recorded_scope_reports_what_the_release_selected() {

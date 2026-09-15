@@ -155,6 +155,12 @@ pub struct Scenario {
     pub generated_by: Option<GeneratedBy>,
     #[serde(default)]
     pub verified_by: Option<VerifiedBy>,
+    /// Requirement UIDへの`contributes_to`関連(ADR 0031)。`Feature.requirement_uids`
+    /// と同じ意味・同じ型。1件以上あれば生成されるTestCaseの
+    /// `generated_from.requirement_uids`はこちらだけを使い、空ならFeature側へ
+    /// フォールバックする(§3)。
+    #[serde(default)]
+    pub requirement_uids: Vec<String>,
     /// 不変identity(ADR 0013、design/immutable-identity-model-design.md)。
     /// `identity::registry`のreplay結果から書き戻される値であり、未移行の
     /// プロジェクトや`identity migrate`未実行のScenarioでは`None`(§後方互換)。
@@ -359,6 +365,12 @@ pub fn serialize_scenario(scenario: &Scenario) -> String {
     if let Some(verified_by) = &scenario.verified_by {
         out.push_str("verified_by:\n");
         out.push_str(&format!("  human_review: {}\n", verified_by.human_review));
+    }
+    if !scenario.requirement_uids.is_empty() {
+        out.push_str(&format!(
+            "requirement_uids: {}\n",
+            yaml_flow_array(&scenario.requirement_uids)
+        ));
     }
     append_uid_line(&mut out, &scenario.uid);
     out
@@ -950,6 +962,7 @@ mod tests {
             implementation_note: None,
             generated_by: None,
             verified_by: None,
+            requirement_uids: Vec::new(),
             uid: None,
         }
     }
@@ -1090,6 +1103,34 @@ mod tests {
         );
         let reparsed: Scenario = parse_scenario(&yaml).unwrap();
         assert_eq!(reparsed.uid, scenario.uid);
+    }
+
+    /// ADR 0031: `Scenario.requirement_uids` mirrors `Feature.requirement_uids`
+    /// and must round trip.
+    #[test]
+    fn serializes_scenario_with_requirement_uids_when_present() {
+        let mut scenario = sample_scenario();
+        scenario.requirement_uids = vec!["01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()];
+
+        let yaml = serialize_scenario(&scenario);
+
+        assert_eq!(
+            yaml,
+            "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nphases:\n  - steps:\n      - action: \"Land on the ground.\"\n    results:\n      - \"Player is standing on the ground.\"\nrequirement_uids: [01ARZ3NDEKTSV4RRFFQ69G5FAV]\n"
+        );
+        let reparsed: Scenario = parse_scenario(&yaml).unwrap();
+        assert_eq!(reparsed.requirement_uids, scenario.requirement_uids);
+    }
+
+    /// A Scenario written before this field existed has no `requirement_uids:`
+    /// key and must still parse, defaulting to empty — not an error.
+    #[test]
+    fn parses_scenario_yaml_without_requirement_uids_as_empty() {
+        let yaml = "id: player-jump-jump-ground\nbehavior: player-jump-jump\nlabel: ground\ndescription: |\n  Jump from the ground and land.\nphases:\n  - steps:\n      - action: \"Land on the ground.\"\n    results:\n      - \"Player is standing on the ground.\"\n";
+
+        let scenario: Scenario = parse_scenario(yaml).unwrap();
+
+        assert_eq!(scenario.requirement_uids, Vec::<String>::new());
     }
 
     /// A round trip (parse -> serialize) must not silently drop
