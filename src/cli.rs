@@ -145,11 +145,14 @@ pub enum Command {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Report Requirement/Feature/Behavior/Scenario/TestCase relations, read-only (ADR 0032, v2 design §cli-read-model)
+    /// Report Requirement/Feature/Behavior/Scenario/TestCase relations, read-only (ADR 0032/0033, v2 design §cli-read-model)
     Traceability {
-        /// Git revision to read the Knowledge and generated TestCases at
-        #[arg(long, default_value = "HEAD")]
-        at: String,
+        /// Git revision to read the Knowledge and generated TestCases at.
+        /// Omit to read the working tree instead (ADR 0033) — unlike
+        /// impact/coverage, traceability has no two-point-comparison or
+        /// release-auditing requirement that would need a commit first.
+        #[arg(long)]
+        at: Option<String>,
         /// Stable output representation
         #[arg(long, value_enum, default_value = "json")]
         format: ImportFormatArg,
@@ -1150,7 +1153,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
             dir,
         } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match crate::traceability::compute(&root, &at) {
+            match crate::traceability::compute(&root, at.as_deref()) {
                 Ok(model) => {
                     println!(
                         "{}",

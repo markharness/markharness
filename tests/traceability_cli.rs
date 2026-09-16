@@ -157,6 +157,63 @@ fn traceability_relates_the_scenario_to_the_requirement_it_contributes_to() {
 }
 
 #[test]
+fn traceability_reads_the_working_tree_when_at_is_omitted() {
+    // ADR 0033: unlike impact/coverage, traceability has no two-point or
+    // release-auditing requirement, so omitting --at reads uncommitted
+    // Knowledge — the same way generate/verify already do — instead of
+    // requiring a commit first.
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: native\nlabel: timing\naxis: [gameplay]\n",
+    );
+    // Deliberately not committed.
+
+    let value = traceability_json(dir.path(), &[]);
+
+    assert!(
+        value["requirements"]
+            .as_array()
+            .expect("requirements array")
+            .iter()
+            .any(|r| r["requirement_id"] == "timing"),
+        "expected the uncommitted Requirement to be visible: {value}"
+    );
+}
+
+#[test]
+fn traceability_reports_working_tree_as_the_at_value_when_at_is_omitted() {
+    let dir = project();
+    let value = traceability_json(dir.path(), &[]);
+
+    assert_eq!(value["at"], "working-tree");
+}
+
+#[test]
+fn traceability_at_head_does_not_see_uncommitted_changes() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: native\nlabel: timing\naxis: [gameplay]\n",
+    );
+    // Deliberately not committed.
+
+    let value = traceability_json(dir.path(), &["--at", "HEAD"]);
+
+    assert_eq!(value["at"], "HEAD");
+    assert!(
+        value["requirements"]
+            .as_array()
+            .expect("requirements array")
+            .iter()
+            .all(|r| r["requirement_id"] != "timing"),
+        "an uncommitted Requirement must not appear when reading a Git ref: {value}"
+    );
+}
+
+#[test]
 fn traceability_omits_relations_for_entities_without_a_uid() {
     // The Feature in the fixture has no `uid:` (not migrated), so it cannot
     // appear on either side of a relation — a relation without a stable UID

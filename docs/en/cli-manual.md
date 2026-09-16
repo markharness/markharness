@@ -1040,17 +1040,17 @@ uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
 
 ---
 
-### 1.25 `markharness traceability` — Read Requirement/Feature/Behavior/Scenario/TestCase relations (ADR 0032, design doc cli-read-model-design.md §5)
+### 1.25 `markharness traceability` — Read Requirement/Feature/Behavior/Scenario/TestCase relations (ADR 0032/0033, design doc cli-read-model-design.md §5)
 
 ```text
 markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 ```
 
-**Purpose**: Reads Requirement/Feature/Behavior/Scenario/TestCase relations, read-only, from the Knowledge and generated TestCases at a given Git ref. Lets external tools such as `markharness-view` take this output as their only input, without reading Knowledge or `.markharness/` directly (ADR 0032). Like `impact` and `coverage`, it never goes through `CommandOutcome`/`Presenter`; its own module's struct is serialized directly to JSON.
+**Purpose**: Reads Requirement/Feature/Behavior/Scenario/TestCase relations, read-only, from Knowledge and generated TestCases. Lets external tools such as `markharness-view` take this output as their only input, without reading Knowledge or `.markharness/` directly (ADR 0032). Like `impact` and `coverage`, it never goes through `CommandOutcome`/`Presenter`; its own module's struct is serialized directly to JSON.
 
-**`--at` is optional, defaulting to `HEAD`**. Unlike `generate`, it never writes any artifact.
+**`--at` is optional. Omitting it reads the working tree** — the uncommitted, current content — the same way `generate`/`verify` already do (ADR 0033). Giving `--at <ref>` reads that Git ref's committed content instead. Unlike `impact`/`coverage`, `traceability` has no two-point-comparison or release-auditing requirement, so it never demands a commit first. It never writes any artifact, unlike `generate`.
 
-**Output**: `schema_version: 1` and `record_kind: traceability`, plus `requirements` (`requirement_id`, `requirement_uid`, `source`), `features` (`feature_id`, `feature_uid`), `behaviors` (`behavior_id`, `feature_id`; `behavior_uid` is always `null` today — the current Knowledge-reading path has no way to obtain it), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`.
+**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`), `features` (`feature_id`, `feature_uid`), `behaviors` (`behavior_id`, `feature_id`; `behavior_uid` is always `null` today — the current Knowledge-reading path has no way to obtain it), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`.
 
 **Behavior**
 
@@ -1066,6 +1066,18 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 | 3 | Filesystem error |
 
 **Example**
+
+```console
+$ markharness traceability
+{
+  "schema_version": 1,
+  "record_kind": "traceability",
+  "at": "working-tree",
+  ...
+}
+```
+
+To check committed state at a specific point instead, give `--at`:
 
 ```console
 $ markharness traceability --at HEAD
@@ -1094,7 +1106,7 @@ $ markharness traceability --at HEAD
 }
 ```
 
-**Use case mapping**: [cli-read-model-design.md](./design/cli-read-model-design.md) §5's `TraceabilityReadModel`, [ADR 0032](./decisions/0032-cli-read-model-seam.md).
+**Use case mapping**: [cli-read-model-design.md](./design/cli-read-model-design.md) §5's `TraceabilityReadModel`, [ADR 0032](./decisions/0032-cli-read-model-seam.md) / [ADR 0033](./decisions/0033-traceability-defaults-to-working-tree.md).
 
 ---
 

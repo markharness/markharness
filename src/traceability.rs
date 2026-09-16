@@ -14,10 +14,17 @@ use crate::generate::{self, KnowledgeCaseSnapshot};
 use crate::git;
 use crate::identity::{CaseRevision, CaseUid};
 use crate::knowledge::{self, Feature, Requirement, RequirementSource};
-use crate::knowledge_source::{GitTreeKnowledgeSource, KnowledgeSource};
+use crate::knowledge_source::{
+    GitTreeKnowledgeSource, KnowledgeSource, WorkingTreeKnowledgeSource,
+};
 
 const SCHEMA_VERSION: u32 = 1;
 const RECORD_KIND: &str = "traceability";
+/// `at`'s value when `--at` is omitted (ADR 0033). Reserved the same way
+/// `HEAD` effectively is: a real Git ref sharing this exact name would
+/// collide, an accepted practical risk rather than something worth guarding
+/// against.
+const WORKING_TREE: &str = "working-tree";
 
 #[derive(Debug)]
 pub enum TraceabilityError {
@@ -111,58 +118,122 @@ pub struct TraceabilityReadModel {
     pub relations: Vec<TraceabilityRelation>,
 }
 
-/// Every Requirement at `git_ref`, keyed by display id. Mirrors
+/// Every Requirement at `git_ref` (the working tree when `None`, ADR 0033),
+/// keyed by display id. The Git-ref branch mirrors
 /// `impact::requirements_at`/`coverage::requirements_at`.
 fn requirements_at(
     root: &Path,
-    git_ref: &str,
+    git_ref: Option<&str>,
 ) -> Result<BTreeMap<String, Requirement>, TraceabilityError> {
     let mut requirements = BTreeMap::new();
-    for entry in git::ls_tree_recursive(
-        root,
-        git_ref,
-        &format!(
-            "{}/requirements",
-            crate::project_root::KNOWLEDGE_PATH_IN_REPO
-        ),
-    )? {
-        if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/requirement.yml") {
-            continue;
+    match git_ref {
+        Some(git_ref) => {
+            for entry in git::ls_tree_recursive(
+                root,
+                git_ref,
+                &format!(
+                    "{}/requirements",
+                    crate::project_root::KNOWLEDGE_PATH_IN_REPO
+                ),
+            )? {
+                if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/requirement.yml")
+                {
+                    continue;
+                }
+                let content = git::show_blob_by_sha(root, &entry.sha)?;
+                let requirement = knowledge::parse_requirement(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: entry.path.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
+                requirements.insert(requirement.id.clone(), requirement);
+            }
         }
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
-        let requirement =
-            knowledge::parse_requirement(&content).map_err(|e| TraceabilityError::Malformed {
-                path: entry.path.clone(),
-                message: e.to_string(),
-            })?;
-        requirements.insert(requirement.id.clone(), requirement);
+        None => {
+            let requirements_dir = root
+                .join(crate::project_root::KNOWLEDGE_PATH_IN_REPO)
+                .join("requirements");
+            for dir in generate::sorted_subdirs(&requirements_dir)? {
+                let path = dir.join("requirement.yml");
+                if !path.is_file() {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&path)?;
+                let requirement = knowledge::parse_requirement(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: repo_relative_path(root, &path),
+                        message: e.to_string(),
+                    }
+                })?;
+                requirements.insert(requirement.id.clone(), requirement);
+            }
+        }
     }
     Ok(requirements)
 }
 
-/// Every Feature at `git_ref`, keyed by display id. Read directly (like
+/// Every Feature at `git_ref` (the working tree when `None`, ADR 0033),
+/// keyed by display id. Read directly (like
 /// `coverage::features_for_requirement`) rather than derived from generated
 /// TestCases, so a Feature with no Behavior/Scenario underneath is still
 /// visible (the same gap coverage's AC21 cares about).
-fn features_at(root: &Path, git_ref: &str) -> Result<BTreeMap<String, Feature>, TraceabilityError> {
+fn features_at(
+    root: &Path,
+    git_ref: Option<&str>,
+) -> Result<BTreeMap<String, Feature>, TraceabilityError> {
     let mut features = BTreeMap::new();
-    for entry in git::ls_tree_recursive(
-        root,
-        git_ref,
-        &format!("{}/features", crate::project_root::KNOWLEDGE_PATH_IN_REPO),
-    )? {
-        if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/feature.yml") {
-            continue;
+    match git_ref {
+        Some(git_ref) => {
+            for entry in git::ls_tree_recursive(
+                root,
+                git_ref,
+                &format!("{}/features", crate::project_root::KNOWLEDGE_PATH_IN_REPO),
+            )? {
+                if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/feature.yml") {
+                    continue;
+                }
+                let content = git::show_blob_by_sha(root, &entry.sha)?;
+                let feature = knowledge::parse_feature(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: entry.path.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
+                features.insert(feature.id.clone(), feature);
+            }
         }
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
-        let feature =
-            knowledge::parse_feature(&content).map_err(|e| TraceabilityError::Malformed {
-                path: entry.path.clone(),
-                message: e.to_string(),
-            })?;
-        features.insert(feature.id.clone(), feature);
+        None => {
+            let features_dir = root
+                .join(crate::project_root::KNOWLEDGE_PATH_IN_REPO)
+                .join("features");
+            for dir in generate::sorted_subdirs(&features_dir)? {
+                let path = dir.join("feature.yml");
+                if !path.is_file() {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&path)?;
+                let feature = knowledge::parse_feature(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: repo_relative_path(root, &path),
+                        message: e.to_string(),
+                    }
+                })?;
+                features.insert(feature.id.clone(), feature);
+            }
+        }
     }
     Ok(features)
+}
+
+/// Formats `path` the same way Git-ref reads report one: repo-relative,
+/// forward-slashed. Keeps error messages consistent regardless of which
+/// source (`--at <ref>` or the working tree) produced them.
+fn repo_relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn push_relation(
@@ -297,15 +368,23 @@ fn build(
     }
 }
 
-/// Computes the Traceability read model at `git_ref`.
-pub fn compute(root: &Path, git_ref: &str) -> Result<TraceabilityReadModel, TraceabilityError> {
+/// Computes the Traceability read model. `git_ref` reads that Git revision;
+/// `None` reads the working tree instead (ADR 0033) — unlike `impact`
+/// (`base..head`) and `coverage` (release auditing), `traceability` has no
+/// requirement that its input already be committed.
+pub fn compute(
+    root: &Path,
+    git_ref: Option<&str>,
+) -> Result<TraceabilityReadModel, TraceabilityError> {
     let requirements = requirements_at(root, git_ref)?;
     let features = features_at(root, git_ref)?;
-    let snapshot = GitTreeKnowledgeSource::new(root, git_ref).load_snapshot()?;
-    Ok(build(
-        git_ref.to_string(),
-        &requirements,
-        &features,
-        &snapshot.cases,
-    ))
+    let snapshot = match git_ref {
+        Some(git_ref) => GitTreeKnowledgeSource::new(root, git_ref).load_snapshot()?,
+        None => {
+            WorkingTreeKnowledgeSource::new(root.join(crate::project_root::KNOWLEDGE_PATH_IN_REPO))
+                .load_snapshot()?
+        }
+    };
+    let at = git_ref.map_or_else(|| WORKING_TREE.to_string(), |git_ref| git_ref.to_string());
+    Ok(build(at, &requirements, &features, &snapshot.cases))
 }

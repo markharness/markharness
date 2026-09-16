@@ -1040,17 +1040,17 @@ uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
 
 ---
 
-### 1.25 `markharness traceability` — Requirement・Feature・Behavior・Scenario・TestCaseの関係を読む(ADR 0032、設計書 cli-read-model-design.md §5)
+### 1.25 `markharness traceability` — Requirement・Feature・Behavior・Scenario・TestCaseの関係を読む(ADR 0032・0033、設計書 cli-read-model-design.md §5)
 
 ```text
 markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 ```
 
-**用途**: 指定したGit ref時点のKnowledgeと生成済みTestCaseから、Requirement・Feature・Behavior・Scenario・TestCaseの関係を読み取り専用で出力する。`markharness-view`などの外部ツールが、Knowledgeや`.markharness/`を直接読まずにこの出力だけを入力にできるようにする(ADR 0032)。`impact`・`coverage`と同じく`CommandOutcome`/`Presenter`を経由せず、専用モジュールの構造体を直接JSONへシリアライズする。
+**用途**: Knowledgeと生成済みTestCaseから、Requirement・Feature・Behavior・Scenario・TestCaseの関係を読み取り専用で出力する。`markharness-view`などの外部ツールが、Knowledgeや`.markharness/`を直接読まずにこの出力だけを入力にできるようにする(ADR 0032)。`impact`・`coverage`と同じく`CommandOutcome`/`Presenter`を経由せず、専用モジュールの構造体を直接JSONへシリアライズする。
 
-**`--at`は省略可、既定`HEAD`**。`generate`のように生成物を書き込むことはない。
+**`--at`は省略可。省略時は作業ツリー(コミット前の現在の内容)を読む**(`generate`・`verify`と同じ経路。ADR 0033)。`--at <ref>`を指定した場合は、そのGit ref時点のコミット内容を読む。`impact`・`coverage`と異なり`traceability`には2点比較やリリース監査の要件がないため、コミットを要求しない。`generate`のように生成物を書き込むことはない。
 
-**出力**: `schema_version: 1`・`record_kind: traceability`に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`)、`features`(`feature_id`・`feature_uid`)、`behaviors`(`behavior_id`・`feature_id`。`behavior_uid`は現状のKnowledge読み取り経路では取得できず常に`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。
+**出力**: `schema_version: 1`・`record_kind: traceability`・`at`(`--at`省略時は固定値`"working-tree"`、指定時は指定文字列そのまま。ADR 0033)に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`)、`features`(`feature_id`・`feature_uid`)、`behaviors`(`behavior_id`・`feature_id`。`behavior_uid`は現状のKnowledge読み取り経路では取得できず常に`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。
 
 **動作**
 
@@ -1066,6 +1066,18 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 | 3 | ファイルシステムエラー |
 
 **使用例**
+
+```console
+$ markharness traceability
+{
+  "schema_version": 1,
+  "record_kind": "traceability",
+  "at": "working-tree",
+  ...
+}
+```
+
+コミット済みの特定時点を見たい場合は`--at`を指定する:
 
 ```console
 $ markharness traceability --at HEAD
@@ -1094,7 +1106,7 @@ $ markharness traceability --at HEAD
 }
 ```
 
-**ユースケース対応**: [cli-read-model-design.md](./design/cli-read-model-design.md)§5の`TraceabilityReadModel`、[ADR 0032](./decisions/0032-cli-read-model-seam.md)。
+**ユースケース対応**: [cli-read-model-design.md](./design/cli-read-model-design.md)§5の`TraceabilityReadModel`、[ADR 0032](./decisions/0032-cli-read-model-seam.md)・[ADR 0033](./decisions/0033-traceability-defaults-to-working-tree.md)。
 
 ---
 
