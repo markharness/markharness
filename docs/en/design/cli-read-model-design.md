@@ -99,13 +99,15 @@ If reading past formats is ever needed, that is handled by adding a separate rec
 
 Provides the relations among Requirement, Feature, Behavior, Scenario, and TestCase in a form external tools can browse.
 
+Omitting `--at <ref>` reads the working tree; giving it reads that Git ref (ADR 0033). Unlike `impact`/`coverage`, `traceability` has no two-point-comparison or release-auditing requirement, so nothing stops it from reading the working tree directly, the same way `generate`/`verify` already do.
+
 ### 5.2 Structure (implemented: `src/traceability.rs`)
 
 ```rust
 struct TraceabilityReadModel {
     schema_version: u32,       // already emitted alongside "record_kind": "traceability"
     record_kind: &'static str,
-    at: String,
+    at: String, // fixed "working-tree" when --at is omitted; otherwise the given string as-is (ADR 0033)
     requirements: Vec<RequirementNode>,
     features: Vec<FeatureNode>,
     behaviors: Vec<BehaviorNode>,
@@ -369,8 +371,8 @@ Per-command modules for the read-only commands (unrelated to CommandOutcome)
 The initial mapping is:
 
 ```text
-markharness traceability --at <ref> --format json
-  → TraceabilityReadModel
+markharness traceability [--at <ref>] --format json
+  → TraceabilityReadModel (omit --at for the working tree, give it for a Git ref; ADR 0033)
 
 markharness impact --base <ref> --head <ref> --format json
   → ChangeImpactReadModel
@@ -379,7 +381,7 @@ markharness coverage --requirements <ids-or-all> [--release <id>] --at <ref> --f
   → ReleaseCoverageReadModel
 ```
 
-`traceability` is new. The existing `generate` is a write command that produces artifacts; a successful generation result and a Knowledge-browsing result are not mixed into the same command. `traceability` is read-only: it reads Knowledge and already-generated TestCases at the Git ref given by `--at`.
+`traceability` is new. The existing `generate` is a write command that produces artifacts; a successful generation result and a Knowledge-browsing result are not mixed into the same command. `traceability` is read-only: giving `--at` reads that Git ref; omitting it reads the working tree's Knowledge and already-generated TestCases. `impact` and `coverage` keep `--at` (or `--base`/`--head`) required, since comparing two points and auditing a release are their whole point (ADR 0033).
 
 `impact` and `coverage` already return the full `ChangeImpactReadModel`/`ReleaseCoverageReadModel` via `--format json`. Both currently support only `--format json`; human-readable output is not implemented. If it is added later, it is generated from the same struct.
 
@@ -463,7 +465,7 @@ In connection with the CLI read-model design, the commands ultimately provided a
 
 | Command | Category | Writes | Primary use | Output read model |
 |---|---|---:|---|---|
-| `markharness traceability --at <ref> [--format json]` | New | No | Read Requirement/Feature/Behavior/Scenario/TestCase relations | `TraceabilityReadModel` |
+| `markharness traceability [--at <ref>] [--format json]` | New | No | Read Requirement/Feature/Behavior/Scenario/TestCase relations (omit `--at` for the working tree) | `TraceabilityReadModel` |
 | `markharness impact --base <ref> --head <ref> [--format json]` | Existing (implemented) | No | Read change impact, affected TestCases, and acknowledgment state | `ChangeImpactReadModel` |
 | `markharness coverage --requirements <ids-or-all> [--release <id>] --at <ref> [--format json]` | Existing (implemented) | No | Read Release Coverage, verification means, and coverage gaps | `ReleaseCoverageReadModel` |
 | `markharness knowledge reconcile <intent-file> [--check]` | Existing command | Yes (no with `--check`) | Validate a UID-bearing Intent and create/update/rename Knowledge | The applied result; updates the read models' input |
@@ -473,12 +475,13 @@ In connection with the CLI read-model design, the commands ultimately provided a
 `markharness-view` uses these three read commands.
 
 ```text
-markharness traceability --at HEAD --format json
+markharness traceability --format json                # live preview while editing: reads the working tree (ADR 0033)
+markharness traceability --at HEAD --format json       # to check committed state instead
 markharness impact --base main --head HEAD --format json
 markharness coverage --requirements all --at HEAD --format json
 ```
 
-Each prints a single JSON read model to stdout. view never reads Knowledge or `.markharness/` directly; it takes these outputs as input.
+Each prints a single JSON read model to stdout. view never reads Knowledge or `.markharness/` directly; it takes these outputs as input. `traceability` differs from `impact`/`coverage` in that it can reflect what the user just edited, before it's committed (ADR 0033).
 
 ### 14.2 Relationship to write commands
 

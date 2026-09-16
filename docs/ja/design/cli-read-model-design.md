@@ -99,13 +99,15 @@ release_coverage
 
 Requirement・Feature・Behavior・Scenario・TestCaseの関係を、外部ツールが閲覧できる形で提供する。
 
+`--at <ref>`を省略した場合は作業ツリーを読み、指定した場合はそのGit ref時点を読む(ADR 0033)。`impact`・`coverage`と異なり、`traceability`には2点比較やリリース監査の要件がなく、`generate`・`verify`と同じく作業ツリーを直接読むことに支障がないためである。
+
 ### 5.2 構造(実装済み: `src/traceability.rs`)
 
 ```rust
 struct TraceabilityReadModel {
     schema_version: u32,        // "record_kind": "traceability" と共に出力
     record_kind: &'static str,
-    at: String,
+    at: String, // "--at"省略時は固定値"working-tree"。指定時は指定文字列そのまま(ADR 0033)
     requirements: Vec<RequirementNode>,
     features: Vec<FeatureNode>,
     behaviors: Vec<BehaviorNode>,
@@ -368,8 +370,8 @@ CommandOutcome(書込み系。CanonicalImported / Generated / ChangesComputed)
 初期の対応は次のとおりとする。
 
 ```text
-markharness traceability --at <ref> --format json
-  → TraceabilityReadModel
+markharness traceability [--at <ref>] --format json
+  → TraceabilityReadModel(--at省略時は作業ツリー、指定時はGit ref。ADR 0033)
 
 markharness impact --base <ref> --head <ref> --format json
   → ChangeImpactReadModel
@@ -378,7 +380,7 @@ markharness coverage --requirements <ids-or-all> [--release <id>] --at <ref> --f
   → ReleaseCoverageReadModel
 ```
 
-`traceability`は新設する。既存の`generate`は生成物を書き込むコマンドであり、生成処理の成功結果とKnowledgeの閲覧結果を同じコマンドへ混ぜない。`traceability`は読み取り専用とし、`--at`で指定したGit refのKnowledgeと生成済みTestCaseを読む。
+`traceability`は新設する。既存の`generate`は生成物を書き込むコマンドであり、生成処理の成功結果とKnowledgeの閲覧結果を同じコマンドへ混ぜない。`traceability`は読み取り専用とし、`--at`を指定すればそのGit ref時点、省略すれば作業ツリーのKnowledgeと生成済みTestCaseを読む。`impact`・`coverage`は2点比較・リリース監査という性質上`--at`(または`--base`/`--head`)を必須のままとする(ADR 0033)。
 
 `impact`と`coverage`は、`ChangeImpactReadModel`・`ReleaseCoverageReadModel`全体を返す`--format json`実装が既に完了している。両コマンドとも現状`--format`の値は`json`のみで、人間可読出力は未実装である。人間可読出力を追加する場合も、同じ構造体から生成する。
 
@@ -462,7 +464,7 @@ CLIリードモデル設計に関係して、最終的に提供するコマン�
 
 | コマンド | 区分 | 書込み | 主な用途 | 出力リードモデル |
 |---|---|---:|---|---|
-| `markharness traceability --at <ref> [--format json]` | 新規追加 | なし | Requirement・Feature・Behavior・Scenario・TestCaseの関係を読む | `TraceabilityReadModel` |
+| `markharness traceability [--at <ref>] [--format json]` | 新規追加 | なし | Requirement・Feature・Behavior・Scenario・TestCaseの関係を読む(`--at`省略時は作業ツリー) | `TraceabilityReadModel` |
 | `markharness impact --base <ref> --head <ref> [--format json]` | 既存(実装済み) | なし | 変更影響、影響を受けるTestCase、対応確認状態を読む | `ChangeImpactReadModel` |
 | `markharness coverage --requirements <ids-or-all> [--release <id>] --at <ref> [--format json]` | 既存(実装済み) | なし | Release Coverage、検証手段、coverage gapを読む | `ReleaseCoverageReadModel` |
 | `markharness knowledge reconcile <intent-file> [--check]` | 既存コマンド | あり（`--check`時はなし） | UID付きIntentを検証し、Knowledgeを作成・更新・renameする | 反映結果。リードモデルの入力を更新する |
@@ -472,12 +474,13 @@ CLIリードモデル設計に関係して、最終的に提供するコマン�
 `markharness-view`が利用するのは、次の3つの読み取りコマンドである。
 
 ```text
-markharness traceability --at HEAD --format json
+markharness traceability --format json                # 編集中のプレビュー: 作業ツリーを読む(ADR 0033)
+markharness traceability --at HEAD --format json       # コミット済み状態を確認したい場合
 markharness impact --base main --head HEAD --format json
 markharness coverage --requirements all --at HEAD --format json
 ```
 
-これらは標準出力へ1つのJSONリードモデルを出力する。viewはKnowledgeや`.markharness/`を直接読み取らず、これらの出力を入力とする。
+これらは標準出力へ1つのJSONリードモデルを出力する。viewはKnowledgeや`.markharness/`を直接読み取らず、これらの出力を入力とする。`traceability`は、利用者が編集した直後(コミット前)の状態をそのまま反映できる点が、`impact`・`coverage`と異なる(ADR 0033)。
 
 ### 14.2 書込みコマンドとの関係
 
