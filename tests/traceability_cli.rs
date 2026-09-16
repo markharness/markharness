@@ -197,6 +197,55 @@ fn traceability_rejects_a_native_requirement_carrying_external_only_fields() {
 }
 
 #[test]
+fn traceability_rejects_a_native_requirement_carrying_only_source_revision() {
+    // Regression: an earlier version of this check only looked at
+    // source_locator/source_key, so a native Requirement carrying just
+    // source_revision (also external-only, ADR 0023) slipped through
+    // unrejected even though `validate` would refuse it.
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: native\nlabel: timing\nsource_revision: 0123456789abcdef0123456789abcdef01234567\naxis: [gameplay]\n",
+    );
+    commit(dir.path(), "chore: add a malformed requirement");
+
+    let output = traceability(dir.path(), &["--at", "HEAD"]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
+fn traceability_rejects_a_native_requirement_without_a_label() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: native\naxis: [gameplay]\n",
+    );
+    commit(dir.path(), "chore: add a malformed requirement");
+
+    let output = traceability(dir.path(), &["--at", "HEAD"]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
+fn traceability_rejects_an_external_requirement_carrying_a_label() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: external\nlabel: timing\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\nsource_key: REQ-Timing-01\naxis: [gameplay]\n",
+    );
+    commit(dir.path(), "chore: add a malformed requirement");
+
+    let output = traceability(dir.path(), &["--at", "HEAD"]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
 fn traceability_rejects_an_external_requirement_missing_source_locator_or_source_key() {
     let dir = project();
     write(

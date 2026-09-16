@@ -1056,7 +1056,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 - Feature・Requirementは`generate`が生成するTestCaseの有無に関わらず、Knowledgeに存在する全件を出力する(`coverage`のAC21と同じ理由で、対応するTestCaseが無いFeatureも可視化する)。
 - Behavior・Scenario・TestCaseは、生成される全TestCaseから導出する(空のPhaseを持つScenarioは`generate`が拒否するため、実在するScenarioは必ず1件のTestCaseに対応する)。
-- `source`(native/external)と`source_locator`/`source_key`の組み合わせが矛盾するRequirement(例: `source: native`なのに`source_locator`を持つ)は拒否する(終了コード2)。`validate`と同じ制約(ADR 0023)だが、`traceability`は`validate`が実行済みであることを前提にできないため、読み取り時に自前で確認する。
+- `source`(native/external)と、それぞれが排他的に持つフィールド(`label`・`source_locator`・`source_revision`・`source_key`。externalは`description`も)が矛盾するRequirement(例: `source: native`なのに`source_locator`を持つ、`source: external`なのに`label`を持つ)は拒否する(終了コード2)。`validate`と同じ制約(ADR 0023)だが、`traceability`は`validate`が実行済みであることを前提にできないため、読み取り時に自前で確認する。
 
 **終了コード**
 

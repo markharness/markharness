@@ -180,13 +180,19 @@ fn requirements_at(
     Ok(requirements)
 }
 
-/// Rejects a Requirement whose `source_locator`/`source_key` disagree with
-/// its `source` (ADR 0023). `traceability` exposes both fields verbatim
-/// (`RequirementNode`), so passing through a native Requirement that also
-/// carries them would let a reader (e.g. markharness-view) follow a stale or
-/// unrelated external reference for what is actually native content.
-/// `validate` catches this too, but `traceability` cannot assume `validate`
-/// has run against every commit it might be asked to read.
+/// Rejects a Requirement whose fields disagree with its `source` (ADR 0023:
+/// each mode owns a disjoint set of fields). Mirrors
+/// `validate::check_requirement_source_mode` in full, not just the two
+/// fields (`source_locator`/`source_key`) `RequirementNode` happens to
+/// expose: `traceability` cannot assume `validate` has already run against
+/// every commit it might be asked to read, and a Requirement that would fail
+/// `validate` should not be treated as well-formed here either. Passing
+/// through a native Requirement that also carries `source_locator`/
+/// `source_key` in particular would let a reader (e.g. markharness-view)
+/// follow a stale or unrelated external reference for what is actually
+/// native content — the concrete case this exists to prevent — but the
+/// other disjoint fields are checked too, so a Requirement `validate` would
+/// reject never gets treated as clean here by coincidence.
 fn check_requirement_source_mode(
     requirement: &Requirement,
     path: &str,
@@ -197,16 +203,51 @@ fn check_requirement_source_mode(
     };
     match requirement.source {
         RequirementSource::Native => {
-            if requirement.source_locator.is_some() || requirement.source_key.is_some() {
+            if requirement.label.is_none() {
                 return Err(malformed(
-                    "source: native must not carry `source_locator`/`source_key` (those belong to source: external)",
+                    "source: native requires `label` (markharness owns the content)",
+                ));
+            }
+            if requirement.source_locator.is_some() {
+                return Err(malformed(
+                    "source: native must not carry `source_locator` (that belongs to source: external)",
+                ));
+            }
+            if requirement.source_revision.is_some() {
+                return Err(malformed(
+                    "source: native must not carry `source_revision` (that belongs to source: external)",
+                ));
+            }
+            if requirement.source_key.is_some() {
+                return Err(malformed(
+                    "source: native must not carry `source_key` (that belongs to source: external)",
                 ));
             }
         }
         RequirementSource::External => {
-            if requirement.source_locator.is_none() || requirement.source_key.is_none() {
+            if requirement.source_locator.is_none() {
                 return Err(malformed(
-                    "source: external requires both `source_locator` and `source_key`",
+                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                ));
+            }
+            if requirement.source_revision.is_none() {
+                return Err(malformed(
+                    "source: external requires `source_revision` (the pinned blob OID of that .sdoc)",
+                ));
+            }
+            if requirement.source_key.is_none() {
+                return Err(malformed(
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)",
+                ));
+            }
+            if requirement.label.is_some() {
+                return Err(malformed(
+                    "source: external must not carry `label` — the external document owns the content",
+                ));
+            }
+            if requirement.description.is_some() {
+                return Err(malformed(
+                    "source: external must not carry `description` — the external document owns the content",
                 ));
             }
         }
