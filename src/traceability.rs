@@ -52,6 +52,11 @@ pub struct RequirementNode {
     pub requirement_id: String,
     pub requirement_uid: Option<String>,
     pub source: &'static str,
+    /// Present only when `source` is `"external"` (ADR 0023): lets a reader
+    /// reach the underlying StrictDoc content. Always `None` for `"native"`.
+    pub source_locator: Option<String>,
+    /// StrictDoc's MID (ADR 0030). Always `None` for `"native"`.
+    pub source_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -272,6 +277,8 @@ fn build(
                 RequirementSource::Native => "native",
                 RequirementSource::External => "external",
             },
+            source_locator: requirement.source_locator.clone(),
+            source_key: requirement.source_key.clone(),
         })
         .collect();
 

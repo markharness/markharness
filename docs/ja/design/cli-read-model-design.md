@@ -124,6 +124,10 @@ struct RequirementNode {
     requirement_id: String,
     requirement_uid: Option<String>,
     source: &'static str, // "native" | "external"
+    // source: "external" の場合のみ値を持つ(ADR 0023)。StrictDoc等の実データを
+    // 参照する手段。source: "native" では常にNone。
+    source_locator: Option<String>, // 参照する.sdocファイルのリポジトリ内パス
+    source_key: Option<String>,     // StrictDocのMID(ADR 0030)
 }
 
 struct FeatureNode {
@@ -407,7 +411,7 @@ markharness coverage --requirements <ids-or-all> [--release <id>] --at <ref> --f
 3. 人間可読出力を追加した場合、JSON出力と同じ判定結果を表示する。
 4. UID、Case revision、Git refが結果から失われない。
 5. `ExecutionBinding`を実行結果と誤認させる表現がない。
-6. Requirementのsourceがnativeかexternalかという意味が失われない。
+6. Requirementのsourceがnativeかexternalかという意味が失われない。externalの場合、`source_locator`・`source_key`により、StrictDoc等の実データへ実際に辿り着けること(区別が付くだけでは不十分)。
 7. 未知の任意フィールドを追加しても、既存の読み取り側が必須フィールドを処理できる。
 
 JSON fixtureをリードモデル単位で用意し、viewリポジトリが参照できる出力例としても利用する。

@@ -1050,7 +1050,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 **`--at`は省略可。省略時は作業ツリー(コミット前の現在の内容)を読む**(`generate`・`verify`と同じ経路。ADR 0033)。`--at <ref>`を指定した場合は、そのGit ref時点のコミット内容を読む。`impact`・`coverage`と異なり`traceability`には2点比較やリリース監査の要件がないため、コミットを要求しない。`generate`のように生成物を書き込むことはない。
 
-**出力**: `schema_version: 1`・`record_kind: traceability`・`at`(`--at`省略時は固定値`"working-tree"`、指定時は指定文字列そのまま。ADR 0033)に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`)、`features`(`feature_id`・`feature_uid`)、`behaviors`(`behavior_id`・`feature_id`。`behavior_uid`は現状のKnowledge読み取り経路では取得できず常に`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。
+**出力**: `schema_version: 1`・`record_kind: traceability`・`at`(`--at`省略時は固定値`"working-tree"`、指定時は指定文字列そのまま。ADR 0033)に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`・`source_locator`・`source_key`。後2者は`source: "external"`の場合のみ値を持ち、StrictDoc等の実データを参照する。`source: "native"`では常に`null`)、`features`(`feature_id`・`feature_uid`)、`behaviors`(`behavior_id`・`feature_id`。`behavior_uid`は現状のKnowledge読み取り経路では取得できず常に`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。
 
 **動作**
 
@@ -1086,7 +1086,7 @@ $ markharness traceability --at HEAD
   "record_kind": "traceability",
   "at": "HEAD",
   "requirements": [
-    { "requirement_id": "controls", "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "source": "native" }
+    { "requirement_id": "controls", "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "source": "native", "source_locator": null, "source_key": null }
   ],
   "features": [
     { "feature_id": "player-jump", "feature_uid": null }

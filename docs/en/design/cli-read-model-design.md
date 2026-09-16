@@ -124,6 +124,10 @@ struct RequirementNode {
     requirement_id: String,
     requirement_uid: Option<String>,
     source: &'static str, // "native" | "external"
+    // Present only when source is "external" (ADR 0023): a way to reach the
+    // actual StrictDoc (or similar) content. Always None for "native".
+    source_locator: Option<String>, // repo-relative path of the referenced .sdoc file
+    source_key: Option<String>,     // StrictDoc's MID (ADR 0030)
 }
 
 struct FeatureNode {
@@ -408,7 +412,7 @@ Read models are tested from these angles.
 3. If human-readable output is added, it shows the same judgment results as the JSON output.
 4. UID, Case revision, and Git ref are never lost from the result.
 5. Nothing presents `ExecutionBinding` in a way that could be mistaken for an execution result.
-6. Whether a Requirement's source is native or external is never lost.
+6. Whether a Requirement's source is native or external is never lost. When external, `source_locator`/`source_key` let a reader actually reach the underlying StrictDoc (or similar) content — distinguishing the two is not enough on its own.
 7. Adding an unknown, optional field never breaks an existing reader's handling of required fields.
 
 JSON fixtures are prepared per read model, and also serve as output examples the view repository can reference.

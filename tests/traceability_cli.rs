@@ -117,6 +117,8 @@ fn traceability_reports_the_envelope_and_full_hierarchy_at_head() {
     assert_eq!(value["requirements"][0]["requirement_id"], "controls");
     assert_eq!(value["requirements"][0]["requirement_uid"], REQUIREMENT_UID);
     assert_eq!(value["requirements"][0]["source"], "native");
+    assert!(value["requirements"][0]["source_locator"].is_null());
+    assert!(value["requirements"][0]["source_key"].is_null());
 
     assert_eq!(value["features"][0]["feature_id"], "player-jump");
 
@@ -139,6 +141,33 @@ fn traceability_reports_the_envelope_and_full_hierarchy_at_head() {
         value["test_cases"][0]["relative_path"],
         "player-jump/jump/ground.yml"
     );
+}
+
+#[test]
+fn traceability_exposes_source_locator_and_source_key_for_an_external_requirement() {
+    // An external Requirement's content lives in a StrictDoc .sdoc file, not
+    // in requirement.yml. Knowing source: "external" alone doesn't let a
+    // reader reach that content — source_locator/source_key do (ADR 0023,
+    // ADR 0030).
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: external\nsource_locator: docs/requirements.sdoc\nsource_revision: 0123456789abcdef0123456789abcdef01234567\nsource_key: REQ-Timing-01\naxis: [gameplay]\n",
+    );
+    commit(dir.path(), "chore: add an external requirement");
+
+    let value = traceability_json(dir.path(), &["--at", "HEAD"]);
+
+    let timing = value["requirements"]
+        .as_array()
+        .expect("requirements array")
+        .iter()
+        .find(|r| r["requirement_id"] == "timing")
+        .expect("expected the external Requirement to be present");
+    assert_eq!(timing["source"], "external");
+    assert_eq!(timing["source_locator"], "docs/requirements.sdoc");
+    assert_eq!(timing["source_key"], "REQ-Timing-01");
 }
 
 #[test]
