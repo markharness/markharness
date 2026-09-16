@@ -152,6 +152,7 @@ fn requirements_at(
                         message: e.to_string(),
                     }
                 })?;
+                check_requirement_source_mode(&requirement, &entry.path)?;
                 requirements.insert(requirement.id.clone(), requirement);
             }
         }
@@ -171,11 +172,46 @@ fn requirements_at(
                         message: e.to_string(),
                     }
                 })?;
+                check_requirement_source_mode(&requirement, &repo_relative_path(root, &path))?;
                 requirements.insert(requirement.id.clone(), requirement);
             }
         }
     }
     Ok(requirements)
+}
+
+/// Rejects a Requirement whose `source_locator`/`source_key` disagree with
+/// its `source` (ADR 0023). `traceability` exposes both fields verbatim
+/// (`RequirementNode`), so passing through a native Requirement that also
+/// carries them would let a reader (e.g. markharness-view) follow a stale or
+/// unrelated external reference for what is actually native content.
+/// `validate` catches this too, but `traceability` cannot assume `validate`
+/// has run against every commit it might be asked to read.
+fn check_requirement_source_mode(
+    requirement: &Requirement,
+    path: &str,
+) -> Result<(), TraceabilityError> {
+    let malformed = |message: &str| TraceabilityError::Malformed {
+        path: path.to_string(),
+        message: message.to_string(),
+    };
+    match requirement.source {
+        RequirementSource::Native => {
+            if requirement.source_locator.is_some() || requirement.source_key.is_some() {
+                return Err(malformed(
+                    "source: native must not carry `source_locator`/`source_key` (those belong to source: external)",
+                ));
+            }
+        }
+        RequirementSource::External => {
+            if requirement.source_locator.is_none() || requirement.source_key.is_none() {
+                return Err(malformed(
+                    "source: external requires both `source_locator` and `source_key`",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Every Feature at `git_ref` (the working tree when `None`, ADR 0033),

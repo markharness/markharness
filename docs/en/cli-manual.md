@@ -1056,6 +1056,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 - Every Feature and Requirement in Knowledge is reported regardless of whether it has a generated TestCase underneath (the same reasoning as coverage's AC21: a Feature with nothing to verify it is still made visible).
 - Behaviors, Scenarios, and TestCases are derived from every generated TestCase (`generate` rejects a Scenario with empty phases, so an existing Scenario always corresponds to exactly one TestCase).
+- A Requirement whose `source` (native/external) disagrees with its `source_locator`/`source_key` (e.g. `source: native` that still carries `source_locator`) is rejected (exit code 2) — the same constraint `validate` enforces (ADR 0023), checked again here because `traceability` cannot assume `validate` has already run.
 
 **Exit codes**
 

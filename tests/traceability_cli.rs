@@ -171,6 +171,47 @@ fn traceability_exposes_source_locator_and_source_key_for_an_external_requiremen
 }
 
 #[test]
+fn traceability_rejects_a_native_requirement_carrying_external_only_fields() {
+    // ADR 0023: source_locator/source_key belong exclusively to source:
+    // external. If a hand-edited requirement.yml claims source: native but
+    // still carries them (validate would normally catch this first),
+    // traceability must not silently pass them through — a consumer such as
+    // markharness-view would otherwise be misdirected to unrelated external
+    // content for what is actually a native Requirement.
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: native\nlabel: timing\nsource_locator: docs/requirements.sdoc\nsource_key: REQ-Timing-01\naxis: [gameplay]\n",
+    );
+    commit(dir.path(), "chore: add a malformed requirement");
+
+    let output = traceability(dir.path(), &["--at", "HEAD"]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("timing") && stderr.contains("native"),
+        "expected an error naming the offending Requirement and its mode: {stderr}"
+    );
+}
+
+#[test]
+fn traceability_rejects_an_external_requirement_missing_source_locator_or_source_key() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        "id: timing\nsource: external\naxis: [gameplay]\n",
+    );
+    commit(dir.path(), "chore: add a malformed external requirement");
+
+    let output = traceability(dir.path(), &["--at", "HEAD"]);
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
 fn traceability_relates_the_scenario_to_the_requirement_it_contributes_to() {
     let dir = project();
     let value = traceability_json(dir.path(), &["--at", "HEAD"]);
