@@ -119,11 +119,16 @@ struct TraceabilityReadModel {
 
 各Nodeには、少なくとも表示IDとUIDを含める(UIDは`identity migrate`未実行の要素では`None`になりうる)。テストケースには、さらにCase revisionと生成パスを含める。
 
+`traceability`の目的は「関係を外部ツールが**閲覧できる**形で提供する」ことであり(§5.1)、識別子(`*_id`/`*_uid`)だけでは閲覧できない。そのため、各Nodeには人間可読な`label`も含める。Feature・Behavior・Scenarioの`label`はKnowledge上で必須のためNoneにならない(`String`)。Requirementの`label`はnativeの場合のみ存在する(ADR 0023によりexternalはmarkharnessが内容を所有しないため、`source_locator`/`source_key`とは非対称に、externalでは常に`None`のまま追加しない)。
+
 ```rust
 struct RequirementNode {
     requirement_id: String,
     requirement_uid: Option<String>,
     source: &'static str, // "native" | "external"
+    // source: "native"の場合のみ値を持つ。externalはmarkharnessが内容を
+    // 所有しないため(ADR 0023)、代表テキストを持たせない。
+    label: Option<String>,
     // source: "external" の場合のみ値を持つ(ADR 0023)。StrictDoc等の実データを
     // 参照する手段。source: "native" では常にNone。
     source_locator: Option<String>, // 参照する.sdocファイルのリポジトリ内パス
@@ -133,6 +138,7 @@ struct RequirementNode {
 struct FeatureNode {
     feature_id: String,
     feature_uid: Option<String>,
+    label: String,
 }
 
 struct BehaviorNode {
@@ -142,12 +148,14 @@ struct BehaviorNode {
     // 読む経路が必要。具体的な必要性が確認されるまで追加しない(YAGNI)。
     behavior_uid: Option<String>,
     feature_id: String,
+    label: String,
 }
 
 struct ScenarioNode {
     scenario_id: String,
     scenario_uid: Option<String>,
     behavior_id: String,
+    label: String,
 }
 
 struct TestCaseNode {
@@ -422,13 +430,15 @@ fixtureは`tests/fixtures/read-models/<record_kind>/v1/`に置く。markharness�
 
 次のモデルは、viewで具体的な必要性が確認されてから追加する。
 
-- TestCaseの詳細表示専用モデル
+- TestCaseの詳細表示専用モデル(`phases`・`axis`等、TestCaseの本文相当のcontent。`test_cases[].relative_path`が指す`.markharness/generated/testcases/<relative_path>`を直接読むことで当面代替できる)
 - Knowledge全文を対象とした検索結果モデル
 - Git履歴比較モデル
 - 複数refを横断する集計モデル
 - 永続化された検索・表示キャッシュ
 
 これらを将来性だけを理由に初期モデルへ含めない。二つ目の実在する読み取り形式や、具体的な利用上の不足が現れた時点で、新しいリードモデルまたはReaderを設計する。
+
+なお各Nodeの`label`(§5.2)はこの限りではない。`traceability`自身の目的である「閲覧できる形での提供」に直接必要な、識別子の付随情報であり、TestCaseの本文のような独立したcontentではないため、初期モデルに含める。
 
 ## 13. 初期設計で確定する事項
 

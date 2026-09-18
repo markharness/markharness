@@ -119,11 +119,16 @@ struct TraceabilityReadModel {
 
 Each Node carries at least a display ID and a UID (the UID may be `None` for an element `identity migrate` hasn't run on yet). TestCase additionally carries the Case revision and its generated path.
 
+`traceability`'s purpose is to provide relations "in a form external tools can **browse**" (§5.1), and identifiers (`*_id`/`*_uid`) alone are not browsable. Each Node therefore also carries a human-readable `label`. Feature/Behavior/Scenario's `label` is required in Knowledge, so it is never `None` (`String`). Requirement's `label` exists only for `source: native` — unlike `source_locator`/`source_key`, it is never added for `external`, since markharness never owns external content (ADR 0023).
+
 ```rust
 struct RequirementNode {
     requirement_id: String,
     requirement_uid: Option<String>,
     source: &'static str, // "native" | "external"
+    // Present only for source: "native". Never given a representative text
+    // for "external", since markharness doesn't own that content (ADR 0023).
+    label: Option<String>,
     // Present only when source is "external" (ADR 0023): a way to reach the
     // actual StrictDoc (or similar) content. Always None for "native".
     source_locator: Option<String>, // repo-relative path of the referenced .sdoc file
@@ -133,6 +138,7 @@ struct RequirementNode {
 struct FeatureNode {
     feature_id: String,
     feature_uid: Option<String>,
+    label: String,
 }
 
 struct BehaviorNode {
@@ -143,12 +149,14 @@ struct BehaviorNode {
     // concrete need for it is confirmed (YAGNI).
     behavior_uid: Option<String>,
     feature_id: String,
+    label: String,
 }
 
 struct ScenarioNode {
     scenario_id: String,
     scenario_uid: Option<String>,
     behavior_id: String,
+    label: String,
 }
 
 struct TestCaseNode {
@@ -423,13 +431,15 @@ Fixtures live at `tests/fixtures/read-models/<record_kind>/v1/`. The markharness
 
 The following models are added only once a concrete need is confirmed on the view side.
 
-- A model dedicated to detailed TestCase display
+- A model dedicated to detailed TestCase display (`phases`, `axis`, and similar TestCase body content; reading `.markharness/generated/testcases/<relative_path>` directly, via `test_cases[].relative_path`, covers this for now)
 - A search-result model over all of Knowledge
 - A Git history comparison model
 - An aggregation model spanning multiple refs
 - A persisted search/display cache
 
 These are not included in the initial models merely because they might be useful someday. A new read model or Reader is designed once a second real read shape, or a concrete usage gap, actually appears.
+
+Each Node's `label` (§5.2) is an exception: it's identifier metadata directly required by `traceability`'s own purpose — being browsable — not independent content the way a TestCase's body is, so it belongs in the initial model.
 
 ## 13. Settled in the initial design
 

@@ -1050,7 +1050,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 **`--at` is optional. Omitting it reads the working tree** — the uncommitted, current content — the same way `generate`/`verify` already do (ADR 0033). Giving `--at <ref>` reads that Git ref's committed content instead. Unlike `impact`/`coverage`, `traceability` has no two-point-comparison or release-auditing requirement, so it never demands a commit first. It never writes any artifact, unlike `generate`.
 
-**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `source_locator`, `source_key` — the latter two are present only when `source` is `"external"`, and point to the underlying StrictDoc (or similar) content; always `null` for `"native"`), `features` (`feature_id`, `feature_uid`), `behaviors` (`behavior_id`, `feature_id`; `behavior_uid` is always `null` today — the current Knowledge-reading path has no way to obtain it), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`.
+**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key` — `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `feature_id`, `label`; `behavior_uid` is always `null` today — the current Knowledge-reading path has no way to obtain it), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) is not included; read it directly from `.markharness/generated/testcases/<relative_path>`, using `relative_path`.
 
 **Behavior**
 
@@ -1087,16 +1087,16 @@ $ markharness traceability --at HEAD
   "record_kind": "traceability",
   "at": "HEAD",
   "requirements": [
-    { "requirement_id": "controls", "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "source": "native", "source_locator": null, "source_key": null }
+    { "requirement_id": "controls", "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "source": "native", "label": "controls", "source_locator": null, "source_key": null }
   ],
   "features": [
-    { "feature_id": "player-jump", "feature_uid": null }
+    { "feature_id": "player-jump", "feature_uid": null, "label": "player-jump" }
   ],
   "behaviors": [
-    { "behavior_id": "jump", "behavior_uid": null, "feature_id": "player-jump" }
+    { "behavior_id": "jump", "behavior_uid": null, "feature_id": "player-jump", "label": "jump" }
   ],
   "scenarios": [
-    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump" }
+    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump", "label": "ground" }
   ],
   "test_cases": [
     { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground" }
