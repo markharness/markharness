@@ -14,8 +14,10 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             feature_axis: vec!["workflow".to_string()],
             behavior_id: "behavior".to_string(),
             behavior_axis: vec!["ui".to_string()],
+            behavior_label: "Behavior".to_string(),
             scenario_id: "scenario".to_string(),
             scenario_uid: None,
+            scenario_label: "Scenario".to_string(),
             phases: vec![Phase {
                 steps: vec!["confirm the state".to_string()],
                 results: vec!["result".to_string()],

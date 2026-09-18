@@ -52,6 +52,10 @@ pub struct RequirementNode {
     pub requirement_id: String,
     pub requirement_uid: Option<String>,
     pub source: &'static str,
+    /// Present only for `source: "native"`. Never given a representative
+    /// text for `"external"`, since markharness doesn't own that content
+    /// (ADR 0023).
+    pub label: Option<String>,
     /// Present only when `source` is `"external"` (ADR 0023): lets a reader
     /// reach the underlying StrictDoc content. Always `None` for `"native"`.
     pub source_locator: Option<String>,
@@ -63,6 +67,7 @@ pub struct RequirementNode {
 pub struct FeatureNode {
     pub feature_id: String,
     pub feature_uid: Option<String>,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -76,6 +81,7 @@ pub struct BehaviorNode {
     /// implementation can populate it without a schema_version bump.
     pub behavior_uid: Option<String>,
     pub feature_id: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -83,6 +89,7 @@ pub struct ScenarioNode {
     pub scenario_id: String,
     pub scenario_uid: Option<String>,
     pub behavior_id: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -354,6 +361,7 @@ fn build(
                 RequirementSource::Native => "native",
                 RequirementSource::External => "external",
             },
+            label: requirement.label.clone(),
             source_locator: requirement.source_locator.clone(),
             source_key: requirement.source_key.clone(),
         })
@@ -364,6 +372,7 @@ fn build(
         .map(|feature| FeatureNode {
             feature_id: feature.id.clone(),
             feature_uid: feature.uid.clone(),
+            label: feature.label.clone(),
         })
         .collect();
 
@@ -390,6 +399,7 @@ fn build(
                 behavior_id: case.behavior_id.clone(),
                 behavior_uid: None,
                 feature_id: case.feature_id.clone(),
+                label: case.behavior_label.clone(),
             });
         scenarios
             .entry((
@@ -401,6 +411,7 @@ fn build(
                 scenario_id: case.scenario_id.clone(),
                 scenario_uid: case.scenario_uid.clone(),
                 behavior_id: case.behavior_id.clone(),
+                label: case.scenario_label.clone(),
             });
 
         let case_id = format!(

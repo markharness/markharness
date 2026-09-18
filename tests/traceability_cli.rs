@@ -117,13 +117,16 @@ fn traceability_reports_the_envelope_and_full_hierarchy_at_head() {
     assert_eq!(value["requirements"][0]["requirement_id"], "controls");
     assert_eq!(value["requirements"][0]["requirement_uid"], REQUIREMENT_UID);
     assert_eq!(value["requirements"][0]["source"], "native");
+    assert_eq!(value["requirements"][0]["label"], "controls");
     assert!(value["requirements"][0]["source_locator"].is_null());
     assert!(value["requirements"][0]["source_key"].is_null());
 
     assert_eq!(value["features"][0]["feature_id"], "player-jump");
+    assert_eq!(value["features"][0]["label"], "player-jump");
 
     assert_eq!(value["behaviors"][0]["behavior_id"], "jump");
     assert_eq!(value["behaviors"][0]["feature_id"], "player-jump");
+    assert_eq!(value["behaviors"][0]["label"], "jump");
     // Known limitation (design doc §5.2): the generated-TestCase path this
     // read model derives Behavior nodes from carries no Behavior UID today,
     // even though `behavior.yml` itself has one.
@@ -132,6 +135,7 @@ fn traceability_reports_the_envelope_and_full_hierarchy_at_head() {
     assert_eq!(value["scenarios"][0]["scenario_id"], "ground");
     assert_eq!(value["scenarios"][0]["scenario_uid"], SCENARIO_UID);
     assert_eq!(value["scenarios"][0]["behavior_id"], "jump");
+    assert_eq!(value["scenarios"][0]["label"], "ground");
 
     assert_eq!(
         value["test_cases"][0]["case_id"],
@@ -168,6 +172,9 @@ fn traceability_exposes_source_locator_and_source_key_for_an_external_requiremen
     assert_eq!(timing["source"], "external");
     assert_eq!(timing["source_locator"], "docs/requirements.sdoc");
     assert_eq!(timing["source_key"], "REQ-Timing-01");
+    // markharness never owns external content (ADR 0023), so it never
+    // fabricates a representative label for it either.
+    assert!(timing["label"].is_null());
 }
 
 #[test]

@@ -100,8 +100,14 @@ pub struct KnowledgeCaseSnapshot {
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
     pub behavior_axis: Vec<String>,
+    /// Informational only, like `feature_uid`/`scenario_uid`: `traceability`
+    /// reads this to make `BehaviorNode` browsable (design doc §5.2). Not
+    /// part of case identity or `axis`.
+    pub behavior_label: String,
     pub scenario_id: String,
     pub scenario_uid: Option<String>,
+    /// Informational only; see `behavior_label`.
+    pub scenario_label: String,
     /// Already expanded: every `use:` step replaced by its Procedure's
     /// steps (`expand_phases`).
     pub phases: Vec<Phase>,
@@ -461,8 +467,10 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                     feature_axis: feature.axis.clone(),
                     behavior_id: behavior.id.clone(),
                     behavior_axis: behavior.axis.clone(),
+                    behavior_label: behavior.label.clone(),
                     scenario_id: scenario.id,
                     scenario_uid: scenario.uid,
+                    scenario_label: scenario.label,
                     phases,
                     case_files,
                 });
