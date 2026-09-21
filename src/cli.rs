@@ -37,7 +37,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Initialize the UC1-UC8 physical directory structure
+    /// Initialize the project's directory structure
     Init {
         /// Target directory to initialize (created if it does not exist). Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -84,23 +84,23 @@ pub enum Command {
     /// Manage the id resolution cache under .markharness-cache/
     #[command(subcommand)]
     Cache(CacheCommand),
-    /// Compute ChangeEvents between two milestones (UC5)
+    /// Compute ChangeEvents between two milestones
     #[command(subcommand)]
     Changes(ChangesCommand),
-    /// Backfill ChangeEvents across past milestones (UC6)
+    /// Backfill ChangeEvents across past milestones
     #[command(subcommand)]
     Backfill(BackfillCommand),
-    /// Manage executions/<tag>/milestone.yml (UC4 support)
+    /// Manage executions/<tag>/milestone.yml
     #[command(subcommand)]
     Milestone(MilestoneCommand),
-    /// Declare how a TestCase is verified (ADR 0020, ADR 0025)
+    /// Declare how a TestCase is verified
     #[command(subcommand)]
     Binding(BindingCommand),
-    /// Record what a release chose to verify (ADR 0024)
+    /// Record what a release chose to verify
     #[command(subcommand)]
     Release(ReleaseCommand),
     /// Report what exists to verify a set of Requirements, and what a release
-    /// selected (v2 design §6.2)
+    /// selected
     Coverage {
         /// `all`, or a comma-separated list of Requirement display ids. This
         /// is what bounds the missed-selection candidates: deriving the bound
@@ -122,11 +122,11 @@ pub enum Command {
         dir: Option<PathBuf>,
     },
     /// Report which Requirements a base..head range touched, and whether the
-    /// corresponding TestCases were confirmed (ADR 0019, v2 design §6.1)
+    /// corresponding TestCases were confirmed
     Impact {
         /// Earlier Git revision. Required: inferring it from the local
         /// branch layout would make the same range produce different results
-        /// on different machines (design principle P3, AC37).
+        /// on different machines.
         #[arg(long)]
         base: String,
         /// Later Git revision
@@ -145,12 +145,12 @@ pub enum Command {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Report Requirement/Feature/Behavior/Scenario/TestCase relations, read-only (ADR 0032/0033, v2 design §cli-read-model)
+    /// Report Requirement/Feature/Behavior/Scenario/TestCase relations, read-only
     Traceability {
         /// Git revision to read the Knowledge and generated TestCases at.
-        /// Omit to read the working tree instead (ADR 0033) — unlike
-        /// impact/coverage, traceability has no two-point-comparison or
-        /// release-auditing requirement that would need a commit first.
+        /// Omit to read the working tree instead — unlike impact/coverage,
+        /// traceability has no two-point-comparison or release-auditing
+        /// requirement that would need a commit first.
         #[arg(long)]
         at: Option<String>,
         /// Stable output representation
@@ -160,7 +160,7 @@ pub enum Command {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Validate knowledge/ and axes/ against schema/*.schema.json plus axis/forked_from cross-references (§3.5/§3.6)
+    /// Validate knowledge/ and axes/ against schema/*.schema.json plus axis/forked_from cross-references
     Validate {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -169,7 +169,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Manage cross-entity-kind identity state (ADR 0013)
+    /// Manage cross-entity-kind identity state
     #[command(subcommand)]
     Identity(IdentityCommand),
 }
@@ -195,7 +195,7 @@ impl From<EntityKindArg> for crate::identity::EntityKind {
 
 #[derive(Subcommand)]
 pub enum IdentityCommand {
-    /// Explicitly join a branch divergence (two identity events extending the same predecessor, design doc §7)
+    /// Explicitly join a branch divergence (two identity events extending the same predecessor)
     Resolve {
         /// The kind of entity whose divergence is being resolved
         #[arg(value_enum)]
@@ -209,7 +209,7 @@ pub enum IdentityCommand {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Scenario) that doesn't have one yet (design doc §12). Idempotent.
+    /// Assign a uid to every Knowledge element (Requirement/Feature/Behavior/Scenario) that doesn't have one yet. Idempotent.
     Migrate {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -221,7 +221,7 @@ pub enum IdentityCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Walk this branch's committed history and verify identity events are append-only and every commit's event set still replays (design doc §11, IdentityAuditor). Unlike `changes`/`verify`, this scans full history and can be slow on a long-lived repository.
+    /// Walk this branch's committed history and verify identity events are append-only and every commit's event set still replays. Unlike `changes`/`verify`, this scans full history and can be slow on a long-lived repository.
     Audit {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -282,8 +282,7 @@ pub enum ReleaseCommand {
 #[derive(Subcommand)]
 pub enum ReleaseScopeCommand {
     /// Replace the list of TestCases a release selected for verification.
-    /// A selection is a declaration, never evidence that anything ran
-    /// (ADR 0024 §5).
+    /// A selection is a declaration, never evidence that anything ran.
     Set {
         /// The release's display name; a Git tag name is the natural choice
         #[arg(long)]
@@ -316,9 +315,9 @@ pub enum ReleaseScopeCommand {
 pub enum BindingCommand {
     /// Record (or replace) the verification means for one TestCase, keyed by
     /// Case UID. A binding is a declaration, not an execution fact: it has no
-    /// result, timestamp, build, or environment (ADR 0025 §1).
+    /// result, timestamp, build, or environment.
     Set {
-        /// The TestCase's Case UID (never its display id — ADR 0013)
+        /// The TestCase's Case UID (never its display id)
         #[arg(long)]
         case_uid: String,
         /// Whether this case is verified by automated or manual means
@@ -448,25 +447,25 @@ pub enum ChangesCommand {
         /// Derive impacted_testcases from the current knowledge/ working tree instead of the `to` milestone's committed tree (legacy behavior; recomputing the same past interval later can then yield a different result)
         #[arg(long)]
         current_tree: bool,
-        /// The unit impacted_testcases is narrowed down to. `feature` (default) keeps every TestCase generated from a changed Feature; `behavior`/`scenario` narrow further, trading recall for precision (no coupling between siblings is detected — see docs/ja/cli-manual.md 1.12節)
+        /// The unit impacted_testcases is narrowed down to. `feature` (default) keeps every TestCase generated from a changed Feature; `behavior`/`scenario` narrow further, trading recall for precision (no coupling between siblings is detected)
         #[arg(long, value_enum, default_value = "feature")]
         granularity: GranularityArg,
     },
-    /// Set change_type and/or related_events on an existing ChangeEvent under changes/ (§3.5, filled in by a human after compute)
+    /// Set change_type and/or related_events on an existing ChangeEvent under changes/ (filled in by a human after compute)
     Annotate {
         /// The ChangeEvent's event_id (as written by `changes compute`)
         event_id: String,
         /// The kind of change this event represents. Required unless --related is given (the two fields are independently additive)
         #[arg(long, value_enum, required_unless_present = "related")]
         r#type: Option<ChangeTypeArg>,
-        /// event_id(s) of other ChangeEvents to record as related (§3.5, repeatable)
+        /// event_id(s) of other ChangeEvents to record as related (repeatable)
         #[arg(long)]
         related: Vec<String>,
         /// Target project directory (a git repository). Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
-    /// Audit-only: reconstruct per-Feature lineage across a merge commit's two parents via git merge-base (§3.2, secondary; does not write changes/*.yaml)
+    /// Audit-only: reconstruct per-Feature lineage across a merge commit's two parents via git merge-base (secondary; does not write changes/*.yaml)
     Lineage {
         /// The merge commit to inspect (must have exactly two parents)
         #[arg(long)]
@@ -548,12 +547,12 @@ pub enum AxesCommand {
 
 #[derive(Subcommand)]
 pub enum KnowledgeCommand {
-    /// Reconcile a Knowledge Intent against the repository's current state (ADR 0027)
+    /// Reconcile a Knowledge Intent against the repository's current state
     Reconcile {
         /// Path to the Knowledge Intent YAML file
         #[arg(required_unless_present = "print_template")]
         intent_file: Option<PathBuf>,
-        /// Print a blank Knowledge Intent template to stdout and exit (ADR 0028 §1)
+        /// Print a blank Knowledge Intent template to stdout and exit
         #[arg(long, conflicts_with_all = ["intent_file", "dir", "json", "check"])]
         print_template: bool,
         /// Target project directory containing knowledge/ and axes/. Defaults to the current directory.
@@ -562,7 +561,7 @@ pub enum KnowledgeCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
-        /// Build and report the mutation plan without writing anything (ADR 0027 §6)
+        /// Build and report the mutation plan without writing anything
         #[arg(long)]
         check: bool,
     },
