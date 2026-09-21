@@ -1,120 +1,485 @@
+//! `traceability`: a read-only view of Requirement/Feature/Behavior/Scenario/
+//! TestCase relations for external tools such as markharness-view (ADR 0032,
+//! docs/design/cli-read-model-design.md §5). Never goes through
+//! `CommandOutcome`/`Presenter` — like `impact`/`coverage`, it builds its own
+//! struct and is serialized directly by `cli.rs`.
+
+use std::collections::BTreeMap;
+use std::io;
+use std::path::Path;
+
 use serde::Serialize;
 
-use crate::generate::TestCase;
+use crate::generate::{self, KnowledgeCaseSnapshot};
+use crate::git;
+use crate::identity::{CaseRevision, CaseUid};
+use crate::knowledge::{self, Feature, Requirement, RequirementSource};
+use crate::knowledge_source::{
+    GitTreeKnowledgeSource, KnowledgeSource, WorkingTreeKnowledgeSource,
+};
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct TraceabilityEntry {
-    pub case_id: String,
-    pub requirement_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requirement_uids: Option<Vec<String>>,
-    pub feature: String,
-    pub behavior: String,
-    pub scenario: String,
-    pub axis: Vec<String>,
+const SCHEMA_VERSION: u32 = 1;
+const RECORD_KIND: &str = "traceability";
+/// `at`'s value when `--at` is omitted (ADR 0033). Reserved the same way
+/// `HEAD` effectively is: a real Git ref sharing this exact name would
+/// collide, an accepted practical risk rather than something worth guarding
+/// against.
+const WORKING_TREE: &str = "working-tree";
+
+#[derive(Debug)]
+pub enum TraceabilityError {
+    Malformed { path: String, message: String },
+    Io(io::Error),
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct TraceabilityIndex {
-    pub testcases: Vec<TraceabilityEntry>,
-}
-
-/// Builds the Requirement→Feature→Behavior→Scenario→TestCase index (§2番目の
-/// 未実装項目, docs/ja/cli-manual.md §2)。`testcases` の順序をそのまま使うため、
-/// `generate::generate_testcases` の決定的な出力に依存する。
-pub fn build_index(testcases: &[TestCase]) -> TraceabilityIndex {
-    TraceabilityIndex {
-        testcases: testcases
-            .iter()
-            .map(|tc| TraceabilityEntry {
-                case_id: tc.case_id.clone(),
-                requirement_ids: tc.generated_from.requirement_ids.clone(),
-                requirement_uids: tc.generated_from.requirement_uids.clone(),
-                feature: tc.generated_from.feature.clone(),
-                behavior: tc.generated_from.behavior.clone(),
-                scenario: tc.generated_from.scenario.clone(),
-                axis: tc.axis.clone(),
-            })
-            .collect(),
+impl From<io::Error> for TraceabilityError {
+    fn from(e: io::Error) -> Self {
+        TraceabilityError::Io(e)
     }
 }
 
-pub fn serialize_index(index: &TraceabilityIndex) -> String {
-    let mut json =
-        serde_json::to_string_pretty(index).expect("TraceabilityIndex serialization is infallible");
-    json.push('\n');
-    json
+impl std::fmt::Display for TraceabilityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TraceabilityError::Malformed { path, message } => write!(f, "{path}: {message}"),
+            TraceabilityError::Io(e) => write!(f, "filesystem error: {e}"),
+        }
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::generate::{CaseFilePaths, GeneratedFrom, Phase};
-    use crate::identity::CaseRevision;
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RequirementNode {
+    pub requirement_id: String,
+    pub requirement_uid: Option<String>,
+    pub source: &'static str,
+    /// Present only for `source: "native"`. Never given a representative
+    /// text for `"external"`, since markharness doesn't own that content
+    /// (ADR 0023).
+    pub label: Option<String>,
+    /// Present only when `source` is `"external"` (ADR 0023): lets a reader
+    /// reach the underlying StrictDoc content. Always `None` for `"native"`.
+    pub source_locator: Option<String>,
+    /// StrictDoc's MID (ADR 0030). Always `None` for `"native"`.
+    pub source_key: Option<String>,
+}
 
-    fn sample_testcase() -> TestCase {
-        TestCase {
-            case_id: "tc-todo-add-task-empty-input-001".to_string(),
-            case_uid: None,
-            case_revision: CaseRevision::new("test-revision").unwrap(),
-            case_files: CaseFilePaths::default(),
-            generated_from: GeneratedFrom {
-                requirement_ids: vec!["req-todo".to_string()],
-                requirement_uids: Some(vec!["01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string()]),
-                feature: "todo".to_string(),
-                feature_uid: None,
-                behavior: "todo-add-task".to_string(),
-                scenario: "todo-add-task-empty-input".to_string(),
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FeatureNode {
+    pub feature_id: String,
+    pub feature_uid: Option<String>,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BehaviorNode {
+    pub behavior_id: String,
+    /// `None` until `identity migrate` assigns one; the fixture data behind
+    /// this read model does not carry a Behavior UID today (only
+    /// `Behavior.uid` in `knowledge/`, not yet threaded through
+    /// `KnowledgeCaseSnapshot`), so this is always `None` in the current
+    /// implementation. Kept as a field (rather than omitted) so a future
+    /// implementation can populate it without a schema_version bump.
+    pub behavior_uid: Option<String>,
+    pub feature_id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScenarioNode {
+    pub scenario_id: String,
+    pub scenario_uid: Option<String>,
+    pub behavior_id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct TestCaseNode {
+    pub case_id: String,
+    pub case_uid: Option<CaseUid>,
+    pub case_revision: CaseRevision,
+    pub relative_path: String,
+    pub scenario_id: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationKind {
+    /// A Feature or Scenario contributes to a Requirement.
+    ContributesTo,
+    /// A TestCase was generated from a Scenario.
+    GeneratedFrom,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct TraceabilityRelation {
+    pub from_uid: String,
+    pub to_uid: String,
+    pub kind: RelationKind,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct TraceabilityReadModel {
+    pub schema_version: u32,
+    pub record_kind: &'static str,
+    pub at: String,
+    pub requirements: Vec<RequirementNode>,
+    pub features: Vec<FeatureNode>,
+    pub behaviors: Vec<BehaviorNode>,
+    pub scenarios: Vec<ScenarioNode>,
+    pub test_cases: Vec<TestCaseNode>,
+    pub relations: Vec<TraceabilityRelation>,
+}
+
+/// Every Requirement at `git_ref` (the working tree when `None`, ADR 0033),
+/// keyed by display id. The Git-ref branch mirrors
+/// `impact::requirements_at`/`coverage::requirements_at`.
+fn requirements_at(
+    root: &Path,
+    git_ref: Option<&str>,
+) -> Result<BTreeMap<String, Requirement>, TraceabilityError> {
+    let mut requirements = BTreeMap::new();
+    match git_ref {
+        Some(git_ref) => {
+            for entry in git::ls_tree_recursive(
+                root,
+                git_ref,
+                &format!(
+                    "{}/requirements",
+                    crate::project_root::KNOWLEDGE_PATH_IN_REPO
+                ),
+            )? {
+                if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/requirement.yml")
+                {
+                    continue;
+                }
+                let content = git::show_blob_by_sha(root, &entry.sha)?;
+                let requirement = knowledge::parse_requirement(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: entry.path.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
+                check_requirement_source_mode(&requirement, &entry.path)?;
+                requirements.insert(requirement.id.clone(), requirement);
+            }
+        }
+        None => {
+            let requirements_dir = root
+                .join(crate::project_root::KNOWLEDGE_PATH_IN_REPO)
+                .join("requirements");
+            for dir in generate::sorted_subdirs(&requirements_dir)? {
+                let path = dir.join("requirement.yml");
+                if !path.is_file() {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&path)?;
+                let requirement = knowledge::parse_requirement(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: repo_relative_path(root, &path),
+                        message: e.to_string(),
+                    }
+                })?;
+                check_requirement_source_mode(&requirement, &repo_relative_path(root, &path))?;
+                requirements.insert(requirement.id.clone(), requirement);
+            }
+        }
+    }
+    Ok(requirements)
+}
+
+/// Rejects a Requirement whose fields disagree with its `source` (ADR 0023:
+/// each mode owns a disjoint set of fields). Mirrors
+/// `validate::check_requirement_source_mode` in full, not just the two
+/// fields (`source_locator`/`source_key`) `RequirementNode` happens to
+/// expose: `traceability` cannot assume `validate` has already run against
+/// every commit it might be asked to read, and a Requirement that would fail
+/// `validate` should not be treated as well-formed here either. Passing
+/// through a native Requirement that also carries `source_locator`/
+/// `source_key` in particular would let a reader (e.g. markharness-view)
+/// follow a stale or unrelated external reference for what is actually
+/// native content — the concrete case this exists to prevent — but the
+/// other disjoint fields are checked too, so a Requirement `validate` would
+/// reject never gets treated as clean here by coincidence.
+fn check_requirement_source_mode(
+    requirement: &Requirement,
+    path: &str,
+) -> Result<(), TraceabilityError> {
+    let malformed = |message: &str| TraceabilityError::Malformed {
+        path: path.to_string(),
+        message: message.to_string(),
+    };
+    match requirement.source {
+        RequirementSource::Native => {
+            if requirement.label.is_none() {
+                return Err(malformed(
+                    "source: native requires `label` (markharness owns the content)",
+                ));
+            }
+            if requirement.source_locator.is_some() {
+                return Err(malformed(
+                    "source: native must not carry `source_locator` (that belongs to source: external)",
+                ));
+            }
+            if requirement.source_revision.is_some() {
+                return Err(malformed(
+                    "source: native must not carry `source_revision` (that belongs to source: external)",
+                ));
+            }
+            if requirement.source_key.is_some() {
+                return Err(malformed(
+                    "source: native must not carry `source_key` (that belongs to source: external)",
+                ));
+            }
+        }
+        RequirementSource::External => {
+            if requirement.source_locator.is_none() {
+                return Err(malformed(
+                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                ));
+            }
+            if requirement.source_revision.is_none() {
+                return Err(malformed(
+                    "source: external requires `source_revision` (the pinned blob OID of that .sdoc)",
+                ));
+            }
+            if requirement.source_key.is_none() {
+                return Err(malformed(
+                    "source: external requires `source_key` (StrictDoc's own MID, held verbatim)",
+                ));
+            }
+            if requirement.label.is_some() {
+                return Err(malformed(
+                    "source: external must not carry `label` — the external document owns the content",
+                ));
+            }
+            if requirement.description.is_some() {
+                return Err(malformed(
+                    "source: external must not carry `description` — the external document owns the content",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every Feature at `git_ref` (the working tree when `None`, ADR 0033),
+/// keyed by display id. Read directly (like
+/// `coverage::features_for_requirement`) rather than derived from generated
+/// TestCases, so a Feature with no Behavior/Scenario underneath is still
+/// visible (the same gap coverage's AC21 cares about).
+fn features_at(
+    root: &Path,
+    git_ref: Option<&str>,
+) -> Result<BTreeMap<String, Feature>, TraceabilityError> {
+    let mut features = BTreeMap::new();
+    match git_ref {
+        Some(git_ref) => {
+            for entry in git::ls_tree_recursive(
+                root,
+                git_ref,
+                &format!("{}/features", crate::project_root::KNOWLEDGE_PATH_IN_REPO),
+            )? {
+                if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/feature.yml") {
+                    continue;
+                }
+                let content = git::show_blob_by_sha(root, &entry.sha)?;
+                let feature = knowledge::parse_feature(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: entry.path.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
+                features.insert(feature.id.clone(), feature);
+            }
+        }
+        None => {
+            let features_dir = root
+                .join(crate::project_root::KNOWLEDGE_PATH_IN_REPO)
+                .join("features");
+            for dir in generate::sorted_subdirs(&features_dir)? {
+                let path = dir.join("feature.yml");
+                if !path.is_file() {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&path)?;
+                let feature = knowledge::parse_feature(&content).map_err(|e| {
+                    TraceabilityError::Malformed {
+                        path: repo_relative_path(root, &path),
+                        message: e.to_string(),
+                    }
+                })?;
+                features.insert(feature.id.clone(), feature);
+            }
+        }
+    }
+    Ok(features)
+}
+
+/// Formats `path` the same way Git-ref reads report one: repo-relative,
+/// forward-slashed. Keeps error messages consistent regardless of which
+/// source (`--at <ref>` or the working tree) produced them.
+fn repo_relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn push_relation(
+    relations: &mut Vec<TraceabilityRelation>,
+    from: Option<&str>,
+    to: Option<&str>,
+    kind: RelationKind,
+) {
+    // A relation names both sides by UID; an entity with no UID yet (not
+    // migrated) cannot appear in one, the same way it cannot appear in any
+    // other UID-keyed contract this codebase produces.
+    if let (Some(from), Some(to)) = (from, to) {
+        relations.push(TraceabilityRelation {
+            from_uid: from.to_string(),
+            to_uid: to.to_string(),
+            kind,
+        });
+    }
+}
+
+/// Builds the read model from already-loaded Knowledge, independent of how
+/// it was loaded (kept separate from `compute` so the assembly logic can be
+/// exercised without a Git fixture).
+fn build(
+    at: String,
+    requirements: &BTreeMap<String, Requirement>,
+    features: &BTreeMap<String, Feature>,
+    cases: &[KnowledgeCaseSnapshot],
+) -> TraceabilityReadModel {
+    let requirement_nodes = requirements
+        .values()
+        .map(|requirement| RequirementNode {
+            requirement_id: requirement.id.clone(),
+            requirement_uid: requirement.uid.clone(),
+            source: match requirement.source {
+                RequirementSource::Native => "native",
+                RequirementSource::External => "external",
             },
-            phases: vec![Phase {
-                steps: vec!["Do it.".to_string()],
-                results: vec!["Shows a validation error.".to_string()],
-            }],
-            axis: vec!["ui".to_string()],
+            label: requirement.label.clone(),
+            source_locator: requirement.source_locator.clone(),
+            source_key: requirement.source_key.clone(),
+        })
+        .collect();
+
+    let feature_nodes: Vec<FeatureNode> = features
+        .values()
+        .map(|feature| FeatureNode {
+            feature_id: feature.id.clone(),
+            feature_uid: feature.uid.clone(),
+            label: feature.label.clone(),
+        })
+        .collect();
+
+    let mut behaviors: BTreeMap<(String, String), BehaviorNode> = BTreeMap::new();
+    let mut scenarios: BTreeMap<(String, String, String), ScenarioNode> = BTreeMap::new();
+    let mut test_cases: Vec<TestCaseNode> = Vec::new();
+    let mut relations: Vec<TraceabilityRelation> = Vec::new();
+
+    for feature in features.values() {
+        for requirement_uid in &feature.requirement_uids {
+            push_relation(
+                &mut relations,
+                feature.uid.as_deref(),
+                Some(requirement_uid),
+                RelationKind::ContributesTo,
+            );
         }
     }
 
-    #[test]
-    fn build_index_maps_generated_from_fields_and_axis() {
-        let index = build_index(&[sample_testcase()]);
+    for case in cases {
+        behaviors
+            .entry((case.feature_id.clone(), case.behavior_id.clone()))
+            .or_insert_with(|| BehaviorNode {
+                behavior_id: case.behavior_id.clone(),
+                behavior_uid: None,
+                feature_id: case.feature_id.clone(),
+                label: case.behavior_label.clone(),
+            });
+        scenarios
+            .entry((
+                case.feature_id.clone(),
+                case.behavior_id.clone(),
+                case.scenario_id.clone(),
+            ))
+            .or_insert_with(|| ScenarioNode {
+                scenario_id: case.scenario_id.clone(),
+                scenario_uid: case.scenario_uid.clone(),
+                behavior_id: case.behavior_id.clone(),
+                label: case.scenario_label.clone(),
+            });
 
-        assert_eq!(index.testcases.len(), 1);
-        let entry = &index.testcases[0];
-        assert_eq!(entry.case_id, "tc-todo-add-task-empty-input-001");
-        assert_eq!(entry.requirement_ids, vec!["req-todo".to_string()]);
-        assert_eq!(entry.feature, "todo");
-        assert_eq!(entry.behavior, "todo-add-task");
-        assert_eq!(entry.scenario, "todo-add-task-empty-input");
-        assert_eq!(entry.axis, vec!["ui".to_string()]);
-    }
+        let case_id = format!(
+            "tc-{}-{}-{}",
+            case.feature_id, case.behavior_id, case.scenario_id
+        );
+        let case_uid = case.scenario_uid.as_deref().map(|scenario_uid| {
+            CaseUid::new(crate::identity::derived_uid::case_uid(scenario_uid))
+                .expect("derived_uid::case_uid always formats a valid CaseUid")
+        });
+        test_cases.push(TestCaseNode {
+            case_id,
+            case_uid: case_uid.clone(),
+            case_revision: generate::compute_case_revision(&case.phases),
+            relative_path: Path::new(&case.feature_id)
+                .join(&case.behavior_id)
+                .join(format!("{}.yml", case.scenario_id))
+                .to_string_lossy()
+                .replace('\\', "/"),
+            scenario_id: case.scenario_id.clone(),
+        });
 
-    #[test]
-    fn build_index_returns_empty_testcases_for_empty_input() {
-        let index = build_index(&[]);
-
-        assert!(index.testcases.is_empty());
-    }
-
-    #[test]
-    fn serialize_index_produces_valid_json() {
-        let index = build_index(&[sample_testcase()]);
-
-        let json = serialize_index(&index);
-
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            parsed["testcases"][0]["case_id"],
-            "tc-todo-add-task-empty-input-001"
+        for requirement_uid in &case.requirement_uids {
+            push_relation(
+                &mut relations,
+                case.scenario_uid.as_deref(),
+                Some(requirement_uid),
+                RelationKind::ContributesTo,
+            );
+        }
+        push_relation(
+            &mut relations,
+            case_uid.as_ref().map(|uid| uid.as_str()),
+            case.scenario_uid.as_deref(),
+            RelationKind::GeneratedFrom,
         );
     }
 
-    #[test]
-    fn serialize_index_is_deterministic() {
-        let index = build_index(&[sample_testcase()]);
-
-        let first = serialize_index(&index);
-        let second = serialize_index(&index);
-
-        assert_eq!(first, second);
+    TraceabilityReadModel {
+        schema_version: SCHEMA_VERSION,
+        record_kind: RECORD_KIND,
+        at,
+        requirements: requirement_nodes,
+        features: feature_nodes,
+        behaviors: behaviors.into_values().collect(),
+        scenarios: scenarios.into_values().collect(),
+        test_cases,
+        relations,
     }
+}
+
+/// Computes the Traceability read model. `git_ref` reads that Git revision;
+/// `None` reads the working tree instead (ADR 0033) — unlike `impact`
+/// (`base..head`) and `coverage` (release auditing), `traceability` has no
+/// requirement that its input already be committed.
+pub fn compute(
+    root: &Path,
+    git_ref: Option<&str>,
+) -> Result<TraceabilityReadModel, TraceabilityError> {
+    let requirements = requirements_at(root, git_ref)?;
+    let features = features_at(root, git_ref)?;
+    let snapshot = match git_ref {
+        Some(git_ref) => GitTreeKnowledgeSource::new(root, git_ref).load_snapshot()?,
+        None => {
+            WorkingTreeKnowledgeSource::new(root.join(crate::project_root::KNOWLEDGE_PATH_IN_REPO))
+                .load_snapshot()?
+        }
+    };
+    let at = git_ref.map_or_else(|| WORKING_TREE.to_string(), |git_ref| git_ref.to_string());
+    Ok(build(at, &requirements, &features, &snapshot.cases))
 }

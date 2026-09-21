@@ -7,7 +7,7 @@ use crate::changes::{self, ChangeOptions};
 use crate::fs_safety::{copy_unmanaged_siblings_no_follow, replace_dir_from_staging, replace_file};
 use crate::generate;
 use crate::presentation::CommandOutcome;
-use crate::traceability;
+use crate::traceability_index;
 
 pub fn import_native(root: &Path, git_ref: &str) -> io::Result<CommandOutcome> {
     Ok(CommandOutcome::CanonicalImported(canonical::import_native(
@@ -88,12 +88,12 @@ pub fn generate_testcases(root: &Path) -> io::Result<CommandOutcome> {
             generate::serialize_testcase(testcase).as_bytes(),
         )?;
     }
-    let index = traceability::build_index(&testcases);
+    let index = traceability_index::build_index(&testcases);
     let staged_index = staging_generated.join("traceability-index.json");
     replace_file(
         staging_parent.path(),
         &staged_index,
-        traceability::serialize_index(&index).as_bytes(),
+        traceability_index::serialize_index(&index).as_bytes(),
     )?;
     // `testcases/` and `traceability-index.json` are generator-owned and
     // fully replaced by the staged content above; everything else already

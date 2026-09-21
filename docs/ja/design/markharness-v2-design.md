@@ -80,7 +80,7 @@
 
 Feature・Behavior・Scenario・TestCase・Axis・Case revision・ChangeEventは現行`knowledge/`実装をそのまま維持する。決定的生成、Git tree SHAによる版比較、Axisによる横断検索は今回の再設計の対象外であり、変更しない。
 
-なお現行実装はRequirementも`knowledge/requirements/<id>/requirement.yml`としてnativeな実体(独自UID・`label`・`description`・`axis`)で保持し、`feature.requirement_uids`で多対多に関連付けている([0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md)§1・§3、`src/knowledge.rs`・`src/identity/entity_kind.rs`・`src/traceability.rs`)。Requirementはcase identityには含まれない(`case_id = tc-{feature}-{behavior}-{scenario}`、`src/generate.rs`)。したがって§5.2の`Requirement`は新規概念の追加ではなく、**既存のnative Requirementに「正本を外部に置くモード」を足す変更**である([0023](../decisions/0023-requirement-native-and-external-source.md)、§5.2.1)。StrictDocを導入していない運用でもmarkharnessは単独で成立する必要があるため、正本を常に外部へ固定する設計は採らない。
+なお現行実装はRequirementも`knowledge/requirements/<id>/requirement.yml`としてnativeな実体(独自UID・`label`・`description`・`axis`)で保持し、`feature.requirement_uids`で多対多に関連付けている([0017](../decisions/0017-scenario-case-revision-and-execution-evidence.md)§1・§3、`src/knowledge.rs`・`src/identity/entity_kind.rs`・`src/traceability_index.rs`)。Requirementはcase identityには含まれない(`case_id = tc-{feature}-{behavior}-{scenario}`、`src/generate.rs`)。したがって§5.2の`Requirement`は新規概念の追加ではなく、**既存のnative Requirementに「正本を外部に置くモード」を足す変更**である([0023](../decisions/0023-requirement-native-and-external-source.md)、§5.2.1)。StrictDocを導入していない運用でもmarkharnessは単独で成立する必要があるため、正本を常に外部へ固定する設計は採らない。
 
 ### 5.2 新規概念
 
@@ -134,7 +134,7 @@ FeatureからRequirementへの多対多関連は、新しい`ContributesTo`型�
 | `axis` | 保持 | 両モードで保持(markharness自身の分類であり外部正本の複製ではない) |
 | `uid`・`feature.requirement_uids` | ADR 0013のUID・多対多関連 | そのまま維持 |
 | Requirement authoring | 対話フローで`label`/`axis`を入力 | [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)により対話フローは廃止。Knowledge Intentへ`source`ごとのfieldを書く(nativeは`label`、externalは`source_locator`と`source_revision: current`。AC02と整合) |
-| `traceability.rs`のRequirement索引・`GeneratedFrom.requirement_ids`/`requirement_uids` | 実装済み | 維持 |
+| `traceability_index.rs`のRequirement索引・`GeneratedFrom.requirement_ids`/`requirement_uids` | 実装済み | 維持 |
 
 `source`は必須であり、省略時のdefaultは持たない。[0023](../decisions/0023-requirement-native-and-external-source.md)§1の「省略時はnative」は既存ファイルを無変更で通すための互換規定であったため、過去を無かったものとして扱う方針([0026](../decisions/0026-module-inventory-and-plan-removal.md)§7)の下では適用しない。externalへ移す場合は人が書き直す(§2の後方互換不要方針により自動変換は作らない)。
 
@@ -233,7 +233,7 @@ FeatureとRequirementの関連は`feature.yml`の`requirement_uids`が正本で�
 | `src/git.rs`・`fs_safety.rs` | 維持 | 不変ref読出し・原子的操作は今回の変更と独立 |
 | `src/canonical.rs`(ImportSourceArg等) | 縮小 | `markharness import`(native/junit)専用に縮小する。`plan`廃止に伴い`CanonicalEvidence`/`EvidenceResult`等のplan専用型を削除。StrictDoc取込は将来別Adapterとして再設計([0026](../decisions/0026-module-inventory-and-plan-removal.md)) |
 | `knowledge/requirements/`(native Requirement実体) | 維持・拡張 | nativeは`label`/`description`を含めそのまま維持する。`source: external`を選んだRequirementでのみ本文相当を持たず固定参照になる([0023](../decisions/0023-requirement-native-and-external-source.md)、§5.2.1) |
-| `src/traceability.rs`(Requirement索引) | 維持 | Requirement⇄TestCaseの逆引きは既存実装をそのまま使う |
+| `src/traceability_index.rs`(Requirement索引) | 維持 | Requirement⇄TestCaseの逆引きは既存実装をそのまま使う |
 | `src/server.rs`・`ui/`・`markharness serve`(ADR 0008 Stage 3のdashboard) | 廃止 | 現行UIは`plan`/evidence出力に依存し、plan縮小と同時に壊れる([0022](../decisions/0022-remove-stage3-dashboard.md))。§9.1 |
 | `src/milestone.rs`・`src/lineage.rs` | 維持 | `src/changes.rs`が`milestone::verify_audit_matches_tag`(fail-closedゲート)と`lineage::classify`(merge分類)を内部利用しており、削除すると`changes compute`がコンパイル不能になる([0026](../decisions/0026-module-inventory-and-plan-removal.md)) |
 | `src/backfill.rs`・`src/verify.rs` | 維持 | 逆依存ゼロだが[0020](../decisions/0020-execution-status-lightweight-model.md)〜[0025](../decisions/0025-v2-forward-compatible-evolution.md)のいずれとも衝突せず、廃止する積極的な理由が無い([0026](../decisions/0026-module-inventory-and-plan-removal.md)) |

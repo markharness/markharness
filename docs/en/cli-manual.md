@@ -1040,6 +1040,77 @@ uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
 
 ---
 
+### 1.25 `markharness traceability` — Read Requirement/Feature/Behavior/Scenario/TestCase relations (ADR 0032/0033, design doc cli-read-model-design.md §5)
+
+```text
+markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
+```
+
+**Purpose**: Reads Requirement/Feature/Behavior/Scenario/TestCase relations, read-only, from Knowledge and generated TestCases. Lets external tools such as `markharness-view` take this output as their only input, without reading Knowledge or `.markharness/` directly (ADR 0032). Like `impact` and `coverage`, it never goes through `CommandOutcome`/`Presenter`; its own module's struct is serialized directly to JSON.
+
+**`--at` is optional. Omitting it reads the working tree** — the uncommitted, current content — the same way `generate`/`verify` already do (ADR 0033). Giving `--at <ref>` reads that Git ref's committed content instead. Unlike `impact`/`coverage`, `traceability` has no two-point-comparison or release-auditing requirement, so it never demands a commit first. It never writes any artifact, unlike `generate`.
+
+**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key` — `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `feature_id`, `label`; `behavior_uid` is always `null` today — the current Knowledge-reading path has no way to obtain it), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) is not included; read it directly from `.markharness/generated/testcases/<relative_path>`, using `relative_path`.
+
+**Behavior**
+
+- Every Feature and Requirement in Knowledge is reported regardless of whether it has a generated TestCase underneath (the same reasoning as coverage's AC21: a Feature with nothing to verify it is still made visible).
+- Behaviors, Scenarios, and TestCases are derived from every generated TestCase (`generate` rejects a Scenario with empty phases, so an existing Scenario always corresponds to exactly one TestCase).
+- A Requirement whose `source` (native/external) disagrees with the fields each mode exclusively owns (`label`, `source_locator`, `source_revision`, `source_key`, and, for external, `description` too — e.g. `source: native` that still carries `source_locator`, or `source: external` that carries `label`) is rejected (exit code 2) — the same constraint `validate` enforces (ADR 0023), checked again here because `traceability` cannot assume `validate` has already run.
+
+**Exit codes**
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 2 | A Knowledge file has a syntax or content error |
+| 3 | Filesystem error |
+
+**Example**
+
+```console
+$ markharness traceability
+{
+  "schema_version": 1,
+  "record_kind": "traceability",
+  "at": "working-tree",
+  ...
+}
+```
+
+To check committed state at a specific point instead, give `--at`:
+
+```console
+$ markharness traceability --at HEAD
+{
+  "schema_version": 1,
+  "record_kind": "traceability",
+  "at": "HEAD",
+  "requirements": [
+    { "requirement_id": "controls", "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "source": "native", "label": "controls", "source_locator": null, "source_key": null }
+  ],
+  "features": [
+    { "feature_id": "player-jump", "feature_uid": null, "label": "player-jump" }
+  ],
+  "behaviors": [
+    { "behavior_id": "jump", "behavior_uid": null, "feature_id": "player-jump", "label": "jump" }
+  ],
+  "scenarios": [
+    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump", "label": "ground" }
+  ],
+  "test_cases": [
+    { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground" }
+  ],
+  "relations": [
+    { "from_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "kind": "contributes_to" }
+  ]
+}
+```
+
+**Use case mapping**: [cli-read-model-design.md](./design/cli-read-model-design.md) §5's `TraceabilityReadModel`, [ADR 0032](./decisions/0032-cli-read-model-seam.md) / [ADR 0033](./decisions/0033-traceability-defaults-to-working-tree.md).
+
+---
+
 ## 2. Unimplemented (Planned) Commands
 
 The following are commands planned for future implementation, based on the use case diagram and use case descriptions in `docs/product-operation.md`. The command names and options are tentative proposals and may change at implementation time.
@@ -1054,7 +1125,7 @@ These are currently not yet started; implementation ordering is managed separate
 
 ## 3. Verification / Testing
 
-Unit tests for the implemented commands can be run with `cargo test` (see the `#[cfg(test)] mod tests` in `src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs`, as well as `tests/knowledge_reconcile_cli.rs`, which verifies the exit codes and output of `knowledge reconcile`). Because the tests in `git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` actually run `git init`/`commit`/`tag` in a temporary directory, the `git` command is required in the test environment. Following the Pre-PR checklist (`CONTRIBUTING.md`), run the following before committing:
+Unit tests for the implemented commands can be run with `cargo test` (see the `#[cfg(test)] mod tests` in `src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability_index.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs`, as well as `tests/knowledge_reconcile_cli.rs`, which verifies the exit codes and output of `knowledge reconcile`). Because the tests in `git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` actually run `git init`/`commit`/`tag` in a temporary directory, the `git` command is required in the test environment. Following the Pre-PR checklist (`CONTRIBUTING.md`), run the following before committing:
 
 ```bash
 cargo test

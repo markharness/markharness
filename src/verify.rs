@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 
 use crate::generate::{generate_testcases, list_files_recursive, serialize_testcase};
-use crate::traceability::{build_index, serialize_index};
+use crate::traceability_index::{build_index, serialize_index};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum DiffKind {

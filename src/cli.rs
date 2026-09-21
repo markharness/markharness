@@ -145,6 +145,21 @@ pub enum Command {
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
     },
+    /// Report Requirement/Feature/Behavior/Scenario/TestCase relations, read-only (ADR 0032/0033, v2 design §cli-read-model)
+    Traceability {
+        /// Git revision to read the Knowledge and generated TestCases at.
+        /// Omit to read the working tree instead (ADR 0033) — unlike
+        /// impact/coverage, traceability has no two-point-comparison or
+        /// release-auditing requirement that would need a commit first.
+        #[arg(long)]
+        at: Option<String>,
+        /// Stable output representation
+        #[arg(long, value_enum, default_value = "json")]
+        format: ImportFormatArg,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
     /// Validate knowledge/ and axes/ against schema/*.schema.json plus axis/forked_from cross-references (§3.5/§3.6)
     Validate {
         /// Target project directory. Defaults to the current directory.
@@ -1123,6 +1138,31 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     Ok(())
                 }
                 Err(crate::coverage::CoverageError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Traceability {
+            at,
+            format: ImportFormatArg::Json,
+            dir,
+        } => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::traceability::compute(&root, at.as_deref()) {
+                Ok(model) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&model)
+                            .expect("traceability read model serialization is infallible")
+                    );
+                    Ok(())
+                }
+                Err(crate::traceability::TraceabilityError::Io(e)) => {
                     eprintln!("error: filesystem error: {e}");
                     std::process::exit(3);
                 }
