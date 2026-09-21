@@ -388,51 +388,6 @@ pub fn strip_redundant_scenario_prefix(feature_id: &str, scenario_id: &str) -> O
         .map(|rest| rest.to_string())
 }
 
-pub fn contains_non_ascii(s: &str) -> bool {
-    !s.is_ascii()
-}
-
-pub fn romanize_label(japanese: &str) -> String {
-    use wana_kana::ConvertJapanese;
-    japanese.to_romaji()
-}
-
-pub fn normalize_slug_candidate(raw: &str) -> String {
-    let lowered = raw.to_lowercase();
-    let mut out = String::with_capacity(lowered.len());
-    let mut last_was_hyphen = false;
-
-    for c in lowered.chars() {
-        let mapped = if c.is_ascii_lowercase() || c.is_ascii_digit() {
-            Some(c)
-        } else if c.is_whitespace() || c == '-' {
-            Some('-')
-        } else {
-            None
-        };
-
-        match mapped {
-            Some('-') => {
-                if !last_was_hyphen && !out.is_empty() {
-                    out.push('-');
-                }
-                last_was_hyphen = true;
-            }
-            Some(c) => {
-                out.push(c);
-                last_was_hyphen = false;
-            }
-            None => {}
-        }
-    }
-
-    if out.ends_with('-') {
-        out.pop();
-    }
-
-    out
-}
-
 pub fn is_valid_slug(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
@@ -1206,48 +1161,5 @@ mod tests {
             strip_redundant_scenario_prefix("player-jump", "player-jump-"),
             None
         );
-    }
-
-    #[test]
-    fn contains_non_ascii_is_false_for_ascii_string() {
-        assert!(!contains_non_ascii("player-jump-001"));
-    }
-
-    #[test]
-    fn contains_non_ascii_is_true_for_string_with_japanese() {
-        assert!(contains_non_ascii("プレイヤーがジャンプする"));
-    }
-
-    #[test]
-    fn romanize_label_converts_japanese_to_romaji() {
-        // wana_kana (MIT) converts kana character-by-character without word
-        // segmentation, so there is no space between words unless the input
-        // already has one. Kanji are not converted (they are dropped later by
-        // normalize_slug_candidate's ASCII filter).
-        assert_eq!(
-            romanize_label("プレイヤーがジャンプする"),
-            "pureiyaagajanpusuru"
-        );
-    }
-
-    #[test]
-    fn normalize_slug_candidate_replaces_spaces_with_hyphens() {
-        assert_eq!(
-            normalize_slug_candidate("pureiyaa ga janpu suru"),
-            "pureiyaa-ga-janpu-suru"
-        );
-    }
-
-    #[test]
-    fn normalize_slug_candidate_lowercases_mixed_case_input() {
-        assert_eq!(
-            normalize_slug_candidate("Pureiyaa GA Janpu"),
-            "pureiyaa-ga-janpu"
-        );
-    }
-
-    #[test]
-    fn normalize_slug_candidate_strips_unsupported_symbols() {
-        assert_eq!(normalize_slug_candidate("Player!! Jump??"), "player-jump");
     }
 }
