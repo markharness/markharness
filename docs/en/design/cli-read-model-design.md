@@ -143,10 +143,7 @@ struct FeatureNode {
 
 struct BehaviorNode {
     behavior_id: String,
-    // Always None in the current implementation. The generated TestCases
-    // (KnowledgeCaseSnapshot) never carry a Behavior UID; obtaining one
-    // would need a separate read of behavior.yml. Not added until a
-    // concrete need for it is confirmed (YAGNI).
+    // None until `identity migrate` runs (same as the other uid fields).
     behavior_uid: Option<String>,
     feature_id: String,
     label: String,
