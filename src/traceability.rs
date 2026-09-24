@@ -73,12 +73,7 @@ pub struct FeatureNode {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BehaviorNode {
     pub behavior_id: String,
-    /// `None` until `identity migrate` assigns one; the fixture data behind
-    /// this read model does not carry a Behavior UID today (only
-    /// `Behavior.uid` in `knowledge/`, not yet threaded through
-    /// `KnowledgeCaseSnapshot`), so this is always `None` in the current
-    /// implementation. Kept as a field (rather than omitted) so a future
-    /// implementation can populate it without a schema_version bump.
+    /// `None` until `identity migrate` assigns one.
     pub behavior_uid: Option<String>,
     pub feature_id: String,
     pub label: String,
@@ -397,7 +392,7 @@ fn build(
             .entry((case.feature_id.clone(), case.behavior_id.clone()))
             .or_insert_with(|| BehaviorNode {
                 behavior_id: case.behavior_id.clone(),
-                behavior_uid: None,
+                behavior_uid: case.behavior_uid.clone(),
                 feature_id: case.feature_id.clone(),
                 label: case.behavior_label.clone(),
             });

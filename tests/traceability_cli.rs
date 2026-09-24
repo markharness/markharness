@@ -41,6 +41,7 @@ fn write(path: &Path, content: &str) {
 }
 
 const REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const BEHAVIOR_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
 const SCENARIO_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
 
 fn project() -> tempfile::TempDir {
@@ -77,7 +78,9 @@ fn project() -> tempfile::TempDir {
     );
     write(
         &root.join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
-        "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Jumping.\nprocedures: {}\n",
+        &format!(
+            "id: jump\nfeature: player-jump\nlabel: jump\nuid: {BEHAVIOR_UID}\naxis: [gameplay]\ndescription: |\n  Jumping.\nprocedures: {{}}\n"
+        ),
     );
     write(
         &root.join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
@@ -125,12 +128,9 @@ fn traceability_reports_the_envelope_and_full_hierarchy_at_head() {
     assert_eq!(value["features"][0]["label"], "player-jump");
 
     assert_eq!(value["behaviors"][0]["behavior_id"], "jump");
+    assert_eq!(value["behaviors"][0]["behavior_uid"], BEHAVIOR_UID);
     assert_eq!(value["behaviors"][0]["feature_id"], "player-jump");
     assert_eq!(value["behaviors"][0]["label"], "jump");
-    // Known limitation (design doc §5.2): the generated-TestCase path this
-    // read model derives Behavior nodes from carries no Behavior UID today,
-    // even though `behavior.yml` itself has one.
-    assert!(value["behaviors"][0]["behavior_uid"].is_null());
 
     assert_eq!(value["scenarios"][0]["scenario_id"], "ground");
     assert_eq!(value["scenarios"][0]["scenario_uid"], SCENARIO_UID);

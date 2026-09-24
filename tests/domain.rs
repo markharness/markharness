@@ -15,6 +15,7 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             behavior_id: "behavior".to_string(),
             behavior_axis: vec!["ui".to_string()],
             behavior_label: "Behavior".to_string(),
+            behavior_uid: None,
             scenario_id: "scenario".to_string(),
             scenario_uid: None,
             scenario_label: "Scenario".to_string(),
