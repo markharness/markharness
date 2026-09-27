@@ -71,11 +71,17 @@ markharness knowledge reconcile --print-template
 
 An Intent describes **desired state, not a procedure**. New elements cross-reference each other through a document-local `key` (never persisted); existing elements are selected by `uid`. Re-running the same Intent leaves matching elements `unchanged` with no write.
 
+Passing `-` as `<intent-file>` reads the YAML from stdin instead of a file. This avoids writing and cleaning up a temporary file when integrating with tools that generate an ephemeral Intent on the fly (e.g. a GUI tool's backend).
+
+```bash
+$ echo "$INTENT_YAML" | markharness knowledge reconcile - --dir /path/to/project
+```
+
 **Options**
 
 | Option             | Description                                                                                                                         |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `<intent-file>`    | Path to the Knowledge Intent YAML. Mutually exclusive with `--print-template` (exactly one is required)                              |
+| `<intent-file>`    | Path to the Knowledge Intent YAML, or `-` to read it from stdin. Mutually exclusive with `--print-template` (exactly one is required) |
 | `--print-template` | Prints a blank Knowledge Intent template to stdout. Cannot be combined with any other option                                         |
 | `--check`          | Parses, matches, validates, and builds the mutation plan with the same implementation as a normal run, but **writes nothing**        |
 | `-d, --dir <path>` | Target project directory (the parent of `.markharness/knowledge/`). Defaults to the project root (discovered by walking up from cwd) |
