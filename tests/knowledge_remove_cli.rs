@@ -229,3 +229,36 @@ fn removing_a_requirement_detaches_it_from_a_referencing_feature() {
     .unwrap();
     assert!(feature_content.contains("requirement_uids: []"));
 }
+
+/// Regression for a Codex stop-time review finding: `--behavior` given
+/// without `--feature` must be rejected outright, never silently ignored.
+/// Without this check, an operator confirming a Scenario's parent Behavior
+/// via `--behavior` alone (forgetting `--feature`) would have it dropped
+/// entirely and `basic` resolved as an unscoped, globally-unique slug —
+/// deleting the real "basic" Scenario even though its actual parent
+/// Behavior ("jump") does not match the "not-jump" given here.
+#[test]
+fn scenario_removal_rejects_behavior_flag_without_feature() {
+    let dir = setup_root();
+
+    let output = run(&[
+        "knowledge",
+        "remove",
+        "scenario",
+        "basic",
+        "--behavior",
+        "not-jump",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--feature"), "stderr={stderr}");
+    assert!(
+        dir.path()
+            .join(".markharness/knowledge/features/player-jump/jump/basic/scenario.yml")
+            .exists(),
+        "nothing must be deleted when the combination is rejected"
+    );
+}

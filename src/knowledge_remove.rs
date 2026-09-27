@@ -56,6 +56,13 @@ pub enum RemoveError {
     /// enough to pick exactly one. Carries every match's root-relative path
     /// so the caller can disambiguate (ADR 0034 §2).
     Ambiguous(Vec<String>),
+    /// `feature`/`behavior` were combined in a way ADR 0034 §2 does not
+    /// support — most importantly `behavior` given without `feature` for a
+    /// Scenario, which (if not rejected here) would silently ignore
+    /// `behavior` entirely and resolve `key` as an unscoped slug instead,
+    /// deleting whichever element `key` alone happens to name uniquely
+    /// rather than the one the caller meant to confirm.
+    InvalidUsage(String),
     OperationInProgress,
     Io(io::Error),
 }
@@ -78,10 +85,49 @@ struct Resolved {
     entity: knowledge_walk::FoundEntity,
 }
 
+/// Rejects a `feature`/`behavior` combination ADR 0034 §2 does not support,
+/// before any resolution runs. In particular, `behavior` given without
+/// `feature` must never be silently dropped: `resolve_scoped` only ever
+/// consults `target.behavior` *inside* its `if let Some(feature) =
+/// target.feature` branch, so without this check a caller who meant to
+/// confirm a Scenario's parent Behavior via `--behavior` alone (forgetting
+/// `--feature`) would instead have it ignored outright and `key` resolved
+/// as an unscoped slug — deleting whichever Scenario `key` alone happens to
+/// name uniquely, which need not be the one under that Behavior at all.
+fn validate_target(target: &RemoveTarget) -> Result<(), RemoveError> {
+    match target.kind {
+        EntityKind::Requirement | EntityKind::Feature => {
+            if target.feature.is_some() || target.behavior.is_some() {
+                return Err(RemoveError::InvalidUsage(format!(
+                    "--feature/--behavior are not applicable when removing a {}: its id is unique across the whole project",
+                    target.kind.as_str()
+                )));
+            }
+        }
+        EntityKind::Behavior => {
+            if target.behavior.is_some() {
+                return Err(RemoveError::InvalidUsage(
+                    "--behavior is not applicable when removing a behavior; use --feature to disambiguate a slug shared across Features".to_string(),
+                ));
+            }
+        }
+        EntityKind::Scenario => {
+            if target.behavior.is_some() && target.feature.is_none() {
+                return Err(RemoveError::InvalidUsage(
+                    "--behavior requires --feature to also be given when removing a scenario"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Finds every `kind` element whose slug is `key`, scoped by
 /// `target.feature`/`target.behavior` when given, and returns it only when
 /// exactly one match remains — otherwise [`RemoveError::NotFound`] or
-/// [`RemoveError::Ambiguous`].
+/// [`RemoveError::Ambiguous`]. Callers must run [`validate_target`] first;
+/// this function does not re-check the `feature`/`behavior` combination.
 fn resolve_target(root: &Path, target: &RemoveTarget) -> Result<Resolved, RemoveError> {
     match target.kind {
         EntityKind::Requirement | EntityKind::Feature => {
@@ -328,6 +374,7 @@ fn compute_detach(
 /// detachment under one continuous hold of the identity lock, so a
 /// concurrent identity mutation cannot land between resolution and commit.
 pub fn remove_element(root: &Path, target: &RemoveTarget) -> Result<RemoveOutcome, RemoveError> {
+    validate_target(target)?;
     let held_lock = match recovery::run_startup_recovery(root, |intent| {
         feature_ops::roll_forward(root, intent)
     })? {
@@ -830,6 +877,98 @@ mod tests {
         assert!(
             dir.path()
                 .join(".markharness/knowledge/features/player-jump/jump/behavior.yml")
+                .exists()
+        );
+    }
+
+    /// Regression for the exact risk ADR 0034 §2 describes: `--behavior`
+    /// given without `--feature` for a Scenario must never be silently
+    /// dropped and fall back to resolving `key` as an unscoped slug — that
+    /// would delete whichever Scenario `key` alone happens to name uniquely,
+    /// which need not be the one under the Behavior the caller named. Here
+    /// `key` ("basic") is globally unique but its real parent Behavior is
+    /// "jump", not "not-jump" — a correct implementation must reject this
+    /// combination outright rather than guess, and must not delete anything.
+    #[test]
+    fn scenario_removal_rejects_behavior_scoping_without_feature() {
+        let dir = init_tree();
+
+        let result = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Scenario,
+                key: "basic",
+                feature: None,
+                behavior: Some("not-jump"),
+            },
+        );
+
+        assert!(
+            matches!(result, Err(RemoveError::InvalidUsage(_))),
+            "expected InvalidUsage, got {result:?}"
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/jump/basic/scenario.yml")
+                .exists(),
+            "nothing must be deleted when the feature/behavior combination is rejected"
+        );
+    }
+
+    /// `--behavior` has no meaning when removing a Behavior itself (a
+    /// Behavior's own scoping key is `--feature`); passing it must be
+    /// rejected rather than silently ignored, regardless of whether
+    /// `--feature` is also given.
+    #[test]
+    fn behavior_removal_rejects_behavior_scoping_flag() {
+        let dir = init_tree();
+
+        let result = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Behavior,
+                key: "jump",
+                feature: Some("player-jump"),
+                behavior: Some("jump"),
+            },
+        );
+
+        assert!(
+            matches!(result, Err(RemoveError::InvalidUsage(_))),
+            "expected InvalidUsage, got {result:?}"
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/jump/behavior.yml")
+                .exists()
+        );
+    }
+
+    /// Requirement/Feature ids are unique project-wide (ADR 0034 §2), so
+    /// `--feature`/`--behavior` can never do anything useful for them;
+    /// rejecting rather than silently ignoring avoids a caller believing
+    /// they scoped something that was never actually checked.
+    #[test]
+    fn requirement_removal_rejects_feature_scoping_flag() {
+        let dir = init_tree();
+
+        let result = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Requirement,
+                key: "controls",
+                feature: Some("player-jump"),
+                behavior: None,
+            },
+        );
+
+        assert!(
+            matches!(result, Err(RemoveError::InvalidUsage(_))),
+            "expected InvalidUsage, got {result:?}"
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/requirements/controls/requirement.yml")
                 .exists()
         );
     }

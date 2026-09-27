@@ -764,6 +764,10 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     }
                     std::process::exit(1);
                 }
+                Err(RemoveError::InvalidUsage(message)) => {
+                    eprintln!("error: {message}");
+                    std::process::exit(2);
+                }
                 Err(RemoveError::OperationInProgress) => {
                     eprintln!("error: a concurrent identity operation is in progress; retry later");
                     std::process::exit(3);

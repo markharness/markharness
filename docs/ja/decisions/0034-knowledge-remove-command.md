@@ -37,6 +37,7 @@ CLIの既存の非対話的な運用方針([0028](0028-consolidate-knowledge-aut
 - `requirement`と`feature`: `<key>`は常にプロジェクト全体で一意な表示`id`。曖昧になることはない。
 - `behavior`と`scenario`: `<key>`は表示`id`。一致が1件だけならそれが対象。2件以上一致する場合(異なる親の下に同じslug)、コマンドは全一致の完全な親パスを列挙した診断で失敗し、何も削除せずに停止する。
 - 曖昧性を解消するには、呼び出し側は`--feature <id>`(`behavior`用。`scenario`では`--behavior <id>`も併せて必須)で検索対象を1つの親に絞るか、既知であれば`<key>`自体を(不変識別子である)`uid`([0013](0013-immutable-identity-model.md))として渡す。`uid`は常に使えるわけではない(`identity migrate`未実行のプロジェクトではBehavior/Scenarioの`uid`が`None`のことがある)。そのため、`uid`だけに頼らず常に使える第二の曖昧性解消手段として親パス形式(`--feature`/`--behavior`)を用意する。
+- `--feature`/`--behavior`は、その組み合わせが何の意味も持ち得ない場合、解決処理を始める前に即座に拒否する: `requirement`/`feature`に対するどちらのフラグ(すでにプロジェクト全体で一意)、`behavior`に対する`--behavior`(Behavior自身のスコープ指定キーは`--feature`であり`--behavior`ではない)、そして`scenario`に対して`--feature`なしの`--behavior`単独。最後のケースが最も重要である: 対になっていない`--behavior`を(拒否せず)黙って無視すると、`<key>`はスコープなしのslugとして解決されてしまい、`<key>`だけで一意に決まるどのScenarioでも削除してしまう——それは呼び出し側が指定したBehaviorの配下にあるとは限らない。
 
 解決には新規のディレクトリ走査を書かず、`identity::knowledge_walk::find_by_id`/`find_by_uid`(`src/identity/knowledge_walk.rs`)を再利用する。
 
