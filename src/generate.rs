@@ -1782,4 +1782,41 @@ mod tests {
             "expected an error for a behavior.id containing path traversal, got: {result:?}"
         );
     }
+
+    /// ADR 0034 §5: `knowledge remove` deletes only canonical Knowledge
+    /// files, relying on `generate` already rebuilding its output from
+    /// whatever is on disk on every run. This is a regression test for that
+    /// existing behavior, not new production code — deleting a Scenario's
+    /// file (simulating what `knowledge remove` does) must make the next
+    /// `generate_testcases` call stop producing its TestCase, with no
+    /// pruning logic added here.
+    #[test]
+    fn generate_testcases_omits_a_testcase_whose_scenario_file_was_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::init::run_init(dir.path()).unwrap();
+        write_requirement(dir.path(), "req-todo", &["security"]);
+        write_feature(dir.path(), "req-todo", "todo", &["ui"]);
+        write_behavior(dir.path(), "todo", "add-task", "Add a task.");
+        write_scenario(
+            dir.path(),
+            "todo",
+            "add-task",
+            "empty-title",
+            "An empty title cannot be added.",
+            &[(&["Attempt to add an empty title"], &["No task is added"])],
+        );
+        let knowledge_root = dir
+            .path()
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge");
+
+        let before = generate_testcases(&knowledge_root).unwrap();
+        assert_eq!(before.len(), 1);
+
+        fs::remove_file(knowledge_root.join("features/todo/add-task/empty-title/scenario.yml"))
+            .unwrap();
+
+        let after = generate_testcases(&knowledge_root).unwrap();
+        assert!(after.is_empty());
+    }
 }

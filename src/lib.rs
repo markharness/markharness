@@ -25,6 +25,7 @@ pub mod impact;
 pub mod init;
 pub mod knowledge;
 pub mod knowledge_reconcile;
+pub mod knowledge_remove;
 pub mod knowledge_schema;
 pub mod knowledge_source;
 pub mod lineage;

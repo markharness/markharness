@@ -21,6 +21,7 @@ use crate::knowledge_reconcile::execute::{
 };
 use crate::knowledge_reconcile::intent::{IntentParseError, parse_intent};
 use crate::knowledge_reconcile::validate::validate_static;
+use crate::knowledge_remove::{self, RemoveError};
 use crate::lineage;
 use crate::milestone::{self, MilestoneInitError, MilestoneInitOutcome};
 use crate::presentation::{self, HumanPresenter, JsonPresenter, Presenter};
@@ -565,6 +566,26 @@ pub enum KnowledgeCommand {
         #[arg(long)]
         check: bool,
     },
+    /// Physically delete a Requirement, Feature, Behavior, or Scenario (ADR 0034), cascading to children with a mandatory parent reference and detaching optional back-references
+    Remove {
+        /// Which kind of element to delete
+        #[arg(value_enum)]
+        kind: EntityKindArg,
+        /// The element's display id (slug), or its uid when known
+        key: String,
+        /// Scope a Behavior/Scenario slug to one Feature, disambiguating a slug shared across Features
+        #[arg(long)]
+        feature: Option<String>,
+        /// Scope a Scenario slug to one Behavior, disambiguating a slug shared across Behaviors under the same Feature
+        #[arg(long)]
+        behavior: Option<String>,
+        /// Target project directory containing knowledge/. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Shared error handling for `changes annotate`'s two writers
@@ -706,6 +727,52 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     std::process::exit(3);
                 }
                 Err(ReconcileError::Io(e)) => Err(e),
+            }
+        }
+        Command::Knowledge(KnowledgeCommand::Remove {
+            kind,
+            key,
+            feature,
+            behavior,
+            dir,
+            json,
+        }) => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            let entity_kind: identity::EntityKind = kind.into();
+            let target = knowledge_remove::RemoveTarget {
+                kind: entity_kind,
+                key: &key,
+                feature: feature.as_deref(),
+                behavior: behavior.as_deref(),
+            };
+            match knowledge_remove::remove_element(&root, &target) {
+                Ok(outcome) => {
+                    report_remove_outcome(&outcome, json);
+                    Ok(())
+                }
+                Err(RemoveError::NotFound) => {
+                    eprintln!("error: no {} matches '{key}'", entity_kind.as_str());
+                    std::process::exit(1);
+                }
+                Err(RemoveError::Ambiguous(paths)) => {
+                    eprintln!(
+                        "error: '{key}' matches more than one {}; pass --feature/--behavior or a uid to disambiguate:",
+                        entity_kind.as_str()
+                    );
+                    for path in &paths {
+                        eprintln!("  {path}");
+                    }
+                    std::process::exit(1);
+                }
+                Err(RemoveError::InvalidUsage(message)) => {
+                    eprintln!("error: {message}");
+                    std::process::exit(2);
+                }
+                Err(RemoveError::OperationInProgress) => {
+                    eprintln!("error: a concurrent identity operation is in progress; retry later");
+                    std::process::exit(3);
+                }
+                Err(RemoveError::Io(e)) => Err(e),
             }
         }
         Command::Generate { dir, json } => {
@@ -1513,6 +1580,60 @@ fn report_reconcile_outcome(outcome: &ReconcileOutcome, json: bool) {
         if outcome.created.is_empty() && outcome.updated.is_empty() && outcome.unchanged.is_empty()
         {
             println!("no changes");
+        }
+    }
+}
+
+/// Reports `knowledge remove`'s result (ADR 0034): every cascade-deleted
+/// element and every back-reference detached to avoid a dangling
+/// Requirement UID.
+fn report_remove_outcome(outcome: &knowledge_remove::RemoveOutcome, json: bool) {
+    if json {
+        let deleted: Vec<String> = outcome
+            .deleted
+            .iter()
+            .map(|d| {
+                let uid = d
+                    .uid
+                    .as_deref()
+                    .map(|u| format!(",\"uid\":\"{}\"", json_escape(u)))
+                    .unwrap_or_default();
+                format!(
+                    "{{\"kind\":\"{}\",\"id\":\"{}\",\"path\":\"{}\"{uid}}}",
+                    d.kind.as_str(),
+                    json_escape(&d.id),
+                    json_escape(&d.path),
+                )
+            })
+            .collect();
+        let detached: Vec<String> = outcome
+            .detached
+            .iter()
+            .map(|d| {
+                format!(
+                    "{{\"kind\":\"{}\",\"id\":\"{}\",\"path\":\"{}\"}}",
+                    d.kind.as_str(),
+                    json_escape(&d.id),
+                    json_escape(&d.path),
+                )
+            })
+            .collect();
+        println!(
+            "{{\"ok\":true,\"deleted\":[{}],\"detached\":[{}]}}",
+            deleted.join(","),
+            detached.join(","),
+        );
+    } else {
+        for d in &outcome.deleted {
+            println!("deleted {} '{}' {}", d.kind.as_str(), d.id, d.path);
+        }
+        for d in &outcome.detached {
+            println!(
+                "detached reference from {} '{}' {}",
+                d.kind.as_str(),
+                d.id,
+                d.path
+            );
         }
     }
 }

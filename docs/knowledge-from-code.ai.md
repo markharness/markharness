@@ -31,7 +31,7 @@ markharness validate                                   # → ".markharness/knowl
 markharness generate                                   # もう一度。N が同じで差分が出ないことを確認
 ```
 
-**Knowledge の書込み口は `knowledge reconcile` だけです。** Intent(望ましい状態を書いた1ファイル)を渡すと、現在状態との差分から作成・更新・renameが決まり、UID の発行とファイル書込みが単一トランザクションで行われます。`identity migrate` を挟む必要はありません。
+**Knowledge の作成・更新・rename の書込み口は `knowledge reconcile` だけです。** Intent(望ましい状態を書いた1ファイル)を渡すと、現在状態との差分から作成・更新・renameが決まり、UID の発行とファイル書込みが単一トランザクションで行われます。`identity migrate` を挟む必要はありません。誤って導出した、または不要になった Requirement/Feature/Behavior/Scenario を削除する場合は `knowledge remove <requirement|feature|behavior|scenario> <id>` を使います(`knowledge reconcile` は削除を扱いません)。詳細は `markharness knowledge remove --help` を参照してください。
 
 ### 落とし穴 ①: 既存要素を書き直すときは内容を完全に一致させる
 
@@ -352,7 +352,7 @@ markharness generate     # 2回目。N が同じで差分が出ないことを�
 
 生成される各 TestCase は `generated_from`(出所と `requirement_ids`/`requirement_uids`)、`phases`(`use:` 参照は procedure の steps に展開済み)、`axis`(Feature ∪ Behavior)から構成されます。`case_uid` / `case_revision` は決定的で、再生成しても変わりません。
 
-**`.markharness/generated/testcases/*.yml` を手編集しないこと。** 派生出力です。書いてよいのは `.markharness/knowledge/` 配下のみ、それも `knowledge reconcile` 経由だけです。
+**`.markharness/generated/testcases/*.yml` を手編集しないこと。** 派生出力です。書いてよいのは `.markharness/knowledge/` 配下のみ、それも `knowledge reconcile`(作成・更新・rename)または `knowledge remove`(削除)経由だけです。
 
 ### 5.5 完了処理
 
