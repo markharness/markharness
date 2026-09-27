@@ -83,6 +83,26 @@ pub(crate) fn roll_forward(root: &Path, intent: &recovery::Intent) -> io::Result
             crate::fs_safety::replace_file(root, &to, moved.contents.as_bytes())?;
         }
     }
+    // `knowledge_remove` is the only caller that sets this variant (ADR
+    // 0034 §6). Deleting before rewriting mirrors the reconcile branch
+    // above's "new elements first" ordering for the same reason: nothing
+    // downstream depends on delete order between the two lists here, but
+    // applying both unconditionally on every replay (happy path and crash
+    // recovery alike) is what makes this idempotent.
+    if let Some(recovery::IntentPayload::KnowledgeRemove { deletes, files }) =
+        &intent.caller_payload
+    {
+        for delete in deletes {
+            crate::fs_safety::remove_file_no_follow(root, &root.join(&delete.relative_path))?;
+        }
+        for file in files {
+            crate::fs_safety::replace_file(
+                root,
+                &root.join(&file.relative_path),
+                file.contents.as_bytes(),
+            )?;
+        }
+    }
     if !intent.batch_events.is_empty() {
         for event in &intent.batch_events {
             roll_forward_entity(root, event.entity_kind, &event.entity_uid)?;
@@ -825,6 +845,143 @@ mod tests {
     }
 
     const UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    /// ADR 0034 §6: `roll_forward` must delete every path named in a
+    /// `KnowledgeRemove` payload's `deletes`, on the happy path immediately
+    /// after `commit_batch` (simulated here directly, with no crash).
+    #[test]
+    fn roll_forward_deletes_a_pending_knowledge_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let relative_path = ".markharness/knowledge/requirements/controls/requirement.yml";
+        let target = dir.path().join(relative_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "id: controls\n").unwrap();
+
+        let payload = recovery::IntentPayload::KnowledgeRemove {
+            deletes: vec![recovery::PendingKnowledgeDelete {
+                relative_path: relative_path.to_string(),
+            }],
+            files: Vec::new(),
+        };
+        let intent =
+            recovery::begin_batch_with_payload(dir.path(), Vec::new(), Some(payload)).unwrap();
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+
+        roll_forward(dir.path(), &intent).unwrap();
+
+        assert!(!target.exists());
+    }
+
+    /// ADR 0034 §6: recovery must also work after a simulated crash right
+    /// after the commit point (no `finish` call), replaying the delete from
+    /// the durable intent — mirroring
+    /// `caller_payload_survives_recovery_after_a_kill_right_after_the_commit_point`
+    /// in `recovery.rs`.
+    #[test]
+    fn roll_forward_delete_is_idempotent_when_the_file_is_already_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let relative_path = ".markharness/knowledge/requirements/controls/requirement.yml";
+
+        let payload = recovery::IntentPayload::KnowledgeRemove {
+            deletes: vec![recovery::PendingKnowledgeDelete {
+                relative_path: relative_path.to_string(),
+            }],
+            files: Vec::new(),
+        };
+        let intent =
+            recovery::begin_batch_with_payload(dir.path(), Vec::new(), Some(payload)).unwrap();
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+
+        // The file never existed (or was already removed by a prior,
+        // interrupted replay) — replay must not error.
+        roll_forward(dir.path(), &intent).unwrap();
+    }
+
+    /// ADR 0034 §6: a `KnowledgeRemove` payload's `files` entries (an
+    /// optional back-reference losing the deleted UID) must also be
+    /// applied, exactly like `KnowledgeReconcile`'s `files`.
+    #[test]
+    fn roll_forward_rewrites_a_pending_knowledge_file_in_a_knowledge_remove_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let relative_path = ".markharness/knowledge/features/player-jump/feature.yml";
+        let target = dir.path().join(relative_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "id: player-jump\nrequirement_uids: [controls]\n").unwrap();
+
+        let payload = recovery::IntentPayload::KnowledgeRemove {
+            deletes: Vec::new(),
+            files: vec![recovery::PendingKnowledgeFile {
+                relative_path: relative_path.to_string(),
+                contents: "id: player-jump\nrequirement_uids: []\n".to_string(),
+            }],
+        };
+        let intent =
+            recovery::begin_batch_with_payload(dir.path(), Vec::new(), Some(payload)).unwrap();
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+
+        roll_forward(dir.path(), &intent).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "id: player-jump\nrequirement_uids: []\n"
+        );
+    }
+
+    /// Security regression: `PendingKnowledgeDelete::relative_path` is
+    /// attacker-shaped input from `knowledge_remove`'s point of view only in
+    /// the abstract — in practice `knowledge_remove` only ever populates it
+    /// from a real path `identity::knowledge_walk::list_entities` already
+    /// found on disk, never by joining a user-supplied `key`/`--feature`/
+    /// `--behavior` string into a path. This test proves the second,
+    /// independent layer of defense: even if a `relative_path` did name a
+    /// symlinked ancestor, `roll_forward` must still refuse to delete
+    /// through it, because it deletes via `fs_safety::remove_file_no_follow`
+    /// (the same primitive `replace_file`/`remove_dir_all_no_follow` already
+    /// use elsewhere), not a bare `std::fs::remove_file`.
+    #[test]
+    fn roll_forward_refuses_to_delete_through_a_symlinked_ancestor() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "do not delete me").unwrap();
+        let ancestor = dir
+            .path()
+            .join(".markharness")
+            .join("knowledge")
+            .join("features")
+            .join("evil");
+        fs::create_dir_all(ancestor.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), &ancestor).unwrap();
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/j"])
+                .arg(&ancestor)
+                .arg(outside.path())
+                .stdout(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "mklink /j failed");
+        }
+
+        let payload = recovery::IntentPayload::KnowledgeRemove {
+            deletes: vec![recovery::PendingKnowledgeDelete {
+                relative_path: ".markharness/knowledge/features/evil/secret.txt".to_string(),
+            }],
+            files: Vec::new(),
+        };
+        let intent =
+            recovery::begin_batch_with_payload(dir.path(), Vec::new(), Some(payload)).unwrap();
+        recovery::commit_batch(dir.path(), &intent).unwrap();
+
+        let result = roll_forward(dir.path(), &intent);
+
+        assert!(
+            result.is_err(),
+            "expected an error deleting through a symlinked ancestor, got: {result:?}"
+        );
+        assert!(outside.path().join("secret.txt").exists());
+    }
 
     #[test]
     fn renames_a_migrated_feature_and_updates_feature_yml() {

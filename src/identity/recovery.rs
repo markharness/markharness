@@ -114,6 +114,19 @@ pub enum IntentPayload {
         files: Vec<PendingKnowledgeFile>,
         moves: Vec<PendingKnowledgeMove>,
     },
+    /// Every canonical Knowledge file `knowledge_remove` deletes (a
+    /// cascade-deleted element, ADR 0034 §3) or rewrites (an optional
+    /// back-reference losing the deleted UID, ADR 0034 §3), captured
+    /// before this intent's commit point so a crash between removing one
+    /// file and rewriting another always converges to the fully-applied
+    /// state on replay rather than a partially-applied one. `knowledge
+    /// remove` issues no identity event (ADR 0021 §4), so this payload
+    /// alone carries the operation's whole effect, exactly like a
+    /// content-only `knowledge reconcile` patch.
+    KnowledgeRemove {
+        deletes: Vec<PendingKnowledgeDelete>,
+        files: Vec<PendingKnowledgeFile>,
+    },
 }
 
 /// One canonical Knowledge file to create or overwrite wholesale (see
@@ -131,6 +144,15 @@ pub struct PendingKnowledgeFile {
 /// than writing the destination and deleting the source: a move leaves
 /// exactly one file claiming this Scenario's UID at every instant, where
 /// write-then-delete would transiently leave two.
+/// One canonical Knowledge file to remove wholesale (ADR 0034 §6): a
+/// cascade-deleted Requirement, Feature, Behavior, or Scenario's file.
+/// `relative_path` is root-relative, forward-slash-normalized, matching
+/// [`PendingKnowledgeFile::relative_path`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingKnowledgeDelete {
+    pub relative_path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingKnowledgeMove {
     pub from_relative_path: String,
