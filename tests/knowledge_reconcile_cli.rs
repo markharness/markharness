@@ -4,7 +4,8 @@
 #![allow(clippy::disallowed_methods)]
 
 use std::fs;
-use std::process::{Command, Output};
+use std::io::Write;
+use std::process::{Command, Output, Stdio};
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_markharness")
@@ -15,6 +16,25 @@ fn run(args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("failed to run markharness binary")
+}
+
+fn run_with_stdin(args: &[&str], stdin: &str) -> Output {
+    let mut child = Command::new(bin())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn markharness binary");
+    child
+        .stdin
+        .take()
+        .expect("child stdin")
+        .write_all(stdin.as_bytes())
+        .expect("failed to write to child stdin");
+    child
+        .wait_with_output()
+        .expect("failed to wait on markharness binary")
 }
 
 fn setup_root_with_axes(axis_ids: &[&str]) -> tempfile::TempDir {
@@ -86,6 +106,29 @@ fn valid_intent_exits_zero() {
         "--dir",
         dir.path().to_str().unwrap(),
     ]);
+
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn intent_file_dash_reads_intent_from_stdin() {
+    let dir = setup_root_with_axes(&["functional"]);
+
+    let output = run_with_stdin(
+        &[
+            "knowledge",
+            "reconcile",
+            "-",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ],
+        VALID_INTENT,
+    );
 
     assert!(
         output.status.success(),
@@ -242,6 +285,27 @@ fn unrecognized_format_reports_invalid_format() {
         dir.path().to_str().unwrap(),
         "--json",
     ]);
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"invalid_format\""), "{stdout}");
+}
+
+#[test]
+fn intent_file_dash_with_malformed_yaml_reports_invalid_format() {
+    let dir = setup_root_with_axes(&[]);
+
+    let output = run_with_stdin(
+        &[
+            "knowledge",
+            "reconcile",
+            "-",
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--json",
+        ],
+        "not: [valid",
+    );
 
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
