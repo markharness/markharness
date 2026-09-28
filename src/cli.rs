@@ -1618,10 +1618,16 @@ fn report_remove_outcome(outcome: &knowledge_remove::RemoveOutcome, json: bool) 
                 )
             })
             .collect();
+        let removed_directories: Vec<String> = outcome
+            .removed_directories
+            .iter()
+            .map(|path| format!("\"{}\"", json_escape(path)))
+            .collect();
         println!(
-            "{{\"ok\":true,\"deleted\":[{}],\"detached\":[{}]}}",
+            "{{\"ok\":true,\"deleted\":[{}],\"detached\":[{}],\"removed_directories\":[{}]}}",
             deleted.join(","),
             detached.join(","),
+            removed_directories.join(","),
         );
     } else {
         for d in &outcome.deleted {
@@ -1634,6 +1640,9 @@ fn report_remove_outcome(outcome: &knowledge_remove::RemoveOutcome, json: bool) 
                 d.id,
                 d.path
             );
+        }
+        for path in &outcome.removed_directories {
+            println!("removed empty directory {path}");
         }
     }
 }

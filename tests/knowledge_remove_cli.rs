@@ -110,6 +110,11 @@ fn removing_a_feature_cascades_and_reports_json() {
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["ok"], true);
     assert_eq!(json["deleted"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        json["removed_directories"].as_array().unwrap().len(),
+        3,
+        "json={json}"
+    );
     assert!(
         !dir.path()
             .join(".markharness/knowledge/features/player-jump/feature.yml")
@@ -125,6 +130,52 @@ fn removing_a_feature_cascades_and_reports_json() {
             .join(".markharness/knowledge/features/player-jump/jump/basic/scenario.yml")
             .exists()
     );
+    assert!(
+        !dir.path()
+            .join(".markharness/knowledge/features/player-jump")
+            .exists(),
+        "the Feature's own now-empty directory must be removed too"
+    );
+    assert!(
+        dir.path().join(".markharness/knowledge/features").exists(),
+        "the features/ collection root must survive even though it is now empty"
+    );
+}
+
+/// ADR 0035: human-readable output reports each removed empty directory,
+/// and the protected `features/`/`requirements/`/`knowledge/` roots survive
+/// even once the only Feature under them is gone.
+#[test]
+fn removing_a_feature_reports_removed_directories_in_human_output() {
+    let dir = setup_root();
+
+    let output = run(&[
+        "knowledge",
+        "remove",
+        "feature",
+        "player-jump",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("removed empty directory .markharness/knowledge/features/player-jump"),
+        "stdout={stdout}"
+    );
+    assert!(dir.path().join(".markharness/knowledge/features").exists());
+    assert!(
+        dir.path()
+            .join(".markharness/knowledge/requirements")
+            .exists()
+    );
+    assert!(dir.path().join(".markharness/knowledge").exists());
 }
 
 #[test]

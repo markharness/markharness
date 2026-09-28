@@ -37,13 +37,15 @@ pub struct DetachedReference {
     pub path: String,
 }
 
-/// `knowledge remove`'s result: every element the cascade deleted, and
-/// every element whose optional back-reference was rewritten to omit a
-/// deleted Requirement's UID.
+/// `knowledge remove`'s result: every element the cascade deleted, every
+/// element whose optional back-reference was rewritten to omit a deleted
+/// Requirement's UID, and every directory left empty by the deletion and
+/// removed as a result (ADR 0035), deepest first.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RemoveOutcome {
     pub deleted: Vec<DeletedElement>,
     pub detached: Vec<DetachedReference>,
+    pub removed_directories: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -369,6 +371,53 @@ fn compute_detach(
     Ok((detached, files))
 }
 
+/// Walks upward from each of `deleted`'s own directories, removing any that
+/// ended up completely empty and continuing to that directory's own parent
+/// when it did, until reaching a directory that is not empty or one of the
+/// three protected roots (ADR 0035 §3): `.markharness/knowledge/` itself
+/// and its `requirements/`/`features/` collection roots, none of which are
+/// ever removed even when completely empty. Returns every directory
+/// actually removed, root-relative, deepest first.
+///
+/// Best-effort (ADR 0035 §5): unlike the file deletions and back-reference
+/// rewrites above, this does not go through `identity::recovery`'s
+/// crash-recoverable batch. An empty directory left behind by an
+/// interruption carries no data and is invisible to every other reader in
+/// the codebase, so nothing downstream can observe the difference between
+/// "removed immediately" and "removed on the next invocation that happens
+/// to touch the same subtree, or never."
+fn cleanup_empty_ancestors(root: &Path, deleted: &[DeletedElement]) -> io::Result<Vec<String>> {
+    let knowledge_dir = root
+        .join(crate::project_root::MARKHARNESS_DIR)
+        .join("knowledge");
+    let protected = [
+        knowledge_dir.clone(),
+        knowledge_dir.join("requirements"),
+        knowledge_dir.join("features"),
+    ];
+
+    let mut removed = Vec::new();
+    for element in deleted {
+        let Some(mut dir) = root.join(&element.path).parent().map(Path::to_path_buf) else {
+            continue;
+        };
+        loop {
+            if protected.contains(&dir) {
+                break;
+            }
+            if !crate::fs_safety::remove_dir_if_empty_no_follow(root, &dir)? {
+                break;
+            }
+            removed.push(relative_path_string(root, &dir));
+            match dir.parent() {
+                Some(parent) => dir = parent.to_path_buf(),
+                None => break,
+            }
+        }
+    }
+    Ok(removed)
+}
+
 /// The safe entry point (mirrors `knowledge_reconcile::execute::reconcile_creation`):
 /// resolves `target` and commits its cascade delete plus back-reference
 /// detachment under one continuous hold of the identity lock, so a
@@ -410,7 +459,13 @@ pub fn remove_element(root: &Path, target: &RemoveTarget) -> Result<RemoveOutcom
             recovery::finish(root, &intent)?;
         }
 
-        Ok(RemoveOutcome { deleted, detached })
+        let removed_directories = cleanup_empty_ancestors(root, &deleted)?;
+
+        Ok(RemoveOutcome {
+            deleted,
+            detached,
+            removed_directories,
+        })
     })();
     held_lock.release()?;
     outcome
@@ -970,6 +1025,153 @@ mod tests {
             dir.path()
                 .join(".markharness/knowledge/requirements/controls/requirement.yml")
                 .exists()
+        );
+    }
+
+    /// ADR 0035 §2/§4: removing a leaf Scenario must remove its own
+    /// now-empty directory and report it, but must not touch its parent
+    /// Behavior directory, which still holds `behavior.yml`.
+    #[test]
+    fn removing_a_scenario_removes_its_own_now_empty_directory() {
+        let dir = init_tree();
+
+        let outcome = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Scenario,
+                key: "basic",
+                feature: Some("player-jump"),
+                behavior: Some("jump"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome.removed_directories,
+            vec![".markharness/knowledge/features/player-jump/jump/basic".to_string()]
+        );
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/features/player-jump/jump/basic")
+                .exists()
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/jump")
+                .exists(),
+            "the parent Behavior directory still holds behavior.yml and must survive"
+        );
+    }
+
+    /// ADR 0035 §3: removing a Behavior cascades to its Scenario, so both
+    /// the Scenario's and the Behavior's own directories end up empty and
+    /// must both be removed, deepest first — but the Feature directory,
+    /// which still holds `feature.yml`, must survive.
+    #[test]
+    fn removing_a_behavior_removes_both_its_own_and_its_scenarios_directories() {
+        let dir = init_tree();
+
+        let outcome = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Behavior,
+                key: "jump",
+                feature: Some("player-jump"),
+                behavior: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome.removed_directories,
+            vec![
+                ".markharness/knowledge/features/player-jump/jump/basic".to_string(),
+                ".markharness/knowledge/features/player-jump/jump".to_string(),
+            ]
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump")
+                .exists(),
+            "the parent Feature directory still holds feature.yml and must survive"
+        );
+    }
+
+    /// ADR 0035 §3: removing a whole Feature cascades all the way down, so
+    /// its own directory and every nested Behavior/Scenario directory end
+    /// up empty and are all removed — but the walk must stop at the
+    /// protected `features/` collection root and `.markharness/knowledge/`
+    /// itself, neither of which is ever removed even though this test's
+    /// tree only has the one Feature (making both completely empty
+    /// afterward).
+    #[test]
+    fn removing_the_only_feature_removes_its_whole_subtree_but_protects_the_collection_roots() {
+        let dir = init_tree();
+
+        let outcome = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Feature,
+                key: "player-jump",
+                feature: None,
+                behavior: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome.removed_directories,
+            vec![
+                ".markharness/knowledge/features/player-jump/jump/basic".to_string(),
+                ".markharness/knowledge/features/player-jump/jump".to_string(),
+                ".markharness/knowledge/features/player-jump".to_string(),
+            ]
+        );
+        assert!(
+            dir.path().join(".markharness/knowledge/features").exists(),
+            "the features/ collection root must never be removed, even when empty"
+        );
+        assert!(
+            dir.path().join(".markharness/knowledge").exists(),
+            ".markharness/knowledge/ itself must never be removed"
+        );
+    }
+
+    /// ADR 0035 §3: removing the last Requirement empties `requirements/`
+    /// entirely (after its own now-empty `<id>/` directory is removed), but
+    /// the `requirements/` collection root itself must survive.
+    #[test]
+    fn removing_the_only_requirement_protects_the_requirements_collection_root() {
+        let dir = init_tree();
+        // Detach the Feature's reference first so the Requirement itself
+        // has no dependents blocking nothing else about this test — its
+        // own directory cleanup is what's under test here.
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/feature.yml",
+            "id: player-jump\nrequirement_uids: []\nlabel: player-jump\naxis: []\n",
+        );
+
+        let outcome = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Requirement,
+                key: "controls",
+                feature: None,
+                behavior: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome.removed_directories,
+            vec![".markharness/knowledge/requirements/controls".to_string()]
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/requirements")
+                .exists(),
+            "the requirements/ collection root must never be removed, even when empty"
         );
     }
 }
