@@ -482,6 +482,159 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
+    /// ADR 0035 §3: a Feature with two Behaviors of uneven Scenario counts
+    /// still has every level of its subtree cleaned up, not just the
+    /// single-Behavior case the other tests use — the upward walk from each
+    /// cascade-deleted element's own directory converges on the same fully
+    /// empty `player-jump/` regardless of tree shape or `deleted`'s order.
+    #[test]
+    fn removing_a_feature_with_multiple_behaviors_and_uneven_scenario_counts_cleans_up_every_level()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/feature.yml",
+            "id: player-jump\nrequirement_uids: []\nlabel: player-jump\naxis: []\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/jump/behavior.yml",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  d\nprocedures: {}\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/jump/basic/scenario.yml",
+            "id: basic\nbehavior: jump\nlabel: basic\ndescription: |\n  d\nphases:\n  - steps:\n      - action: \"a\"\n    results:\n      - \"r\"\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/jump/double/scenario.yml",
+            "id: double\nbehavior: jump\nlabel: double\ndescription: |\n  d\nphases:\n  - steps:\n      - action: \"a\"\n    results:\n      - \"r\"\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/dash/behavior.yml",
+            "id: dash\nfeature: player-jump\nlabel: dash\naxis: []\ndescription: |\n  d\nprocedures: {}\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/dash/quick/scenario.yml",
+            "id: quick\nbehavior: dash\nlabel: quick\ndescription: |\n  d\nphases:\n  - steps:\n      - action: \"a\"\n    results:\n      - \"r\"\n",
+        );
+
+        let outcome = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Feature,
+                key: "player-jump",
+                feature: None,
+                behavior: None,
+            },
+        )
+        .unwrap();
+
+        let mut removed_directories = outcome.removed_directories.clone();
+        removed_directories.sort();
+        assert_eq!(
+            removed_directories,
+            vec![
+                ".markharness/knowledge/features/player-jump".to_string(),
+                ".markharness/knowledge/features/player-jump/dash".to_string(),
+                ".markharness/knowledge/features/player-jump/dash/quick".to_string(),
+                ".markharness/knowledge/features/player-jump/jump".to_string(),
+                ".markharness/knowledge/features/player-jump/jump/basic".to_string(),
+                ".markharness/knowledge/features/player-jump/jump/double".to_string(),
+            ]
+        );
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/features/player-jump")
+                .exists(),
+            "player-jump directory must be fully gone"
+        );
+    }
+
+    /// ADR 0035 §3: removing a single Behavior scoped by `--feature`, when a
+    /// sibling Behavior remains under the same Feature, must clean up only
+    /// the removed Behavior's own subtree — the sibling's directories, and
+    /// the Feature's own directory (still holding `feature.yml`), must
+    /// survive untouched.
+    #[test]
+    fn removing_a_scoped_behavior_cleans_up_only_its_own_subtree_leaving_a_sibling_behavior_intact()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/feature.yml",
+            "id: player-jump\nrequirement_uids: []\nlabel: player-jump\naxis: []\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/jump/behavior.yml",
+            "id: jump\nfeature: player-jump\nlabel: jump\naxis: []\ndescription: |\n  d\nprocedures: {}\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/jump/basic/scenario.yml",
+            "id: basic\nbehavior: jump\nlabel: basic\ndescription: |\n  d\nphases:\n  - steps:\n      - action: \"a\"\n    results:\n      - \"r\"\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/jump/double/scenario.yml",
+            "id: double\nbehavior: jump\nlabel: double\ndescription: |\n  d\nphases:\n  - steps:\n      - action: \"a\"\n    results:\n      - \"r\"\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/dash/behavior.yml",
+            "id: dash\nfeature: player-jump\nlabel: dash\naxis: []\ndescription: |\n  d\nprocedures: {}\n",
+        );
+        write(
+            dir.path(),
+            ".markharness/knowledge/features/player-jump/dash/quick/scenario.yml",
+            "id: quick\nbehavior: dash\nlabel: quick\ndescription: |\n  d\nphases:\n  - steps:\n      - action: \"a\"\n    results:\n      - \"r\"\n",
+        );
+
+        let outcome = remove_element(
+            dir.path(),
+            &RemoveTarget {
+                kind: EntityKind::Behavior,
+                key: "jump",
+                feature: Some("player-jump"),
+                behavior: None,
+            },
+        )
+        .unwrap();
+
+        let mut removed_directories = outcome.removed_directories.clone();
+        removed_directories.sort();
+        assert_eq!(
+            removed_directories,
+            vec![
+                ".markharness/knowledge/features/player-jump/jump".to_string(),
+                ".markharness/knowledge/features/player-jump/jump/basic".to_string(),
+                ".markharness/knowledge/features/player-jump/jump/double".to_string(),
+            ]
+        );
+        assert!(
+            !dir.path()
+                .join(".markharness/knowledge/features/player-jump/jump")
+                .exists(),
+            "jump subtree must be fully gone"
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/dash/quick/scenario.yml")
+                .exists(),
+            "dash sibling must survive untouched"
+        );
+        assert!(
+            dir.path()
+                .join(".markharness/knowledge/features/player-jump/feature.yml")
+                .exists(),
+            "player-jump/feature.yml must survive (dash behavior still exists)"
+        );
+    }
+
     fn init_tree() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         write(
