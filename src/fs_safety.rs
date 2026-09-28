@@ -475,6 +475,31 @@ pub fn remove_file_no_follow(root: &Path, target: &Path) -> io::Result<()> {
     }
 }
 
+/// Removes `target` only when it is a directory with no entries at all,
+/// refusing to follow a symlink/junction at `target` itself or any of its
+/// ancestors. A missing `target`, and a `target` that is not empty, are
+/// both left alone and reported as "not removed" rather than as an error —
+/// this is a "clean up if trivially empty" primitive (ADR 0035), not an
+/// assertion that `target` must be empty. Returns whether it actually
+/// removed the directory, so a caller walking upward through several
+/// ancestors can tell when to stop.
+pub fn remove_dir_if_empty_no_follow(root: &Path, target: &Path) -> io::Result<bool> {
+    ensure_no_symlink_ancestor(root, target)?;
+    let mut entries = match fs::read_dir(target) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    if entries.next().is_some() {
+        return Ok(false);
+    }
+    match retry_on_transient_permission_denial(|| fs::remove_dir(target)) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// Recursively removes `target` and its contents, refusing to follow a
 /// symlink/junction at `target` itself or any of its ancestors. A missing
 /// `target` is treated as success (removal is idempotent).
@@ -1193,6 +1218,68 @@ mod tests {
         link_dir(&target, outside.path());
 
         let result = remove_dir_all_no_follow(root, &target);
+
+        assert!(result.is_err(), "expected an error, got: {result:?}");
+        assert!(outside.path().join("keep.txt").exists());
+    }
+
+    #[test]
+    fn remove_dir_if_empty_no_follow_removes_an_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
+            .join("requirements")
+            .join("stale");
+        fs::create_dir_all(&target).unwrap();
+
+        let removed = remove_dir_if_empty_no_follow(root, &target).unwrap();
+
+        assert!(removed);
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn remove_dir_if_empty_no_follow_leaves_a_non_empty_directory_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let target = root
+            .join(crate::project_root::MARKHARNESS_DIR)
+            .join("knowledge")
+            .join("requirements")
+            .join("still-has-a-file");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("requirement.yml"), "id: still-has-a-file\n").unwrap();
+
+        let removed = remove_dir_if_empty_no_follow(root, &target).unwrap();
+
+        assert!(!removed);
+        assert!(target.join("requirement.yml").exists());
+    }
+
+    #[test]
+    fn remove_dir_if_empty_no_follow_treats_a_missing_directory_as_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let target = root.join(".markharness/knowledge/requirements/does-not-exist");
+
+        let removed = remove_dir_if_empty_no_follow(root, &target).unwrap();
+
+        assert!(!removed);
+    }
+
+    #[test]
+    fn remove_dir_if_empty_no_follow_rejects_a_target_behind_a_symlinked_ancestor() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("keep.txt"), "keep me").unwrap();
+        let link = root.join(".markharness").join("knowledge");
+        link_dir(&link, outside.path());
+        let target = link.join("requirements").join("stale");
+
+        let result = remove_dir_if_empty_no_follow(root, &target);
 
         assert!(result.is_err(), "expected an error, got: {result:?}");
         assert!(outside.path().join("keep.txt").exists());
