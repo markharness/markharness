@@ -677,7 +677,13 @@ pub fn run(cli: Cli) -> io::Result<()> {
             let intent_file =
                 intent_file.expect("clap requires intent_file unless --print-template is given");
             let root = project_root::resolve(dir, &env::current_dir()?)?;
-            let yaml = fs::read_to_string(&intent_file)?;
+            let yaml = if intent_file == Path::new("-") {
+                let mut yaml = String::new();
+                io::Read::read_to_string(&mut io::stdin(), &mut yaml)?;
+                yaml
+            } else {
+                fs::read_to_string(&intent_file)?
+            };
             let doc = match parse_intent(&yaml) {
                 Ok(doc) => doc,
                 Err(e) => {

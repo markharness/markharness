@@ -71,11 +71,17 @@ markharness knowledge reconcile --print-template
 
 Intentは**手続きではなく望ましい状態**を記述する。新規要素はドキュメント内ローカルな `key` で相互参照し(`key` は保存されない)、既存要素は `uid` で選択する。同じIntentを再実行しても、内容が一致する要素は `unchanged` となり書込みは発生しない。
 
+`<intent-file>` に `-` を渡すと、ファイルではなく標準入力からYAMLを読む。ephemeralなIntentを都度生成するツール統合(GUIツールのバックエンド等)で、一時ファイルへの書き出し・削除を省ける。
+
+```bash
+$ echo "$INTENT_YAML" | markharness knowledge reconcile - --dir /path/to/project
+```
+
 **オプション**
 
 | オプション         | 説明                                                                                                     |
 | ------------------ | -------------------------------------------------------------------------------------------------------- |
-| `<intent-file>`    | Knowledge Intent YAMLのパス。`--print-template` と排他(いずれか一方が必須)                               |
+| `<intent-file>`    | Knowledge Intent YAMLのパス。`-` を指定すると標準入力から読む。`--print-template` と排他(いずれか一方が必須) |
 | `--print-template` | 空のKnowledge Intent雛形を標準出力へ出す。他のオプションとは併用できない                                  |
 | `--check`          | 解析・照合・検証・mutation plan生成まで通常実行と同じ実装で行い、**書込みだけを行わない**                 |
 | `-d, --dir <path>` | 対象プロジェクトディレクトリ(`.markharness/knowledge/` の親)。省略時はプロジェクトルート(cwdから上位探索) |
