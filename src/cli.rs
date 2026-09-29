@@ -566,6 +566,18 @@ pub enum KnowledgeCommand {
         #[arg(long)]
         check: bool,
     },
+    /// Print a Knowledge Intent that registers a StrictDoc JSON export's requirements as external Requirements (ADR 0036). Pipe it to `knowledge reconcile -`.
+    IntentFromStrictdoc {
+        /// StrictDoc JSON export file (`strictdoc export --formats=json`)
+        #[arg(long)]
+        input: PathBuf,
+        /// Directory scanned for the `.sdoc` files. Defaults to the project directory.
+        #[arg(long)]
+        sdoc_root: Option<PathBuf>,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
     /// Physically delete a Requirement, Feature, Behavior, or Scenario (ADR 0034), cascading to children with a mandatory parent reference and detaching optional back-references
     Remove {
         /// Which kind of element to delete
@@ -733,6 +745,30 @@ pub fn run(cli: Cli) -> io::Result<()> {
                     std::process::exit(3);
                 }
                 Err(ReconcileError::Io(e)) => Err(e),
+            }
+        }
+        Command::Knowledge(KnowledgeCommand::IntentFromStrictdoc {
+            input,
+            sdoc_root,
+            dir,
+        }) => {
+            let cwd = env::current_dir()?;
+            let root = project_root::resolve(dir, &cwd)?;
+            let sdoc_root = sdoc_root.map_or_else(|| root.clone(), |dir| cwd.join(dir));
+            let export = fs::read_to_string(&input)?;
+            let result = crate::knowledge_strictdoc::index_sdoc_headers(&root, &sdoc_root)
+                .and_then(|index| {
+                    crate::knowledge_strictdoc::intent_from_strictdoc(&export, &index)
+                });
+            match result {
+                Ok(intent) => {
+                    print!("{intent}");
+                    Ok(())
+                }
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    std::process::exit(1);
+                }
             }
         }
         Command::Knowledge(KnowledgeCommand::Remove {
