@@ -178,13 +178,13 @@ fn check_requirement_source_mode(
         knowledge::RequirementSource::External => {
             if requirement.source_locator.is_none() {
                 report(
-                    "source: external requires `source_locator` (the .sdoc path in this repository)"
+                    "source: external requires `source_locator` (the path of the StrictDoc source file, .sdoc or .md, in this repository)"
                         .to_string(),
                 );
             }
             if requirement.source_revision.is_none() {
                 report(
-                    "source: external requires `source_revision` (the pinned blob OID of that .sdoc)"
+                    "source: external requires `source_revision` (the pinned blob OID of that source file)"
                         .to_string(),
                 );
             }

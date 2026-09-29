@@ -69,12 +69,21 @@ fn project_with_sdoc() -> tempfile::TempDir {
     fs::create_dir_all(dir.path().join("docs")).unwrap();
     fs::write(
         dir.path().join("docs/a.sdoc"),
-        format!("[DOCUMENT]\nMID: {DOC_MID}\nTITLE: Doc A\n"),
+        sdoc_with(&[REQ_MID_1, REQ_MID_2]),
     )
     .unwrap();
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-q", "-m", "init"]);
     dir
+}
+
+/// The `.sdoc` text of a document holding requirements with these MIDs.
+fn sdoc_with(mids: &[&str]) -> String {
+    let mut text = String::from("[DOCUMENT]\nTITLE: Doc\n");
+    for mid in mids {
+        text.push_str(&format!("\n[REQUIREMENT]\nMID: {mid}\nSTATEMENT: s\n"));
+    }
+    text
 }
 
 fn write_export(dir: &Path, json: &str) -> String {
@@ -227,7 +236,8 @@ fn a_requirement_without_a_mid_rejects_the_whole_run_naming_it() {
 }
 
 #[test]
-fn a_document_with_requirements_but_no_mid_rejects_the_run_naming_it() {
+fn a_document_without_a_mid_is_fine_because_requirement_mids_locate_the_file() {
+    // Markdown documents have no document-level MID at all.
     let dir = project_with_sdoc();
     let export = export_of(&[document(
         None,
@@ -235,28 +245,36 @@ fn a_document_with_requirements_but_no_mid_rejects_the_run_naming_it() {
         &[requirement(REQ_MID_1, "REQ-1")],
     )]);
 
-    assert_rejected(&intent_from(dir.path(), &export, &[]), "Unnumbered Doc");
+    let output = intent_from(dir.path(), &export, &[]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let intent = String::from_utf8(output.stdout).unwrap();
+    assert!(intent.contains("source_locator: docs/a.sdoc\n"), "{intent}");
 }
 
 #[test]
-fn a_document_mid_matching_no_sdoc_rejects_the_run() {
+fn a_requirement_mid_found_in_no_source_file_rejects_the_run() {
     let dir = project_with_sdoc();
-    let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let unknown = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let export = export_of(&[document(
-        Some(other),
-        "Doc B",
-        &[requirement(REQ_MID_1, "REQ-1")],
+        Some(DOC_MID),
+        "Doc A",
+        &[requirement(unknown, "REQ-1")],
     )]);
 
-    assert_rejected(&intent_from(dir.path(), &export, &[]), other);
+    assert_rejected(&intent_from(dir.path(), &export, &[]), unknown);
 }
 
 #[test]
-fn a_document_mid_matching_several_sdocs_rejects_the_run_listing_them() {
+fn an_indented_mid_line_in_a_code_example_is_not_a_requirement_mid() {
+    // strictdoc's own user guide quotes a `[REQUIREMENT]` block, indented,
+    // inside a text node.
     let dir = project_with_sdoc();
     fs::write(
-        dir.path().join("docs/copy.sdoc"),
-        format!("[DOCUMENT]\nMID: {DOC_MID}\nTITLE: Copy\n"),
+        dir.path().join("docs/guide.sdoc"),
+        format!(
+            "[DOCUMENT]\nTITLE: Guide\n\n[TEXT]\nSTATEMENT: >>>\n.. code:: strictdoc\n\n    [REQUIREMENT]\n    MID: {REQ_MID_1}\n<<<\n"
+        ),
     )
     .unwrap();
     let export = export_of(&[document(
@@ -267,11 +285,66 @@ fn a_document_mid_matching_several_sdocs_rejects_the_run_listing_them() {
 
     let output = intent_from(dir.path(), &export, &[]);
 
-    assert_rejected(&output, "docs/a.sdoc");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let intent = String::from_utf8(output.stdout).unwrap();
+    assert!(intent.contains("source_locator: docs/a.sdoc\n"), "{intent}");
+}
+
+#[test]
+fn requirements_of_a_markdown_document_locate_their_md_file() {
+    let dir = project_with_sdoc();
+    let md_mid = "cccccccccccccccccccccccccccccccc";
+    fs::create_dir_all(dir.path().join("spec")).unwrap();
+    fs::write(
+        dir.path().join("spec/spec.md"),
+        format!(
+            "# Spec\n\n### Naming\n\n**MID**: {md_mid} \\\n**UID**: MD-1\n\n**Statement**: s\n"
+        ),
+    )
+    .unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "md"]);
+    let export = export_of(&[document(None, "Spec", &[requirement(md_mid, "MD-1")])]);
+
+    let output = intent_from(dir.path(), &export, &[]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let intent = String::from_utf8(output.stdout).unwrap();
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("docs/copy.sdoc"),
-        "{output:?}"
+        intent.contains("source_locator: spec/spec.md\n"),
+        "{intent}"
     );
+    let reconcile = run_with_stdin(
+        &[
+            "knowledge",
+            "reconcile",
+            "-",
+            "--check",
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ],
+        &intent,
+    );
+    assert_eq!(reconcile.status.code(), Some(4), "{reconcile:?}");
+}
+
+#[test]
+fn a_requirement_mid_found_in_several_files_rejects_the_run_listing_them() {
+    let dir = project_with_sdoc();
+    fs::write(dir.path().join("docs/copy.sdoc"), sdoc_with(&[REQ_MID_1])).unwrap();
+    let export = export_of(&[document(
+        Some(DOC_MID),
+        "Doc A",
+        &[requirement(REQ_MID_1, "REQ-1")],
+    )]);
+
+    let output = intent_from(dir.path(), &export, &[]);
+
+    assert_rejected(&output, "docs/a.sdoc");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("docs/copy.sdoc"), "{output:?}");
+    // Two copies under one root cannot be told apart by `--sdoc-root`.
+    assert!(stderr.contains("remove the duplicate"), "{output:?}");
 }
 
 #[test]
@@ -279,11 +352,7 @@ fn sdoc_root_limits_the_scan_and_locators_stay_relative_to_the_project() {
     let dir = project_with_sdoc();
     // Same MID outside the scanned root: must not count as a second match.
     fs::create_dir_all(dir.path().join("other")).unwrap();
-    fs::write(
-        dir.path().join("other/dup.sdoc"),
-        format!("[DOCUMENT]\nMID: {DOC_MID}\nTITLE: Dup\n"),
-    )
-    .unwrap();
+    fs::write(dir.path().join("other/dup.sdoc"), sdoc_with(&[REQ_MID_1])).unwrap();
     let export = export_of(&[document(
         Some(DOC_MID),
         "Doc A",
@@ -336,17 +405,136 @@ fn a_mid_that_is_not_lowercase_hex_rejects_the_run() {
 }
 
 #[test]
-fn a_mid_that_is_not_32_hex_digits_rejects_the_run() {
-    // StrictDoc MIDs are 32 hex digits (ADR 0036 §3); a truncated or
-    // overlong value is a corrupt export, not a shorter key.
+fn a_mid_of_fewer_than_32_hex_digits_is_accepted() {
+    // A real StrictDoc project carries a 31-digit MID
+    // (SDOC-SRS-148 in strictdoc's own docs), so length is not validated.
     let dir = project_with_sdoc();
-    for bad in ["abc", &format!("{REQ_MID_1}0")] {
-        let export = export_of(&[document(
-            Some(DOC_MID),
-            "Doc A",
-            &[requirement(bad, "REQ-1")],
-        )]);
+    let short = "9183080f1358485f9bacdcda0635109";
+    fs::write(dir.path().join("docs/short.sdoc"), sdoc_with(&[short])).unwrap();
+    let export = export_of(&[document(
+        Some(DOC_MID),
+        "Doc A",
+        &[requirement(short, "SDOC-SRS-148")],
+    )]);
 
-        assert_rejected(&intent_from(dir.path(), &export, &[]), "REQ-1");
+    let output = intent_from(dir.path(), &export, &[]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let intent = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        intent.contains(&format!("  - id: sd-{short}\n")),
+        "{intent}"
+    );
+    assert!(
+        intent.contains(&format!("    source_key: {short}\n")),
+        "{intent}"
+    );
+}
+
+#[test]
+fn an_empty_mid_rejects_the_run() {
+    let dir = project_with_sdoc();
+    let export = export_of(&[document(
+        Some(DOC_MID),
+        "Doc A",
+        &[requirement("", "REQ-1")],
+    )]);
+
+    assert_rejected(&intent_from(dir.path(), &export, &[]), "REQ-1");
+}
+
+#[test]
+fn several_sdoc_roots_scan_only_those_directories() {
+    // strictdoc's own repository copies its spec into `tests/` as fixtures;
+    // listing the document directories (its `include_doc_paths`) keeps
+    // those copies out of the scan.
+    let dir = project_with_sdoc();
+    let md_mid = "cccccccccccccccccccccccccccccccc";
+    let md = format!("# Spec\n\n### Naming\n\n**MID**: {md_mid} \\\n**UID**: MD-1\n");
+    for path in ["spec/spec.md", "tests/fixture/input.md"] {
+        fs::create_dir_all(dir.path().join(path).parent().unwrap()).unwrap();
+        fs::write(dir.path().join(path), &md).unwrap();
     }
+    let export = export_of(&[
+        document(Some(DOC_MID), "Doc A", &[requirement(REQ_MID_1, "REQ-1")]),
+        document(None, "Spec", &[requirement(md_mid, "MD-1")]),
+    ]);
+
+    assert_rejected(
+        &intent_from(dir.path(), &export, &[]),
+        "tests/fixture/input.md",
+    );
+
+    let docs = dir.path().join("docs");
+    let spec = dir.path().join("spec");
+    let output = intent_from(
+        dir.path(),
+        &export,
+        &[
+            "--sdoc-root",
+            docs.to_str().unwrap(),
+            "--sdoc-root",
+            spec.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let intent = String::from_utf8(output.stdout).unwrap();
+    assert!(intent.contains("source_locator: docs/a.sdoc\n"), "{intent}");
+    assert!(
+        intent.contains("source_locator: spec/spec.md\n"),
+        "{intent}"
+    );
+}
+
+#[test]
+fn a_mid_quoted_in_an_sdoc_multiline_string_is_not_a_declaration() {
+    // Multi-line field values are not indented, so a quoted requirement
+    // block puts `MID:` at column 0.
+    let dir = project_with_sdoc();
+    fs::write(
+        dir.path().join("docs/guide.sdoc"),
+        format!(
+            "[DOCUMENT]\nTITLE: Guide\n\n[TEXT]\nSTATEMENT: >>>\n[REQUIREMENT]\nMID: {REQ_MID_1}\n<<<\n"
+        ),
+    )
+    .unwrap();
+    let export = export_of(&[document(
+        Some(DOC_MID),
+        "Doc A",
+        &[requirement(REQ_MID_1, "REQ-1")],
+    )]);
+
+    let output = intent_from(dir.path(), &export, &[]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let intent = String::from_utf8(output.stdout).unwrap();
+    assert!(intent.contains("source_locator: docs/a.sdoc\n"), "{intent}");
+}
+
+#[test]
+fn a_mid_quoted_in_a_markdown_code_fence_is_not_a_declaration() {
+    let dir = project_with_sdoc();
+    let md_mid = "cccccccccccccccccccccccccccccccc";
+    fs::create_dir_all(dir.path().join("spec")).unwrap();
+    fs::write(
+        dir.path().join("spec/spec.md"),
+        format!("# Spec\n\n### Naming\n\n**MID**: {md_mid}\n**UID**: MD-1\n"),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("spec/howto.md"),
+        format!("# How to\n\n```markdown\n**MID**: {md_mid}\n```\n"),
+    )
+    .unwrap();
+    let export = export_of(&[document(None, "Spec", &[requirement(md_mid, "MD-1")])]);
+
+    let output = intent_from(dir.path(), &export, &[]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let intent = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        intent.contains("source_locator: spec/spec.md\n"),
+        "{intent}"
+    );
 }

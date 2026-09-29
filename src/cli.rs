@@ -571,9 +571,9 @@ pub enum KnowledgeCommand {
         /// StrictDoc JSON export file (`strictdoc export --formats=json`)
         #[arg(long)]
         input: PathBuf,
-        /// Directory scanned for the `.sdoc` files. Defaults to the project directory.
+        /// Directory scanned for StrictDoc source files (`.sdoc`, `.md`); repeatable. Defaults to the project directory.
         #[arg(long)]
-        sdoc_root: Option<PathBuf>,
+        sdoc_root: Vec<PathBuf>,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -754,9 +754,13 @@ pub fn run(cli: Cli) -> io::Result<()> {
         }) => {
             let cwd = env::current_dir()?;
             let root = project_root::resolve(dir, &cwd)?;
-            let sdoc_root = sdoc_root.map_or_else(|| root.clone(), |dir| cwd.join(dir));
+            let sdoc_roots: Vec<PathBuf> = if sdoc_root.is_empty() {
+                vec![root.clone()]
+            } else {
+                sdoc_root.iter().map(|dir| cwd.join(dir)).collect()
+            };
             let export = fs::read_to_string(&input)?;
-            let result = crate::knowledge_strictdoc::index_sdoc_headers(&root, &sdoc_root)
+            let result = crate::knowledge_strictdoc::index_source_mids(&root, &sdoc_roots)
                 .and_then(|index| {
                     crate::knowledge_strictdoc::intent_from_strictdoc(&export, &index)
                 });

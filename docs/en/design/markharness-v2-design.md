@@ -96,7 +96,7 @@ Requirement {
   description,           // optional
 
   // required when source = external; not allowed in native mode
-  source_locator,        // the .sdoc path, inside the same Git repository
+  source_locator,        // the StrictDoc source file (.sdoc/.md) path, inside the same Git repository
   source_revision,       // the Git blob OID pinned at link time
   source_key,            // StrictDoc's own identifier, held verbatim; never case-normalized on write. Recommended value is StrictDoc's MID (machine-generated, no spelling variance), not the free-text `UID:` field that caused the originating incident (ADR 0030)
 }

@@ -96,7 +96,7 @@ Requirement {
   description,           // optional
 
   // source = external のとき必須、nativeでは書けない
-  source_locator,        // 同一Gitリポジトリ内の`.sdoc`パス
+  source_locator,        // 同一Gitリポジトリ内のStrictDocソースファイル(`.sdoc`/`.md`)のパス
   source_revision,       // 取込時に固定したGit blob OID
   source_key,            // StrictDoc側の識別子をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない。推奨値はStrictDocのMID(機械生成のため表記ゆれが無い)であり、事故の原因になった自由記述の`UID:`フィールドではない(ADR 0030)
 }

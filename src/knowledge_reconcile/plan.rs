@@ -221,7 +221,7 @@ pub struct Plan {
 /// input state changed between them: the basis for `stale_plan` (ADR 0027
 /// §6) between when [`build_plan`] read current state and when a caller
 /// later commits it. ADR 0029 fixes which trees those are — the state
-/// markharness owns, excluding the `.sdoc` a `source_locator` points at.
+/// markharness owns, excluding the source file a `source_locator` points at.
 pub(crate) fn state_fingerprint(root: &Path) -> io::Result<String> {
     let markharness_dir = root.join(crate::project_root::MARKHARNESS_DIR);
     let mut entries: Vec<(String, String)> = Vec::new();
@@ -438,12 +438,12 @@ fn check_requirement_required_fields(
             if candidate.source_locator.is_none() {
                 (
                     "source_locator",
-                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                    "source: external requires `source_locator` (the path of the StrictDoc source file, .sdoc or .md, in this repository)",
                 )
             } else if candidate.source_revision.is_none() {
                 (
                     "source_revision",
-                    "source: external requires `source_revision: current` to pin the .sdoc's current blob OID",
+                    "source: external requires `source_revision: current` to pin the source file's current blob OID",
                 )
             } else if candidate.source_key.is_none() {
                 (
@@ -518,7 +518,7 @@ fn build_requirement_content(
                 return Ok(Err(Diagnostic::new(
                     DiagnosticCode::MissingRequiredField,
                     format!("{location}.source_locator"),
-                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                    "source: external requires `source_locator` (the path of the StrictDoc source file, .sdoc or .md, in this repository)",
                 )));
             };
             // A brand-new external Requirement has no prior pin to keep,
@@ -528,7 +528,7 @@ fn build_requirement_content(
                 return Ok(Err(Diagnostic::new(
                     DiagnosticCode::MissingRequiredField,
                     format!("{location}.source_revision"),
-                    "source: external requires `source_revision: current` to pin the .sdoc's current blob OID",
+                    "source: external requires `source_revision: current` to pin the source file's current blob OID",
                 )));
             }
             let Some(key) = intent.source_key.clone() else {
@@ -672,7 +672,7 @@ fn resolve_source_revision(
                 return Ok(Err(Diagnostic::new(
                     DiagnosticCode::MissingRequiredField,
                     format!("{location}.source_locator"),
-                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                    "source: external requires `source_locator` (the path of the StrictDoc source file, .sdoc or .md, in this repository)",
                 )));
             };
             if !root.join(&locator).is_file() {
