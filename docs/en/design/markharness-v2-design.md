@@ -167,7 +167,7 @@ On top of the Feature-revision comparison between base and head (reusing the cur
 1. **Builds the changed set in both directions.** It walks from changed Features to the Requirements they `contributes_to`, *and* from changed Requirements to their related Features and TestCases. The search never depends on a Feature having changed, so a PR that touches only a Requirement is not missed.
 2. **Detects spec-side change from the base/head diff.** In both modes the comparison is "content at base" versus "content at head".
    - `source: native`: the base/head diff of `requirement.yml` itself. Granularity is per Requirement and no external tool is involved.
-   - `source: external`: the base/head diff of the `.sdoc` blob named by `source_locator`. This assumes the `.sdoc` file is **managed in the same Git repository as markharness**, and requires no `.sdoc` parsing. Granularity is per file: a change to another Requirement in the same file also reads as "changed" (false positives are accepted; per-Requirement granularity waits for M3's `.sdoc` parsing).
+   - `source: external`: the base/head diff of the source file blob (`.sdoc` or `.md`) named by `source_locator`. This assumes the source file is **managed in the same Git repository as markharness**, and requires no parsing of it. Granularity is per file: a change to another Requirement in the same file also reads as "changed" (false positives are accepted; per-Requirement granularity waits for M3's `.sdoc` parsing).
 3. **Reports a stale pin as its own item.** In external mode, when `source_revision` does not match the blob OID at head, that is output as "pinned reference is stale." It is independent of step 2: advancing the pin with `source_revision: current` must never cancel out detection of a spec change (changing the `.sdoc` and repinning inside the same PR still leaves the step-2 diff intact).
 4. Computes the Alignment-check state (the three values of §5.3) for each changed TestCase and Requirement.
 5. Outputs the affected TestCase list, the related Requirement list, the alignment states, and the stale-pin list.
@@ -360,9 +360,9 @@ The MVP is M0–M2, and M0–M2 were completed on 2026-09-12 (✅). M3 and M4 ar
 | AC09 | A `source: external` `requirement.yml` without `source_locator`/`source_revision` | `validate` rejects it (§5.2.1) |
 | AC09b | A `requirement.yml` with `label` and no `source` field | `validate` rejects it. Mode is never decided by an implicit default (§9.1) |
 | AC09c | A `requirement.yml` carrying both `label` and `source_locator` | `validate` rejects it (mixed modes) |
-| AC10 | For a `source: external` Requirement, the `.sdoc` blob named by `source_locator` differs between base and head | Change Impact reports a spec-side change, without parsing the `.sdoc` (§6.1 step 2) |
+| AC10 | For a `source: external` Requirement, the source file blob (`.sdoc` or `.md`) named by `source_locator` differs between base and head | Change Impact reports a spec-side change, without parsing the source file (§6.1 step 2) |
 | AC10b | A `source: native` Requirement's `label`/`description` changes between base and head | Change Impact reports a spec-side change (§6.1) |
-| AC10c | The `.sdoc` is unchanged between base and head, but `source_revision` does not match the blob OID at head | Reported as a stale pin only, never as a spec-side change (§6.1 step 3) |
+| AC10c | The source file is unchanged between base and head, but `source_revision` does not match the blob OID at head | Reported as a stale pin only, never as a spec-side change (§6.1 step 3) |
 | AC11 | Compute Release Coverage with a past release tag passed to `--at` | The listing reproduces the Knowledge and `ExecutionBinding` as of that ref (§6.2) |
 | AC12 | One commit touches several Requirements and carries a trailer without a target | It stays "unconfirmed", because which check was done cannot be determined (§5.3) |
 | AC13 | Rename a Scenario's display id | `ExecutionBinding` survives, because it references the Case UID (§5.2) |
