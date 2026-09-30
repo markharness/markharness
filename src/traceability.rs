@@ -229,12 +229,12 @@ fn check_requirement_source_mode(
         RequirementSource::External => {
             if requirement.source_locator.is_none() {
                 return Err(malformed(
-                    "source: external requires `source_locator` (the .sdoc path in this repository)",
+                    "source: external requires `source_locator` (the path of the StrictDoc source file, .sdoc or .md, in this repository)",
                 ));
             }
             if requirement.source_revision.is_none() {
                 return Err(malformed(
-                    "source: external requires `source_revision` (the pinned blob OID of that .sdoc)",
+                    "source: external requires `source_revision` (the pinned blob OID of that source file)",
                 ));
             }
             if requirement.source_key.is_none() {

@@ -26,12 +26,12 @@ pub struct Requirement {
     pub axis: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
-    /// Present only for `source: external`: the `.sdoc` path, inside this
-    /// same Git repository.
+    /// Present only for `source: external`: the StrictDoc source file
+    /// (`.sdoc` or `.md`) path, inside this same Git repository.
     #[serde(default)]
     pub source_locator: Option<String>,
     /// Present only for `source: external`: the pinned Git blob OID of the
-    /// `.sdoc` the locator names.
+    /// source file the locator names.
     #[serde(default)]
     pub source_revision: Option<String>,
     /// Present only for `source: external`: StrictDoc's own MID — the
