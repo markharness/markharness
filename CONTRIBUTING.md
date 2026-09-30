@@ -60,9 +60,11 @@ Keep each kind of knowledge in its proper source:
 - ADRs record why a design was chosen, the alternatives considered, and the resulting decision.
 - Git history records how the implementation evolved.
 
-Write a comment when the information cannot be recovered from the code, types, tests, or names and is useful for a future change. Prefer a precise invariant or constraint over a description of control flow. Keep comments local to the code they protect. Put design-level rationale, alternatives, and historical context in an ADR or Git history instead of duplicating it in comments. When a design decision is relevant at a code location, link to the ADR briefly.
+Write a comment when the information cannot be recovered from the code, types, tests, or names and is useful for a future change. Prefer a precise invariant or constraint over a description of control flow. Keep comments local to the code they protect. Put design-level rationale, alternatives, and historical context in an ADR or Git history instead of duplicating it in comments.
 
-During review, check both that comments do not restate the current implementation and that non-obvious local constraints are documented. Treat a comment that belongs in an ADR, a stale comment, or a missing constraint explanation as a review finding when it affects maintainability or correctness.
+Text in code must be understandable on its own: comments, command help, error messages, and other strings. Never leave a sentence that cannot be understood without opening an ADR or another document (for example "see ADR 0036 §4", or a help text that only names an ADR). State the constraint or reason in the text itself. A short pointer to an ADR may follow a self-contained sentence as further reading, but it must not carry the meaning.
+
+During review, check both that comments do not restate the current implementation and that non-obvious local constraints are documented. Treat a comment that belongs in an ADR, a stale comment, a missing constraint explanation, or text that depends on an ADR or other document to make sense as a review finding when it affects maintainability or correctness.
 
 ## Commit style
 
