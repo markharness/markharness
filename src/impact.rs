@@ -98,7 +98,7 @@ pub struct RequirementImpact {
     pub cases: Vec<CaseAlignment>,
 }
 
-/// An external Requirement whose pinned revision is behind the `.sdoc` as
+/// An external Requirement whose pinned revision is behind the source file as
 /// head records it. Reported separately from a spec change: a stale pin is
 /// bookkeeping, not evidence that the requirement's text moved in this range
 /// (AC10c).
@@ -185,7 +185,7 @@ fn cases_at(root: &Path, git_ref: &str) -> Result<BTreeMap<String, TestCase>, Im
 }
 
 /// The blob a Requirement's content effectively lives in, per mode: the
-/// `requirement.yml` itself for native, the `.sdoc` it pins for external
+/// `requirement.yml` itself for native, the source file it pins for external
 /// (ADR 0023 §2/§3).
 fn spec_blob_path(requirement: &Requirement, requirement_id: &str) -> String {
     match requirement.source {

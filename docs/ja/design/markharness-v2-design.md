@@ -96,7 +96,7 @@ Requirement {
   description,           // optional
 
   // source = external のとき必須、nativeでは書けない
-  source_locator,        // 同一Gitリポジトリ内の`.sdoc`パス
+  source_locator,        // 同一Gitリポジトリ内のStrictDocソースファイル(`.sdoc`/`.md`)のパス
   source_revision,       // 取込時に固定したGit blob OID
   source_key,            // StrictDoc側の識別子をそのまま複製した付随情報。生値のまま保持し、大文字小文字の変換は行わない。推奨値はStrictDocのMID(機械生成のため表記ゆれが無い)であり、事故の原因になった自由記述の`UID:`フィールドではない(ADR 0030)
 }
@@ -167,7 +167,7 @@ base/head間のFeature版比較(現行`changes.rs`の`ChangeEvent`計算を流�
 1. **双方向に変更集合を求める。** Featureの変更起点(変更されたFeature→`contributes_to`するRequirement)と、Requirementの変更起点(変更されたRequirement→関連するFeature・TestCase)の両方を辿る。Featureが変更されていないPRでもRequirementの変更を見落とさないため、探索をFeature変更の有無に依存させない。
 2. **仕様側の変更は base/head 間の差分で判定する。** モードごとの判定対象は次の通りで、いずれも「base時点の内容」と「head時点の内容」を比較する。
    - `source: native`：`requirement.yml`自体のbase/head差分。粒度はRequirement単位で、外部ツールを必要としない。
-   - `source: external`：`source_locator`が指す`.sdoc` blobのbase/head差分。`.sdoc`が**markharnessと同一のGitリポジトリで管理されている**ことを前提とし、`.sdoc`の構文解析を必要としない。粒度はファイル単位であり、同一ファイル内の別Requirementの変更でも「変更あり」と判定される(偽陽性を許容する。Requirement単位の粒度が必要になった時点でM3の`.sdoc`解析へ引き上げる)。
+   - `source: external`：`source_locator`が指すソースファイル(`.sdoc`または`.md`)のblobのbase/head差分。ソースファイルが**markharnessと同一のGitリポジトリで管理されている**ことを前提とし、その構文解析を必要としない。粒度はファイル単位であり、同一ファイル内の別Requirementの変更でも「変更あり」と判定される(偽陽性を許容する。Requirement単位の粒度が必要になった時点でM3の`.sdoc`解析へ引き上げる)。
 3. **固定参照の古さ(stale pin)は別項目として算出する。** externalモードで`source_revision`がhead時点のblob OIDと一致しない場合、「固定参照が古い」として出力する。これは2の変更検知とは独立した項目であり、`source_revision: current`による参照更新が仕様変更の検知を打ち消してはならない(同一PR内で`.sdoc`を変更しrepinしても、2の差分は成立する)。
 4. 変更されたTestCase・Requirementそれぞれについて、Alignment checkの状態(§5.3の三値)を算出する。
 5. 影響を受けるTestCase一覧、関連Requirement一覧、Alignment checkの状態別一覧、stale pin一覧を出力する。
@@ -360,9 +360,9 @@ MVPはM0〜M2とする。M0〜M2は2026-09-12に実装完了した(✅)。M3・M
 | AC09 | `source: external`なのに`source_locator`/`source_revision`を持たない`requirement.yml`を置く | `validate`が拒否する(§5.2.1) |
 | AC09b | `source`を省略した`requirement.yml`(`label`あり)を置く | `validate`が拒否する。モード判定を暗黙のdefaultに委ねない(§9.1) |
 | AC09c | `label`と`source_locator`を両方持つ`requirement.yml`を置く | `validate`が拒否する(モード混在) |
-| AC10 | `source: external`のRequirementで、`source_locator`が指す`.sdoc` blobがbaseとheadで異なる | Change Impactが仕様側変更として検出する。`.sdoc`の構文解析は行わない(§6.1手順2) |
+| AC10 | `source: external`のRequirementで、`source_locator`が指すソースファイル(`.sdoc`または`.md`)のblobがbaseとheadで異なる | Change Impactが仕様側変更として検出する。ソースファイルの構文解析は行わない(§6.1手順2) |
 | AC10b | `source: native`のRequirementの`label`/`description`をbase/head間で変更する | Change Impactが仕様側変更として検出する(§6.1) |
-| AC10c | `.sdoc`はbase/head間で変更されていないが、`source_revision`がhead時点のblob OIDと一致しない | stale pinとしてのみ出力する。仕様側変更としては報告しない(§6.1手順3) |
+| AC10c | ソースファイルはbase/head間で変更されていないが、`source_revision`がhead時点のblob OIDと一致しない | stale pinとしてのみ出力する。仕様側変更としては報告しない(§6.1手順3) |
 | AC11 | 過去のリリースtagを`--at`に指定してRelease Coverageを算出する | 当時のKnowledge・`ExecutionBinding`に基づく一覧を再現する(§6.2) |
 | AC12 | 1コミットで複数のRequirementに触れ、対象を書かないtrailerを付与する | どの対応確認が済んだか判定できないため「未確認」のまま残る(§5.3) |
 | AC13 | Scenarioの表示idをrenameする | `ExecutionBinding`はCase UID参照のため維持される(§5.2) |
