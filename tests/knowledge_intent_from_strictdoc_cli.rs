@@ -187,7 +187,7 @@ fn intent_from(dir: &Path, export: &str, extra: &[&str]) -> Output {
     run(&args)
 }
 
-/// A rejected run must emit no Intent at all (ADR 0036 §5), so a caller
+/// A rejected run must emit no Intent at all, so a caller
 /// piping into `knowledge reconcile -` never applies a partial one.
 fn assert_rejected(output: &Output, stderr_contains: &str) {
     assert_eq!(output.status.code(), Some(1), "{output:?}");

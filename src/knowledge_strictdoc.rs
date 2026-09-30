@@ -1,4 +1,4 @@
-//! `knowledge intent-from-strictdoc` (ADR 0036): turns a StrictDoc
+//! `knowledge intent-from-strictdoc`: turns a StrictDoc
 //! `export --formats=json` file into a Knowledge Intent that
 //! `knowledge reconcile` consumes. Read-only; nothing is written.
 
@@ -15,7 +15,7 @@ pub type MidIndex = HashMap<String, Vec<String>>;
 /// Indexes the MID lines of every StrictDoc source file under `sdoc_roots`.
 /// The JSON export carries neither the source path nor, for Markdown
 /// documents, a document MID, so the requirement's own MID is the only key
-/// that leads back to its file (ADR 0036 §4).
+/// that leads back to its file.
 pub fn index_source_mids(project_root: &Path, sdoc_roots: &[PathBuf]) -> Result<MidIndex, String> {
     let project_root = canonical(project_root)?;
     let mut roots = Vec::new();
@@ -186,13 +186,14 @@ fn fence_of(line: &str) -> Option<(u8, usize)> {
     (indent <= 3 && matches!(marker, b'`' | b'~') && length >= 3).then_some((marker, length))
 }
 
-/// A MID is lowercase hex; the length is not checked (ADR 0036 §3).
+/// A MID is lowercase hex; the length is not checked (StrictDoc's own
+/// documents contain a 31-digit MID).
 fn is_mid(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Builds the Intent YAML for every `REQUIREMENT` node in the export.
-/// Fails as a whole on any inconsistency (ADR 0036 §5).
+/// Fails as a whole on any inconsistency, so no partial Intent is emitted.
 pub fn intent_from_strictdoc(export_json: &str, mid_index: &MidIndex) -> Result<String, String> {
     let export: Value =
         serde_json::from_str(export_json).map_err(|e| format!("invalid StrictDoc JSON: {e}"))?;
@@ -234,8 +235,8 @@ fn str_field<'a>(node: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 /// A requirement's display name and MID. The MID becomes both `source_key`
-/// and `id: sd-<MID>`; only lowercase hex is accepted (ADR 0036 §3): that
-/// is a valid slug (ADR 0030), and the Intent is assembled by formatting,
+/// and `id: sd-<MID>`; only lowercase hex is accepted: that
+/// is a valid slug, and the Intent is assembled by formatting,
 /// so nothing else may reach it. The length is not checked: StrictDoc's
 /// own docs carry a 31-digit MID.
 fn requirement_mid(requirement: &Value) -> Result<(&str, &str), String> {
@@ -252,7 +253,7 @@ fn requirement_mid(requirement: &Value) -> Result<(&str, &str), String> {
     Ok((name, mid))
 }
 
-/// The source file a requirement is declared in (ADR 0036 §4).
+/// The source file a requirement is declared in.
 fn source_locator<'a>(name: &str, mid: &str, mid_index: &'a MidIndex) -> Result<&'a str, String> {
     match mid_index.get(mid).map(Vec::as_slice) {
         Some([only]) => Ok(only),

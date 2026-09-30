@@ -566,7 +566,7 @@ pub enum KnowledgeCommand {
         #[arg(long)]
         check: bool,
     },
-    /// Print a Knowledge Intent that registers a StrictDoc JSON export's requirements as external Requirements (ADR 0036). Pipe it to `knowledge reconcile -`.
+    /// Print a Knowledge Intent that registers a StrictDoc JSON export's requirements as external Requirements. Pipe it to `knowledge reconcile -`.
     IntentFromStrictdoc {
         /// StrictDoc JSON export file (`strictdoc export --formats=json`)
         #[arg(long)]
