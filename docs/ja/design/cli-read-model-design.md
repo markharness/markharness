@@ -194,7 +194,7 @@ UIDを持たない要素(未migrate)は、`relations`のいずれの側にも現
 
 `TraceabilityReadModel`には、Bindingの有無やCoverageの判定結果を含めない。それらは`ReleaseCoverageReadModel`の責務とする。
 
-`requirements`・`features`はKnowledgeに存在する全件を対象とする(生成されたTestCaseの有無を問わない。`coverage`のAC21と同じ理由で、対応するTestCaseがまだ無いFeatureも可視化する)。`behaviors`・`scenarios`・`test_cases`は生成される全TestCaseから導出する。空のPhaseを持つScenarioは`generate`が生成時に拒否するため、実在するScenarioは必ず1件のTestCaseに対応し、この導出に抜け漏れは生じない。
+`requirements`・`features`・`behaviors`はKnowledgeに存在する全件を対象とする(生成されたTestCaseの有無を問わない。`coverage`のAC21と同じ理由で、対応するTestCaseがまだ無いFeatureも、Scenarioをまだ持たないBehaviorも可視化する)。`scenarios`・`test_cases`は生成される全TestCaseから導出する。空のPhaseを持つScenarioは`generate`が生成時に拒否するため、実在するScenarioは必ず1件のTestCaseに対応し、この導出に抜け漏れは生じない。`knowledge reconcile`はScenarioを持たないBehaviorを作れるため、`behaviors`をTestCaseから導出すると、外部ツールがその後にScenarioを追加するために必要な`behavior_uid`を引けなくなる。
 
 ### 5.4 編集用Intentとの関係
 

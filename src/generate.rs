@@ -100,18 +100,10 @@ pub struct KnowledgeCaseSnapshot {
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
     pub behavior_axis: Vec<String>,
-    /// Informational only, like `feature_uid`/`scenario_uid`: `traceability`
-    /// reads this to make `BehaviorNode` browsable (design doc §5.2). Not
-    /// part of case identity or `axis`.
-    pub behavior_label: String,
-    /// Informational only, like `feature_uid`/`scenario_uid`: `traceability`
-    /// reads this to populate `BehaviorNode.behavior_uid`, or `None` if the
-    /// Behavior hasn't been migrated yet. Not part of case identity or
-    /// `axis`.
-    pub behavior_uid: Option<String>,
     pub scenario_id: String,
     pub scenario_uid: Option<String>,
-    /// Informational only; see `behavior_label`.
+    /// Informational only: `traceability` reads this to make `ScenarioNode`
+    /// browsable (design doc §5.2). Not part of case identity or `axis`.
     pub scenario_label: String,
     /// Already expanded: every `use:` step replaced by its Procedure's
     /// steps (`expand_phases`).
@@ -157,8 +149,21 @@ pub(crate) fn compute_case_revision(phases: &[Phase]) -> CaseRevision {
         .expect("derived_uid::case_revision always formats a non-blank hash string")
 }
 
+/// A Behavior as stored in Knowledge, independent of whether it has any
+/// Scenario (and therefore any case). `traceability` lists these rather
+/// than deriving Behaviors from `cases`, which would drop a Behavior that
+/// has no Scenario yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeBehaviorSnapshot {
+    pub feature_id: String,
+    pub behavior_id: String,
+    pub behavior_uid: Option<String>,
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KnowledgeSnapshot {
+    pub behaviors: Vec<KnowledgeBehaviorSnapshot>,
     pub cases: Vec<KnowledgeCaseSnapshot>,
 }
 
@@ -402,6 +407,7 @@ fn load_requirement_uid_index(knowledge_root: &Path) -> io::Result<BTreeMap<Stri
 }
 
 pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSnapshot> {
+    let mut behaviors = Vec::new();
     let mut cases = Vec::new();
     let requirement_uid_index = load_requirement_uid_index(knowledge_root)?;
 
@@ -421,6 +427,12 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
             let behavior = parse_behavior(&behavior_yaml)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             require_valid_slug(&behavior_path, "behavior", &behavior.id)?;
+            behaviors.push(KnowledgeBehaviorSnapshot {
+                feature_id: feature.id.clone(),
+                behavior_id: behavior.id.clone(),
+                behavior_uid: behavior.uid.clone(),
+                label: behavior.label.clone(),
+            });
 
             for scenario_dir in find_dirs_with_marker(&behavior_dir, "scenario.yml")? {
                 let scenario_path = scenario_dir.join("scenario.yml");
@@ -472,8 +484,6 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                     feature_axis: feature.axis.clone(),
                     behavior_id: behavior.id.clone(),
                     behavior_axis: behavior.axis.clone(),
-                    behavior_label: behavior.label.clone(),
-                    behavior_uid: behavior.uid.clone(),
                     scenario_id: scenario.id,
                     scenario_uid: scenario.uid,
                     scenario_label: scenario.label,
@@ -484,7 +494,7 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
         }
     }
 
-    Ok(KnowledgeSnapshot { cases })
+    Ok(KnowledgeSnapshot { behaviors, cases })
 }
 
 pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
