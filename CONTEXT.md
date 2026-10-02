@@ -44,5 +44,8 @@ _Avoid_：Verification Plan、Evidence Selection(重量級の契約・証跡選�
 
 **Release Coverage**：指定したRequirement/Feature集合全体について、TestCaseとの対応関係およびExecution Bindingの有無を一覧化したもの。リリース判断時の補助情報として、Change Impactと併用する。
 
+**GUI**：markharnessのデータ(関係・Change Impact・Release Coverage)を人が見て、テスト知識を編集するための、CLIとは別に保守される独立したプロジェクト。コアとの接点は、CLIが出力するJSON(外部契約)だけである。
+_Avoid_：view、viewer、ビューア(呼び名を「GUI」に統一する)。
+
 **Retire(退役)**：TestCaseまたはFeatureを現在の対象から外すこと。UIDの再利用保証や、同一UIDでの明示的な復元・ID予約解除の仕組みは持たない。CLIによる新規作成では新UIDを発行し、内容一致から旧UIDを推定しない。Git履歴からUIDを含むファイルを復元した場合は元UIDが戻るため、すべての再登場が別要素になるとは保証しない。
 _Avoid_：Restore／Release(ID予約解除)(厳密な同一性保証の仕組みとしては導入しないため、退役に統合する)。
