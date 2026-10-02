@@ -22,7 +22,7 @@ The GUI is built in a separate repository (`markharness-gui`) as a separate exec
 
 The GUI calls `markharness` as a child process from outside and reads only its JSON output. It does not read the internal files under `.markharness/` directly, and it does not call the core's Rust library directly.
 
-The first version uses only the existing read outputs: `traceability` (with `--at` omitted, so the working tree), `binding list`, `coverage`, and `impact`. Detail fields such as axes, descriptions, and steps are not in the existing output. To show them, first add a read output to the CLI and have the GUI read that output (outside the first version). `axes list` is not used in the first version: its output is a bare array with no `schema_version`, so decision 5's version check cannot apply to it, and `traceability` carries no per-element axis, so it has no use in the first version.
+The first version uses only the existing read outputs: `traceability` (with `--at` omitted, so the working tree), `binding list`, `coverage`, and `impact`. Detail fields such as axes, descriptions, and steps are not in the existing output. To show them, first add a read output to the CLI and have the GUI read that output (outside the first version). `axes list` is not used in the first version: its output is a bare array with neither `record_kind` nor `schema_version`, so decision 5's check of the record kind cannot apply to it, and `traceability` carries no per-element axis, so it has no use in the first version.
 
 ### 3. `markharness gui` only launches
 
@@ -40,11 +40,11 @@ markharness gui [--dir <path>]
 
 So that people who use only the CLI (CI, AI) do not get a larger download for the GUI, the current CLI-only archive stays as it is. A separate GUI-bundled archive is built with `markharness` and `markharness-gui` in the same directory. The GUI artifact is the stable release published by the GUI repository, pinned and pulled in when `markharness` is released. Running `markharness gui` from a CLI-only distribution gives the "not bundled" error of decision 3.
 
-### 5. Version compatibility is decided by the JSON's `schema_version`
+### 5. Version compatibility is decided by the version of `markharness`
 
-The GUI checks the `record_kind` and `schema_version` of the JSON it receives, and stops displaying when it detects an unsupported version. It shows the version it supports and the version it received, guides the user to update, and does not show partial results. Showing wrong relations does more harm than stopping.
+By [0026](0026-module-inventory-and-plan-removal.md) decision 7, the `schema_version` of public JSON is fixed at `1` for every kind and is never raised; backward compatibility is not considered. `schema_version` therefore cannot tell the GUI that the shape of an output has changed. The compatibility boundary is the version of `markharness` (`Cargo.toml`'s `version` is the single source of truth, and 0.x releases may break compatibility between minor versions).
 
-The criterion for raising `schema_version` (whether adding fields or elements to an output counts as compatible) is a core-wide policy that concerns all public JSON. [0025](0025-v2-forward-compatible-evolution.md) decides only that public JSON carries a `schema_version`; no ADR currently defines this criterion. This record does not decide it; the core will decide it separately. Until then, the GUI stops whenever `schema_version` does not match a version it supports.
+At startup the GUI runs `markharness --version` and stops displaying if that version is outside the range the GUI supports. It shows the supported range and the actual version, guides the user to update, and does not show partial results. Showing wrong relations does more harm than stopping. It also checks that the `record_kind` of the JSON it receives is the kind it expects and that `schema_version` is `1`, and stops in the same way if not. This check guards against mixing up record kinds; it is not used to judge compatibility. As decision 3 has the GUI call only the `markharness` of the same distribution, a version mismatch arises mainly when the GUI is started on its own.
 
 ### 6. The CLI's error format is not unified
 
@@ -64,7 +64,7 @@ The GUI does not watch files. It re-fetches the JSON when the user refreshes. Af
 
 - Launching without a terminal (double-click, a folder-chooser screen, a Start menu entry). If this becomes necessary, it will be a separate desktop edition as a separate project, keeping its impact on this core small.
 - A review snapshot for viewing a specific committed version (including a way to receive a StrictDoc export produced by CI). It will be designed separately, including identification of the version it was made from. It will not be added as a standalone option.
-- Editing from the GUI.
+- Editing from the GUI. If editing is added, it goes only through `knowledge reconcile`, as §14.2 of the design document `cli-read-model-design.md` requires.
 
 ## Scope of impact
 
@@ -72,7 +72,9 @@ The GUI does not watch files. It re-fetches the JSON when the user refreshes. Af
 - `.github/workflows/release.yml`: add the GUI-bundled archive. How to pull in the GUI is decided once the GUI repository has its first stable release.
 - `docs/ja/cli-manual.md`, `docs/en/cli-manual.md`: add a description of `markharness gui` together with the implementation.
 - `CONTEXT.md`: the term "GUI" (already added).
-- **Not changed**: existing ADRs (including 0022, 0032, and 0033) and design documents. This does not conflict with [0022](0022-remove-stage3-dashboard.md): no UI code goes into the core; the artifact of a separate project is only bundled into the distribution.
+- §14.1 and §14.3 of `docs/ja/design/cli-read-model-design.md` and `docs/en/design/cli-read-model-design.md`: two points that conflicted with this record are updated. (1) §14.1 limited the read commands the view uses to three (`traceability`, `impact`, `coverage`), but the GUI also uses `binding list` for verification means. `binding list` is not one of the initial read models of §3.3 but an output of the `outcome` family, so that the GUI reads it is decided within this record, and whether to add it to the read models is decided separately. (2) §14.3 said `markharness view` is not added; it now states that this record's `markharness gui` only launches a separate tool and the main tool holds no viewer implementation.
+- **To be reconciled separately (not decided here)**: §13.4 of the same design document says the JSON Schemas and representative fixtures of the read models are managed as the public contract, and that an external tool imports the fixtures for each `record_kind` and `schema_version` for contract tests. This does not contradict decision 5 (compatibility is judged by the version of `markharness`, and `schema_version` is fixed at `1`), but it is written on the premise that `schema_version` identifies the contract, and it does not decide what the GUI imports for contract tests. The document also has other statements that assume a differently named viewer. These will be reconciled on a separate branch after this record is agreed.
+- **Not changed**: existing ADRs (including 0022, 0032, and 0033) and design documents other than the one above. This does not conflict with [0022](0022-remove-stage3-dashboard.md): no UI code goes into the core; the artifact of a separate project is only bundled into the distribution.
 
 ## Alternatives considered and not adopted
 
