@@ -1123,7 +1123,7 @@ $ markharness traceability --at HEAD
 markharness gui [--dir <path>]
 ```
 
-**用途**: プロジェクトの関係・Change Impact・Release Coverageを見るGUIを開く。GUIは別プロジェクトの別の実行ファイル(`markharness-gui`)で、このコマンドは起動するだけである。GUIは、`traceability`などの読み取りコマンドのJSON出力を通してプロジェクトを読む。
+**用途**: プロジェクトの関係・Change Impact・Release Coverageを見て、テスト知識を編集するGUIを開く。GUIは別プロジェクトの別の実行ファイル(`markharness-gui`)で、このコマンドは起動するだけである。GUIは、`traceability`などの読み取りコマンドのJSON出力を通してプロジェクトを読み、編集は`knowledge reconcile`を通す。
 
 **動作**
 
@@ -1140,7 +1140,7 @@ markharness gui [--dir <path>]
 
 **終了コード**: GUIを起動した後は、GUIの終了コード。プロジェクトが見つからない場合と、`markharness-gui`が見つからない場合は`1`。
 
-**GUIが見つからない場合**: GUIはGUI入りのリリースアーカイブにだけ含まれ、CLIのみのアーカイブには含まれない。エラーメッセージもそう説明する。GUI入りのアーカイブは、まだ公開していない。
+**GUIが見つからない場合**: GUIはGUI入りのリリースアーカイブにだけ含まれ、CLIのみのアーカイブには含まれない。エラーメッセージもそう説明する。GUI入りのアーカイブは、まだ公開していない。GUIの同梱は、テスト知識の編集ができる安定版から行う。
 
 **ユースケース対応**: [ADR 0038](./decisions/0038-gui-as-independent-project.md)。関連: [cli-read-model-design.md](./design/cli-read-model-design.md)§14。
 

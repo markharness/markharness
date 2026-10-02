@@ -1123,7 +1123,7 @@ $ markharness traceability --at HEAD
 markharness gui [--dir <path>]
 ```
 
-**Purpose**: Opens the GUI for browsing the project's relations, Change Impact, and Release Coverage. The GUI is a separate project and a separate executable (`markharness-gui`); this command only launches it. The GUI reads the project through the JSON output of `traceability` and the other read commands.
+**Purpose**: Opens the GUI for viewing the project's relations, Change Impact, and Release Coverage, and for editing its test knowledge. The GUI is a separate project and a separate executable (`markharness-gui`); this command only launches it. The GUI reads the project through the JSON output of `traceability` and the other read commands, and edits through `knowledge reconcile`.
 
 **Behavior**
 
@@ -1140,7 +1140,7 @@ markharness gui [--dir <path>]
 
 **Exit codes**: the GUI's exit code once it has been launched; `1` when the project is not found or `markharness-gui` is not found.
 
-**When the GUI is not found**: it is included only in the GUI-bundled release archive, not in the CLI-only archive, and the error message says so. The GUI-bundled archive is not published yet.
+**When the GUI is not found**: it is included only in the GUI-bundled release archive, not in the CLI-only archive, and the error message says so. The GUI-bundled archive is not published yet; the GUI is bundled starting with a stable release that can edit test knowledge.
 
 **Use case mapping**: [ADR 0038](./decisions/0038-gui-as-independent-project.md). Related: [cli-read-model-design.md](./design/cli-read-model-design.md) §14.
 
