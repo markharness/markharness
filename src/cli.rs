@@ -12,6 +12,7 @@ use crate::axes;
 use crate::backfill;
 use crate::binding;
 use crate::changes;
+use crate::gui;
 use crate::id_cache;
 use crate::identity::{self, MigrateError, ResolveError, SyncError};
 use crate::init;
@@ -157,6 +158,12 @@ pub enum Command {
         /// Stable output representation
         #[arg(long, value_enum, default_value = "json")]
         format: ImportFormatArg,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
+    },
+    /// Open the GUI on the project. Runs the separate `markharness-gui` executable and waits for it to exit.
+    Gui {
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -1284,6 +1291,14 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
+        Command::Gui { dir } => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            let exit_code = gui::launch(&root)?;
+            if exit_code != 0 {
+                process::exit(exit_code);
+            }
+            Ok(())
+        }
         Command::Validate { dir, json } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             let issues = validate::validate_all(&root)?;
@@ -1893,6 +1908,26 @@ mod tests {
         match cli.command {
             Command::Init { dir } => assert_eq!(dir, Some(PathBuf::from("some/path"))),
             _ => panic!("expected Init command"),
+        }
+    }
+
+    #[test]
+    fn parses_gui_dir_option() {
+        let cli = Cli::parse_from(["markharness", "gui", "--dir", "some/path"]);
+
+        match cli.command {
+            Command::Gui { dir } => assert_eq!(dir, Some(PathBuf::from("some/path"))),
+            _ => panic!("expected Gui command"),
+        }
+    }
+
+    #[test]
+    fn parses_gui_without_dir_option() {
+        let cli = Cli::parse_from(["markharness", "gui"]);
+
+        match cli.command {
+            Command::Gui { dir } => assert_eq!(dir, None),
+            _ => panic!("expected Gui command"),
         }
     }
 
