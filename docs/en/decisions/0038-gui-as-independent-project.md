@@ -42,7 +42,9 @@ So that people who use only the CLI (CI, AI) do not get a larger download for th
 
 ### 5. Version compatibility is decided by the JSON's `schema_version`
 
-The GUI checks the `record_kind` and `schema_version` of the JSON it receives, and stops displaying when it detects an unsupported version. It shows the version it supports and the version it received, guides the user to update, and does not show partial results. Adding fields is treated as compatible (the forward-compatibility policy of [0025](0025-v2-forward-compatible-evolution.md)). Showing wrong relations does more harm than stopping.
+The GUI checks the `record_kind` and `schema_version` of the JSON it receives, and stops displaying when it detects an unsupported version. It shows the version it supports and the version it received, guides the user to update, and does not show partial results. Showing wrong relations does more harm than stopping.
+
+The criterion for raising `schema_version` (whether adding fields or elements to an output counts as compatible) is a core-wide policy that concerns all public JSON. [0025](0025-v2-forward-compatible-evolution.md) decides only that public JSON carries a `schema_version`; no ADR currently defines this criterion. This record does not decide it; the core will decide it separately. Until then, the GUI stops whenever `schema_version` does not match a version it supports.
 
 ### 6. The CLI's error format is not unified
 
