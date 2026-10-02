@@ -6,9 +6,9 @@ Accepted (decided 2026-10-02). Not implemented. It keeps the policies of [0022](
 
 ## Background
 
-A GUI is needed that lets people see markharness's relations (Requirement, Feature, Behavior, Scenario, TestCase), Change Impact, and Release Coverage on screen. Its users include non-developers. The first version is mainly for viewing; editing is a possible later extension.
+The markharness CLI outputs relations (Requirement, Feature, Behavior, Scenario, TestCase), Change Impact, and Release Coverage as JSON. The GUI lets people who do not use a terminal (non-developers included) read this output on screen, and also lets them edit test knowledge. A viewing-only stage is allowed as an intermediate step of development, but the GUI is bundled into the markharness distribution only once it can edit. This record decides in what form the GUI is provided.
 
-[0022](0022-remove-stage3-dashboard.md) removed the dashboard that was bundled into the core because it meant "permanently bearing the maintenance cost of a UI that does not serve the MVP's thesis." [0032](0032-cli-read-model-seam.md) made the JSON of `traceability`, `impact`, and `coverage` an external contract and left display to a separate tool. A concrete demand has now appeared (viewing for non-developers), and a development setup in which a dedicated frontend specialist joins separately is settled, so this record decides the shape of the GUI.
+[0022](0022-remove-stage3-dashboard.md) removed the dashboard that was bundled into the core because it meant "permanently bearing the maintenance cost of a UI that does not serve the MVP's thesis." [0032](0032-cli-read-model-seam.md) made the JSON of `traceability`, `impact`, and `coverage` an external contract and left display to a separate tool. The GUI is developed by a dedicated frontend specialist, separately.
 
 The precedent is `git gui`. The official Git manual says git-gui is maintained as an independent project and that its stable releases are distributed as part of Git. It is launched by the subcommand `git gui`, which finds and runs a separate executable, `git-gui`. git-gui uses Git by calling the git CLI as a child process, and its implementation language is independent of Git itself.
 
@@ -22,7 +22,7 @@ The GUI is built in a separate repository (`markharness-gui`) as a separate exec
 
 The GUI calls `markharness` as a child process from outside and reads only its JSON output. It does not read the internal files under `.markharness/` directly, and it does not call the core's Rust library directly.
 
-The first version uses only the existing read outputs: `traceability` (with `--at` omitted, so the working tree), `binding list`, `coverage`, and `impact`. Detail fields such as axes, descriptions, and steps are not in the existing output. To show them, first add a read output to the CLI and have the GUI read that output (outside the first version). `axes list` is not used in the first version: its output is a bare array with neither `record_kind` nor `schema_version`, so decision 5's check of the record kind cannot apply to it, and `traceability` carries no per-element axis, so it has no use in the first version.
+The viewing-only intermediate stage uses only the existing read outputs: `traceability` (with `--at` omitted, so the working tree), `binding list`, `coverage`, and `impact`. Detail fields such as axes, descriptions, and steps are not in the existing output. To show them, which editing needs, first add a read output to the CLI and have the GUI read that output (decision 10). `axes list` is not used in this intermediate stage: its output is a bare array with neither `record_kind` nor `schema_version`, so decision 5's check of the record kind cannot apply to it, and `traceability` carries no per-element axis, so it has no use in this stage.
 
 ### 3. `markharness gui` only launches
 
@@ -38,7 +38,7 @@ markharness gui [--dir <path>]
 
 ### 4. Distribution keeps the CLI-only archive unchanged and adds a separate GUI-bundled archive
 
-So that people who use only the CLI (CI, AI) do not get a larger download for the GUI, the current CLI-only archive stays as it is. A separate GUI-bundled archive is built with `markharness` and `markharness-gui` in the same directory. The GUI artifact is the stable release published by the GUI repository, pinned and pulled in when `markharness` is released. Running `markharness gui` from a CLI-only distribution gives the "not bundled" error of decision 3.
+So that people who use only the CLI (CI, AI) do not get a larger download for the GUI, the current CLI-only archive stays as it is. A separate GUI-bundled archive is built with `markharness` and `markharness-gui` in the same directory. The GUI artifact is the stable release published by the GUI repository, pinned and pulled in when `markharness` is released. The stable release pulled in is limited, as decision 10 says, to one that can edit test knowledge. Running `markharness gui` from a CLI-only distribution gives the "not bundled" error of decision 3.
 
 ### 5. Version compatibility is decided by the version of `markharness`
 
@@ -58,13 +58,18 @@ The export takes time (see the measurements below). The GUI stores the export JS
 
 ### 8. The display is refreshed by a manual refresh action
 
-The GUI does not watch files. It re-fetches the JSON when the user refreshes. After the GUI itself writes (edits), it re-fetches automatically (the policy for when it has editing). Changes made outside the GUI are picked up by the refresh action.
+The GUI does not watch files. It re-fetches the JSON when the user refreshes. After the GUI itself writes (edits), it re-fetches automatically. Changes made outside the GUI are picked up by the refresh action.
 
 ### 9. Out of the initial scope
 
 - Launching without a terminal (double-click, a folder-chooser screen, a Start menu entry). If this becomes necessary, it will be a separate desktop edition as a separate project, keeping its impact on this core small.
 - A review snapshot for viewing a specific committed version (including a way to receive a StrictDoc export produced by CI). It will be designed separately, including identification of the version it was made from. It will not be added as a standalone option.
-- Editing from the GUI. If editing is added, it goes only through `knowledge reconcile`, as §14.2 of the design document `cli-read-model-design.md` requires.
+
+### 10. The condition for bundling the GUI into the markharness distribution is that it can edit test knowledge
+
+The GUI is responsible for both viewing and editing. A viewing-only version may exist as an intermediate stage of development in the GUI repository, but it is not bundled into the GUI-bundled archive. Bundling starts with a stable release that can edit test knowledge.
+
+Editing goes only through `knowledge reconcile`, as §14.2 of the design document `cli-read-model-design.md` requires, and the GUI does not rewrite Knowledge files directly. The detail fields that an editing screen needs (axes, descriptions, steps, and so on) are, as decision 2 says, first added to the CLI as read outputs, and the GUI reads those outputs.
 
 ## Scope of impact
 
