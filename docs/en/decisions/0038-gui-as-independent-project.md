@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-10-02). Not implemented. It keeps the policies of [0022](0022-remove-stage3-dashboard.md) (no UI bundled into the core) and [0032](0032-cli-read-model-seam.md) (the CLI's JSON is the external contract) and decides how to build a GUI on top of them.
+Accepted (decided 2026-10-02). Not implemented. It keeps the policies of [0022](0022-remove-stage3-dashboard.md) (no UI bundled into the core) and [0032](0032-cli-read-model-seam.md) (the CLI's JSON is the external contract) and decides how to build a GUI on top of them.
 
 ## Background
 
