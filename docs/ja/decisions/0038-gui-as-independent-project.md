@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Proposed(2026-10-02)。実装は未着手。[0022](0022-remove-stage3-dashboard.md)(コアへのUI同梱の廃止)と[0032](0032-cli-read-model-seam.md)(CLIのJSONを外部契約とするseam)の方針を変えず、その上でGUIを作る形を決める。
+Accepted(2026-10-02決定)。実装は未着手。[0022](0022-remove-stage3-dashboard.md)(コアへのUI同梱の廃止)と[0032](0032-cli-read-model-seam.md)(CLIのJSONを外部契約とするseam)の方針を変えず、その上でGUIを作る形を決める。
 
 ## 背景
 
