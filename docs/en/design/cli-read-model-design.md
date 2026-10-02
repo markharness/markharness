@@ -194,7 +194,7 @@ Example:
 
 `TraceabilityReadModel` does not include Binding presence or Coverage judgment results; those are `ReleaseCoverageReadModel`'s responsibility.
 
-`requirements` and `features` cover everything in Knowledge, regardless of whether a generated TestCase exists (the same reasoning as coverage's AC21: a Feature with nothing underneath it yet is still made visible). `behaviors`, `scenarios`, and `test_cases` are derived from every generated TestCase; since `generate` rejects a Scenario with empty phases at generation time, an existing Scenario always corresponds to exactly one TestCase, so this derivation cannot miss one.
+`requirements`, `features`, and `behaviors` cover everything in Knowledge, regardless of whether a generated TestCase exists (the same reasoning as coverage's AC21: a Feature with nothing underneath it yet, and a Behavior that has no Scenario yet, are still made visible). `scenarios` and `test_cases` are derived from every generated TestCase; since `generate` rejects a Scenario with empty phases at generation time, an existing Scenario always corresponds to exactly one TestCase, so this derivation cannot miss one. `knowledge reconcile` can create a Behavior that has no Scenario, so deriving `behaviors` from TestCases would leave an external tool unable to look up the `behavior_uid` it needs to add a Scenario to that Behavior later.
 
 ### 5.4 Relationship to the editing Intent
 

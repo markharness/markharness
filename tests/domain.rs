@@ -6,6 +6,7 @@ use markharness::generate::{
 #[test]
 fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
     let snapshot = KnowledgeSnapshot {
+        behaviors: vec![],
         cases: vec![KnowledgeCaseSnapshot {
             requirement_ids: vec!["req".to_string()],
             requirement_uids: vec!["req-uid".to_string()],
@@ -14,8 +15,6 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             feature_axis: vec!["workflow".to_string()],
             behavior_id: "behavior".to_string(),
             behavior_axis: vec!["ui".to_string()],
-            behavior_label: "Behavior".to_string(),
-            behavior_uid: None,
             scenario_id: "scenario".to_string(),
             scenario_uid: None,
             scenario_label: "Scenario".to_string(),

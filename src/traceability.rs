@@ -10,7 +10,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::generate::{self, KnowledgeCaseSnapshot};
+use crate::generate::{self, KnowledgeBehaviorSnapshot, KnowledgeCaseSnapshot};
 use crate::git;
 use crate::identity::{CaseRevision, CaseUid};
 use crate::knowledge::{self, Feature, Requirement, RequirementSource};
@@ -345,6 +345,7 @@ fn build(
     at: String,
     requirements: &BTreeMap<String, Requirement>,
     features: &BTreeMap<String, Feature>,
+    behaviors: &[KnowledgeBehaviorSnapshot],
     cases: &[KnowledgeCaseSnapshot],
 ) -> TraceabilityReadModel {
     let requirement_nodes = requirements
@@ -371,7 +372,17 @@ fn build(
         })
         .collect();
 
-    let mut behaviors: BTreeMap<(String, String), BehaviorNode> = BTreeMap::new();
+    let mut behavior_nodes: Vec<BehaviorNode> = behaviors
+        .iter()
+        .map(|behavior| BehaviorNode {
+            behavior_id: behavior.behavior_id.clone(),
+            behavior_uid: behavior.behavior_uid.clone(),
+            feature_id: behavior.feature_id.clone(),
+            label: behavior.label.clone(),
+        })
+        .collect();
+    behavior_nodes
+        .sort_by(|a, b| (&a.feature_id, &a.behavior_id).cmp(&(&b.feature_id, &b.behavior_id)));
     let mut scenarios: BTreeMap<(String, String, String), ScenarioNode> = BTreeMap::new();
     let mut test_cases: Vec<TestCaseNode> = Vec::new();
     let mut relations: Vec<TraceabilityRelation> = Vec::new();
@@ -388,14 +399,6 @@ fn build(
     }
 
     for case in cases {
-        behaviors
-            .entry((case.feature_id.clone(), case.behavior_id.clone()))
-            .or_insert_with(|| BehaviorNode {
-                behavior_id: case.behavior_id.clone(),
-                behavior_uid: case.behavior_uid.clone(),
-                feature_id: case.feature_id.clone(),
-                label: case.behavior_label.clone(),
-            });
         scenarios
             .entry((
                 case.feature_id.clone(),
@@ -451,7 +454,7 @@ fn build(
         at,
         requirements: requirement_nodes,
         features: feature_nodes,
-        behaviors: behaviors.into_values().collect(),
+        behaviors: behavior_nodes,
         scenarios: scenarios.into_values().collect(),
         test_cases,
         relations,
@@ -476,5 +479,11 @@ pub fn compute(
         }
     };
     let at = git_ref.map_or_else(|| WORKING_TREE.to_string(), |git_ref| git_ref.to_string());
-    Ok(build(at, &requirements, &features, &snapshot.cases))
+    Ok(build(
+        at,
+        &requirements,
+        &features,
+        &snapshot.behaviors,
+        &snapshot.cases,
+    ))
 }
