@@ -536,6 +536,8 @@ markharness coverage --requirements all --at HEAD
 
 Each prints a single JSON read model to stdout. view never reads Knowledge or `.markharness/` directly; it takes these outputs as input. `traceability` differs from `impact`/`coverage` in that it can reflect what the user just edited, before it's committed (ADR 0033).
 
+The GUI ([ADR 0038](../decisions/0038-gui-as-independent-project.md)) additionally uses `markharness binding list --json` to read verification means. The output of `binding list` is not one of the three initial read models of §3.3; it has `outcome` and `schema_version` at the top level and a `record_kind` in each element. That the GUI reads it is therefore decided within 0038, and whether to add it to the read models is decided separately.
+
 ### 14.2 Relationship to write commands
 
 When a GUI or view modifies test knowledge, it goes only through `knowledge reconcile`.
@@ -556,7 +558,7 @@ markharness knowledge reconcile <intent-file>
 
 The following commands are not added as part of the initial read-model design.
 
-- `markharness view`: view ships as a separate tool in a separate repository
+- `markharness view`: view ships as a separate tool in a separate repository. This means the main tool holds no viewer implementation; `markharness gui`, which only launches the separate GUI tool, is added by [ADR 0038](../decisions/0038-gui-as-independent-project.md)
 - `markharness serve`: no local web server is built into the main tool
 - `markharness search`: not built until a concrete search requirement is confirmed
 - `markharness edit`: no additional editing path; everything goes through Intent and `knowledge reconcile`

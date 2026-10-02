@@ -536,6 +536,8 @@ markharness coverage --requirements all --at HEAD
 
 これらは標準出力へ1つのJSONリードモデルを出力する。viewはKnowledgeや`.markharness/`を直接読み取らず、これらの出力を入力とする。`traceability`は、利用者が編集した直後(コミット前)の状態をそのまま反映できる点が、`impact`・`coverage`と異なる(ADR 0033)。
 
+GUI([ADR 0038](../decisions/0038-gui-as-independent-project.md))は、これに加えて検証手段を読むために`markharness binding list --json`を使う。`binding list`の出力は§3.3の初期3種のリードモデルではなく、`outcome`と`schema_version`を最上位に持ち各要素が`record_kind`を持つ形式である。したがって、GUIが読むことは0038の範囲で決め、リードモデルへ加えるかどうかは別に決める。
+
 ### 14.2 書込みコマンドとの関係
 
 GUIやviewがテスト知識を修正する場合は、`knowledge reconcile`だけを通す。
@@ -556,7 +558,7 @@ markharness knowledge reconcile <intent-file>
 
 次のコマンドは、初期リードモデル設計には追加しない。
 
-- `markharness view`：viewは別リポジトリの別ツールとして提供する
+- `markharness view`：viewは別リポジトリの別ツールとして提供する。ビューアの実装を本体に持たないという意味であり、別ツールのGUIを起動するだけの`markharness gui`は、[ADR 0038](../decisions/0038-gui-as-independent-project.md)により追加する
 - `markharness serve`：ローカルWebサーバーを本体へ組み込まない
 - `markharness search`：具体的な検索要件が確認されるまで作らない
 - `markharness edit`：編集経路を増やさず、Intentと`knowledge reconcile`へ統一する
