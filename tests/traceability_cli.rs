@@ -356,3 +356,32 @@ fn traceability_omits_relations_for_entities_without_a_uid() {
         "a Feature with no uid must not appear in relations: {relations:?}"
     );
 }
+
+#[test]
+fn traceability_lists_a_behavior_that_has_no_scenario() {
+    let dir = project();
+    let root = dir.path();
+    write(
+        &root.join(".markharness/knowledge/features/player-jump/double-jump/behavior.yml"),
+        "id: double-jump\nfeature: player-jump\nlabel: double jump\nuid: 01ARZ3NDEKTSV4RRFFQ69G5FA2\naxis: [gameplay]\ndescription: |\n  Jumping twice.\nprocedures: {}\n",
+    );
+
+    let value = traceability_json(root, &[]);
+
+    let behaviors = value["behaviors"].as_array().unwrap();
+    let double_jump = behaviors
+        .iter()
+        .find(|b| b["behavior_id"] == "double-jump")
+        .expect("a Behavior without Scenarios must still be listed");
+    assert_eq!(double_jump["behavior_uid"], "01ARZ3NDEKTSV4RRFFQ69G5FA2");
+    assert_eq!(double_jump["feature_id"], "player-jump");
+    assert_eq!(double_jump["label"], "double jump");
+    assert!(
+        value["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["behavior_id"] != "double-jump")
+    );
+    assert_eq!(behaviors.len(), 2);
+}
