@@ -1117,6 +1117,35 @@ $ markharness traceability --at HEAD
 
 ---
 
+### 1.26 `markharness gui` — Open the GUI on the project ([ADR 0038](./decisions/0038-gui-as-independent-project.md))
+
+```text
+markharness gui [--dir <path>]
+```
+
+**Purpose**: Opens the GUI for viewing the project's relations, Change Impact, and Release Coverage, and for editing its test knowledge. The GUI is a separate project and a separate executable (`markharness-gui`); this command only launches it. The GUI reads the project through the JSON output of `traceability` and the other read commands, and edits through `knowledge reconcile`.
+
+**Behavior**
+
+- Determines the project root as the other commands do: `--dir`, or the nearest ancestor of the current directory that has `.markharness/config.toml`. If there is none, it exits with an error that tells you to run `markharness init`.
+- Looks for `markharness-gui` in the same directory as the running `markharness`, then on `PATH`.
+- Runs it with `--dir <project root>`, and sets the environment variable `MARKHARNESS_BIN` to the path of the running `markharness`, so that the GUI calls the same `markharness`.
+- Waits for the GUI to exit, and exits with the GUI's exit code.
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--dir`, `-d <path>` | Target project directory. Defaults to the current directory. |
+
+**Exit codes**: the GUI's exit code once it has been launched; `1` when the project is not found or `markharness-gui` is not found.
+
+**When the GUI is not found**: it is included only in the GUI-bundled release archive, not in the CLI-only archive, and the error message says so. The GUI-bundled archive is not published yet; the GUI is bundled starting with a stable release that can edit test knowledge.
+
+**Use case mapping**: [ADR 0038](./decisions/0038-gui-as-independent-project.md). Related: [cli-read-model-design.md](./design/cli-read-model-design.md) §14.
+
+---
+
 ## 2. Unimplemented (Planned) Commands
 
 The following are commands planned for future implementation, based on the use case diagram and use case descriptions in `docs/product-operation.md`. The command names and options are tentative proposals and may change at implementation time.
@@ -1131,7 +1160,7 @@ These are currently not yet started; implementation ordering is managed separate
 
 ## 3. Verification / Testing
 
-Unit tests for the implemented commands can be run with `cargo test` (see the `#[cfg(test)] mod tests` in `src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability_index.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs`, as well as `tests/knowledge_reconcile_cli.rs`, which verifies the exit codes and output of `knowledge reconcile`). Because the tests in `git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` actually run `git init`/`commit`/`tag` in a temporary directory, the `git` command is required in the test environment. Following the Pre-PR checklist (`CONTRIBUTING.md`), run the following before committing:
+Unit tests for the implemented commands can be run with `cargo test` (see the `#[cfg(test)] mod tests` in `src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability_index.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` / `src/gui.rs`, as well as `tests/knowledge_reconcile_cli.rs`, which verifies the exit codes and output of `knowledge reconcile`, and `tests/gui_cli.rs`, which verifies how `gui` behaves when there is no GUI executable). Because the tests in `git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` actually run `git init`/`commit`/`tag` in a temporary directory, the `git` command is required in the test environment. Following the Pre-PR checklist (`CONTRIBUTING.md`), run the following before committing:
 
 ```bash
 cargo test
