@@ -42,7 +42,7 @@ CIやAIだけがCLIを使う場合に、GUIの分だけ配布物が大きくな�
 
 ### 5. 版の互換は、`markharness`のバージョンで判断する
 
-[0026](0026-module-inventory-and-plan-removal.md)決定7により、公開JSONの`schema_version`は全種別で`1`に固定され、今後も上げない。後方互換も考えない。そのため`schema_version`は、出力の形が変わったことを知らせる手段にならない。互換の境界になるのは`markharness`のバージョンである(`Cargo.toml`の`version`が唯一の情報源で、0.x系はマイナーバージョンの間で互換を壊しうる)。
+[0026](0026-module-inventory-and-plan-removal.md)決定7と[0039](0039-read-output-schema-version-frozen-in-prototype.md)により、公開JSONの`schema_version`は`1`に固定され、0.xの間は上げない。後方互換も考えない。そのため`schema_version`は、出力の形が変わったことを知らせる手段にならない。互換の境界になるのは`markharness`のバージョンである(`Cargo.toml`の`version`が唯一の情報源で、0.x系はマイナーバージョンの間で互換を壊しうる)。`schema_version`を上げる基準は、0039のとおり1.0の基準を満たす時点で決まる。そのとき、下で述べる`schema_version`が`1`であることの確認は、その基準に合わせて見直す。
 
 GUIは、起動時に`markharness --version`を実行し、そのバージョンが自身の対応する範囲に入っていなければ、表示を止める。対応する範囲と実際のバージョンを示して更新を案内し、部分的な表示はしない。誤った関係を表示するより、止めるほうが害が小さいためである。あわせて、受け取ったJSONの`record_kind`が期待する種別であること、`schema_version`が`1`であることを確認し、違えば同じく止める。これは別の種別のレコードを取り違えないための確認で、互換の判断には使わない。決定3のとおり、GUIは同じ配布物の`markharness`だけを呼ぶので、バージョンの不一致が起きるのは主にGUIを単独で起動した場合である。
 
