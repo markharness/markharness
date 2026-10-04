@@ -76,6 +76,8 @@ pub struct BehaviorNode {
     /// `None` until `identity migrate` assigns one.
     pub behavior_uid: Option<String>,
     pub feature_id: String,
+    /// `None` while the parent Feature has no uid (not migrated).
+    pub feature_uid: Option<String>,
     pub label: String,
 }
 
@@ -84,6 +86,8 @@ pub struct ScenarioNode {
     pub scenario_id: String,
     pub scenario_uid: Option<String>,
     pub behavior_id: String,
+    /// `None` while the parent Behavior has no uid (not migrated).
+    pub behavior_uid: Option<String>,
     pub label: String,
 }
 
@@ -94,6 +98,8 @@ pub struct TestCaseNode {
     pub case_revision: CaseRevision,
     pub relative_path: String,
     pub scenario_id: String,
+    /// `None` while the parent Scenario has no uid (not migrated).
+    pub scenario_uid: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -378,6 +384,7 @@ fn build(
             behavior_id: behavior.behavior_id.clone(),
             behavior_uid: behavior.behavior_uid.clone(),
             feature_id: behavior.feature_id.clone(),
+            feature_uid: behavior.feature_uid.clone(),
             label: behavior.label.clone(),
         })
         .collect();
@@ -409,6 +416,7 @@ fn build(
                 scenario_id: case.scenario_id.clone(),
                 scenario_uid: case.scenario_uid.clone(),
                 behavior_id: case.behavior_id.clone(),
+                behavior_uid: case.behavior_uid.clone(),
                 label: case.scenario_label.clone(),
             });
 
@@ -430,6 +438,7 @@ fn build(
                 .to_string_lossy()
                 .replace('\\', "/"),
             scenario_id: case.scenario_id.clone(),
+            scenario_uid: case.scenario_uid.clone(),
         });
 
         for requirement_uid in &case.requirement_uids {

@@ -99,6 +99,7 @@ pub struct KnowledgeCaseSnapshot {
     pub feature_uid: Option<String>,
     pub feature_axis: Vec<String>,
     pub behavior_id: String,
+    pub behavior_uid: Option<String>,
     pub behavior_axis: Vec<String>,
     pub scenario_id: String,
     pub scenario_uid: Option<String>,
@@ -156,6 +157,7 @@ pub(crate) fn compute_case_revision(phases: &[Phase]) -> CaseRevision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnowledgeBehaviorSnapshot {
     pub feature_id: String,
+    pub feature_uid: Option<String>,
     pub behavior_id: String,
     pub behavior_uid: Option<String>,
     pub label: String,
@@ -429,6 +431,7 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
             require_valid_slug(&behavior_path, "behavior", &behavior.id)?;
             behaviors.push(KnowledgeBehaviorSnapshot {
                 feature_id: feature.id.clone(),
+                feature_uid: feature.uid.clone(),
                 behavior_id: behavior.id.clone(),
                 behavior_uid: behavior.uid.clone(),
                 label: behavior.label.clone(),
@@ -483,6 +486,7 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                     feature_uid: feature.uid.clone(),
                     feature_axis: feature.axis.clone(),
                     behavior_id: behavior.id.clone(),
+                    behavior_uid: behavior.uid.clone(),
                     behavior_axis: behavior.axis.clone(),
                     scenario_id: scenario.id,
                     scenario_uid: scenario.uid,

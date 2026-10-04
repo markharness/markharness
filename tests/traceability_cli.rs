@@ -358,6 +358,71 @@ fn traceability_omits_relations_for_entities_without_a_uid() {
 }
 
 #[test]
+fn traceability_names_each_parent_by_uid_when_two_features_share_slugs() {
+    // `jump`/`ground` exist under both Features, so a child's `*_id` alone
+    // cannot say which parent it hangs from; the parent uid can.
+    const DASH_FEATURE_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC2";
+    const DASH_BEHAVIOR_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FA3";
+    const DASH_SCENARIO_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB2";
+    let dir = project();
+    let root = dir.path();
+    write(
+        &root.join(".markharness/knowledge/features/player-dash/feature.yml"),
+        &format!(
+            "id: player-dash\nrequirement_uids: [{REQUIREMENT_UID}]\nlabel: player-dash\naxis: [gameplay]\nuid: {DASH_FEATURE_UID}\n"
+        ),
+    );
+    write(
+        &root.join(".markharness/knowledge/features/player-dash/jump/behavior.yml"),
+        &format!(
+            "id: jump\nfeature: player-dash\nlabel: jump\nuid: {DASH_BEHAVIOR_UID}\naxis: [gameplay]\ndescription: |\n  Jumping while dashing.\nprocedures: {{}}\n"
+        ),
+    );
+    write(
+        &root.join(".markharness/knowledge/features/player-dash/jump/ground/scenario.yml"),
+        &format!(
+            "id: ground\nbehavior: jump\nlabel: ground\nuid: {DASH_SCENARIO_UID}\ndescription: |\n  From the ground.\nphases:\n  - steps:\n      - action: \"Presses jump.\"\n    results:\n      - \"Rises.\"\n"
+        ),
+    );
+
+    let value = traceability_json(root, &[]);
+
+    let behavior = |uid: &str| {
+        value["behaviors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["behavior_uid"] == uid)
+            .unwrap_or_else(|| panic!("behavior {uid} missing: {value}"))
+            .clone()
+    };
+    assert_eq!(behavior(DASH_BEHAVIOR_UID)["feature_uid"], DASH_FEATURE_UID);
+    // The original Feature has no `uid:` (not migrated), so its Behavior
+    // reports a null parent uid rather than omitting the key.
+    assert!(behavior(BEHAVIOR_UID).get("feature_uid").unwrap().is_null());
+
+    let scenario = |uid: &str| {
+        value["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["scenario_uid"] == uid)
+            .unwrap_or_else(|| panic!("scenario {uid} missing: {value}"))
+            .clone()
+    };
+    assert_eq!(
+        scenario(DASH_SCENARIO_UID)["behavior_uid"],
+        DASH_BEHAVIOR_UID
+    );
+    assert_eq!(scenario(SCENARIO_UID)["behavior_uid"], BEHAVIOR_UID);
+
+    let test_cases = value["test_cases"].as_array().unwrap();
+    let parents: Vec<&serde_json::Value> = test_cases.iter().map(|t| &t["scenario_uid"]).collect();
+    assert!(parents.contains(&&serde_json::json!(DASH_SCENARIO_UID)));
+    assert!(parents.contains(&&serde_json::json!(SCENARIO_UID)));
+}
+
+#[test]
 fn traceability_lists_a_behavior_that_has_no_scenario() {
     let dir = project();
     let root = dir.path();

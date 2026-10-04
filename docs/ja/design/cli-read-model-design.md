@@ -146,6 +146,9 @@ struct BehaviorNode {
     // `identity migrate`未実行のBehaviorではNone(他のuidフィールドと同じ)。
     behavior_uid: Option<String>,
     feature_id: String,
+    // 親Featureがuidを持たない(未migrate)場合はNone。`*_id`は親の中でしか
+    // 一意でないため、親をuidでも指す。
+    feature_uid: Option<String>,
     label: String,
 }
 
@@ -153,6 +156,7 @@ struct ScenarioNode {
     scenario_id: String,
     scenario_uid: Option<String>,
     behavior_id: String,
+    behavior_uid: Option<String>, // 親Behaviorが未migrateならNone
     label: String,
 }
 
@@ -162,6 +166,7 @@ struct TestCaseNode {
     case_revision: CaseRevision, // ハッシュ値の文字列型。u64ではない
     relative_path: String,
     scenario_id: String,
+    scenario_uid: Option<String>, // 親Scenarioが未migrateならNone
 }
 ```
 
