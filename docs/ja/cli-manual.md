@@ -725,6 +725,7 @@ markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at 
 | フィールド | 意味 |
 | --- | --- |
 | `requirements[].cases[].binding_mode` / `binding_reference` | そのTestCaseの検証手段(1.12節)。**存在することは「実行済み」を意味しない** |
+| `requirements[].cases[].reference_status` | `binding_reference` がある場合のみ。`--at` のコミットのtreeで参照先が実在するか: `exists`(実在)・`missing`(実在しない、または絶対パス・`..` を含むパス)・`not_checked`(URL。到達性は確認しない)。**`exists` は参照先がある事実だけで、実行や合格を意味しない**。`::` や `#` の接尾辞は切り落とさず、全体を1つのパスとして判定するため、接尾辞付きの参照は `missing` になる(ADR 0041) |
 | `requirements[].cases[].selected` | `--release` 指定時のみ。選定リストに含まれるか |
 | `gaps[].kind = requirement_has_no_feature` | `contributes_to` するFeatureが1つも無い(AC08) |
 | `gaps[].kind = feature_has_no_case` | Featureは関連付いているが、その配下にScenarioが1つも無い(AC21) |

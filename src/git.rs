@@ -113,6 +113,28 @@ pub fn tree_sha(root: &Path, git_ref: &str, path_in_repo: &str) -> io::Result<Op
     Ok(meta.split_whitespace().nth(2).map(|sha| sha.to_string()))
 }
 
+/// Whether `path` is, spelled exactly so, an entry (file or directory) in the
+/// tree of `git_ref`. `--literal-pathspecs` stops `:(top)`, `*` and `[..]`
+/// from being interpreted, and the listed name must equal `path`, so
+/// `./a`, `a//b` and a trailing `/` (all of which git would normalize or
+/// expand to children) do not resolve.
+pub fn path_exists_at(root: &Path, git_ref: &str, path: &str) -> io::Result<bool> {
+    reject_option_like(git_ref)?;
+    let raw = run_git(
+        root,
+        &[
+            "--literal-pathspecs",
+            "ls-tree",
+            "-z",
+            "--name-only",
+            git_ref,
+            "--",
+            path,
+        ],
+    )?;
+    Ok(raw.split('\0').any(|name| name == path))
+}
+
 /// Reads a blob's content by its content-addressed SHA (as returned in a
 /// `TreeEntry` from `ls_tree_recursive`), via `git cat-file -p`. Used to
 /// resolve a Feature's id from its `feature.yml` content (the `id:` field)

@@ -366,6 +366,7 @@ struct CaseCoverage {
     feature_id: String,
     binding_mode: Option<String>,       // omitted when undeclared
     binding_reference: Option<String>,  // omitted when undeclared
+    reference_status: Option<ReferenceStatus>, // only with binding_reference: exists | missing | not_checked
     selected: Option<bool>,             // only meaningful when a release was requested
 }
 
@@ -384,6 +385,8 @@ struct ReleaseView {
 ```
 
 `binding_mode`/`binding_reference` express `ExecutionBinding` (a declared verification means) as-is. These values must never be presented as "executed" or "passed" — pass/fail, execution time, executor, and execution environment are a separate tool's responsibility (ADR 0025 §1). "Selected" is likewise never conflated with "executed" (ADR 0024 §5).
+
+`reference_status` says whether `binding_reference` exists in the tree of the `--at` commit (`exists`, `missing`, `not_checked`). The working tree is not consulted. A URL is `not_checked`; reachability is not checked. `exists` states only that the target is there, never that anything ran or passed. The rules, and the patterns that can be misjudged, follow ADR 0041.
 
 ### 7.3 `coverage` as seen from markharness-view
 

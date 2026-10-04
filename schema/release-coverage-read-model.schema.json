@@ -73,12 +73,17 @@
           "minLength": 1
         },
         "binding_reference": { "type": "string", "minLength": 1 },
+        "reference_status": {
+          "description": "Whether `binding_reference` resolves at the requested commit: `exists` (the path is in that commit's tree), `missing` (it is not, or it is absolute or leaves the repository), `not_checked` (a URL; reachability is not checked). Says nothing about whether the Case ran. Present exactly when `binding_reference` is.",
+          "enum": ["exists", "missing", "not_checked"]
+        },
         "selected": {
           "description": "Present only when a release scope was requested.",
           "type": "boolean"
         }
       },
-      "required": ["case_id", "case_uid", "feature_id"]
+      "required": ["case_id", "case_uid", "feature_id"],
+      "dependentRequired": { "binding_reference": ["reference_status"] }
     },
     "gap": {
       "type": "object",

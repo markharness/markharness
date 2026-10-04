@@ -79,6 +79,43 @@ pub struct CoverageGap {
     pub feature_id: Option<String>,
 }
 
+/// Whether a binding's `reference` resolves to something at the requested ref.
+/// A structural fact about the tree — `Exists` says the path is there, never
+/// that anything ran or passed (ADR 0025 §1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceStatus {
+    Exists,
+    Missing,
+    /// A URL: reachability is out of scope, so nothing was checked.
+    NotChecked,
+}
+
+/// The whole string is judged as one repo-relative path: no `::`/`#` suffix
+/// is stripped, so a suffixed reference to an existing file is `Missing`.
+fn reference_status(
+    root: &Path,
+    commit: &str,
+    reference: &str,
+) -> Result<ReferenceStatus, CoverageError> {
+    if reference.contains("://") {
+        return Ok(ReferenceStatus::NotChecked);
+    }
+    // An empty name would match the tree root, and a path that is absolute
+    // or climbs out with `..` cannot name something inside the repository.
+    let leaves_the_repo = reference.is_empty()
+        || reference.starts_with('/')
+        || reference.split('/').any(|part| part == "..");
+    if leaves_the_repo {
+        return Ok(ReferenceStatus::Missing);
+    }
+    Ok(if git::path_exists_at(root, commit, reference)? {
+        ReferenceStatus::Exists
+    } else {
+        ReferenceStatus::Missing
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CaseCoverage {
     pub case_id: String,
@@ -90,6 +127,9 @@ pub struct CaseCoverage {
     pub binding_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binding_reference: Option<String>,
+    /// Present exactly when `binding_reference` is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_status: Option<ReferenceStatus>,
     /// Only meaningful when a release scope was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected: Option<bool>,
@@ -328,12 +368,18 @@ pub fn compute(
                 in_scope_uids.insert(uid.clone());
             }
             let found = case_uid.as_ref().and_then(|uid| bindings.get(uid));
+            let binding_reference = found.and_then(|b| b.reference.clone());
+            let reference_status = binding_reference
+                .as_deref()
+                .map(|reference| reference_status(root, &at_commit, reference))
+                .transpose()?;
             case_coverage.push(CaseCoverage {
                 case_id: case.case_id.clone(),
                 case_uid: case_uid.clone(),
                 feature_id: case.generated_from.feature.clone(),
                 binding_mode: found.map(|b| b.mode.as_str().to_string()),
-                binding_reference: found.and_then(|b| b.reference.clone()),
+                binding_reference,
+                reference_status,
                 selected: scope.as_ref().map(|_| {
                     case_uid
                         .as_ref()
