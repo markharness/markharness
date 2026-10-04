@@ -1056,7 +1056,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 **`--at` is optional. Omitting it reads the working tree** — the uncommitted, current content — the same way `generate`/`verify` already do (ADR 0033). Giving `--at <ref>` reads that Git ref's committed content instead. Unlike `impact`/`coverage`, `traceability` has no two-point-comparison or release-auditing requirement, so it never demands a commit first. It never writes any artifact, unlike `generate`.
 
-**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key` — `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `behavior_uid`, `feature_id`, `feature_uid`, `label`; every Behavior in Knowledge is listed, including one that has no Scenario; `behavior_uid` is `null` for a Behavior `identity migrate` has not yet processed), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `behavior_uid`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`, `scenario_uid`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). The parent UIDs (`feature_uid`, `behavior_uid`, `scenario_uid`) are emitted because a `*_id` slug is unique only within its parent, so a project where several Features share a slug can still be walked unambiguously; the key is always present and is `null` when the parent has no UID yet (`identity migrate` not run). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) is not included; read it directly from `.markharness/generated/testcases/<relative_path>`, using `relative_path`.
+**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key` — `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `behavior_uid`, `feature_id`, `feature_uid`, `label`; every Behavior in Knowledge is listed, including one that has no Scenario; `behavior_uid` is `null` for a Behavior `identity migrate` has not yet processed), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `behavior_uid`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`, `scenario_uid`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). The parent UIDs (`feature_uid`, `behavior_uid`, `scenario_uid`) are emitted because a `*_id` slug is unique only within its parent, so a project where several Features share a slug can still be walked unambiguously; the key is always present and is `null` when the parent has no UID yet (`identity migrate` not run). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) and the other elements' content are not included; read them one element at a time with `traceability show` (§1.26).
 
 **Behavior**
 
@@ -1114,6 +1114,67 @@ $ markharness traceability --at HEAD
 ```
 
 **Use case mapping**: [cli-read-model-design.md](./design/cli-read-model-design.md) §5's `TraceabilityReadModel`, [ADR 0032](./decisions/0032-cli-read-model-seam.md) / [ADR 0033](./decisions/0033-traceability-defaults-to-working-tree.md).
+
+---
+
+### 1.26 `markharness traceability show` — Read the content of one chosen element (ADR 0040, design doc cli-read-model-design.md §5.5)
+
+```text
+markharness traceability show --uid <UID> [--at <git-ref>] [-d, --dir <path>]
+```
+
+**Purpose**: Prints, read-only, the content of one element (Requirement, Feature, Behavior, Scenario, or TestCase) chosen in the `traceability` tree. Use it when axes, descriptions, or steps are needed, as in the GUI's detail pane. `traceability` stays a light output with only identifiers and a `label`; only this command carries content.
+
+**`--uid`**: The element's `uid`. For a Requirement, Feature, Behavior, or Scenario, pass its `*_uid` (such as `requirement_uid`); for a TestCase, pass `test_cases[].case_uid`. The element's kind is not given.
+
+**`--at` is optional. Omitting it reads the working tree** (the same as `traceability`; ADR 0033). To read the tree and the detail at the same point, pass the same `--at` used for the tree.
+
+**Output**: `schema_version: 1`, `record_kind: traceability_detail`, `at`, `kind`, and `uid`, plus fields that depend on `kind`. A field that does not exist is omitted, not set to `null`.
+
+| `kind` | Fields |
+| --- | --- |
+| `requirement` | `requirement_id`, `axis`, `description`. A Requirement with `source: external` has no `description` |
+| `feature` | `feature_id`, `axis`, `description` |
+| `behavior` | `behavior_id`, `axis`, `description`, `procedures` (keyed by procedure name; each value has `steps`) |
+| `scenario` | `scenario_id`, `description`, `phases` (as written in Knowledge; each `steps` item is `action` or `use`, and `use` is not expanded; each phase has `results`), `implementation_note` |
+| `test_case` | `case_id`, `case_revision`, `phases` (what actually runs, with `use` expanded; `steps` is an array of strings) |
+
+**Behavior**
+
+- `uid` is matched against the uid of a Requirement, Feature, Behavior, or Scenario, or a TestCase's `case_uid`. A TestCase returns its current revision at `--at`.
+- A `uid` that matches no element exits with code 2 and writes nothing to stdout. The error message names the `uid` and the point it was read at.
+- It reads the same way `traceability` does, so a syntax or content error in a Knowledge file is reported with the same exit code.
+
+**Exit codes**
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 2 | The `uid` does not exist, or a syntax/content error in a Knowledge file |
+| 3 | Filesystem error |
+
+**Example**
+
+```console
+$ markharness traceability show --uid 01ARZ3NDEKTSV4RRFFQ69G5FB1 --at HEAD
+{
+  "at": "HEAD",
+  "description": "From the ground.\n",
+  "kind": "scenario",
+  "phases": [
+    {
+      "results": ["Rises."],
+      "steps": [{ "use": "start-game" }, { "action": "Presses jump." }]
+    }
+  ],
+  "record_kind": "traceability_detail",
+  "scenario_id": "ground",
+  "schema_version": 1,
+  "uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+}
+```
+
+**Use-case mapping**: [cli-read-model-design.md](./design/cli-read-model-design.md) §5.5, [ADR 0040](./decisions/0040-traceability-show-element-detail.md).
 
 ---
 

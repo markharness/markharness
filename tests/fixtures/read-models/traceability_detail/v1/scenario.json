@@ -1,0 +1,25 @@
+{
+  "at": "HEAD",
+  "description": "From the ground.\n",
+  "implementation_note": "Uses the physics tick.",
+  "kind": "scenario",
+  "phases": [
+    {
+      "results": [
+        "Rises."
+      ],
+      "steps": [
+        {
+          "use": "start-game"
+        },
+        {
+          "action": "Presses jump."
+        }
+      ]
+    }
+  ],
+  "record_kind": "traceability_detail",
+  "scenario_id": "ground",
+  "schema_version": 1,
+  "uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+}

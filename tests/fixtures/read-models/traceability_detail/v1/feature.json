@@ -1,0 +1,12 @@
+{
+  "at": "HEAD",
+  "axis": [
+    "gameplay"
+  ],
+  "description": "The player jumps.\n",
+  "feature_id": "player-jump",
+  "kind": "feature",
+  "record_kind": "traceability_detail",
+  "schema_version": 1,
+  "uid": "01ARZ3NDEKTSV4RRFFQ69G5FC1"
+}

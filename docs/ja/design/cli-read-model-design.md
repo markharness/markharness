@@ -252,6 +252,34 @@ knowledge reconcile
 
 `--check`後にKnowledgeやidentity stateが変化していた場合、通常実行はstale planとして停止する。GUIは最新のリードモデルを再取得し、編集内容を再確認してからIntentを再生成する。GUIやviewがKnowledgeファイルを直接書き換えてはならない。
 
+### 5.5 `traceability show`(選んだ1要素の内容)
+
+`traceability`の各Nodeは識別子と`label`だけを持ち、内容(軸・説明文・手順)を持たない。GUIの詳細ペインのように内容が要るときは、木から選んだ要素の`uid`で`traceability show`を呼び、その1件の内容だけを読む([ADR 0040](../decisions/0040-traceability-show-element-detail.md))。
+
+```text
+markharness traceability show --uid <UID> [--at <ref>]
+```
+
+`--at`の意味は`traceability`と同じで、省略時は作業ツリー、指定時はそのGit refを読む。木と詳細を同じ時点で読むため、GUIは木に使った`--at`をそのまま渡す。
+
+出力は、`schema_version`・`record_kind`(`traceability_detail`)・`at`・`kind`・`uid`に、要素の種類(`kind`)ごとの項目が加わる1件のJSONである。
+
+| `kind` | 項目 |
+|---|---|
+| `requirement` | `requirement_id`、`axis`、`description` |
+| `feature` | `feature_id`、`axis`、`description` |
+| `behavior` | `behavior_id`、`axis`、`description`、`procedures` |
+| `scenario` | `scenario_id`、`description`、`phases`、`implementation_note` |
+| `test_case` | `case_id`、`case_revision`、`phases` |
+
+- 存在しない項目は、`null`にせずキーごと省略する。`source: external`のRequirementは`description`を持たない(外部文書が内容を持つ。ADR 0023)。
+- Scenarioの`phases`は、Knowledgeに書かれたまま返す。各`steps`の要素は`action`または`use`を持ち、`use`は展開しない。
+- TestCaseの`phases`は、`use`を展開した、実際に実行される手順を返す。`steps`は文字列の配列である。TestCaseは`case_uid`で引き、`--at`時点の現在の版を返す。
+- `uid`が、その時点のどの要素にも一致しない場合は、終了コード2で終了し、標準出力には何も出さない。GUIは木を再取得する。
+- Requirementの`source_revision`・`related_issues`とFeatureの`forked_from`は、表示に使わないので含めない。
+
+編集用Intentを作るとき(§5.4)の現在値も、この出力から取る。
+
 ## 6. ChangeImpactReadModel(`impact`は実装済み)
 
 ### 6.1 目的
@@ -388,6 +416,9 @@ CommandOutcome(書込み系。CanonicalImported / Generated / ChangesComputed)
 markharness traceability [--at <ref>] --format json
   → TraceabilityReadModel(--at省略時は作業ツリー、指定時はGit ref。ADR 0033)
 
+markharness traceability show --uid <UID> [--at <ref>]
+  → TraceabilityDetailReadModel(選んだ1要素の内容。ADR 0040)
+
 markharness impact --base <ref> --head <ref> --format json
   → ChangeImpactReadModel
 
@@ -433,7 +464,6 @@ fixtureは`tests/fixtures/read-models/<record_kind>/v1/`に置く。markharness�
 
 次のモデルは、viewで具体的な必要性が確認されてから追加する。
 
-- TestCaseの詳細表示専用モデル(`phases`・`axis`等、TestCaseの本文相当のcontent。`test_cases[].relative_path`が指す`.markharness/generated/testcases/<relative_path>`を直接読むことで当面代替できる)
 - Knowledge全文を対象とした検索結果モデル
 - Git履歴比較モデル
 - 複数refを横断する集計モデル
@@ -442,6 +472,8 @@ fixtureは`tests/fixtures/read-models/<record_kind>/v1/`に置く。markharness�
 これらを将来性だけを理由に初期モデルへ含めない。二つ目の実在する読み取り形式や、具体的な利用上の不足が現れた時点で、新しいリードモデルまたはReaderを設計する。
 
 なお各Nodeの`label`(§5.2)はこの限りではない。`traceability`自身の目的である「閲覧できる形での提供」に直接必要な、識別子の付随情報であり、TestCaseの本文のような独立したcontentではないため、初期モデルに含める。
+
+なお、TestCaseの詳細表示専用モデルは、GUIの詳細ペインという具体的な必要が確認されたため、`traceability show`(§5.5)として追加済みである([ADR 0040](../decisions/0040-traceability-show-element-detail.md))。
 
 ## 13. 初期設計で確定する事項
 
@@ -488,11 +520,12 @@ CLIリードモデル設計に関係して、最終的に提供するコマン�
 
 ### 14.1 view向けの読み取りコマンド
 
-`markharness-view`が利用するのは、次の3つの読み取りコマンドである。
+`markharness-view`が利用するのは、次の読み取りコマンドである。
 
 ```text
 markharness traceability --format json                # 編集中のプレビュー: 作業ツリーを読む(ADR 0033)
 markharness traceability --at HEAD --format json       # コミット済み状態を確認したい場合
+markharness traceability show --uid <UID>              # 木で選んだ1要素の内容(詳細ペイン用)
 markharness impact --base main --head HEAD --format json
 markharness coverage --requirements all --at HEAD --format json
 ```

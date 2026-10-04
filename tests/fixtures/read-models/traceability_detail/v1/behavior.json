@@ -1,0 +1,20 @@
+{
+  "at": "HEAD",
+  "axis": [
+    "gameplay"
+  ],
+  "behavior_id": "jump",
+  "description": "Jumping.\n",
+  "kind": "behavior",
+  "procedures": {
+    "start-game": {
+      "steps": [
+        "Launches the game.",
+        "Loads the stage."
+      ]
+    }
+  },
+  "record_kind": "traceability_detail",
+  "schema_version": 1,
+  "uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1"
+}

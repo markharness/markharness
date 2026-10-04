@@ -106,6 +106,11 @@ pub struct KnowledgeCaseSnapshot {
     /// Informational only: `traceability` reads this to make `ScenarioNode`
     /// browsable (design doc §5.2). Not part of case identity or `axis`.
     pub scenario_label: String,
+    /// Informational only: `traceability show` reads these three to give a
+    /// Scenario's detail as written, with `use:` left unexpanded (ADR 0040).
+    pub scenario_description: String,
+    pub scenario_phases: Vec<crate::knowledge::Phase>,
+    pub scenario_implementation_note: Option<String>,
     /// Already expanded: every `use:` step replaced by its Procedure's
     /// steps (`expand_phases`).
     pub phases: Vec<Phase>,
@@ -161,6 +166,11 @@ pub struct KnowledgeBehaviorSnapshot {
     pub behavior_id: String,
     pub behavior_uid: Option<String>,
     pub label: String,
+    /// Informational only: `traceability show` reads these three to give a
+    /// Behavior's detail (ADR 0040). Not part of case identity or `axis`.
+    pub axis: Vec<String>,
+    pub description: String,
+    pub procedures: BTreeMap<String, Procedure>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -435,6 +445,9 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                 behavior_id: behavior.id.clone(),
                 behavior_uid: behavior.uid.clone(),
                 label: behavior.label.clone(),
+                axis: behavior.axis.clone(),
+                description: behavior.description.clone(),
+                procedures: behavior.procedures.clone(),
             });
 
             for scenario_dir in find_dirs_with_marker(&behavior_dir, "scenario.yml")? {
@@ -491,6 +504,9 @@ pub fn load_knowledge_snapshot(knowledge_root: &Path) -> io::Result<KnowledgeSna
                     scenario_id: scenario.id,
                     scenario_uid: scenario.uid,
                     scenario_label: scenario.label,
+                    scenario_description: scenario.description,
+                    scenario_phases: scenario.phases,
+                    scenario_implementation_note: scenario.implementation_note,
                     phases,
                     case_files,
                 });
