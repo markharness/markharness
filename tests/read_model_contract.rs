@@ -495,7 +495,8 @@ fn release_coverage_output_matches_its_schema_and_fixture() {
         "--dir",
         dir_arg(&dir),
     ]);
-    commit(root, "chore: binding and release scope");
+    write(&root.join("tests/jump.spec.ts"), "// test\n");
+    commit(root, "chore: binding, referenced test and release scope");
 
     let actual = coverage(&["--release", "v1.0.0"]);
 

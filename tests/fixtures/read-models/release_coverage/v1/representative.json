@@ -39,6 +39,7 @@
           "case_id": "tc-player-jump-jump-ground",
           "case_uid": "7ecd56ba-c81d-57cf-a871-d5dd1d951c74",
           "feature_id": "player-jump",
+          "reference_status": "exists",
           "selected": true
         }
       ],

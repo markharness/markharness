@@ -366,6 +366,7 @@ struct CaseCoverage {
     feature_id: String,
     binding_mode: Option<String>,       // 未宣言なら省略
     binding_reference: Option<String>,  // 未宣言なら省略
+    reference_status: Option<ReferenceStatus>, // binding_referenceがある場合のみ。exists | missing | not_checked
     selected: Option<bool>,             // releaseを指定した場合のみ意味を持つ
 }
 
@@ -384,6 +385,8 @@ struct ReleaseView {
 ```
 
 `binding_mode`/`binding_reference`は、`ExecutionBinding`(検証手段の宣言)をそのまま表す。これらの値を「実行済み」「合格済み」と表示してはならない。合否・実行日時・実行者・実行環境は別ツールの責務である(ADR 0025 §1)。「選定された(`selected`)」と「実行された」も混同しない(ADR 0024 §5)。
+
+`reference_status`は、`binding_reference`が`--at`のコミットのtreeに実在するかを示す(`exists`・`missing`・`not_checked`)。作業ツリーは見ない。URLは`not_checked`で、到達性は確認しない。`exists`は参照先がある事実だけで、実行や合格を意味しない。判定規則と、誤判定されうるパターンはADR 0041に従う。
 
 ### 7.3 markharness-viewから見た`coverage`
 

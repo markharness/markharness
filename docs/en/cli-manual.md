@@ -725,6 +725,7 @@ markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at 
 | Field | Meaning |
 | --- | --- |
 | `requirements[].cases[].binding_mode` / `binding_reference` | That TestCase's verification means (section 1.12). **Its presence does not mean anything ran** |
+| `requirements[].cases[].reference_status` | Only when `binding_reference` is present. Whether the target resolves in the tree at the `--at` commit: `exists`, `missing` (not there, or an absolute path or a path containing `..`), or `not_checked` (a URL; reachability is not checked). **`exists` states only that the target is there; it never means anything ran or passed.** A `::` or `#` suffix is not stripped and the whole string is judged as one path, so a suffixed reference is `missing` (ADR 0041) |
 | `requirements[].cases[].selected` | Only with `--release`: whether the selection includes it |
 | `gaps[].kind = requirement_has_no_feature` | No Feature contributes to this Requirement (AC08) |
 | `gaps[].kind = feature_has_no_case` | A Feature contributes, but nothing underneath it produces a TestCase (AC21) |

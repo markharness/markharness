@@ -552,6 +552,176 @@ fn a_binding_recorded_after_a_tag_does_not_appear_in_that_tags_coverage() {
     );
 }
 
+fn bind(root: &Path, reference: Option<&str>) {
+    let case_uid = case_uid_of(root);
+    let mut args = vec![
+        "binding",
+        "set",
+        "--case-uid",
+        &case_uid,
+        "--mode",
+        "automated",
+        "--dir",
+        root.to_str().unwrap(),
+    ];
+    if let Some(reference) = reference {
+        args.extend_from_slice(&["--reference", reference]);
+    }
+    let output = run(&args);
+    assert!(output.status.success(), "{output:?}");
+    commit(root, "chore: record the binding");
+}
+
+fn reference_status(root: &Path, extra: &[&str]) -> serde_json::Value {
+    let mut args = vec!["--requirements", "all"];
+    args.extend_from_slice(extra);
+    coverage_json(root, &args)["requirements"][0]["cases"][0]["reference_status"].clone()
+}
+
+/// A reference that names a file in the tree at the ref is `exists`; one that
+/// names nothing is `missing`. Both are about the tree, never about a run.
+#[test]
+fn a_reference_is_exists_or_missing_by_the_tree_at_the_ref() {
+    let dir = project();
+    write(&dir.path().join("tests/jump.spec.ts"), "// test\n");
+    bind(dir.path(), Some("tests/jump.spec.ts"));
+    assert_eq!(reference_status(dir.path(), &[]), "exists");
+
+    let other = project();
+    bind(other.path(), Some("tests/nowhere.spec.ts"));
+    assert_eq!(reference_status(other.path(), &[]), "missing");
+}
+
+/// The judgement is made against the requested commit, not the working tree:
+/// a file deleted since a tag still exists at that tag.
+#[test]
+fn the_reference_status_follows_the_requested_ref_not_the_working_tree() {
+    let dir = project();
+    write(&dir.path().join("tests/jump.spec.ts"), "// test\n");
+    bind(dir.path(), Some("tests/jump.spec.ts"));
+    assert!(git(dir.path(), &["tag", "with-file"]).status.success());
+
+    assert!(
+        git(dir.path(), &["rm", "-q", "tests/jump.spec.ts"])
+            .status
+            .success()
+    );
+    commit(dir.path(), "chore: delete the referenced file");
+
+    assert_eq!(
+        reference_status(dir.path(), &["--at", "with-file"]),
+        "exists"
+    );
+    assert_eq!(reference_status(dir.path(), &[]), "missing");
+}
+
+/// A file only in the working tree, never committed, is not in the ref.
+#[test]
+fn an_uncommitted_file_is_missing_at_the_ref() {
+    let dir = project();
+    bind(dir.path(), Some("tests/jump.spec.ts"));
+    write(&dir.path().join("tests/jump.spec.ts"), "// test\n");
+    assert_eq!(reference_status(dir.path(), &[]), "missing");
+}
+
+#[test]
+fn a_directory_reference_that_is_in_the_tree_is_exists() {
+    let dir = project();
+    write(&dir.path().join("docs/manual/steps.md"), "steps\n");
+    commit(dir.path(), "docs: add manual material");
+    bind(dir.path(), Some("docs/manual"));
+    assert_eq!(reference_status(dir.path(), &[]), "exists");
+}
+
+/// Reachability is out of scope: a URL is distinguished, never fetched.
+#[test]
+fn a_url_reference_is_not_checked() {
+    let dir = project();
+    bind(dir.path(), Some("https://example.com/runbook"));
+    assert_eq!(reference_status(dir.path(), &[]), "not_checked");
+}
+
+/// A path that leaves the repository cannot be said to exist in it, even when
+/// the same name resolves on disk.
+#[test]
+fn an_absolute_or_parent_escaping_reference_is_missing() {
+    for reference in ["../outside.ts", "tests/../../outside.ts", "/etc/hosts"] {
+        let dir = project();
+        bind(dir.path(), Some(reference));
+        assert_eq!(
+            reference_status(dir.path(), &[]),
+            "missing",
+            "`{reference}` must be missing"
+        );
+    }
+}
+
+/// The whole string is the path: no `::`/`#` suffix is stripped, so a suffixed
+/// reference to an existing file is reported `missing`.
+#[test]
+fn a_reference_is_judged_as_one_whole_path_without_stripping_suffixes() {
+    let dir = project();
+    write(&dir.path().join("tests/jump.spec.ts"), "// test\n");
+    bind(dir.path(), Some("tests/jump.spec.ts::jumps"));
+    assert_eq!(reference_status(dir.path(), &[]), "missing");
+}
+
+/// The reference is compared as a literal string: git pathspec syntax and
+/// path normalization must not make a differently-spelled reference resolve,
+/// and glob characters in a real file name must match only that name.
+#[test]
+fn a_reference_is_matched_literally_not_as_a_pathspec() {
+    let dir = project();
+    write(&dir.path().join("tests/jump.spec.ts"), "// test\n");
+    write(&dir.path().join("tests/[a].ts"), "// test\n");
+    write(&dir.path().join("tests/a.ts"), "// test\n");
+    commit(dir.path(), "test: files");
+
+    let cases = [
+        ("tests/jump.spec.ts", "exists"),
+        ("tests/[a].ts", "exists"),
+        ("tests/[ab].ts", "missing"),
+        (":(top)tests/jump.spec.ts", "missing"),
+        (":(glob)tests/*.spec.ts", "missing"),
+        ("./tests/jump.spec.ts", "missing"),
+        ("tests//jump.spec.ts", "missing"),
+        ("tests/", "missing"),
+    ];
+    for (reference, expected) in cases {
+        let one = project();
+        write(&one.path().join("tests/jump.spec.ts"), "// test\n");
+        write(&one.path().join("tests/[a].ts"), "// test\n");
+        write(&one.path().join("tests/a.ts"), "// test\n");
+        commit(one.path(), "test: files");
+        bind(one.path(), Some(reference));
+        assert_eq!(reference_status(one.path(), &[]), expected, "`{reference}`");
+    }
+}
+
+/// A name that is only a string prefix of a real path is not that path.
+#[test]
+fn a_string_prefix_of_a_real_path_is_missing() {
+    let dir = project();
+    write(&dir.path().join("tests/jump.spec.ts"), "// test\n");
+    bind(dir.path(), Some("tests/jump"));
+    assert_eq!(reference_status(dir.path(), &[]), "missing");
+}
+
+/// Without a reference there is nothing to judge, so no status is claimed —
+/// and without a binding neither field appears.
+#[test]
+fn no_reference_status_is_emitted_without_a_reference() {
+    let dir = project();
+    assert!(reference_status(dir.path(), &[]).is_null());
+
+    bind(dir.path(), None);
+    let value = coverage_json(dir.path(), &["--requirements", "all"]);
+    let case = &value["requirements"][0]["cases"][0];
+    assert_eq!(case["binding_mode"], "automated");
+    assert!(case.get("binding_reference").is_none(), "{case}");
+    assert!(case.get("reference_status").is_none(), "{case}");
+}
+
 #[test]
 fn coverage_reports_an_unknown_requirement_rather_than_an_empty_answer() {
     let dir = project();
