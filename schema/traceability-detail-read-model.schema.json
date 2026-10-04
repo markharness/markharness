@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.com/schema/traceability-detail-read-model.schema.json",
+  "title": "TraceabilityDetailReadModel",
+  "description": "Output of `markharness traceability show --uid <UID>`: the content of one element of the traceability tree. `kind` says which element. Unknown fields are allowed so that a reader keeps working when a field is added.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_kind": { "const": "traceability_detail" },
+    "at": {
+      "description": "The Git ref the Knowledge was read at, or \"working-tree\" when --at was omitted.",
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": ["requirement", "feature", "behavior", "scenario", "test_case"]
+    },
+    "uid": { "type": "string", "minLength": 1 }
+  },
+  "required": ["schema_version", "record_kind", "at", "kind", "uid"],
+  "oneOf": [
+    {
+      "description": "`description` is absent for an external Requirement: the external document owns that content.",
+      "properties": {
+        "kind": { "const": "requirement" },
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "axis": { "$ref": "#/$defs/axis" },
+        "description": { "type": "string" }
+      },
+      "required": ["requirement_id", "axis"]
+    },
+    {
+      "properties": {
+        "kind": { "const": "feature" },
+        "feature_id": { "type": "string", "minLength": 1 },
+        "axis": { "$ref": "#/$defs/axis" },
+        "description": { "type": "string" }
+      },
+      "required": ["feature_id", "axis"]
+    },
+    {
+      "properties": {
+        "kind": { "const": "behavior" },
+        "behavior_id": { "type": "string", "minLength": 1 },
+        "axis": { "$ref": "#/$defs/axis" },
+        "description": { "type": "string" },
+        "procedures": {
+          "description": "Reusable steps, keyed by procedure name. A Scenario's `use` step refers to one by that name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "steps": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["steps"]
+          }
+        }
+      },
+      "required": ["behavior_id", "axis", "description", "procedures"]
+    },
+    {
+      "description": "`phases` are as written in Knowledge: a `use` step stays a reference and is not expanded.",
+      "properties": {
+        "kind": { "const": "scenario" },
+        "scenario_id": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "phases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "oneOf": [
+                    {
+                      "properties": { "action": { "type": "string" } },
+                      "required": ["action"]
+                    },
+                    {
+                      "properties": { "use": { "type": "string" } },
+                      "required": ["use"]
+                    }
+                  ]
+                }
+              },
+              "results": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["steps", "results"]
+          }
+        },
+        "implementation_note": { "type": "string" }
+      },
+      "required": ["scenario_id", "description", "phases"]
+    },
+    {
+      "description": "`phases` are what the generated TestCase runs: every `use` step is already replaced by its procedure's steps.",
+      "properties": {
+        "kind": { "const": "test_case" },
+        "case_id": { "type": "string", "minLength": 1 },
+        "case_revision": { "type": "string", "minLength": 1 },
+        "phases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "steps": { "type": "array", "items": { "type": "string" } },
+              "results": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["steps", "results"]
+          }
+        }
+      },
+      "required": ["case_id", "case_revision", "phases"]
+    }
+  ],
+  "$defs": {
+    "axis": { "type": "array", "items": { "type": "string" } }
+  }
+}

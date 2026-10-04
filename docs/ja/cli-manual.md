@@ -1056,7 +1056,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 **`--at`は省略可。省略時は作業ツリー(コミット前の現在の内容)を読む**(`generate`・`verify`と同じ経路。ADR 0033)。`--at <ref>`を指定した場合は、そのGit ref時点のコミット内容を読む。`impact`・`coverage`と異なり`traceability`には2点比較やリリース監査の要件がないため、コミットを要求しない。`generate`のように生成物を書き込むことはない。
 
-**出力**: `schema_version: 1`・`record_kind: traceability`・`at`(`--at`省略時は固定値`"working-tree"`、指定時は指定文字列そのまま。ADR 0033)に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`・`label`・`source_locator`・`source_key`。`label`は`source: "native"`の場合のみ値を持ち、`source_locator`・`source_key`は`source: "external"`の場合のみ値を持つ。互いに反対の値を持ち、片方が`null`の時もう片方は値を持つ)、`features`(`feature_id`・`feature_uid`・`label`)、`behaviors`(`behavior_id`・`behavior_uid`・`feature_id`・`feature_uid`・`label`。Scenarioを持たないBehaviorも含め、Knowledgeに存在する全件を出す。`behavior_uid`は`identity migrate`未実行のBehaviorでは`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`・`behavior_uid`・`label`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`・`scenario_uid`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。親UID(`feature_uid`・`behavior_uid`・`scenario_uid`)は、`*_id`(slug)が親の中でしか一意でないため、同じslugを複数のFeatureが持つプロジェクトでも階層を一意にたどれるように出力する。親がUIDを持たない(`identity migrate`未実行)場合は`null`で、キーは常に出力する。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。TestCaseの本文(`phases`・`axis`)は含まない。`relative_path`が指す`.markharness/generated/testcases/<relative_path>`を直接読むことで得られる。
+**出力**: `schema_version: 1`・`record_kind: traceability`・`at`(`--at`省略時は固定値`"working-tree"`、指定時は指定文字列そのまま。ADR 0033)に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`・`label`・`source_locator`・`source_key`。`label`は`source: "native"`の場合のみ値を持ち、`source_locator`・`source_key`は`source: "external"`の場合のみ値を持つ。互いに反対の値を持ち、片方が`null`の時もう片方は値を持つ)、`features`(`feature_id`・`feature_uid`・`label`)、`behaviors`(`behavior_id`・`behavior_uid`・`feature_id`・`feature_uid`・`label`。Scenarioを持たないBehaviorも含め、Knowledgeに存在する全件を出す。`behavior_uid`は`identity migrate`未実行のBehaviorでは`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`・`behavior_uid`・`label`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`・`scenario_uid`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。親UID(`feature_uid`・`behavior_uid`・`scenario_uid`)は、`*_id`(slug)が親の中でしか一意でないため、同じslugを複数のFeatureが持つプロジェクトでも階層を一意にたどれるように出力する。親がUIDを持たない(`identity migrate`未実行)場合は`null`で、キーは常に出力する。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。TestCaseの本文(`phases`・`axis`)を含め、各要素の内容は含まない。内容は`traceability show`(1.26節)で1要素ずつ読む。
 
 **動作**
 
@@ -1114,6 +1114,67 @@ $ markharness traceability --at HEAD
 ```
 
 **ユースケース対応**: [cli-read-model-design.md](./design/cli-read-model-design.md)§5の`TraceabilityReadModel`、[ADR 0032](./decisions/0032-cli-read-model-seam.md)・[ADR 0033](./decisions/0033-traceability-defaults-to-working-tree.md)。
+
+---
+
+### 1.26 `markharness traceability show` — 選んだ1要素の内容を読む(ADR 0040、設計書 cli-read-model-design.md §5.5)
+
+```text
+markharness traceability show --uid <UID> [--at <git-ref>] [-d, --dir <path>]
+```
+
+**用途**: `traceability`の木で選んだ1要素(Requirement・Feature・Behavior・Scenario・TestCase)の内容を、読み取り専用で出力する。GUIの詳細ペインのように、軸・説明文・手順が要るときに使う。`traceability`は識別子と`label`だけを持つ軽い出力のままで、内容はこのコマンドだけが持つ。
+
+**`--uid`**: 要素の`uid`。Requirement・Feature・Behavior・Scenarioは`requirement_uid`などの`*_uid`、TestCaseは`test_cases[].case_uid`を指定する。要素の種類は指定しない。
+
+**`--at`は省略可。省略時は作業ツリーを読む**(`traceability`と同じ。ADR 0033)。木と詳細を同じ時点で読むため、木に使った`--at`をそのまま渡す。
+
+**出力**: `schema_version: 1`・`record_kind: traceability_detail`・`at`・`kind`・`uid`に、`kind`ごとの項目が加わる。存在しない項目は、`null`にせずキーごと省略する。
+
+| `kind` | 項目 |
+| --- | --- |
+| `requirement` | `requirement_id`、`axis`、`description`。`source: external`のRequirementは`description`を持たない |
+| `feature` | `feature_id`、`axis`、`description` |
+| `behavior` | `behavior_id`、`axis`、`description`、`procedures`(手順名をキーとし、各値が`steps`を持つ) |
+| `scenario` | `scenario_id`、`description`、`phases`(Knowledgeに書かれたまま。各`steps`の要素は`action`または`use`で、`use`は展開しない。`results`を持つ)、`implementation_note` |
+| `test_case` | `case_id`、`case_revision`、`phases`(`use`を展開した、実際に実行される手順。`steps`は文字列の配列) |
+
+**動作**
+
+- `uid`は、Requirement・Feature・Behavior・Scenarioのuid、またはTestCaseの`case_uid`と照合する。TestCaseは`--at`時点の現在の版を返す。
+- どの要素にも一致しない`uid`は、標準出力に何も出さず、終了コード2で終了する。エラー文に`uid`と読んだ時点を含める。
+- `traceability`と同じ読み方をするので、Knowledgeファイルの構文・内容エラーも同じ終了コードで報告する。
+
+**終了コード**
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 成功 |
+| 2 | `uid`が存在しない、またはKnowledgeファイルの構文・内容エラー |
+| 3 | ファイルシステムエラー |
+
+**使用例**
+
+```console
+$ markharness traceability show --uid 01ARZ3NDEKTSV4RRFFQ69G5FB1 --at HEAD
+{
+  "at": "HEAD",
+  "description": "From the ground.\n",
+  "kind": "scenario",
+  "phases": [
+    {
+      "results": ["Rises."],
+      "steps": [{ "use": "start-game" }, { "action": "Presses jump." }]
+    }
+  ],
+  "record_kind": "traceability_detail",
+  "scenario_id": "ground",
+  "schema_version": 1,
+  "uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+}
+```
+
+**ユースケース対応**: [cli-read-model-design.md](./design/cli-read-model-design.md)§5.5、[ADR 0040](./decisions/0040-traceability-show-element-detail.md)。
 
 ---
 

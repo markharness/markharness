@@ -19,6 +19,9 @@ fn testcase_compiler_compiles_a_snapshot_without_filesystem_access() {
             scenario_id: "scenario".to_string(),
             scenario_uid: None,
             scenario_label: "Scenario".to_string(),
+            scenario_description: String::new(),
+            scenario_phases: vec![],
+            scenario_implementation_note: None,
             phases: vec![Phase {
                 steps: vec!["confirm the state".to_string()],
                 results: vec!["result".to_string()],

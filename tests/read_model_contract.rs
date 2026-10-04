@@ -91,12 +91,25 @@ struct Contract {
     /// the scratch repo's whole tree (including files `init` writes), so it
     /// is checked for shape only and then taken from the fixture.
     commit_pointers: &'static [&'static str],
+    /// File stem of the fixture the generic schema checks run against.
+    representative: &'static str,
 }
 
 const TRACEABILITY: Contract = Contract {
     record_kind: "traceability",
     schema_file: "traceability-read-model.schema.json",
     commit_pointers: &[],
+    representative: "representative",
+};
+
+/// One element's detail has a different shape per `kind`, so each kind has
+/// its own fixture; a Behavior's, which carries every field, stands in for
+/// the generic checks.
+const TRACEABILITY_DETAIL: Contract = Contract {
+    record_kind: "traceability_detail",
+    schema_file: "traceability-detail-read-model.schema.json",
+    commit_pointers: &[],
+    representative: "behavior",
 };
 
 const CHANGE_IMPACT: Contract = Contract {
@@ -107,28 +120,34 @@ const CHANGE_IMPACT: Contract = Contract {
         "/head_commit",
         "/rejected_trailers/0/commit",
     ],
+    representative: "representative",
 };
 
 const RELEASE_COVERAGE: Contract = Contract {
     record_kind: "release_coverage",
     schema_file: "release-coverage-read-model.schema.json",
     commit_pointers: &["/at_commit"],
+    representative: "representative",
 };
 
 impl Contract {
-    fn fixture_path(&self) -> String {
+    fn fixture_path(&self, name: &str) -> String {
         format!(
-            "tests/fixtures/read-models/{}/v1/representative.json",
+            "tests/fixtures/read-models/{}/v1/{name}.json",
             self.record_kind
         )
     }
 
     fn fixture(&self) -> Value {
-        read_json(&self.fixture_path())
+        read_json(&self.fixture_path(self.representative))
     }
 
-    fn assert_matches_cli_output(&self, mut actual: Value) {
-        let fixture = self.fixture();
+    fn assert_matches_cli_output(&self, actual: Value) {
+        self.assert_matches_fixture(self.representative, actual);
+    }
+
+    fn assert_matches_fixture(&self, name: &str, mut actual: Value) {
+        let fixture = read_json(&self.fixture_path(name));
         for pointer in self.commit_pointers {
             let id = actual
                 .pointer(pointer)
@@ -154,7 +173,7 @@ impl Contract {
             actual,
             fixture,
             "the CLI output differs from {}; update the fixture only for an intended contract change:\n{actual:#}",
-            self.fixture_path()
+            self.fixture_path(name)
         );
     }
 }
@@ -263,6 +282,66 @@ fn traceability_output_matches_its_schema_and_fixture() {
     let actual = output_json(&["traceability", "--at", "HEAD", "--dir", dir_arg(&dir)]);
 
     TRACEABILITY.assert_matches_cli_output(actual);
+}
+
+#[test]
+fn traceability_detail_output_matches_its_schema_and_fixtures() {
+    const FEATURE_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC1";
+    let dir = init_repo();
+    let root = dir.path();
+    write_controls_tree(root, Some(FEATURE_UID));
+    write(
+        &root.join(".markharness/knowledge/requirements/controls/requirement.yml"),
+        &format!(
+            "id: controls\nsource: native\nlabel: Player controls\naxis: [gameplay]\ndescription: |\n  The player can control the character.\nuid: {CONTROLS_UID}\n"
+        ),
+    );
+    write(
+        &root.join(".markharness/knowledge/features/player-jump/feature.yml"),
+        &format!(
+            "id: player-jump\nrequirement_uids: [{CONTROLS_UID}]\nlabel: player-jump\naxis: [gameplay]\ndescription: |\n  The player jumps.\nuid: {FEATURE_UID}\n"
+        ),
+    );
+    write(
+        &root.join(".markharness/knowledge/features/player-jump/jump/behavior.yml"),
+        &format!(
+            "id: jump\nfeature: player-jump\nlabel: jump\nuid: {JUMP_BEHAVIOR_UID}\naxis: [gameplay]\ndescription: |\n  Jumping.\nprocedures:\n  start-game:\n    steps:\n      - \"Launches the game.\"\n      - \"Loads the stage.\"\n"
+        ),
+    );
+    write(
+        &root.join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+        &format!(
+            "id: ground\nbehavior: jump\nlabel: ground\nuid: {GROUND_SCENARIO_UID}\ndescription: |\n  From the ground.\nimplementation_note: Uses the physics tick.\nphases:\n  - steps:\n      - use: start-game\n      - action: \"Presses jump.\"\n    results:\n      - \"Rises.\"\n"
+        ),
+    );
+    commit(root, "chore: knowledge");
+
+    let tree = output_json(&["traceability", "--at", "HEAD", "--dir", dir_arg(&dir)]);
+    let case_uid = tree["test_cases"][0]["case_uid"]
+        .as_str()
+        .expect("the migrated Scenario has a case_uid")
+        .to_string();
+
+    for (kind, uid) in [
+        ("requirement", CONTROLS_UID),
+        ("feature", FEATURE_UID),
+        ("behavior", JUMP_BEHAVIOR_UID),
+        ("scenario", GROUND_SCENARIO_UID),
+        ("test_case", case_uid.as_str()),
+    ] {
+        let actual = output_json(&[
+            "traceability",
+            "show",
+            "--uid",
+            uid,
+            "--at",
+            "HEAD",
+            "--dir",
+            dir_arg(&dir),
+        ]);
+        assert_eq!(actual["kind"], kind);
+        TRACEABILITY_DETAIL.assert_matches_fixture(kind, actual);
+    }
 }
 
 #[test]
@@ -423,8 +502,13 @@ fn release_coverage_output_matches_its_schema_and_fixture() {
     RELEASE_COVERAGE.assert_matches_cli_output(actual);
 }
 
-fn contracts() -> [Contract; 3] {
-    [TRACEABILITY, CHANGE_IMPACT, RELEASE_COVERAGE]
+fn contracts() -> [Contract; 4] {
+    [
+        TRACEABILITY,
+        TRACEABILITY_DETAIL,
+        CHANGE_IMPACT,
+        RELEASE_COVERAGE,
+    ]
 }
 
 #[test]
@@ -515,6 +599,36 @@ fn the_traceability_schema_keeps_native_and_external_requirements_apart() {
         assert!(
             !schema_errors(TRACEABILITY.schema_file, &mutated).is_empty(),
             "accepted requirements[{index}].{field} contradicting its source"
+        );
+    }
+}
+
+/// The detail schema is one `oneOf` over five kinds; a payload whose fields
+/// belong to another kind than its `kind` says must not pass.
+#[test]
+fn the_traceability_detail_schema_keeps_each_kind_to_its_own_fields() {
+    let kinds = [
+        "requirement",
+        "feature",
+        "behavior",
+        "scenario",
+        "test_case",
+    ];
+    for kind in kinds {
+        let fixture = read_json(&TRACEABILITY_DETAIL.fixture_path(kind));
+        for other in kinds.into_iter().filter(|other| *other != kind) {
+            let mut mutated = fixture.clone();
+            mutated["kind"] = json!(other);
+            assert!(
+                !schema_errors(TRACEABILITY_DETAIL.schema_file, &mutated).is_empty(),
+                "accepted a {kind} payload labelled {other}"
+            );
+        }
+        let mut unknown = fixture.clone();
+        unknown["kind"] = json!("something_else");
+        assert!(
+            !schema_errors(TRACEABILITY_DETAIL.schema_file, &unknown).is_empty(),
+            "accepted a {kind} payload with an unknown kind"
         );
     }
 }

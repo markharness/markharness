@@ -1,0 +1,12 @@
+{
+  "at": "HEAD",
+  "axis": [
+    "gameplay"
+  ],
+  "description": "The player can control the character.\n",
+  "kind": "requirement",
+  "record_kind": "traceability_detail",
+  "requirement_id": "controls",
+  "schema_version": 1,
+  "uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+}

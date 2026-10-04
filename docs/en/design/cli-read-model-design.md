@@ -252,6 +252,34 @@ knowledge reconcile
 
 If Knowledge or identity state has changed since `--check`, the real run stops as a stale plan. The GUI re-fetches the latest read model, re-confirms the edit, and regenerates the Intent. A GUI or view must never write to Knowledge files directly.
 
+### 5.5 `traceability show` (the content of one chosen element)
+
+Each Node in `traceability` carries only an identifier and a `label`, not content (axes, descriptions, steps). When content is needed, as in the GUI's detail pane, call `traceability show` with the `uid` of the element chosen in the tree and read just that one element's content ([ADR 0040](../decisions/0040-traceability-show-element-detail.md)).
+
+```text
+markharness traceability show --uid <UID> [--at <ref>]
+```
+
+`--at` means what it means for `traceability`: the working tree when omitted, the given Git ref otherwise. To read the tree and the detail at the same point, the GUI passes the same `--at` it used for the tree.
+
+The output is one JSON document: `schema_version`, `record_kind` (`traceability_detail`), `at`, `kind`, and `uid`, plus fields that depend on the element's `kind`.
+
+| `kind` | Fields |
+|---|---|
+| `requirement` | `requirement_id`, `axis`, `description` |
+| `feature` | `feature_id`, `axis`, `description` |
+| `behavior` | `behavior_id`, `axis`, `description`, `procedures` |
+| `scenario` | `scenario_id`, `description`, `phases`, `implementation_note` |
+| `test_case` | `case_id`, `case_revision`, `phases` |
+
+- A field that does not exist is omitted, not set to `null`. A Requirement with `source: external` has no `description` (the external document owns that content; ADR 0023).
+- A Scenario's `phases` are returned as written in Knowledge. Each `steps` item carries `action` or `use`, and `use` is not expanded.
+- A TestCase's `phases` are what actually runs, with `use` expanded; `steps` is an array of strings. A TestCase is looked up by `case_uid` and returns its current revision at `--at`.
+- If `uid` matches no element at that point, the command exits with code 2 and writes nothing to stdout. The GUI re-reads the tree.
+- A Requirement's `source_revision` and `related_issues` and a Feature's `forked_from` are not used for display, so they are not included.
+
+The current values for building an editing Intent (§5.4) also come from this output.
+
 ## 6. ChangeImpactReadModel (`impact` already implements this)
 
 ### 6.1 Purpose
@@ -388,6 +416,9 @@ The initial mapping is:
 markharness traceability [--at <ref>] --format json
   → TraceabilityReadModel (omit --at for the working tree, give it for a Git ref; ADR 0033)
 
+markharness traceability show --uid <UID> [--at <ref>]
+  → TraceabilityDetailReadModel (the content of one chosen element; ADR 0040)
+
 markharness impact --base <ref> --head <ref> --format json
   → ChangeImpactReadModel
 
@@ -433,7 +464,6 @@ Fixtures live at `tests/fixtures/read-models/<record_kind>/v1/`. The markharness
 
 The following models are added only once a concrete need is confirmed on the view side.
 
-- A model dedicated to detailed TestCase display (`phases`, `axis`, and similar TestCase body content; reading `.markharness/generated/testcases/<relative_path>` directly, via `test_cases[].relative_path`, covers this for now)
 - A search-result model over all of Knowledge
 - A Git history comparison model
 - An aggregation model spanning multiple refs
@@ -442,6 +472,8 @@ The following models are added only once a concrete need is confirmed on the vie
 These are not included in the initial models merely because they might be useful someday. A new read model or Reader is designed once a second real read shape, or a concrete usage gap, actually appears.
 
 Each Node's `label` (§5.2) is an exception: it's identifier metadata directly required by `traceability`'s own purpose — being browsable — not independent content the way a TestCase's body is, so it belongs in the initial model.
+
+The model dedicated to detailed TestCase display has been added as `traceability show` (§5.5), because the GUI's detail pane confirmed a concrete need ([ADR 0040](../decisions/0040-traceability-show-element-detail.md)).
 
 ## 13. Settled in the initial design
 
@@ -488,11 +520,12 @@ In connection with the CLI read-model design, the commands ultimately provided a
 
 ### 14.1 Read commands for view
 
-`markharness-view` uses these three read commands.
+`markharness-view` uses these read commands.
 
 ```text
 markharness traceability --format json                # live preview while editing: reads the working tree (ADR 0033)
 markharness traceability --at HEAD --format json       # to check committed state instead
+markharness traceability show --uid <UID>              # the content of one element chosen in the tree (for the detail pane)
 markharness impact --base main --head HEAD --format json
 markharness coverage --requirements all --at HEAD --format json
 ```

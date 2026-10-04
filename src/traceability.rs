@@ -24,11 +24,19 @@ const RECORD_KIND: &str = "traceability";
 /// `HEAD` effectively is: a real Git ref sharing this exact name would
 /// collide, an accepted practical risk rather than something worth guarding
 /// against.
-const WORKING_TREE: &str = "working-tree";
+pub(crate) const WORKING_TREE: &str = "working-tree";
 
 #[derive(Debug)]
 pub enum TraceabilityError {
-    Malformed { path: String, message: String },
+    Malformed {
+        path: String,
+        message: String,
+    },
+    /// `traceability show --uid` named a uid that no element has at `at`.
+    NotFound {
+        uid: String,
+        at: String,
+    },
     Io(io::Error),
 }
 
@@ -42,6 +50,9 @@ impl std::fmt::Display for TraceabilityError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TraceabilityError::Malformed { path, message } => write!(f, "{path}: {message}"),
+            TraceabilityError::NotFound { uid, at } => {
+                write!(f, "no element has uid {uid} at {at}")
+            }
             TraceabilityError::Io(e) => write!(f, "filesystem error: {e}"),
         }
     }
@@ -134,7 +145,7 @@ pub struct TraceabilityReadModel {
 /// Every Requirement at `git_ref` (the working tree when `None`, ADR 0033),
 /// keyed by display id. The Git-ref branch mirrors
 /// `impact::requirements_at`/`coverage::requirements_at`.
-fn requirements_at(
+pub(crate) fn requirements_at(
     root: &Path,
     git_ref: Option<&str>,
 ) -> Result<BTreeMap<String, Requirement>, TraceabilityError> {
@@ -268,7 +279,7 @@ fn check_requirement_source_mode(
 /// `coverage::features_for_requirement`) rather than derived from generated
 /// TestCases, so a Feature with no Behavior/Scenario underneath is still
 /// visible (the same gap coverage's AC21 cares about).
-fn features_at(
+pub(crate) fn features_at(
     root: &Path,
     git_ref: Option<&str>,
 ) -> Result<BTreeMap<String, Feature>, TraceabilityError> {

@@ -147,7 +147,10 @@ pub enum Command {
         dir: Option<PathBuf>,
     },
     /// Report Requirement/Feature/Behavior/Scenario/TestCase relations, read-only
+    #[command(args_conflicts_with_subcommands = true)]
     Traceability {
+        #[command(subcommand)]
+        command: Option<TraceabilityCommand>,
         /// Git revision to read the Knowledge and generated TestCases at.
         /// Omit to read the working tree instead — unlike impact/coverage,
         /// traceability has no two-point-comparison or release-auditing
@@ -270,6 +273,23 @@ pub enum MilestoneCommand {
         /// Emit machine-readable JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TraceabilityCommand {
+    /// Report the content of one element picked from the traceability tree, read-only
+    Show {
+        /// The element's uid (a Requirement, Feature, Behavior or Scenario uid, or a TestCase's Case UID)
+        #[arg(long)]
+        uid: String,
+        /// Git revision to read at. Omit to read the working tree instead,
+        /// the same as `traceability` itself.
+        #[arg(long)]
+        at: Option<String>,
+        /// Target project directory. Defaults to the current directory.
+        #[arg(long, short = 'd')]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -1260,6 +1280,31 @@ pub fn run(cli: Cli) -> io::Result<()> {
             }
         }
         Command::Traceability {
+            command: Some(TraceabilityCommand::Show { uid, at, dir }),
+            ..
+        } => {
+            let root = project_root::resolve(dir, &env::current_dir()?)?;
+            match crate::traceability_detail::compute(&root, at.as_deref(), &uid) {
+                Ok(detail) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&detail)
+                            .expect("traceability detail serialization is infallible")
+                    );
+                    Ok(())
+                }
+                Err(crate::traceability::TraceabilityError::Io(e)) => {
+                    eprintln!("error: filesystem error: {e}");
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Command::Traceability {
+            command: None,
             at,
             format: ImportFormatArg::Json,
             dir,
