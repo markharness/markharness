@@ -452,7 +452,7 @@ The reason is to avoid losing, from the JSON contract, the meaning of per-type r
 
 ### 13.3 JSON Schema is managed in the repository
 
-The external contract is not managed by implementation and fixtures alone. The following JSON Schemas are added to the existing `schema/` directory.
+The external contract is not managed by implementation and fixtures alone. The following JSON Schemas are placed in the existing `schema/` directory.
 
 ```text
 schema/traceability-read-model.schema.json
@@ -466,7 +466,7 @@ JSON Schema validates structure and types. Semantic invariants — that a UID ex
 
 Since markharness and view are separate repositories, no shared directory, submodule, or runtime cross-reference is set up at this initial stage.
 
-markharness manages the read models' JSON Schema and representative fixtures as a published contract. view pulls the fixtures for the matching `record_kind` and `schema_version` into its own repository and uses them for contract tests. Fixtures are updated explicitly, as a Schema change or a deliberate change to the output contract.
+markharness manages the read models' JSON Schema and representative fixtures as a published contract. The CLI integration test `tests/read_model_contract.rs` validates actual CLI output against the Schema and compares it with the fixture. view pulls the fixtures for the matching `record_kind` and `schema_version` into its own repository and uses them for contract tests. Fixtures are updated explicitly, as a Schema change or a deliberate change to the output contract.
 
 This separation keeps view's build from depending on markharness's working tree or a local path. On the markharness side, using the fixtures in CLI integration tests lets divergence between actual CLI output and the external contract be detected.
 

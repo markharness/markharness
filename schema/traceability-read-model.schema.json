@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.com/schema/traceability-read-model.schema.json",
+  "title": "TraceabilityReadModel",
+  "description": "Output of `markharness traceability --format json`. Unknown fields are allowed so that a reader keeps working when a field is added.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_kind": { "const": "traceability" },
+    "at": {
+      "description": "The Git ref the Knowledge was read at, or \"working-tree\" when --at was omitted.",
+      "type": "string",
+      "minLength": 1
+    },
+    "requirements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/requirement" }
+    },
+    "features": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/feature" }
+    },
+    "behaviors": {
+      "description": "Every Behavior in Knowledge, including one that has no Scenario.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/behavior" }
+    },
+    "scenarios": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/scenario" }
+    },
+    "test_cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/test_case" }
+    },
+    "relations": {
+      "description": "Only entities that have a UID take part in a relation.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/relation" }
+    }
+  },
+  "required": [
+    "schema_version",
+    "record_kind",
+    "at",
+    "requirements",
+    "features",
+    "behaviors",
+    "scenarios",
+    "test_cases",
+    "relations"
+  ],
+  "$defs": {
+    "ulid_or_null": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "requirement": {
+      "description": "A native Requirement has a label and no source fields. An external Requirement has source_locator and source_key and no label, because markharness does not own its content.",
+      "type": "object",
+      "properties": {
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "requirement_uid": { "$ref": "#/$defs/ulid_or_null" },
+        "source": { "enum": ["native", "external"] },
+        "label": { "type": ["string", "null"] },
+        "source_locator": { "type": ["string", "null"] },
+        "source_key": { "type": ["string", "null"] }
+      },
+      "required": [
+        "requirement_id",
+        "requirement_uid",
+        "source",
+        "label",
+        "source_locator",
+        "source_key"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "source": { "const": "native" },
+            "label": { "type": "string", "minLength": 1 },
+            "source_locator": { "type": "null" },
+            "source_key": { "type": "null" }
+          }
+        },
+        {
+          "properties": {
+            "source": { "const": "external" },
+            "label": { "type": "null" },
+            "source_locator": { "type": "string", "minLength": 1 },
+            "source_key": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "feature": {
+      "type": "object",
+      "properties": {
+        "feature_id": { "type": "string", "minLength": 1 },
+        "feature_uid": { "$ref": "#/$defs/ulid_or_null" },
+        "label": { "type": "string" }
+      },
+      "required": ["feature_id", "feature_uid", "label"]
+    },
+    "behavior": {
+      "type": "object",
+      "properties": {
+        "behavior_id": { "type": "string", "minLength": 1 },
+        "behavior_uid": { "$ref": "#/$defs/ulid_or_null" },
+        "feature_id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" }
+      },
+      "required": ["behavior_id", "behavior_uid", "feature_id", "label"]
+    },
+    "scenario": {
+      "type": "object",
+      "properties": {
+        "scenario_id": { "type": "string", "minLength": 1 },
+        "scenario_uid": { "$ref": "#/$defs/ulid_or_null" },
+        "behavior_id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" }
+      },
+      "required": ["scenario_id", "scenario_uid", "behavior_id", "label"]
+    },
+    "test_case": {
+      "type": "object",
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "case_uid": { "type": ["string", "null"], "minLength": 1 },
+        "case_revision": { "type": "string", "minLength": 1 },
+        "relative_path": {
+          "description": "Relative to .markharness/generated/testcases/.",
+          "type": "string",
+          "minLength": 1
+        },
+        "scenario_id": { "type": "string", "minLength": 1 }
+      },
+      "required": [
+        "case_id",
+        "case_uid",
+        "case_revision",
+        "relative_path",
+        "scenario_id"
+      ]
+    },
+    "relation": {
+      "type": "object",
+      "properties": {
+        "from_uid": { "type": "string", "minLength": 1 },
+        "to_uid": { "type": "string", "minLength": 1 },
+        "kind": {
+          "description": "contributes_to: a Feature or Scenario contributes to a Requirement. generated_from: a TestCase was generated from a Scenario.",
+          "enum": ["contributes_to", "generated_from"]
+        }
+      },
+      "required": ["from_uid", "to_uid", "kind"]
+    }
+  }
+}

@@ -452,7 +452,7 @@ fixtureは`tests/fixtures/read-models/<record_kind>/v1/`に置く。markharness�
 
 ### 13.3 JSON Schemaをリポジトリで管理する
 
-外部契約を実装とfixtureだけで管理しない。既存の`schema/`ディレクトリに、次のJSON Schemaを追加する。
+外部契約を実装とfixtureだけで管理しない。既存の`schema/`ディレクトリに、次のJSON Schemaを置く。
 
 ```text
 schema/traceability-read-model.schema.json
@@ -466,7 +466,7 @@ JSON Schemaは構造と型を検証する。UIDの存在、Git refの意味、Bi
 
 markharnessとviewは別リポジトリのため、初期段階で共有ディレクトリ、submodule、実行時の相互参照は設けない。
 
-markharnessは、リードモデルのJSON Schemaと代表fixtureを公開契約として管理する。viewは対応する`record_kind`と`schema_version`のfixtureを自分のリポジトリへ取り込み、契約テストに使用する。fixture更新は、Schema変更または意図的な出力契約変更として明示的に行う。
+markharnessは、リードモデルのJSON Schemaと代表fixtureを公開契約として管理する。CLI統合テスト`tests/read_model_contract.rs`が、実際のCLI出力をSchemaで検証し、fixtureと照合する。viewは対応する`record_kind`と`schema_version`のfixtureを自分のリポジトリへ取り込み、契約テストに使用する。fixture更新は、Schema変更または意図的な出力契約変更として明示的に行う。
 
 この分離により、viewのビルドがmarkharnessの作業ツリーやローカルパスへ依存しない。一方、markharness側ではfixtureをCLI統合テストへ使うため、実際のCLI出力と外部契約の乖離を検知できる。
 

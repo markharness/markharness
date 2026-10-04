@@ -1,0 +1,92 @@
+{
+  "base_commit": "7a6c38d9eadecb65b63472b1597abbb0330be9ba",
+  "head_commit": "53cd8ca99da45cdc7523f4ac57dfbeaf663eb76c",
+  "record_kind": "change_impact",
+  "rejected_trailers": [
+    {
+      "commit": "53cd8ca99da45cdc7523f4ac57dfbeaf663eb76c",
+      "line": "Spec-Reviewed: reason=no-change-required",
+      "reason": "needs both `requirement=<id>` and `case=<id>`; a trailer without a target cannot say which pair was confirmed"
+    }
+  ],
+  "requirements": [
+    {
+      "cases": [
+        {
+          "case_changed": true,
+          "case_id": "tc-game-audio-play-start",
+          "case_uid": "8e62e568-aff2-5d7c-ba9e-f544e65ee890",
+          "status": "followed_up"
+        }
+      ],
+      "feature_ids": [
+        "game-audio"
+      ],
+      "requirement_id": "audio",
+      "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "source": "native",
+      "spec_changed": true
+    },
+    {
+      "cases": [
+        {
+          "case_changed": false,
+          "case_id": "tc-player-jump-jump-ground",
+          "case_uid": "7ecd56ba-c81d-57cf-a871-d5dd1d951c74",
+          "status": "unconfirmed"
+        }
+      ],
+      "feature_ids": [
+        "player-jump"
+      ],
+      "requirement_id": "controls",
+      "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "source": "native",
+      "spec_changed": true
+    },
+    {
+      "cases": [
+        {
+          "case_changed": false,
+          "case_id": "tc-game-menu-open-pause",
+          "case_uid": "64c6f577-8098-5b94-a3e7-e04be669e722",
+          "status": "confirmed"
+        }
+      ],
+      "feature_ids": [
+        "game-menu"
+      ],
+      "requirement_id": "menu",
+      "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "source": "native",
+      "spec_changed": true
+    },
+    {
+      "cases": [
+        {
+          "case_changed": false,
+          "case_id": "tc-game-timing-tick-frame",
+          "case_uid": "45d85d5d-a4fd-5080-a521-7f830fccbe36",
+          "status": "unconfirmed"
+        }
+      ],
+      "feature_ids": [
+        "game-timing"
+      ],
+      "requirement_id": "timing",
+      "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      "source": "external",
+      "spec_changed": true
+    }
+  ],
+  "rule_version": 1,
+  "schema_version": 1,
+  "stale_pins": [
+    {
+      "head_revision": "6be7e77887e7bd7b53943da3e8dcf2fad3290dd5",
+      "pinned_revision": "eb6e3e2ffe08a275a47e324d565a1dc2460c1f5b",
+      "requirement_id": "timing",
+      "source_locator": "docs/requirements.sdoc"
+    }
+  ]
+}

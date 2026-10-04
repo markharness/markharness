@@ -66,7 +66,7 @@ grillingセッションで実装(`src/`)を調べたところ、この前提は�
 - `docs/ja/design/testcase-generation-design.md`・`docs/en/design/testcase-generation-design.md`(冒頭のStatus行、§3.4)
 - `docs/ja/cli-manual.md`・`docs/en/cli-manual.md`(§3 動作確認・テスト、`cargo test`対象モジュール一覧。新設`traceability`コマンドの説明追加も同時に行う)
 - **変更不要**: `src/presentation.rs`(`CommandOutcome`・`Presenter`)、`src/impact.rs`・`src/coverage.rs`の出力構造体、`.markharness/generated/traceability-index.json`のファイル形式・内容
-- `schema/`配下(将来、`schema/traceability-read-model.schema.json`等を追加する際は、`impact`/`coverage`が既に使っている`record_kind`命名に従う)
+- `schema/`配下(`schema/traceability-read-model.schema.json`等。`impact`/`coverage`が既に使っている`record_kind`命名に従う)
 
 ## 検討したが採用しない選択肢
 

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.com/schema/release-coverage-read-model.schema.json",
+  "title": "ReleaseCoverageReadModel",
+  "description": "Output of `markharness coverage --format json`. A binding shows how a Case would be verified, never that it was run. Unknown fields are allowed so that a reader keeps working when a field is added.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_kind": { "const": "release_coverage" },
+    "rule_version": {
+      "description": "Changes when the same inputs would produce a different answer.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "at_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "requirements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/requirement_coverage" }
+    },
+    "gaps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/gap" }
+    },
+    "release": {
+      "description": "Absent when no release was requested, or when the requested release recorded no scope. In that case the output shows the registered state only, not a selection.",
+      "$ref": "#/$defs/release_view"
+    }
+  },
+  "required": [
+    "schema_version",
+    "record_kind",
+    "rule_version",
+    "at_commit",
+    "requirements",
+    "gaps"
+  ],
+  "$defs": {
+    "requirement_coverage": {
+      "type": "object",
+      "properties": {
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "requirement_uid": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "source": { "enum": ["native", "external"] },
+        "feature_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/case_coverage" }
+        }
+      },
+      "required": [
+        "requirement_id",
+        "requirement_uid",
+        "source",
+        "feature_ids",
+        "cases"
+      ]
+    },
+    "case_coverage": {
+      "type": "object",
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "case_uid": { "type": ["string", "null"], "minLength": 1 },
+        "feature_id": { "type": "string", "minLength": 1 },
+        "binding_mode": {
+          "description": "The verification means declared for the Case. Present only when a binding exists.",
+          "type": "string",
+          "minLength": 1
+        },
+        "binding_reference": { "type": "string", "minLength": 1 },
+        "selected": {
+          "description": "Present only when a release scope was requested.",
+          "type": "boolean"
+        }
+      },
+      "required": ["case_id", "case_uid", "feature_id"]
+    },
+    "gap": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "requirement_has_no_feature: no Feature contributes to the Requirement. feature_has_no_case: a Feature contributes but nothing underneath it produces a TestCase.",
+          "enum": ["requirement_has_no_feature", "feature_has_no_case"]
+        },
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "feature_id": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind", "requirement_id"],
+      "oneOf": [
+        {
+          "properties": { "kind": { "const": "requirement_has_no_feature" } },
+          "not": { "required": ["feature_id"] }
+        },
+        {
+          "properties": { "kind": { "const": "feature_has_no_case" } },
+          "required": ["feature_id"]
+        }
+      ]
+    },
+    "release_view": {
+      "type": "object",
+      "properties": {
+        "release_id": { "type": "string", "minLength": 1 },
+        "selected_case_uids": {
+          "description": "Selected by the release and present in Knowledge at this ref.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "unselected_case_uids": {
+          "description": "In scope of the requested Requirements but not selected. Candidates for a missed selection; omitting them is not judged wrong.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "absent_case_uids": {
+          "description": "Selected by the release but absent from Knowledge at this ref.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "required": [
+        "release_id",
+        "selected_case_uids",
+        "unselected_case_uids",
+        "absent_case_uids"
+      ]
+    }
+  }
+}

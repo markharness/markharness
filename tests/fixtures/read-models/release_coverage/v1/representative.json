@@ -1,0 +1,63 @@
+{
+  "at_commit": "45c7fc13cfc0749fb0df9f2cdca724d0826f8a78",
+  "gaps": [
+    {
+      "feature_id": "player-duck",
+      "kind": "feature_has_no_case",
+      "requirement_id": "controls"
+    },
+    {
+      "kind": "requirement_has_no_feature",
+      "requirement_id": "orphan"
+    }
+  ],
+  "record_kind": "release_coverage",
+  "release": {
+    "absent_case_uids": [
+      "long-gone-case"
+    ],
+    "release_id": "v1.0.0",
+    "selected_case_uids": [
+      "7ecd56ba-c81d-57cf-a871-d5dd1d951c74"
+    ],
+    "unselected_case_uids": [
+      "d96fffca-521f-5367-9611-83229888bf30"
+    ]
+  },
+  "requirements": [
+    {
+      "cases": [
+        {
+          "case_id": "tc-player-jump-jump-air",
+          "case_uid": "d96fffca-521f-5367-9611-83229888bf30",
+          "feature_id": "player-jump",
+          "selected": false
+        },
+        {
+          "binding_mode": "automated",
+          "binding_reference": "tests/jump.spec.ts",
+          "case_id": "tc-player-jump-jump-ground",
+          "case_uid": "7ecd56ba-c81d-57cf-a871-d5dd1d951c74",
+          "feature_id": "player-jump",
+          "selected": true
+        }
+      ],
+      "feature_ids": [
+        "player-duck",
+        "player-jump"
+      ],
+      "requirement_id": "controls",
+      "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "source": "native"
+    },
+    {
+      "cases": [],
+      "feature_ids": [],
+      "requirement_id": "orphan",
+      "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "source": "native"
+    }
+  ],
+  "rule_version": 1,
+  "schema_version": 1
+}

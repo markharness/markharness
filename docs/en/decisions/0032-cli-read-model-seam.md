@@ -66,7 +66,7 @@ The `src/traceability.rs` rename, its new implementation, and wiring `traceabili
 - `docs/ja/design/testcase-generation-design.md`, `docs/en/design/testcase-generation-design.md` (the opening Status line, §3.4)
 - `docs/ja/cli-manual.md`, `docs/en/cli-manual.md` (§3, the list of modules `cargo test` covers — also document the new `traceability` command here at the same time)
 - **No change needed**: `src/presentation.rs` (`CommandOutcome`, `Presenter`), the output structs in `src/impact.rs`/`src/coverage.rs`, or the format/content of `.markharness/generated/traceability-index.json`.
-- Future: `schema/` — when `schema/traceability-read-model.schema.json` etc. are added, they follow the `record_kind` naming already used by `impact`/`coverage`.
+- `schema/` — `schema/traceability-read-model.schema.json` etc., following the `record_kind` naming already used by `impact`/`coverage`.
 
 ## Options considered and rejected
 
