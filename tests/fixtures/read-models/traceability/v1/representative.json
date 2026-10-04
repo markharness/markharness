@@ -1,0 +1,78 @@
+{
+  "at": "HEAD",
+  "behaviors": [
+    {
+      "behavior_id": "double-jump",
+      "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+      "feature_id": "player-jump",
+      "label": "double-jump"
+    },
+    {
+      "behavior_id": "jump",
+      "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+      "feature_id": "player-jump",
+      "label": "jump"
+    }
+  ],
+  "features": [
+    {
+      "feature_id": "player-jump",
+      "feature_uid": "01ARZ3NDEKTSV4RRFFQ69G5FC1",
+      "label": "player-jump"
+    }
+  ],
+  "record_kind": "traceability",
+  "relations": [
+    {
+      "from_uid": "01ARZ3NDEKTSV4RRFFQ69G5FC1",
+      "kind": "contributes_to",
+      "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "from_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+      "kind": "contributes_to",
+      "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "from_uid": "7ecd56ba-c81d-57cf-a871-d5dd1d951c74",
+      "kind": "generated_from",
+      "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+    }
+  ],
+  "requirements": [
+    {
+      "label": "Player controls",
+      "requirement_id": "controls",
+      "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "source": "native",
+      "source_key": null,
+      "source_locator": null
+    },
+    {
+      "label": null,
+      "requirement_id": "timing",
+      "requirement_uid": null,
+      "source": "external",
+      "source_key": "REQ-Timing-01",
+      "source_locator": "docs/requirements.sdoc"
+    }
+  ],
+  "scenarios": [
+    {
+      "behavior_id": "jump",
+      "label": "ground",
+      "scenario_id": "ground",
+      "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+    }
+  ],
+  "schema_version": 1,
+  "test_cases": [
+    {
+      "case_id": "tc-player-jump-jump-ground",
+      "case_revision": "56252a49-6c07-5183-827c-96107cf2801b",
+      "case_uid": "7ecd56ba-c81d-57cf-a871-d5dd1d951c74",
+      "relative_path": "player-jump/jump/ground.yml",
+      "scenario_id": "ground"
+    }
+  ]
+}

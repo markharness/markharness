@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://markharness.com/schema/change-impact-read-model.schema.json",
+  "title": "ChangeImpactReadModel",
+  "description": "Output of `markharness impact --format json`. Unknown fields are allowed so that a reader keeps working when a field is added.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_kind": { "const": "change_impact" },
+    "rule_version": {
+      "description": "Changes when the same inputs would produce a different verdict.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "base_commit": { "$ref": "#/$defs/commit" },
+    "head_commit": { "$ref": "#/$defs/commit" },
+    "requirements": {
+      "description": "Requirements whose spec side changed between base and head, with the alignment status of each related TestCase.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/requirement_impact" }
+    },
+    "stale_pins": {
+      "description": "External Requirements whose pinned revision is behind the source file at head. Bookkeeping, not evidence that the text changed in the range.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/stale_pin" }
+    },
+    "rejected_trailers": {
+      "description": "Spec-Reviewed trailers that were written but could not be counted.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/rejected_trailer" }
+    }
+  },
+  "required": [
+    "schema_version",
+    "record_kind",
+    "rule_version",
+    "base_commit",
+    "head_commit",
+    "requirements",
+    "stale_pins",
+    "rejected_trailers"
+  ],
+  "$defs": {
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "requirement_impact": {
+      "type": "object",
+      "properties": {
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "requirement_uid": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "source": { "enum": ["native", "external"] },
+        "spec_changed": {
+          "description": "Whether the spec side itself changed between base and head.",
+          "type": "boolean"
+        },
+        "feature_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/case_alignment" }
+        }
+      },
+      "required": [
+        "requirement_id",
+        "requirement_uid",
+        "source",
+        "spec_changed",
+        "feature_ids",
+        "cases"
+      ]
+    },
+    "case_alignment": {
+      "type": "object",
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "case_uid": { "type": ["string", "null"], "minLength": 1 },
+        "case_changed": { "type": "boolean" },
+        "status": {
+          "description": "confirmed: a Spec-Reviewed trailer names this pair and neither side changed since. followed_up: both sides changed in the range but nobody recorded a confirmation. unconfirmed: the spec side changed and nothing says the TestCase was reconciled with it.",
+          "enum": ["confirmed", "followed_up", "unconfirmed"]
+        }
+      },
+      "required": ["case_id", "case_uid", "case_changed", "status"]
+    },
+    "stale_pin": {
+      "type": "object",
+      "properties": {
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "source_locator": { "type": "string", "minLength": 1 },
+        "pinned_revision": { "type": "string", "minLength": 1 },
+        "head_revision": { "type": "string", "minLength": 1 }
+      },
+      "required": [
+        "requirement_id",
+        "source_locator",
+        "pinned_revision",
+        "head_revision"
+      ]
+    },
+    "rejected_trailer": {
+      "type": "object",
+      "properties": {
+        "commit": { "$ref": "#/$defs/commit" },
+        "line": { "type": "string" },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "required": ["commit", "line", "reason"]
+    }
+  }
+}
