@@ -5,12 +5,14 @@
       "behavior_id": "double-jump",
       "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
       "feature_id": "player-jump",
+      "feature_uid": "01ARZ3NDEKTSV4RRFFQ69G5FC1",
       "label": "double-jump"
     },
     {
       "behavior_id": "jump",
       "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
       "feature_id": "player-jump",
+      "feature_uid": "01ARZ3NDEKTSV4RRFFQ69G5FC1",
       "label": "jump"
     }
   ],
@@ -60,6 +62,7 @@
   "scenarios": [
     {
       "behavior_id": "jump",
+      "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
       "label": "ground",
       "scenario_id": "ground",
       "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
@@ -72,7 +75,8 @@
       "case_revision": "56252a49-6c07-5183-827c-96107cf2801b",
       "case_uid": "7ecd56ba-c81d-57cf-a871-d5dd1d951c74",
       "relative_path": "player-jump/jump/ground.yml",
-      "scenario_id": "ground"
+      "scenario_id": "ground",
+      "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
     }
   ]
 }

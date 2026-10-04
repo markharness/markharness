@@ -1056,7 +1056,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 **`--at`は省略可。省略時は作業ツリー(コミット前の現在の内容)を読む**(`generate`・`verify`と同じ経路。ADR 0033)。`--at <ref>`を指定した場合は、そのGit ref時点のコミット内容を読む。`impact`・`coverage`と異なり`traceability`には2点比較やリリース監査の要件がないため、コミットを要求しない。`generate`のように生成物を書き込むことはない。
 
-**出力**: `schema_version: 1`・`record_kind: traceability`・`at`(`--at`省略時は固定値`"working-tree"`、指定時は指定文字列そのまま。ADR 0033)に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`・`label`・`source_locator`・`source_key`。`label`は`source: "native"`の場合のみ値を持ち、`source_locator`・`source_key`は`source: "external"`の場合のみ値を持つ。互いに反対の値を持ち、片方が`null`の時もう片方は値を持つ)、`features`(`feature_id`・`feature_uid`・`label`)、`behaviors`(`behavior_id`・`behavior_uid`・`feature_id`・`label`。Scenarioを持たないBehaviorも含め、Knowledgeに存在する全件を出す。`behavior_uid`は`identity migrate`未実行のBehaviorでは`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`・`label`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。TestCaseの本文(`phases`・`axis`)は含まない。`relative_path`が指す`.markharness/generated/testcases/<relative_path>`を直接読むことで得られる。
+**出力**: `schema_version: 1`・`record_kind: traceability`・`at`(`--at`省略時は固定値`"working-tree"`、指定時は指定文字列そのまま。ADR 0033)に加え、`requirements`(`requirement_id`・`requirement_uid`・`source`・`label`・`source_locator`・`source_key`。`label`は`source: "native"`の場合のみ値を持ち、`source_locator`・`source_key`は`source: "external"`の場合のみ値を持つ。互いに反対の値を持ち、片方が`null`の時もう片方は値を持つ)、`features`(`feature_id`・`feature_uid`・`label`)、`behaviors`(`behavior_id`・`behavior_uid`・`feature_id`・`feature_uid`・`label`。Scenarioを持たないBehaviorも含め、Knowledgeに存在する全件を出す。`behavior_uid`は`identity migrate`未実行のBehaviorでは`null`)、`scenarios`(`scenario_id`・`scenario_uid`・`behavior_id`・`behavior_uid`・`label`)、`test_cases`(`case_id`・`case_uid`・`case_revision`・`relative_path`・`scenario_id`・`scenario_uid`)、`relations`(`from_uid`・`to_uid`・`kind`。`kind`は`contributes_to`(FeatureまたはScenarioからRequirementへ)と`generated_from`(TestCaseからScenarioへ)の2種類)を含む。親UID(`feature_uid`・`behavior_uid`・`scenario_uid`)は、`*_id`(slug)が親の中でしか一意でないため、同じslugを複数のFeatureが持つプロジェクトでも階層を一意にたどれるように出力する。親がUIDを持たない(`identity migrate`未実行)場合は`null`で、キーは常に出力する。UIDを持たない要素(`identity migrate`未実行)は、Nodeとしては出力されるが`relations`には現れない。TestCaseの本文(`phases`・`axis`)は含まない。`relative_path`が指す`.markharness/generated/testcases/<relative_path>`を直接読むことで得られる。
 
 **動作**
 
@@ -1099,13 +1099,13 @@ $ markharness traceability --at HEAD
     { "feature_id": "player-jump", "feature_uid": null, "label": "player-jump" }
   ],
   "behaviors": [
-    { "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "feature_id": "player-jump", "label": "jump" }
+    { "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "feature_id": "player-jump", "feature_uid": null, "label": "jump" }
   ],
   "scenarios": [
-    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump", "label": "ground" }
+    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "label": "ground" }
   ],
   "test_cases": [
-    { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground" }
+    { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1" }
   ],
   "relations": [
     { "from_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "kind": "contributes_to" }

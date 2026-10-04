@@ -146,6 +146,9 @@ struct BehaviorNode {
     // None until `identity migrate` runs (same as the other uid fields).
     behavior_uid: Option<String>,
     feature_id: String,
+    // None while the parent Feature has no uid (not migrated). A `*_id` is
+    // unique only within its parent, so the parent is also named by uid.
+    feature_uid: Option<String>,
     label: String,
 }
 
@@ -153,6 +156,7 @@ struct ScenarioNode {
     scenario_id: String,
     scenario_uid: Option<String>,
     behavior_id: String,
+    behavior_uid: Option<String>, // None while the parent Behavior is not migrated
     label: String,
 }
 
@@ -162,6 +166,7 @@ struct TestCaseNode {
     case_revision: CaseRevision, // a hash-string type, not u64
     relative_path: String,
     scenario_id: String,
+    scenario_uid: Option<String>, // None while the parent Scenario is not migrated
 }
 ```
 

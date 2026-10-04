@@ -108,9 +108,16 @@
         "behavior_id": { "type": "string", "minLength": 1 },
         "behavior_uid": { "$ref": "#/$defs/ulid_or_null" },
         "feature_id": { "type": "string", "minLength": 1 },
+        "feature_uid": { "$ref": "#/$defs/ulid_or_null" },
         "label": { "type": "string" }
       },
-      "required": ["behavior_id", "behavior_uid", "feature_id", "label"]
+      "required": [
+        "behavior_id",
+        "behavior_uid",
+        "feature_id",
+        "feature_uid",
+        "label"
+      ]
     },
     "scenario": {
       "type": "object",
@@ -118,9 +125,16 @@
         "scenario_id": { "type": "string", "minLength": 1 },
         "scenario_uid": { "$ref": "#/$defs/ulid_or_null" },
         "behavior_id": { "type": "string", "minLength": 1 },
+        "behavior_uid": { "$ref": "#/$defs/ulid_or_null" },
         "label": { "type": "string" }
       },
-      "required": ["scenario_id", "scenario_uid", "behavior_id", "label"]
+      "required": [
+        "scenario_id",
+        "scenario_uid",
+        "behavior_id",
+        "behavior_uid",
+        "label"
+      ]
     },
     "test_case": {
       "type": "object",
@@ -133,14 +147,16 @@
           "type": "string",
           "minLength": 1
         },
-        "scenario_id": { "type": "string", "minLength": 1 }
+        "scenario_id": { "type": "string", "minLength": 1 },
+        "scenario_uid": { "$ref": "#/$defs/ulid_or_null" }
       },
       "required": [
         "case_id",
         "case_uid",
         "case_revision",
         "relative_path",
-        "scenario_id"
+        "scenario_id",
+        "scenario_uid"
       ]
     },
     "relation": {

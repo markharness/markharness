@@ -1056,7 +1056,7 @@ markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
 
 **`--at` is optional. Omitting it reads the working tree** — the uncommitted, current content — the same way `generate`/`verify` already do (ADR 0033). Giving `--at <ref>` reads that Git ref's committed content instead. Unlike `impact`/`coverage`, `traceability` has no two-point-comparison or release-auditing requirement, so it never demands a commit first. It never writes any artifact, unlike `generate`.
 
-**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key` — `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `behavior_uid`, `feature_id`, `label`; every Behavior in Knowledge is listed, including one that has no Scenario; `behavior_uid` is `null` for a Behavior `identity migrate` has not yet processed), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) is not included; read it directly from `.markharness/generated/testcases/<relative_path>`, using `relative_path`.
+**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key` — `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `behavior_uid`, `feature_id`, `feature_uid`, `label`; every Behavior in Knowledge is listed, including one that has no Scenario; `behavior_uid` is `null` for a Behavior `identity migrate` has not yet processed), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `behavior_uid`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`, `scenario_uid`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). The parent UIDs (`feature_uid`, `behavior_uid`, `scenario_uid`) are emitted because a `*_id` slug is unique only within its parent, so a project where several Features share a slug can still be walked unambiguously; the key is always present and is `null` when the parent has no UID yet (`identity migrate` not run). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) is not included; read it directly from `.markharness/generated/testcases/<relative_path>`, using `relative_path`.
 
 **Behavior**
 
@@ -1099,13 +1099,13 @@ $ markharness traceability --at HEAD
     { "feature_id": "player-jump", "feature_uid": null, "label": "player-jump" }
   ],
   "behaviors": [
-    { "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "feature_id": "player-jump", "label": "jump" }
+    { "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "feature_id": "player-jump", "feature_uid": null, "label": "jump" }
   ],
   "scenarios": [
-    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump", "label": "ground" }
+    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "label": "ground" }
   ],
   "test_cases": [
-    { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground" }
+    { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1" }
   ],
   "relations": [
     { "from_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "kind": "contributes_to" }
