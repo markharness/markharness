@@ -43,7 +43,7 @@ Scenarioが参照するRequirement UIDがFeatureの`requirement_uids`に含ま�
 
 現状の`coverage.rs`(`features_for_requirement`)は、あるRequirementに`contributes_to`するFeatureの集合を求め、その**Featureに属しているというだけ**でTestCaseを「このRequirementをカバーしている」と扱っていた。`case.generated_from.requirement_uids`は一切参照していなかった。
 
-これを、Feature単位のgap検出(`RequirementHasNoFeature`:どのFeatureも`contributes_to`していないRequirementの検出)は維持しつつ、個々のTestCaseとRequirementの対応判定は、Featureの集合によるゲートを外し、**全TestCaseを直接`case.generated_from.requirement_uids`で照合する**独立したロジックに置き換える。これにより、あるFeatureが`contributes_to`していないRequirementであっても、そのFeature配下のいずれかのScenarioが単独で`contributes_to`していれば正しく検出できる。
+これを、Feature単位のgap検出(`RequirementHasNoFeature`)は維持する。ただしFeatureは、自身が`contributes_to`している場合に加え、`contributes_to`するScenarioを持つ場合もRequirementに届いているものとして数える(LLRのようにScenario単位でだけ紐づくRequirementは「Featureが無い」とは報告されず、そのScenarioを持つFeatureが`feature_ids`に含まれる)。そのうえで、個々のTestCaseとRequirementの対応判定は、Featureの集合によるゲートを外し、**全TestCaseを直接`case.generated_from.requirement_uids`で照合する**独立したロジックに置き換える。これにより、あるFeatureが`contributes_to`していないRequirementであっても、そのFeature配下のいずれかのScenarioが単独で`contributes_to`していれば正しく検出できる。
 
 Scenario単位の上書きを1件も使わない場合(本ADR以前からの使い方全て)、この判定は現状と数学的に同値になる。`generated_from.requirement_uids`はフォールバックによりFeatureの`requirement_uids`をそのまま引き継ぐため、「TestCaseがそのFeatureに属している」ことと「TestCaseの`generated_from.requirement_uids`にそのRequirementが含まれている」ことが一致するからである。したがって本変更は`coverage`の既存の振る舞いを壊すものではなく、より安全側(不正確な対応を排除する側)へ倒す実装である。`impact.rs`は既に`case.generated_from.requirement_uids`を直接見ているため、追加の修正は不要である。
 

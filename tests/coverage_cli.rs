@@ -265,6 +265,43 @@ fn a_scenario_level_override_narrows_which_requirement_a_case_covers() {
     );
 }
 
+/// ADR 0031: a Requirement only a Scenario names (its Feature does not) is
+/// still reached through that Scenario's Feature, so it is neither a
+/// requirement-without-feature gap nor reported with empty `feature_ids`
+/// while it has a case.
+#[test]
+fn a_requirement_only_a_scenario_names_is_reached_through_its_feature() {
+    const SECOND_REQUIREMENT_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC2";
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/persistence/requirement.yml"),
+        &format!(
+            "id: persistence\nsource: native\nlabel: persistence\naxis: [gameplay]\nuid: {SECOND_REQUIREMENT_UID}\n"
+        ),
+    );
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/features/player-jump/jump/ground/scenario.yml"),
+        &format!(
+            "id: ground\nbehavior: jump\nlabel: ground\nuid: {SCENARIO_UID}\ndescription: |\n  From the ground.\nphases:\n  - steps:\n      - action: \"Presses jump.\"\n    results:\n      - \"Rises.\"\nrequirement_uids: [{SECOND_REQUIREMENT_UID}]\n"
+        ),
+    );
+    commit(
+        dir.path(),
+        "docs: bind ground to a requirement only it names",
+    );
+
+    let value = coverage_json(dir.path(), &["--requirements", "persistence"]);
+    assert_eq!(value["gaps"].as_array().unwrap().len(), 0, "{value}");
+    let requirement = &value["requirements"][0];
+    assert_eq!(requirement["feature_ids"][0], "player-jump", "{value}");
+    assert_eq!(
+        requirement["cases"][0]["case_id"],
+        "tc-player-jump-jump-ground"
+    );
+}
+
 /// AC24: a recorded scope reproduces what that release selected.
 #[test]
 fn a_recorded_scope_reports_what_the_release_selected() {
