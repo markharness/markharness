@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(2026-09-16決定)。[0032](0032-cli-read-model-seam.md)が導入した`traceability`コマンドの入力ソースを拡張する。
+Accepted(2026-09-16決定)。[0032](0032-cli-read-model-seam.md)が導入した`traceability`コマンドの入力ソースを拡張する。`--at`を省略可とする部分は、[0043](0043-traceability-working-tree-only-and-no-format-option.md)で`--at`自体を削除したため置き換えられた(作業ツリーを読むという決定は有効)。
 
 ## 背景
 

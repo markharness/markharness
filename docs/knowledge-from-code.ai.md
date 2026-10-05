@@ -504,10 +504,10 @@ StrictDoc・Playwright を使っている場合、次のコマンドで「仕様
 
 ```bash
 # base..head間で変更されたRequirement/Featureと、対応確認(Spec-Reviewedトレーラー)の状態を一覧する
-markharness impact --base <base-ref> --head <head-ref> --format json
+markharness impact --base <base-ref> --head <head-ref>
 
 # 指定したRequirement集合について、ExecutionBindingの有無・coverage gapを一覧する
-markharness coverage --requirements all --format json
+markharness coverage --requirements all
 ```
 
 - `impact` は `.sdoc` の構文解析をしません。`source_locator` が指すファイル単位での base/head 差分で仕様変更を検知します(同一ファイル内の無関係な変更も「変更あり」として検出される偽陽性を許容します)。

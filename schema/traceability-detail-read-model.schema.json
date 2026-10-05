@@ -7,17 +7,12 @@
   "properties": {
     "schema_version": { "const": 1 },
     "record_kind": { "const": "traceability_detail" },
-    "at": {
-      "description": "The Git ref the Knowledge was read at, or \"working-tree\" when --at was omitted.",
-      "type": "string",
-      "minLength": 1
-    },
     "kind": {
       "enum": ["requirement", "feature", "behavior", "scenario", "test_case"]
     },
     "uid": { "type": "string", "minLength": 1 }
   },
-  "required": ["schema_version", "record_kind", "at", "kind", "uid"],
+  "required": ["schema_version", "record_kind", "kind", "uid"],
   "oneOf": [
     {
       "description": "`description` is absent for an external Requirement: the external document owns that content.",

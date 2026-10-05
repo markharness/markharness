@@ -655,7 +655,7 @@ reference: tests/login.spec.ts
 ### 1.13 `markharness impact` — Change Impact and the alignment check (ADR 0019, design §5.3 and §6.1)
 
 ```text
-markharness impact --base <git-ref> --head <git-ref> [--format json] [--fail-on-findings] [-d, --dir <path>]
+markharness impact --base <git-ref> --head <git-ref> [--fail-on-findings] [-d, --dir <path>]
 ```
 
 **Purpose**: For every Requirement the `base..head` range changed, reports the related Features and TestCases and whether a human confirmed that the two still correspond.
@@ -706,8 +706,8 @@ Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-requ
 
 ```text
 markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...] [-d, --dir <path>]
-markharness release scope show --release <release-id> [--at <ref>] [--format json] [-d, --dir <path>]
-markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at <ref>] [--format json] [-d, --dir <path>]
+markharness release scope show --release <release-id> [--at <ref>] [-d, --dir <path>]
+markharness coverage --requirements <ids-or-all> [--release <release-id>] [--at <ref>] [-d, --dir <path>]
 ```
 
 **Purpose**: Records what a release chose to verify, and lists — for a chosen set of Requirements — whether a means of verification exists and whether anything looks left out of the selection.
@@ -896,7 +896,7 @@ $ markharness axes list --dir tmp/todo-sample --json
 ### 1.20 `markharness import` — Emit a canonical snapshot
 
 ```text
-markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... --format json [-d, --dir <path>]
+markharness import --source <native|junit> [--input <junit.xml>] [--git-ref <ref>] [--bind <artifact-id=version>]... [-d, --dir <path>]
 ```
 
 `native` normalizes `.markharness/knowledge/` at the selected Git ref into artifacts carrying Feature tree SHAs and derived traces. `junit` normalizes JUnit XML TestCases and PASS/FAIL/SKIP results into evidence, with `--bind` supplying versions under verification. A JUnit `markharness.condition` property creates a stored trace. Output carries `schema_version: 1` and conforms to `.markharness/schema/canonical_snapshot.schema.json`. The command does not modify the input or `.markharness/knowledge/`.
@@ -1047,17 +1047,17 @@ uid: 01M0MJQ5C4CJ3HHVG7PBYAQEBR
 
 ---
 
-### 1.25 `markharness traceability` — Read Requirement/Feature/Behavior/Scenario/TestCase relations (ADR 0032/0033, design doc cli-read-model-design.md §5)
+### 1.25 `markharness traceability` — Read Requirement/Feature/Behavior/Scenario/TestCase relations (ADR 0032/0033/0043, design doc cli-read-model-design.md §5)
 
 ```text
-markharness traceability [--at <git-ref>] [--format json] [-d, --dir <path>]
+markharness traceability [-d, --dir <path>]
 ```
 
 **Purpose**: Reads Requirement/Feature/Behavior/Scenario/TestCase relations, read-only, from Knowledge and generated TestCases. Lets external tools such as `markharness-view` take this output as their only input, without reading Knowledge or `.markharness/` directly (ADR 0032). Like `impact` and `coverage`, it never goes through `CommandOutcome`/`Presenter`; its own module's struct is serialized directly to JSON.
 
-**`--at` is optional. Omitting it reads the working tree** — the uncommitted, current content — the same way `generate`/`verify` already do (ADR 0033). Giving `--at <ref>` reads that Git ref's committed content instead. Unlike `impact`/`coverage`, `traceability` has no two-point-comparison or release-auditing requirement, so it never demands a commit first. It never writes any artifact, unlike `generate`.
+**It reads the working tree** — the uncommitted, current content — the same way `generate`/`verify` do (ADR 0043), so it never demands a commit first. To read a specific committed point, use `coverage --at`. It never writes any artifact, unlike `generate`.
 
-**Output**: `schema_version: 1`, `record_kind: traceability`, `at` (the fixed string `"working-tree"` when `--at` is omitted, otherwise the given string as-is; ADR 0033), plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key`, `case_uids` — `case_uids` lists the `case_uid` of every TestCase related to the Requirement, sorted, and is empty when `requirement_uid` is `null`; the rule is the same as `coverage`'s: a Scenario that names a Requirement itself relates to that one instead of its Feature's (ADR 0031, 0042), and a TestCase with no `case_uid` yet (`identity migrate` not run) is not listed. `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `behavior_uid`, `feature_id`, `feature_uid`, `label`; every Behavior in Knowledge is listed, including one that has no Scenario; `behavior_uid` is `null` for a Behavior `identity migrate` has not yet processed), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `behavior_uid`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`, `scenario_uid`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). The parent UIDs (`feature_uid`, `behavior_uid`, `scenario_uid`) are emitted because a `*_id` slug is unique only within its parent, so a project where several Features share a slug can still be walked unambiguously; the key is always present and is `null` when the parent has no UID yet (`identity migrate` not run). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) and the other elements' content are not included; read them one element at a time with `traceability show` (§1.26).
+**Output**: `schema_version: 1`, `record_kind: traceability`, plus `requirements` (`requirement_id`, `requirement_uid`, `source`, `label`, `source_locator`, `source_key`, `case_uids` — `case_uids` lists the `case_uid` of every TestCase related to the Requirement, sorted, and is empty when `requirement_uid` is `null`; the rule is the same as `coverage`'s: a Scenario that names a Requirement itself relates to that one instead of its Feature's (ADR 0031, 0042), and a TestCase with no `case_uid` yet (`identity migrate` not run) is not listed. `label` is present only when `source` is `"native"`, while `source_locator`/`source_key` are present only when `source` is `"external"`; exactly one side is non-null), `features` (`feature_id`, `feature_uid`, `label`), `behaviors` (`behavior_id`, `behavior_uid`, `feature_id`, `feature_uid`, `label`; every Behavior in Knowledge is listed, including one that has no Scenario; `behavior_uid` is `null` for a Behavior `identity migrate` has not yet processed), `scenarios` (`scenario_id`, `scenario_uid`, `behavior_id`, `behavior_uid`, `label`), `test_cases` (`case_id`, `case_uid`, `case_revision`, `relative_path`, `scenario_id`, `scenario_uid`), and `relations` (`from_uid`, `to_uid`, `kind`, where `kind` is one of `contributes_to` — Feature or Scenario to Requirement — or `generated_from` — TestCase to Scenario). The parent UIDs (`feature_uid`, `behavior_uid`, `scenario_uid`) are emitted because a `*_id` slug is unique only within its parent, so a project where several Features share a slug can still be walked unambiguously; the key is always present and is `null` when the parent has no UID yet (`identity migrate` not run). An element with no UID yet (`identity migrate` not run) still appears as a Node, but never in `relations`. TestCase body content (`phases`, `axis`) and the other elements' content are not included; read them one element at a time with `traceability show` (§1.26).
 
 **Behavior**
 
@@ -1080,37 +1080,7 @@ $ markharness traceability
 {
   "schema_version": 1,
   "record_kind": "traceability",
-  "at": "working-tree",
   ...
-}
-```
-
-To check committed state at a specific point instead, give `--at`:
-
-```console
-$ markharness traceability --at HEAD
-{
-  "schema_version": 1,
-  "record_kind": "traceability",
-  "at": "HEAD",
-  "requirements": [
-    { "requirement_id": "controls", "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "source": "native", "label": "controls", "source_locator": null, "source_key": null, "case_uids": ["7ecd56ba-c81d-57cf-a871-d5dd1d951c74"] }
-  ],
-  "features": [
-    { "feature_id": "player-jump", "feature_uid": null, "label": "player-jump" }
-  ],
-  "behaviors": [
-    { "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "feature_id": "player-jump", "feature_uid": null, "label": "jump" }
-  ],
-  "scenarios": [
-    { "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "behavior_id": "jump", "behavior_uid": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "label": "ground" }
-  ],
-  "test_cases": [
-    { "case_id": "tc-player-jump-jump-ground", "case_uid": "...", "case_revision": "...", "relative_path": "player-jump/jump/ground.yml", "scenario_id": "ground", "scenario_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1" }
-  ],
-  "relations": [
-    { "from_uid": "01ARZ3NDEKTSV4RRFFQ69G5FB1", "to_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "kind": "contributes_to" }
-  ]
 }
 ```
 
@@ -1121,16 +1091,16 @@ $ markharness traceability --at HEAD
 ### 1.26 `markharness traceability show` — Read the content of one chosen element (ADR 0040, design doc cli-read-model-design.md §5.5)
 
 ```text
-markharness traceability show --uid <UID> [--at <git-ref>] [-d, --dir <path>]
+markharness traceability show --uid <UID> [-d, --dir <path>]
 ```
 
 **Purpose**: Prints, read-only, the content of one element (Requirement, Feature, Behavior, Scenario, or TestCase) chosen in the `traceability` tree. Use it when axes, descriptions, or steps are needed, as in the GUI's detail pane. `traceability` stays a light output with only identifiers and a `label`; only this command carries content.
 
 **`--uid`**: The element's `uid`. For a Requirement, Feature, Behavior, or Scenario, pass its `*_uid` (such as `requirement_uid`); for a TestCase, pass `test_cases[].case_uid`. The element's kind is not given.
 
-**`--at` is optional. Omitting it reads the working tree** (the same as `traceability`; ADR 0033). To read the tree and the detail at the same point, pass the same `--at` used for the tree.
+**It reads the working tree** (the same as `traceability`; ADR 0043).
 
-**Output**: `schema_version: 1`, `record_kind: traceability_detail`, `at`, `kind`, and `uid`, plus fields that depend on `kind`. A field that does not exist is omitted, not set to `null`.
+**Output**: `schema_version: 1`, `record_kind: traceability_detail`, `kind`, and `uid`, plus fields that depend on `kind`. A field that does not exist is omitted, not set to `null`.
 
 | `kind` | Fields |
 | --- | --- |
@@ -1142,7 +1112,7 @@ markharness traceability show --uid <UID> [--at <git-ref>] [-d, --dir <path>]
 
 **Behavior**
 
-- `uid` is matched against the uid of a Requirement, Feature, Behavior, or Scenario, or a TestCase's `case_uid`. A TestCase returns its current revision at `--at`.
+- `uid` is matched against the uid of a Requirement, Feature, Behavior, or Scenario, or a TestCase's `case_uid`. A TestCase returns its current revision in the working tree.
 - A `uid` that matches no element exits with code 2 and writes nothing to stdout. The error message names the `uid` and the point it was read at.
 - It reads the same way `traceability` does, so a syntax or content error in a Knowledge file is reported with the same exit code.
 
@@ -1157,9 +1127,8 @@ markharness traceability show --uid <UID> [--at <git-ref>] [-d, --dir <path>]
 **Example**
 
 ```console
-$ markharness traceability show --uid 01ARZ3NDEKTSV4RRFFQ69G5FB1 --at HEAD
+$ markharness traceability show --uid 01ARZ3NDEKTSV4RRFFQ69G5FB1
 {
-  "at": "HEAD",
   "description": "From the ground.\n",
   "kind": "scenario",
   "phases": [

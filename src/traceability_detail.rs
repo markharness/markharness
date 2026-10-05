@@ -11,10 +11,8 @@ use serde::Serialize;
 use crate::generate::{self, KnowledgeSnapshot};
 use crate::identity::CaseRevision;
 use crate::knowledge::{Feature, Phase, Procedure, Requirement, RequirementSource};
-use crate::knowledge_source::{
-    GitTreeKnowledgeSource, KnowledgeSource, WorkingTreeKnowledgeSource,
-};
-use crate::traceability::{TraceabilityError, WORKING_TREE, features_at, requirements_at};
+use crate::knowledge_source::{KnowledgeSource, WorkingTreeKnowledgeSource};
+use crate::traceability::{TraceabilityError, features_at, requirements_at};
 
 const SCHEMA_VERSION: u32 = 1;
 const RECORD_KIND: &str = "traceability_detail";
@@ -68,7 +66,6 @@ pub enum DetailElement {
 pub struct TraceabilityDetail {
     pub schema_version: u32,
     pub record_kind: &'static str,
-    pub at: String,
     #[serde(flatten)]
     pub element: DetailElement,
 }
@@ -150,24 +147,14 @@ fn test_case_detail(uid: &str, snapshot: &KnowledgeSnapshot) -> Option<DetailEle
     })
 }
 
-/// Looks `uid` up among every element kind at `git_ref` (the working tree
-/// when `None`, ADR 0033). Uids are unique across kinds, so at most one kind
-/// matches.
-pub fn compute(
-    root: &Path,
-    git_ref: Option<&str>,
-    uid: &str,
-) -> Result<TraceabilityDetail, TraceabilityError> {
-    let requirements = requirements_at(root, git_ref)?;
-    let features = features_at(root, git_ref)?;
-    let snapshot = match git_ref {
-        Some(git_ref) => GitTreeKnowledgeSource::new(root, git_ref).load_snapshot()?,
-        None => {
-            WorkingTreeKnowledgeSource::new(root.join(crate::project_root::KNOWLEDGE_PATH_IN_REPO))
-                .load_snapshot()?
-        }
-    };
-    let at = git_ref.map_or_else(|| WORKING_TREE.to_string(), str::to_string);
+/// Looks `uid` up among every element kind in the working tree. Uids are
+/// unique across kinds, so at most one kind matches.
+pub fn compute(root: &Path, uid: &str) -> Result<TraceabilityDetail, TraceabilityError> {
+    let requirements = requirements_at(root)?;
+    let features = features_at(root)?;
+    let snapshot =
+        WorkingTreeKnowledgeSource::new(root.join(crate::project_root::KNOWLEDGE_PATH_IN_REPO))
+            .load_snapshot()?;
 
     let element = requirement_detail(uid, &requirements)
         .or_else(|| feature_detail(uid, &features))
@@ -176,13 +163,11 @@ pub fn compute(
         .or_else(|| test_case_detail(uid, &snapshot))
         .ok_or_else(|| TraceabilityError::NotFound {
             uid: uid.to_string(),
-            at: at.clone(),
         })?;
 
     Ok(TraceabilityDetail {
         schema_version: SCHEMA_VERSION,
         record_kind: RECORD_KIND,
-        at,
         element,
     })
 }

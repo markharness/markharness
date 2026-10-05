@@ -202,9 +202,9 @@ markharness knowledge reconcile <intent-file>   # relating a Feature to Requirem
 markharness binding set --case-uid <case-uid> --mode automated --reference src/tests/login.spec.ts
 markharness binding set --case-uid <case-uid> --mode manual
 markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...]   # replaces the selection list
-markharness release scope show --release <release-id> [--at <ref>] --format json
-markharness impact --base <ref> --head <ref> --format json
-markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref> --format json
+markharness release scope show --release <release-id> [--at <ref>]
+markharness impact --base <ref> --head <ref>
+markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref>
 ```
 
 `feature.yml`'s `requirement_uids` remains the record of a Feature-to-Requirement relation, and no new store is introduced (§5.2); editing it was consolidated into `knowledge reconcile` by [0028](../decisions/0028-consolidate-knowledge-authoring-commands.md). Output is CLI/JSON only; no local server or dashboard is in the MVP (§8). Exit codes and JSON schema versioning policy are settled at implementation time. Commands that are removed are covered in §9.1.

@@ -202,9 +202,9 @@ markharness knowledge reconcile <intent-file>   # Requirement関連の追加・�
 markharness binding set --case-uid <case-uid> --mode automated --reference src/tests/login.spec.ts
 markharness binding set --case-uid <case-uid> --mode manual
 markharness release scope set --release <release-id> --case-uid <case-uid> [--case-uid ...]   # 選定リストを置換
-markharness release scope show --release <release-id> [--at <ref>] --format json
-markharness impact --base <ref> --head <ref> --format json
-markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref> --format json
+markharness release scope show --release <release-id> [--at <ref>]
+markharness impact --base <ref> --head <ref>
+markharness coverage --requirements <requirement-ids-or-all> [--release <release-id>] --at <ref>
 ```
 
 FeatureとRequirementの関連は`feature.yml`の`requirement_uids`が正本であり、新しい格納先は作らない(§5.2)。その編集は[0028](../decisions/0028-consolidate-knowledge-authoring-commands.md)により`knowledge reconcile`へ統合されている。出力はCLI/JSONのみとし、ローカルサーバーやダッシュボードはMVPに含めない(§8)。終了コード・JSON schemaのversioning方針は実装時に確定する。廃止するCLIは§9.1で扱う。

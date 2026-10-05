@@ -110,9 +110,9 @@ fn traceability_json(root: &Path, extra: &[&str]) -> serde_json::Value {
 }
 
 #[test]
-fn traceability_reports_the_envelope_and_full_hierarchy_at_head() {
+fn traceability_reports_the_envelope_and_full_hierarchy() {
     let dir = project();
-    let value = traceability_json(dir.path(), &["--at", "HEAD"]);
+    let value = traceability_json(dir.path(), &[]);
 
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["record_kind"], "traceability");
@@ -161,7 +161,7 @@ fn traceability_exposes_source_locator_and_source_key_for_an_external_requiremen
     );
     commit(dir.path(), "chore: add an external requirement");
 
-    let value = traceability_json(dir.path(), &["--at", "HEAD"]);
+    let value = traceability_json(dir.path(), &[]);
 
     let timing = value["requirements"]
         .as_array()
@@ -193,7 +193,7 @@ fn traceability_rejects_a_native_requirement_carrying_external_only_fields() {
     );
     commit(dir.path(), "chore: add a malformed requirement");
 
-    let output = traceability(dir.path(), &["--at", "HEAD"]);
+    let output = traceability(dir.path(), &[]);
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -217,7 +217,7 @@ fn traceability_rejects_a_native_requirement_carrying_only_source_revision() {
     );
     commit(dir.path(), "chore: add a malformed requirement");
 
-    let output = traceability(dir.path(), &["--at", "HEAD"]);
+    let output = traceability(dir.path(), &[]);
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
@@ -232,7 +232,7 @@ fn traceability_rejects_a_native_requirement_without_a_label() {
     );
     commit(dir.path(), "chore: add a malformed requirement");
 
-    let output = traceability(dir.path(), &["--at", "HEAD"]);
+    let output = traceability(dir.path(), &[]);
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
@@ -247,7 +247,7 @@ fn traceability_rejects_an_external_requirement_carrying_a_label() {
     );
     commit(dir.path(), "chore: add a malformed requirement");
 
-    let output = traceability(dir.path(), &["--at", "HEAD"]);
+    let output = traceability(dir.path(), &[]);
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
@@ -262,7 +262,7 @@ fn traceability_rejects_an_external_requirement_missing_source_locator_or_source
     );
     commit(dir.path(), "chore: add a malformed external requirement");
 
-    let output = traceability(dir.path(), &["--at", "HEAD"]);
+    let output = traceability(dir.path(), &[]);
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
@@ -270,7 +270,7 @@ fn traceability_rejects_an_external_requirement_missing_source_locator_or_source
 #[test]
 fn traceability_relates_the_scenario_to_the_requirement_it_contributes_to() {
     let dir = project();
-    let value = traceability_json(dir.path(), &["--at", "HEAD"]);
+    let value = traceability_json(dir.path(), &[]);
 
     let relations = value["relations"].as_array().expect("relations array");
     let contributes_to = relations
@@ -283,11 +283,9 @@ fn traceability_relates_the_scenario_to_the_requirement_it_contributes_to() {
 }
 
 #[test]
-fn traceability_reads_the_working_tree_when_at_is_omitted() {
-    // ADR 0033: unlike impact/coverage, traceability has no two-point or
-    // release-auditing requirement, so omitting --at reads uncommitted
-    // Knowledge — the same way generate/verify already do — instead of
-    // requiring a commit first.
+fn traceability_reads_the_working_tree() {
+    // ADR 0043: traceability reads uncommitted Knowledge — the same way
+    // generate/verify do — instead of requiring a commit first.
     let dir = project();
     write(
         &dir.path()
@@ -309,43 +307,12 @@ fn traceability_reads_the_working_tree_when_at_is_omitted() {
 }
 
 #[test]
-fn traceability_reports_working_tree_as_the_at_value_when_at_is_omitted() {
-    let dir = project();
-    let value = traceability_json(dir.path(), &[]);
-
-    assert_eq!(value["at"], "working-tree");
-}
-
-#[test]
-fn traceability_at_head_does_not_see_uncommitted_changes() {
-    let dir = project();
-    write(
-        &dir.path()
-            .join(".markharness/knowledge/requirements/timing/requirement.yml"),
-        "id: timing\nsource: native\nlabel: timing\naxis: [gameplay]\n",
-    );
-    // Deliberately not committed.
-
-    let value = traceability_json(dir.path(), &["--at", "HEAD"]);
-
-    assert_eq!(value["at"], "HEAD");
-    assert!(
-        value["requirements"]
-            .as_array()
-            .expect("requirements array")
-            .iter()
-            .all(|r| r["requirement_id"] != "timing"),
-        "an uncommitted Requirement must not appear when reading a Git ref: {value}"
-    );
-}
-
-#[test]
 fn traceability_omits_relations_for_entities_without_a_uid() {
     // The Feature in the fixture has no `uid:` (not migrated), so it cannot
     // appear on either side of a relation — a relation without a stable UID
     // would be meaningless to an external reader across re-runs.
     let dir = project();
-    let value = traceability_json(dir.path(), &["--at", "HEAD"]);
+    let value = traceability_json(dir.path(), &[]);
 
     assert!(value["features"][0]["feature_uid"].is_null());
     let relations = value["relations"].as_array().expect("relations array");
