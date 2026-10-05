@@ -133,6 +133,9 @@ struct RequirementNode {
     // 参照する手段。source: "native" では常にNone。
     source_locator: Option<String>, // 参照する.sdocファイルのリポジトリ内パス
     source_key: Option<String>,     // StrictDocのMID(ADR 0030)
+    // このRequirementに紐づくTestCaseのcase_uid(昇順)。規則は`coverage`と同じ
+    // `generate::testcases_for_requirement`(ADR 0042)。
+    case_uids: Vec<String>,
 }
 
 struct FeatureNode {

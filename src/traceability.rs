@@ -10,7 +10,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::generate::{self, KnowledgeBehaviorSnapshot, KnowledgeCaseSnapshot};
+use crate::generate::{self, KnowledgeBehaviorSnapshot, KnowledgeCaseSnapshot, TestCase};
 use crate::git;
 use crate::identity::{CaseRevision, CaseUid};
 use crate::knowledge::{self, Feature, Requirement, RequirementSource};
@@ -72,6 +72,13 @@ pub struct RequirementNode {
     pub source_locator: Option<String>,
     /// StrictDoc's MID (ADR 0030). Always `None` for `"native"`.
     pub source_key: Option<String>,
+    /// The `case_uid` of every TestCase that relates to this Requirement,
+    /// by the same rule `coverage` uses (`generate::testcases_for_requirement`):
+    /// a Scenario naming a Requirement of its own replaces its Feature's, so
+    /// this is not the union of the Feature and Scenario relations. Sorted;
+    /// empty while the Requirement has no uid. A case with no `case_uid` yet
+    /// (its Scenario is not migrated) cannot be listed.
+    pub case_uids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -364,10 +371,23 @@ fn build(
     features: &BTreeMap<String, Feature>,
     behaviors: &[KnowledgeBehaviorSnapshot],
     cases: &[KnowledgeCaseSnapshot],
+    testcases: &[TestCase],
 ) -> TraceabilityReadModel {
     let requirement_nodes = requirements
         .values()
         .map(|requirement| RequirementNode {
+            case_uids: requirement
+                .uid
+                .as_deref()
+                .map(|uid| {
+                    let mut case_uids: Vec<String> =
+                        generate::testcases_for_requirement(testcases, uid)
+                            .filter_map(|case| case.case_uid.as_ref().map(|uid| uid.to_string()))
+                            .collect();
+                    case_uids.sort();
+                    case_uids
+                })
+                .unwrap_or_default(),
             requirement_id: requirement.id.clone(),
             requirement_uid: requirement.uid.clone(),
             source: match requirement.source {
@@ -505,5 +525,6 @@ pub fn compute(
         &features,
         &snapshot.behaviors,
         &snapshot.cases,
+        &generate::compile_testcases(&snapshot),
     ))
 }

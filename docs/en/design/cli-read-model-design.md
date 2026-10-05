@@ -133,6 +133,9 @@ struct RequirementNode {
     // actual StrictDoc (or similar) content. Always None for "native".
     source_locator: Option<String>, // repo-relative path of the referenced .sdoc file
     source_key: Option<String>,     // StrictDoc's MID (ADR 0030)
+    // case_uid of every TestCase related to this Requirement, sorted. The rule is
+    // `generate::testcases_for_requirement`, shared with `coverage` (ADR 0042).
+    case_uids: Vec<String>,
 }
 
 struct FeatureNode {

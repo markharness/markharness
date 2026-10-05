@@ -64,7 +64,13 @@
         "source": { "enum": ["native", "external"] },
         "label": { "type": ["string", "null"] },
         "source_locator": { "type": ["string", "null"] },
-        "source_key": { "type": ["string", "null"] }
+        "source_key": { "type": ["string", "null"] },
+        "case_uids": {
+          "description": "The case_uid of every TestCase related to this Requirement, by the same rule as coverage: a Scenario that names a Requirement replaces its Feature's, so this is not the union of the Feature and Scenario relations. Sorted. Empty while requirement_uid is null.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
       },
       "required": [
         "requirement_id",
@@ -72,7 +78,8 @@
         "source",
         "label",
         "source_locator",
-        "source_key"
+        "source_key",
+        "case_uids"
       ],
       "oneOf": [
         {
