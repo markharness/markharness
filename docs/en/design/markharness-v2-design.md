@@ -356,7 +356,7 @@ The MVP is M0–M2, and M0–M2 were completed on 2026-09-12 (✅). M3 and M4 ar
 | AC06 | Compute Change Impact / Release Coverage multiple times from the same input | The same output is reproduced (P3) |
 | AC07 | Create, via the CLI, a Scenario with the same content as a deleted one | A new Scenario UID is issued, so the Case UID derived from it differs too. Matching content never implies the old UID ([0021](../decisions/0021-identity-retire-simplification.md)) |
 | AC07b | Restore a deleted Scenario's file from Git history (`git checkout <ref> -- <path>`) | The file's `uid:` comes back, so the original Scenario UID and Case UID return. That is a Git history operation, not markharness's `restore`; markharness neither prevents nor detects it ([0021](../decisions/0021-identity-retire-simplification.md) §2) |
-| AC08 | A Requirement has no Feature `contributes_to` it | Listed as a coverage gap in Release Coverage |
+| AC08 | A Requirement has no Feature `contributes_to` it, and no Feature owns a Scenario that does | Listed as a coverage gap in Release Coverage |
 | AC09 | A `source: external` `requirement.yml` without `source_locator`/`source_revision` | `validate` rejects it (§5.2.1) |
 | AC09b | A `requirement.yml` with `label` and no `source` field | `validate` rejects it. Mode is never decided by an implicit default (§9.1) |
 | AC09c | A `requirement.yml` carrying both `label` and `source_locator` | `validate` rejects it (mixed modes) |

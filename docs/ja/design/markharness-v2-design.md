@@ -356,7 +356,7 @@ MVPはM0〜M2とする。M0〜M2は2026-09-12に実装完了した(✅)。M3・M
 | AC06 | 同一入力から複数回Change Impact/Release Coverageを計算する | 同じ出力を再現する(P3) |
 | AC07 | 削除したTestCaseと同じ内容のScenarioをCLIで新規作成する | 新しいScenario UIDが発行され、そこから導出されるCase UIDも別値になる。内容の一致を理由に旧UIDを推定しない([0021](../decisions/0021-identity-retire-simplification.md)) |
 | AC07b | 削除したScenarioのファイルをGit履歴から復元する(`git checkout <ref> -- <path>`等) | ファイル内の`uid:`が戻るため、当時のScenario UID・Case UIDが復活する。これはmarkharnessの`restore`機能ではなくGit履歴操作であり、markharnessはこれを禁止も検出もしない([0021](../decisions/0021-identity-retire-simplification.md)§2) |
-| AC08 | Requirementに`contributes_to`するFeatureが一つもない | Release Coverageでcoverage gapとして一覧される |
+| AC08 | Requirementに`contributes_to`するFeatureが一つもなく、`contributes_to`するScenarioを持つFeatureも一つもない | Release Coverageでcoverage gapとして一覧される |
 | AC09 | `source: external`なのに`source_locator`/`source_revision`を持たない`requirement.yml`を置く | `validate`が拒否する(§5.2.1) |
 | AC09b | `source`を省略した`requirement.yml`(`label`あり)を置く | `validate`が拒否する。モード判定を暗黙のdefaultに委ねない(§9.1) |
 | AC09c | `label`と`source_locator`を両方持つ`requirement.yml`を置く | `validate`が拒否する(モード混在) |
