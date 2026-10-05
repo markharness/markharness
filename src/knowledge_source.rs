@@ -46,14 +46,16 @@ impl<'a> GitTreeKnowledgeSource<'a> {
 impl KnowledgeSource for GitTreeKnowledgeSource<'_> {
     fn load_snapshot(&self) -> io::Result<KnowledgeSnapshot> {
         let staging = tempfile::tempdir()?;
-        for entry in git::ls_tree_recursive(
+        let blobs: Vec<git::TreeEntry> = git::ls_tree_recursive(
             self.repository_root,
             self.git_ref,
             crate::project_root::KNOWLEDGE_PATH_IN_REPO,
-        )? {
-            if entry.kind != ObjectKind::Blob {
-                continue;
-            }
+        )?
+        .into_iter()
+        .filter(|entry| entry.kind == ObjectKind::Blob)
+        .collect();
+        let contents = git::show_blobs_of(self.repository_root, &blobs)?;
+        for (entry, content) in blobs.iter().zip(contents) {
             let relative = Path::new(&entry.path);
             if !relative.starts_with(crate::project_root::KNOWLEDGE_PATH_IN_REPO)
                 || relative
@@ -66,7 +68,6 @@ impl KnowledgeSource for GitTreeKnowledgeSource<'_> {
                 ));
             }
             let target = staging.path().join(relative);
-            let content = git::show_blob_by_sha(self.repository_root, &entry.sha)?;
             replace_file(staging.path(), &target, content.as_bytes())?;
         }
         generate::load_knowledge_snapshot(

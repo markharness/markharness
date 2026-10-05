@@ -1,6 +1,6 @@
-use std::io;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Whether a `TreeEntry` is a file (blob) or a directory (tree) object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,7 +143,104 @@ pub fn path_exists_at(root: &Path, git_ref: &str, path: &str) -> io::Result<bool
 /// repo-root-relative path pitfall as `tree_sha` above, since a blob SHA
 /// needs no path resolution at all.
 pub fn show_blob_by_sha(root: &Path, sha: &str) -> io::Result<String> {
-    run_git(root, &["cat-file", "-p", sha])
+    let mut contents = show_blobs_by_sha(root, &[sha])?;
+    Ok(contents.remove(0))
+}
+
+/// The contents of the blobs `entries` point at, in the same order — one
+/// `git` process for all of them (see [`show_blobs_by_sha`]).
+pub fn show_blobs_of(root: &Path, entries: &[TreeEntry]) -> io::Result<Vec<String>> {
+    let shas: Vec<&str> = entries.iter().map(|entry| entry.sha.as_str()).collect();
+    show_blobs_by_sha(root, &shas)
+}
+
+/// Reads many blobs through one `git cat-file --batch` process, returning
+/// their contents in the order of `shas`. Callers that read every blob of a
+/// listing must use this rather than `show_blob_by_sha` in a loop: a process
+/// start costs tens of milliseconds on Windows, so one process per blob made
+/// the run time proportional to the number of blobs.
+pub fn show_blobs_by_sha(root: &Path, shas: &[&str]) -> io::Result<Vec<String>> {
+    if shas.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("git cat-file --batch has no stdin"))?;
+    let requests: String = shas.iter().map(|sha| format!("{sha}\n")).collect();
+    // Written from another thread: git starts answering before it has read
+    // every request, so writing it all first could block on a full stdout pipe.
+    let writer = std::thread::spawn(move || stdin.write_all(requests.as_bytes()));
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("git cat-file --batch has no stdout"))?;
+    let contents = match read_batch_output(BufReader::new(stdout), shas) {
+        Ok(contents) => contents,
+        Err(error) => {
+            // git explains why on stderr (corrupt or missing object, bad
+            // repository, ...) and may have closed stdout without a header.
+            let _ = child.kill();
+            let mut stderr = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut stderr);
+            }
+            let _ = child.wait();
+            let _ = writer.join();
+            return Err(io::Error::other(format!(
+                "git cat-file --batch failed: {error}: {}",
+                stderr.trim_end()
+            )));
+        }
+    };
+    writer
+        .join()
+        .map_err(|_| io::Error::other("writing to git cat-file panicked"))??;
+    let status = child.wait()?;
+    if !status.success() {
+        let mut stderr = String::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            let _ = pipe.read_to_string(&mut stderr);
+        }
+        return Err(io::Error::other(format!(
+            "git cat-file --batch failed: {}",
+            stderr.trim_end()
+        )));
+    }
+    Ok(contents)
+}
+
+/// Parses `git cat-file --batch` output: for each requested sha, a header
+/// `<sha> <type> <size>` (or `<sha> missing`), then the object and a newline.
+fn read_batch_output(mut stdout: impl BufRead, shas: &[&str]) -> io::Result<Vec<String>> {
+    let mut contents = Vec::with_capacity(shas.len());
+    for sha in shas {
+        let mut header = String::new();
+        stdout.read_line(&mut header)?;
+        let size: usize = match header.split_whitespace().collect::<Vec<_>>()[..] {
+            [_, _, size] => size.parse().map_err(io::Error::other)?,
+            _ => {
+                return Err(io::Error::other(format!(
+                    "could not read blob {sha}: {}",
+                    header.trim_end()
+                )));
+            }
+        };
+        let mut body = vec![0; size + 1]; // the object, then the separating newline
+        stdout.read_exact(&mut body)?;
+        body.truncate(size);
+        contents.push(String::from_utf8_lossy(&body).into_owned());
+    }
+    Ok(contents)
 }
 
 /// The git blob SHA `path_in_repo` would be given if committed right now
@@ -834,6 +931,81 @@ mod tests {
         let content = show_blob_by_sha(dir.path(), &blob.sha).unwrap();
 
         assert_eq!(content, "id: feat\nlabel: v1\n");
+    }
+
+    #[test]
+    fn show_blobs_by_sha_returns_each_content_in_the_order_requested() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join(".markharness/knowledge/req/feat")).unwrap();
+        fs::write(
+            dir.path().join(".markharness/knowledge/req/feat/a.yml"),
+            "id: a\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".markharness/knowledge/req/feat/b.yml"),
+            "id: b\n\nmultiple lines\n",
+        )
+        .unwrap();
+        commit_all(dir.path(), "add files");
+        let entries = ls_tree_recursive(
+            dir.path(),
+            "HEAD",
+            crate::project_root::KNOWLEDGE_PATH_IN_REPO,
+        )
+        .unwrap();
+        let blobs: Vec<&TreeEntry> = entries
+            .iter()
+            .filter(|e| e.kind == ObjectKind::Blob)
+            .collect();
+        let shas: Vec<&str> = [blobs[1], blobs[0], blobs[1]]
+            .iter()
+            .map(|e| e.sha.as_str())
+            .collect();
+
+        let contents = show_blobs_by_sha(dir.path(), &shas).unwrap();
+
+        assert_eq!(
+            contents,
+            vec![
+                "id: b\n\nmultiple lines\n",
+                "id: a\n",
+                "id: b\n\nmultiple lines\n"
+            ]
+        );
+    }
+
+    #[test]
+    fn show_blobs_by_sha_of_nothing_returns_nothing() {
+        let dir = init_repo();
+
+        assert_eq!(
+            show_blobs_by_sha(dir.path(), &[]).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn show_blobs_by_sha_reports_what_git_wrote_to_stderr_when_git_itself_fails() {
+        let not_a_repository = tempfile::tempdir().unwrap();
+
+        let error = show_blobs_by_sha(
+            not_a_repository.path(),
+            &["0123456789012345678901234567890123456789"],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("fatal:"), "{error}");
+    }
+
+    #[test]
+    fn show_blobs_by_sha_fails_for_a_sha_that_is_not_in_the_repository() {
+        let dir = init_repo();
+        let absent = "0123456789012345678901234567890123456789";
+
+        let result = show_blobs_by_sha(dir.path(), &[absent]);
+
+        assert!(result.is_err());
     }
 
     /// A blob SHA is content-addressed and needs no path resolution, so

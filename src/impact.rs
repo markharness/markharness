@@ -159,12 +159,11 @@ fn requirements_at(
             "{}/requirements",
             crate::project_root::KNOWLEDGE_PATH_IN_REPO
         ),
-    )?;
-    for entry in entries {
-        if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/requirement.yml") {
-            continue;
-        }
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
+    )?
+    .into_iter()
+    .filter(|entry| entry.kind == git::ObjectKind::Blob && entry.path.ends_with("/requirement.yml"))
+    .collect::<Vec<_>>();
+    for (entry, content) in entries.iter().zip(git::show_blobs_of(root, &entries)?) {
         let requirement =
             knowledge::parse_requirement(&content).map_err(|e| ImpactError::Malformed {
                 path: entry.path.clone(),
