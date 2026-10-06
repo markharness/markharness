@@ -43,6 +43,9 @@
   ],
   "requirements": [
     {
+      "case_uids": [
+        "7ecd56ba-c81d-57cf-a871-d5dd1d951c74"
+      ],
       "label": "Player controls",
       "requirement_id": "controls",
       "requirement_uid": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -51,6 +54,7 @@
       "source_locator": null
     },
     {
+      "case_uids": [],
       "label": null,
       "requirement_id": "timing",
       "requirement_uid": null,

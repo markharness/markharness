@@ -545,6 +545,27 @@ pub fn compile_testcases(snapshot: &KnowledgeSnapshot) -> Vec<TestCase> {
     testcases
 }
 
+/// The TestCases that relate to the Requirement `requirement_uid`. This is
+/// the one rule behind "which cases belong to a Requirement": both `coverage`
+/// and `traceability` call it, so their answers cannot drift apart.
+///
+/// ADR 0031: matched against each TestCase's own `requirement_uids`, which
+/// already resolves a Scenario-level override, rather than by Feature
+/// membership — a case under a Feature that `contributes_to` this Requirement
+/// is not necessarily itself related to it once a sibling Scenario has been
+/// given a more precise `contributes_to`.
+pub fn testcases_for_requirement<'a>(
+    testcases: &'a [TestCase],
+    requirement_uid: &'a str,
+) -> impl Iterator<Item = &'a TestCase> {
+    testcases.iter().filter(move |case| {
+        case.generated_from
+            .requirement_uids
+            .as_ref()
+            .is_some_and(|uids| uids.iter().any(|uid| uid == requirement_uid))
+    })
+}
+
 pub fn generate_testcases(knowledge_root: &Path) -> io::Result<Vec<TestCase>> {
     Ok(compile_testcases(&load_knowledge_snapshot(knowledge_root)?))
 }

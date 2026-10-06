@@ -450,3 +450,121 @@ fn traceability_lists_a_behavior_that_has_no_scenario() {
     );
     assert_eq!(behaviors.len(), 2);
 }
+
+const TIMING_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const AIR_SCENARIO_UID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB2";
+
+/// `project()` plus a second Requirement and a second Scenario under the same
+/// Feature. The Feature contributes to `controls`; the new Scenario names
+/// `timing` itself, so (ADR 0031) it contributes only to `timing`.
+fn project_with_a_scenario_that_overrides_its_feature() -> tempfile::TempDir {
+    let dir = project();
+    let root = dir.path();
+    write(
+        &root.join(".markharness/knowledge/requirements/timing/requirement.yml"),
+        &format!(
+            "id: timing\nsource: native\nlabel: timing\naxis: [gameplay]\nuid: {TIMING_UID}\n"
+        ),
+    );
+    write(
+        &root.join(".markharness/knowledge/features/player-jump/jump/air/scenario.yml"),
+        &format!(
+            "id: air\nbehavior: jump\nlabel: air\nuid: {AIR_SCENARIO_UID}\nrequirement_uids: [{TIMING_UID}]\ndescription: |\n  In the air.\nphases:\n  - steps:\n      - action: \"Presses jump again.\"\n    results:\n      - \"Rises.\"\n"
+        ),
+    );
+    commit(root, "chore: add a scenario that names its own requirement");
+    dir
+}
+
+fn case_uids_of(value: &serde_json::Value, requirement_id: &str) -> Vec<String> {
+    let requirement = value["requirements"]
+        .as_array()
+        .expect("requirements array")
+        .iter()
+        .find(|r| r["requirement_id"] == requirement_id)
+        .unwrap_or_else(|| panic!("no requirement {requirement_id} in {value}"));
+    requirement["case_uids"]
+        .as_array()
+        .unwrap_or_else(|| panic!("requirement {requirement_id} has no case_uids: {requirement}"))
+        .iter()
+        .map(|uid| uid.as_str().unwrap().to_string())
+        .collect()
+}
+
+fn coverage_case_uids_of(root: &Path, requirement_id: &str) -> Vec<String> {
+    let output = run(&[
+        "coverage",
+        "--requirements",
+        "all",
+        "--at",
+        "HEAD",
+        "--dir",
+        root.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let requirement = value["requirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["requirement_id"] == requirement_id)
+        .unwrap();
+    let mut uids: Vec<String> = requirement["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|case| case["case_uid"].as_str().map(str::to_string))
+        .collect();
+    uids.sort();
+    uids
+}
+
+#[test]
+fn traceability_lists_the_cases_of_each_requirement_by_the_rule_coverage_uses() {
+    let dir = project_with_a_scenario_that_overrides_its_feature();
+    let value = traceability_json(dir.path(), &[]);
+
+    // `air` names `timing`, so it replaces the Feature's `controls` rather
+    // than adding to it: `controls` keeps only `ground`.
+    for requirement_id in ["controls", "timing"] {
+        assert_eq!(
+            case_uids_of(&value, requirement_id),
+            coverage_case_uids_of(dir.path(), requirement_id),
+            "{requirement_id}"
+        );
+    }
+    assert_eq!(case_uids_of(&value, "controls").len(), 1);
+    assert_eq!(case_uids_of(&value, "timing").len(), 1);
+}
+
+#[test]
+fn traceability_case_uids_follow_an_uncommitted_edit() {
+    let dir = project_with_a_scenario_that_overrides_its_feature();
+    // Drop the override without committing: `air` falls back to the Feature.
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/features/player-jump/jump/air/scenario.yml"),
+        &format!(
+            "id: air\nbehavior: jump\nlabel: air\nuid: {AIR_SCENARIO_UID}\ndescription: |\n  In the air.\nphases:\n  - steps:\n      - action: \"Presses jump again.\"\n    results:\n      - \"Rises.\"\n"
+        ),
+    );
+
+    let value = traceability_json(dir.path(), &[]);
+
+    assert_eq!(case_uids_of(&value, "controls").len(), 2);
+    assert!(case_uids_of(&value, "timing").is_empty());
+}
+
+#[test]
+fn traceability_gives_an_empty_case_uids_to_a_requirement_with_no_uid() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/legacy/requirement.yml"),
+        "id: legacy\nsource: native\nlabel: legacy\naxis: [gameplay]\n",
+    );
+
+    let value = traceability_json(dir.path(), &[]);
+
+    assert!(case_uids_of(&value, "legacy").is_empty());
+}
