@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (decided 2026-09-16). Extends the input source for the `traceability` command that [0032](0032-cli-read-model-seam.md) introduced.
+Accepted (decided 2026-09-16). Extends the input source for the `traceability` command that [0032](0032-cli-read-model-seam.md) introduced. The part making `--at` optional is replaced by [0043](0043-traceability-working-tree-only-and-no-format-option.md), which removes `--at` itself (the decision to read the working tree still stands).
 
 ## Background
 

@@ -1,5 +1,4 @@
 {
-  "at": "HEAD",
   "description": "From the ground.\n",
   "implementation_note": "Uses the physics tick.",
   "kind": "scenario",

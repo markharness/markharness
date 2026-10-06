@@ -279,7 +279,7 @@ fn traceability_output_matches_its_schema_and_fixture() {
     );
     commit(root, "chore: knowledge");
 
-    let actual = output_json(&["traceability", "--at", "HEAD", "--dir", dir_arg(&dir)]);
+    let actual = output_json(&["traceability", "--dir", dir_arg(&dir)]);
 
     TRACEABILITY.assert_matches_cli_output(actual);
 }
@@ -316,7 +316,7 @@ fn traceability_detail_output_matches_its_schema_and_fixtures() {
     );
     commit(root, "chore: knowledge");
 
-    let tree = output_json(&["traceability", "--at", "HEAD", "--dir", dir_arg(&dir)]);
+    let tree = output_json(&["traceability", "--dir", dir_arg(&dir)]);
     let case_uid = tree["test_cases"][0]["case_uid"]
         .as_str()
         .expect("the migrated Scenario has a case_uid")
@@ -329,16 +329,7 @@ fn traceability_detail_output_matches_its_schema_and_fixtures() {
         ("scenario", GROUND_SCENARIO_UID),
         ("test_case", case_uid.as_str()),
     ] {
-        let actual = output_json(&[
-            "traceability",
-            "show",
-            "--uid",
-            uid,
-            "--at",
-            "HEAD",
-            "--dir",
-            dir_arg(&dir),
-        ]);
+        let actual = output_json(&["traceability", "show", "--uid", uid, "--dir", dir_arg(&dir)]);
         assert_eq!(actual["kind"], kind);
         TRACEABILITY_DETAIL.assert_matches_fixture(kind, actual);
     }

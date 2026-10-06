@@ -21,8 +21,6 @@ fn import_junit_emits_a_versioned_json_contract() {
             report.to_str().unwrap(),
             "--bind",
             "pay=tree-sha",
-            "--format",
-            "json",
             "--dir",
             dir.path().to_str().unwrap(),
         ])
@@ -59,8 +57,6 @@ fn junit_import_matches_the_stage1_golden_contract() {
             "tests/fixtures/stage1/junit.xml",
             "--bind",
             "pay=feature-tree-sha",
-            "--format",
-            "json",
             "--dir",
             ".",
         ])

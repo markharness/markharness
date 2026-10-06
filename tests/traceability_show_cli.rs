@@ -137,11 +137,10 @@ fn case_uid(root: &Path) -> String {
 #[test]
 fn show_reports_the_envelope_and_a_native_requirement() {
     let dir = project();
-    let value = show_json(dir.path(), REQUIREMENT_UID, &["--at", "HEAD"]);
+    let value = show_json(dir.path(), REQUIREMENT_UID, &[]);
 
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["record_kind"], "traceability_detail");
-    assert_eq!(value["at"], "HEAD");
     assert_eq!(value["kind"], "requirement");
     assert_eq!(value["uid"], REQUIREMENT_UID);
     assert_eq!(value["requirement_id"], "controls");
@@ -256,7 +255,7 @@ fn show_reports_a_test_case_with_use_expanded() {
 }
 
 #[test]
-fn show_reads_the_working_tree_when_at_is_omitted_and_the_ref_when_given() {
+fn show_reads_the_working_tree_including_uncommitted_edits() {
     let dir = project();
     write(
         &dir.path()
@@ -267,16 +266,9 @@ fn show_reads_the_working_tree_when_at_is_omitted_and_the_ref_when_given() {
     );
 
     let working = show_json(dir.path(), FEATURE_UID, &[]);
-    assert_eq!(working["at"], "working-tree");
     assert_eq!(
         working["description"].as_str().unwrap().trim(),
         "Edited, not committed."
-    );
-
-    let head = show_json(dir.path(), FEATURE_UID, &["--at", "HEAD"]);
-    assert_eq!(
-        head["description"].as_str().unwrap().trim(),
-        "The player jumps."
     );
 }
 
@@ -293,8 +285,8 @@ fn show_fails_without_stdout_for_a_uid_that_does_not_exist() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("01ARZ3NDEKTSV4RRFFQ69G5ZZZ") && stderr.contains("working-tree"),
-        "the error must name the uid and the point it was looked up at: {stderr}"
+        stderr.contains("01ARZ3NDEKTSV4RRFFQ69G5ZZZ"),
+        "the error must name the uid: {stderr}"
     );
 }
 

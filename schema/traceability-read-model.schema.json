@@ -7,11 +7,6 @@
   "properties": {
     "schema_version": { "const": 1 },
     "record_kind": { "const": "traceability" },
-    "at": {
-      "description": "The Git ref the Knowledge was read at, or \"working-tree\" when --at was omitted.",
-      "type": "string",
-      "minLength": 1
-    },
     "requirements": {
       "type": "array",
       "items": { "$ref": "#/$defs/requirement" }
@@ -42,7 +37,6 @@
   "required": [
     "schema_version",
     "record_kind",
-    "at",
     "requirements",
     "features",
     "behaviors",

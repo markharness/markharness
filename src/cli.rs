@@ -58,9 +58,6 @@ pub enum Command {
         /// Evidence version binding in ARTIFACT_ID=VERSION form (repeatable)
         #[arg(long, value_name = "ARTIFACT_ID=VERSION")]
         bind: Vec<String>,
-        /// Stable output representation
-        #[arg(long, value_enum, default_value = "json")]
-        format: ImportFormatArg,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -115,9 +112,6 @@ pub enum Command {
         /// Git revision to read the Knowledge and the release scope at
         #[arg(long, default_value = "HEAD")]
         at: String,
-        /// Stable output representation
-        #[arg(long, value_enum, default_value = "json")]
-        format: ImportFormatArg,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -133,9 +127,6 @@ pub enum Command {
         /// Later Git revision
         #[arg(long)]
         head: String,
-        /// Stable output representation
-        #[arg(long, value_enum, default_value = "json")]
-        format: ImportFormatArg,
         /// Exit with code 2 when anything needs attention (an unconfirmed or
         /// followed-up pair, a stale pin, a rejected trailer). Off by default:
         /// whether a finding should fail CI is the team's policy, not this
@@ -151,15 +142,6 @@ pub enum Command {
     Traceability {
         #[command(subcommand)]
         command: Option<TraceabilityCommand>,
-        /// Git revision to read the Knowledge and generated TestCases at.
-        /// Omit to read the working tree instead — unlike impact/coverage,
-        /// traceability has no two-point-comparison or release-auditing
-        /// requirement that would need a commit first.
-        #[arg(long)]
-        at: Option<String>,
-        /// Stable output representation
-        #[arg(long, value_enum, default_value = "json")]
-        format: ImportFormatArg,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -256,11 +238,6 @@ pub enum ImportSourceArg {
     Junit,
 }
 
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImportFormatArg {
-    Json,
-}
-
 #[derive(Subcommand)]
 pub enum MilestoneCommand {
     /// Create executions/<tag>/milestone.yml for an existing git tag
@@ -283,10 +260,6 @@ pub enum TraceabilityCommand {
         /// The element's uid (a Requirement, Feature, Behavior or Scenario uid, or a TestCase's Case UID)
         #[arg(long)]
         uid: String,
-        /// Git revision to read at. Omit to read the working tree instead,
-        /// the same as `traceability` itself.
-        #[arg(long)]
-        at: Option<String>,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -323,9 +296,6 @@ pub enum ReleaseScopeCommand {
         /// Git revision to read the scope at
         #[arg(long, default_value = "HEAD")]
         at: String,
-        /// Stable output representation
-        #[arg(long, value_enum, default_value = "json")]
-        format: ImportFormatArg,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
         dir: Option<PathBuf>,
@@ -656,7 +626,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
             input,
             git_ref,
             bind,
-            format: ImportFormatArg::Json,
             dir,
         } => {
             let bindings = bind
@@ -1174,7 +1143,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
         Command::Impact {
             base,
             head,
-            format: ImportFormatArg::Json,
             fail_on_findings,
             dir,
         } => {
@@ -1225,12 +1193,7 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Release(ReleaseCommand::Scope(ReleaseScopeCommand::Show {
-            release,
-            at,
-            format: ImportFormatArg::Json,
-            dir,
-        })) => {
+        Command::Release(ReleaseCommand::Scope(ReleaseScopeCommand::Show { release, at, dir })) => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
             match crate::release::read_scope_at(&root, &at, &release) {
                 Ok(scope) => {
@@ -1255,7 +1218,6 @@ pub fn run(cli: Cli) -> io::Result<()> {
             requirements,
             release,
             at,
-            format: ImportFormatArg::Json,
             dir,
         } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
@@ -1280,11 +1242,11 @@ pub fn run(cli: Cli) -> io::Result<()> {
             }
         }
         Command::Traceability {
-            command: Some(TraceabilityCommand::Show { uid, at, dir }),
+            command: Some(TraceabilityCommand::Show { uid, dir }),
             ..
         } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match crate::traceability_detail::compute(&root, at.as_deref(), &uid) {
+            match crate::traceability_detail::compute(&root, &uid) {
                 Ok(detail) => {
                     println!(
                         "{}",
@@ -1303,14 +1265,9 @@ pub fn run(cli: Cli) -> io::Result<()> {
                 }
             }
         }
-        Command::Traceability {
-            command: None,
-            at,
-            format: ImportFormatArg::Json,
-            dir,
-        } => {
+        Command::Traceability { command: None, dir } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match crate::traceability::compute(&root, at.as_deref()) {
+            match crate::traceability::compute(&root) {
                 Ok(model) => {
                     println!(
                         "{}",
