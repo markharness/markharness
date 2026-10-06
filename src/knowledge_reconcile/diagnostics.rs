@@ -19,9 +19,9 @@ pub enum DiagnosticCode {
     InvariantViolation,
     /// ADR 0028 §2: display-id format, single-line labels and the
     /// redundant-id-prefix rule were owned by the KnowledgeDraft
-    /// validator that ADR 0028 deletes. `MultilineLabel` in particular
-    /// guards a serializer invariant — `knowledge::serialize_*` writes
-    /// `label:` as a plain scalar, which a newline would break.
+    /// validator that ADR 0028 deletes. `MultilineLabel` keeps `label` a
+    /// one-line display name; it is not a YAML constraint, since the
+    /// serializer quotes whatever it is given.
     InvalidSlug,
     MultilineLabel,
     RedundantPrefix,

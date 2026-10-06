@@ -35,13 +35,11 @@ pub fn validate_static(doc: &IntentDocument) -> Vec<Diagnostic> {
 }
 
 /// A present-but-blank string is not the same as an omitted one, and is
-/// never what the author meant. `knowledge::serialize_*` writes `label:`
-/// as a plain scalar, so an empty one round-trips as YAML null and leaves
-/// the file `knowledge reconcile` just wrote failing `markharness
-/// validate`; an empty `action` or `results` entry is a step a Test
-/// Executor cannot perform (the rule the deleted KnowledgeDraft validator
-/// reported as `missing_steps`). Whitespace-only counts as blank: the
-/// canonical form trims it away, so it would be stored as empty anyway.
+/// never what the author meant. An empty `label` is a heading with no
+/// text; an empty `action` or `results` entry is a step a Test Executor
+/// cannot perform (the rule the deleted KnowledgeDraft validator reported
+/// as `missing_steps`). Whitespace-only counts as blank: the canonical
+/// form trims it away, so it would be stored as empty anyway.
 fn check_blank_strings(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
     fn check(value: &Option<String>, location: String, out: &mut Vec<Diagnostic>) {
         if value.as_deref().is_some_and(|v| v.trim().is_empty()) {
@@ -134,9 +132,7 @@ fn push_blank(location: String, out: &mut Vec<Diagnostic>) {
 
 /// ADR 0028 §2: the display-id and label rules the deleted KnowledgeDraft
 /// validator owned. A display id becomes a directory name and the key
-/// other elements are matched by, and `knowledge::serialize_*` writes
-/// `label:` as a plain scalar — a newline there produces a file that no
-/// longer parses back.
+/// other elements are matched by, and a label is a one-line display name.
 fn check_display_ids_and_labels(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
     let mut check = |id: &Option<String>, label: &Option<String>, location: String| {
         if let Some(id) = id
@@ -540,11 +536,9 @@ features:
         );
     }
 
-    /// ADR 0028 §2: `knowledge::serialize_*` writes `label:` as a plain
-    /// scalar, so a label carrying a newline produces a file that no
-    /// longer round-trips. The old KnowledgeDraft validator was what kept
-    /// that invariant; without this check, deleting it would let a broken
-    /// file be written.
+    /// ADR 0028 §2: a label is a one-line display name. The old
+    /// KnowledgeDraft validator enforced that; without this check,
+    /// deleting it would let a multi-line label be written.
     #[test]
     fn detects_a_multiline_label_on_every_kind() {
         let yaml = "\
@@ -616,11 +610,10 @@ requirements:
     }
 
     /// A present-but-blank required string is not the same as an omitted
-    /// one: `label: ""` serializes as `label: `, which parses back as YAML
-    /// null, so the file `knowledge reconcile` wrote no longer satisfies
-    /// `markharness validate`. Blank `steps`/`results` entries are
-    /// meaningless for the same reason the old KnowledgeDraft validator
-    /// rejected them — a Test Executor cannot perform an empty step.
+    /// one: an empty `label` is a heading with no text. Blank
+    /// `steps`/`results` entries are meaningless for the same reason the
+    /// old KnowledgeDraft validator rejected them — a Test Executor cannot
+    /// perform an empty step.
     #[test]
     fn detects_blank_required_strings() {
         let yaml = "format: markharness/knowledge-intent/v1
