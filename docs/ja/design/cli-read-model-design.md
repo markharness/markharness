@@ -308,7 +308,7 @@ struct RequirementImpact {
     requirement_id: String,
     requirement_uid: Option<String>,
     source: &'static str,   // "native" | "external"
-    spec_changed: bool,
+    spec_changed: bool,     // Requirement側が変更されたか。Feature変更のみから到達した場合はfalse
     feature_ids: Vec<String>,
     cases: Vec<CaseAlignment>,
 }
@@ -326,7 +326,7 @@ struct CaseAlignment {
 ```text
 confirmed      その組に対する有効なSpec-Reviewedがある
 followed_up    区間内で両側が変更されたが、確認の記録は無い
-unconfirmed    仕様側が変更され、追随した形跡も確認の記録も無い
+unconfirmed    仕様側または関連Featureが変更され、追随した形跡も確認の記録も無い
 ```
 
 ### 6.3 markharness-viewから見た`impact`

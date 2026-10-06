@@ -308,7 +308,7 @@ struct RequirementImpact {
     requirement_id: String,
     requirement_uid: Option<String>,
     source: &'static str,   // "native" | "external"
-    spec_changed: bool,
+    spec_changed: bool,     // whether the Requirement itself changed; false when reached only through a changed Feature
     feature_ids: Vec<String>,
     cases: Vec<CaseAlignment>,
 }
@@ -326,7 +326,7 @@ The acknowledgment state derived from the `Spec-Reviewed` trailer (`AlignmentSta
 ```text
 confirmed      a valid Spec-Reviewed exists for this pair
 followed_up    both sides changed in the range, but no acknowledgment was recorded
-unconfirmed    the spec side changed with neither follow-up nor acknowledgment
+unconfirmed    the spec side or a related Feature changed with neither follow-up nor acknowledgment
 ```
 
 ### 6.3 `impact` as seen from markharness-view

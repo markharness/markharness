@@ -164,7 +164,7 @@ Requirementの意味変更、またはTestCaseの実効内容変更を検知し�
 
 base/head間のFeature版比較(現行`changes.rs`の`ChangeEvent`計算を流用)に加え、次を行う。
 
-1. **双方向に変更集合を求める。** Featureの変更起点(変更されたFeature→`contributes_to`するRequirement)と、Requirementの変更起点(変更されたRequirement→関連するFeature・TestCase)の両方を辿る。Featureが変更されていないPRでもRequirementの変更を見落とさないため、探索をFeature変更の有無に依存させない。
+1. **双方向に変更集合を求める。** Featureの変更起点(変更されたFeature→`contributes_to`するRequirement)と、Requirementの変更起点(変更されたRequirement→関連するFeature・TestCase)の両方を辿る。Featureが変更されていないPRでもRequirementの変更を見落とさないため、探索をFeature変更の有無に依存させない。Feature変更のみから到達したRequirementでは、出力の`spec_changed`は`false`になる(Requirement側が変更されたかを表す)。Featureの変更はFeatureディレクトリ全体のtree SHAのbase/head差分で判定し、head時点に存在するFeatureだけを対象にする。
 2. **仕様側の変更は base/head 間の差分で判定する。** モードごとの判定対象は次の通りで、いずれも「base時点の内容」と「head時点の内容」を比較する。
    - `source: native`：`requirement.yml`自体のbase/head差分。粒度はRequirement単位で、外部ツールを必要としない。
    - `source: external`：`source_locator`が指すソースファイル(`.sdoc`または`.md`)のblobのbase/head差分。ソースファイルが**markharnessと同一のGitリポジトリで管理されている**ことを前提とし、その構文解析を必要としない。粒度はファイル単位であり、同一ファイル内の別Requirementの変更でも「変更あり」と判定される(偽陽性を許容する。Requirement単位の粒度が必要になった時点でM3の`.sdoc`解析へ引き上げる)。
@@ -373,6 +373,7 @@ MVPはM0〜M2とする。M0〜M2は2026-09-12に実装完了した(✅)。M3・M
 | AC18 | 同一PRで`.sdoc`を変更し、同じPR内でrepin(`source_revision: current`)も実行する | 仕様変更として検出される。repinは検知を打ち消さない(§6.1手順3) |
 | AC19 | repin後、内容を変更しない次のPRを評価する | 新たな仕様変更としては報告されない。固定参照が古い場合のみstale pinとして出力する(§6.1手順3) |
 | AC20 | Requirementのみが変更され、関連Featureは変更されていない | 関連Feature・TestCaseを逆引きし、影響とAlignment checkを出力する(§6.1手順1) |
+| AC20b | Featureのみが変更され、そのFeatureが`contributes_to`するRequirementは変更されていない | 当該Requirementに到達し、`spec_changed: false`として影響とAlignment checkを出力する(§6.1手順1) |
 | AC21 | RequirementにFeatureは関連付いているが、そのFeature配下にScenarioが一つもない | Release Coverageが当該Featureをcoverage gapとして明示する(§6.2) |
 | AC23 | 発行(`issued`)とrenameのみで構成された`identity-events`を読み込む | 決定的にreplayでき、UIDとidの対応を再現する(§9.1) |
 | AC24 | `ReleaseScope`を記録し、過去のリリースtagを`--at`、`release_id`を`--release`に渡してRelease Coverageを算出する | 当時選定されたTestCaseと、その検証手段の有無を再現する(§6.2) |

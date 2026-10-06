@@ -164,7 +164,7 @@ Trailers are governed by the following rules.
 
 On top of the Feature-revision comparison between base and head (reusing the current `changes.rs` `ChangeEvent` computation), markharness:
 
-1. **Builds the changed set in both directions.** It walks from changed Features to the Requirements they `contributes_to`, *and* from changed Requirements to their related Features and TestCases. The search never depends on a Feature having changed, so a PR that touches only a Requirement is not missed.
+1. **Builds the changed set in both directions.** It walks from changed Features to the Requirements they `contributes_to`, *and* from changed Requirements to their related Features and TestCases. The search never depends on a Feature having changed, so a PR that touches only a Requirement is not missed. For a Requirement reached only through a changed Feature, the output's `spec_changed` is `false` (it says whether the Requirement itself changed). A Feature counts as changed when the tree SHA of its whole directory differs between base and head, and only Features that exist at head are considered.
 2. **Detects spec-side change from the base/head diff.** In both modes the comparison is "content at base" versus "content at head".
    - `source: native`: the base/head diff of `requirement.yml` itself. Granularity is per Requirement and no external tool is involved.
    - `source: external`: the base/head diff of the source file blob (`.sdoc` or `.md`) named by `source_locator`. This assumes the source file is **managed in the same Git repository as markharness**, and requires no parsing of it. Granularity is per file: a change to another Requirement in the same file also reads as "changed" (false positives are accepted; per-Requirement granularity waits for M3's `.sdoc` parsing).
@@ -373,6 +373,7 @@ The MVP is M0–M2, and M0–M2 were completed on 2026-09-12 (✅). M3 and M4 ar
 | AC18 | A PR changes a `.sdoc` and also re-pins (`source_revision: current`) in the same PR | The spec change is still detected; repin does not cancel detection (§6.1 step 3) |
 | AC19 | Evaluate the next PR, which changes nothing, after that repin | Nothing is reported as a new spec change; only a stale pin, if the reference is behind (§6.1 step 3) |
 | AC20 | Only a Requirement changed; no related Feature changed | Related Features and TestCases are found by reverse lookup, and impact plus alignment state is reported (§6.1 step 1) |
+| AC20b | Only a Feature changed; a Requirement it `contributes_to` did not | That Requirement is reached and reported with `spec_changed: false`, with impact and alignment state (§6.1 step 1) |
 | AC21 | A Requirement has a related Feature, but that Feature has no Scenario at all | Release Coverage names that Feature as a coverage gap (§6.2) |
 | AC23 | Read an `identity-events` log made up of `issued` and rename events only | Replays deterministically and reproduces the id↔UID mapping (§9.1) |
 | AC24 | Record a `ReleaseScope`, then compute Release Coverage with the past release tag in `--at` and its `release_id` in `--release` | Reproduces the TestCases selected then, and whether each had a verification method (§6.2) |
