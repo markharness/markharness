@@ -2,7 +2,7 @@
 //! (ADR 0019, v2 design §5.3 and §6.1).
 //!
 //! Covers acceptance criteria AC03, AC10, AC10b, AC10c, AC12, AC14, AC15,
-//! AC16, AC17, AC18, AC19, AC20, AC29, AC31, and AC37.
+//! AC16, AC17, AC18, AC19, AC20, AC20b, AC29, AC31, and AC37.
 //!
 //! Fixtures write directly to a scratch repo before invoking the CLI binary;
 //! that's outside fs_safety's managed-root scope (see clippy.toml).
@@ -158,6 +158,143 @@ fn a_spec_change_with_an_untouched_case_is_unconfirmed() {
     assert_eq!(statuses(&value), vec!["unconfirmed"]);
     assert_eq!(value["requirements"][0]["requirement_id"], "controls");
     assert_eq!(value["requirements"][0]["feature_ids"][0], "player-jump");
+}
+
+/// AC20b (Feature origin, §6.1 step 1): only the Feature changed, so the
+/// Requirement is reached through it; `spec_changed` stays false because the
+/// Requirement side did not move.
+#[test]
+fn a_feature_only_change_reaches_its_requirement_without_a_spec_change() {
+    let dir = project();
+    write_scenario(dir.path(), "Presses jump twice.", "Rises higher.");
+    commit(dir.path(), "feat: change the scenario only");
+
+    let value = impact_json(dir.path());
+    assert_eq!(value["requirements"].as_array().unwrap().len(), 1);
+    assert_eq!(value["requirements"][0]["requirement_id"], "controls");
+    assert_eq!(value["requirements"][0]["spec_changed"], false);
+    assert_eq!(value["requirements"][0]["feature_ids"][0], "player-jump");
+    assert_eq!(statuses(&value), vec!["followed_up"]);
+}
+
+/// A Feature edit that leaves every case's revision alone has nothing that
+/// says the case was reconciled with it, so the pair stays unconfirmed.
+#[test]
+fn a_feature_change_that_leaves_the_case_revision_is_unconfirmed() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
+        &format!(
+            "id: player-jump
+requirement_uids: [{REQUIREMENT_UID}]
+label: player-jump v2
+axis: [gameplay]
+"
+        ),
+    );
+    commit(dir.path(), "docs: relabel the feature");
+
+    let value = impact_json(dir.path());
+    assert_eq!(value["requirements"][0]["spec_changed"], false);
+    assert_eq!(statuses(&value), vec!["unconfirmed"]);
+}
+
+/// A Feature with no Scenario generates no case, but it still contributes to
+/// its Requirements, so changing it must still reach them.
+#[test]
+fn a_changed_feature_without_cases_still_reaches_its_requirement() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/features/idle/feature.yml"),
+        &format!(
+            "id: idle
+requirement_uids: [{REQUIREMENT_UID}]
+label: idle
+axis: [gameplay]
+"
+        ),
+    );
+    commit(dir.path(), "feat: add a feature that has no scenario yet");
+
+    let value = impact_json(dir.path());
+    assert_eq!(value["requirements"].as_array().unwrap().len(), 1);
+    assert_eq!(value["requirements"][0]["spec_changed"], false);
+    assert_eq!(
+        value["requirements"][0]["feature_ids"],
+        serde_json::json!(["idle", "player-jump"])
+    );
+}
+
+/// ADR 0031: a Scenario can contribute to a Requirement its Feature does not
+/// list, and that Feature is then one of the Requirement's Features.
+#[test]
+fn a_scenario_level_contribution_makes_its_feature_a_related_feature() {
+    let dir = project();
+    let root = dir.path();
+    write(
+        &root.join(".markharness/knowledge/features/other/feature.yml"),
+        "id: other
+requirement_uids: []
+label: other
+axis: [gameplay]
+",
+    );
+    write(
+        &root.join(".markharness/knowledge/features/other/dash/behavior.yml"),
+        "id: dash
+feature: other
+label: dash
+axis: [gameplay]
+description: |
+  Dashing.
+procedures: {}
+",
+    );
+    write(
+        &root.join(".markharness/knowledge/features/other/dash/ground/scenario.yml"),
+        &format!(
+            "id: ground
+behavior: dash
+label: ground
+uid: 01ARZ3NDEKTSV4RRFFQ69G5FB2
+requirement_uids: [{REQUIREMENT_UID}]
+description: |
+  From the ground.
+phases:
+  - steps:
+      - action: \"Presses dash.\"
+    results:
+      - \"Moves.\"
+"
+        ),
+    );
+    commit(
+        root,
+        "feat: add a scenario that contributes to the requirement",
+    );
+
+    let value = impact_json(root);
+    assert_eq!(value["requirements"].as_array().unwrap().len(), 1);
+    assert_eq!(value["requirements"][0]["spec_changed"], false);
+    assert_eq!(
+        value["requirements"][0]["feature_ids"],
+        serde_json::json!(["other", "player-jump"])
+    );
+}
+
+/// A Requirement reached both ways appears once, with `spec_changed` true.
+#[test]
+fn a_requirement_changed_on_both_origins_is_reported_once() {
+    let dir = project();
+    write_requirement_native(dir.path(), "controls", "controls v2");
+    write_scenario(dir.path(), "Presses jump twice.", "Rises higher.");
+    commit(dir.path(), "feat: change both sides");
+
+    let value = impact_json(dir.path());
+    assert_eq!(value["requirements"].as_array().unwrap().len(), 1);
+    assert_eq!(value["requirements"][0]["spec_changed"], true);
 }
 
 /// AC15: both sides moved in the same range, but nothing records that a

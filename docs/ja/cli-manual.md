@@ -658,7 +658,7 @@ reference: tests/login.spec.ts
 markharness impact --base <git-ref> --head <git-ref> [--fail-on-findings] [-d, --dir <path>]
 ```
 
-**用途**: `base..head` の区間で変更されたRequirementごとに、関連するFeature・TestCaseと、両者の対応が人によって確認されたかを出力する。
+**用途**: `base..head` の区間でRequirement自体が変更された、またはそのRequirementに紐づくFeatureが変更されたRequirementごとに、関連するFeature・TestCaseと、両者の対応が人によって確認されたかを出力する。Requirement側が変更されたかは `spec_changed` で区別し、Featureの変更のみから到達したRequirementでは `false` になる。Featureの変更は、Featureディレクトリ全体のtree SHAのbase/head差分で判定する。headに存在するFeatureだけが対象で、削除されたFeatureや紐づけを外した元のRequirementは出力しない。
 
 **`--base` は必須**。ローカルのbranch配置からbaseを推測すると、同じ区間でも実行環境によって結果が変わり、算出の再現性(設計原則P3、AC37)が壊れるため。CIでは `origin/main` などを明示的に渡す。
 
@@ -680,7 +680,7 @@ Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-requ
 | --- | --- |
 | `confirmed` | その組に対する有効な `Spec-Reviewed` がある |
 | `followed_up` | 区間内で両側が変更されたが、確認の記録は無い。TestCaseが動いたことは作業の証拠であって、人が意味の整合を判断した証拠ではない |
-| `unconfirmed` | 仕様側が変更され、TestCaseが追随した形跡も確認の記録も無い |
+| `unconfirmed` | 仕様側またはFeatureが変更され、TestCaseが追随した形跡も確認の記録も無い |
 
 **確認の失効**: 同一区間内の後続コミットで、組のどちらかの実効内容(TestCaseはCase revision、Requirementは `requirement.yml` または `.sdoc` blob)が変更されると、その組の確認は無効になる(AC14・AC29)。別の組への流用や、後から追加されたケースへの拡張は行わない(AC30・AC31)。
 

@@ -55,7 +55,7 @@
         },
         "source": { "enum": ["native", "external"] },
         "spec_changed": {
-          "description": "Whether the spec side itself changed between base and head.",
+          "description": "Whether the Requirement itself changed between base and head. False for a Requirement reached only because a Feature contributing to it changed.",
           "type": "boolean"
         },
         "feature_ids": {

@@ -658,7 +658,7 @@ reference: tests/login.spec.ts
 markharness impact --base <git-ref> --head <git-ref> [--fail-on-findings] [-d, --dir <path>]
 ```
 
-**Purpose**: For every Requirement the `base..head` range changed, reports the related Features and TestCases and whether a human confirmed that the two still correspond.
+**Purpose**: For every Requirement that the `base..head` range changed itself, or whose related Feature the range changed, reports the related Features and TestCases and whether a human confirmed that the two still correspond. `spec_changed` says whether the Requirement itself changed; it is `false` for a Requirement reached only through a changed Feature. A Feature counts as changed when the tree SHA of its whole directory differs between base and head. Only Features that exist at head are considered: a deleted Feature, and the Requirement a Feature was unlinked from, are not reported.
 
 **`--base` is required.** Inferring it from the local branch layout would make the same range produce different results on different machines, breaking reproducibility (design principle P3, AC37). In CI, pass something explicit such as `origin/main`.
 
@@ -680,7 +680,7 @@ Spec-Reviewed: requirement=<requirement-id> case=<case-id> reason=no-change-requ
 | --- | --- |
 | `confirmed` | A still-valid `Spec-Reviewed` exists for that exact pair |
 | `followed_up` | Both sides changed in the range, but nothing records a confirmation. That the TestCase moved is evidence of work, not of a human judging the two to still agree |
-| `unconfirmed` | The spec side changed, and there is neither a matching TestCase change nor a confirmation |
+| `unconfirmed` | The spec side or a related Feature changed, and there is neither a matching TestCase change nor a confirmation |
 
 **When a confirmation lapses**: if a later commit in the same range changes the effective content of either side of the pair — the Case revision for a TestCase, the `requirement.yml` or `.sdoc` blob for a Requirement — that pair's confirmation is void (AC14, AC29). A confirmation is never reused for another pair, nor extended to a case added later (AC30, AC31).
 

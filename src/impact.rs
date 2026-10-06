@@ -15,7 +15,8 @@ use serde::Serialize;
 use crate::alignment::{self, Confirmation, RejectedTrailer};
 use crate::generate::{self, TestCase};
 use crate::git;
-use crate::knowledge::{self, Requirement, RequirementSource};
+use crate::id_cache::{self, by_identity_key};
+use crate::knowledge::{self, Feature, Requirement, RequirementSource};
 use crate::knowledge_source::{GitTreeKnowledgeSource, KnowledgeSource};
 
 /// Bumped when a change to this module would make the same inputs produce a
@@ -92,7 +93,9 @@ pub struct RequirementImpact {
     pub requirement_id: String,
     pub requirement_uid: Option<String>,
     pub source: &'static str,
-    /// Whether the spec side itself changed between base and head.
+    /// Whether the Requirement itself changed between base and head. False
+    /// for a Requirement reached only because a Feature contributing to it
+    /// changed.
     pub spec_changed: bool,
     pub feature_ids: Vec<String>,
     pub cases: Vec<CaseAlignment>,
@@ -174,6 +177,29 @@ fn requirements_at(
     Ok(requirements)
 }
 
+/// Every Feature at `git_ref`, keyed by display id. Read from `feature.yml`
+/// rather than from generated cases so a Feature with no Scenario yet still
+/// counts as contributing to its Requirements.
+fn features_at(root: &Path, git_ref: &str) -> Result<BTreeMap<String, Feature>, ImpactError> {
+    let mut features = BTreeMap::new();
+    let entries = git::ls_tree_recursive(
+        root,
+        git_ref,
+        &format!("{}/features", crate::project_root::KNOWLEDGE_PATH_IN_REPO),
+    )?
+    .into_iter()
+    .filter(|entry| entry.kind == git::ObjectKind::Blob && entry.path.ends_with("/feature.yml"))
+    .collect::<Vec<_>>();
+    for (entry, content) in entries.iter().zip(git::show_blobs_of(root, &entries)?) {
+        let feature = knowledge::parse_feature(&content).map_err(|e| ImpactError::Malformed {
+            path: entry.path.clone(),
+            message: e.to_string(),
+        })?;
+        features.insert(feature.id.clone(), feature);
+    }
+    Ok(features)
+}
+
 /// The TestCases `git_ref` would generate, keyed by `case_id`.
 fn cases_at(root: &Path, git_ref: &str) -> Result<BTreeMap<String, TestCase>, ImpactError> {
     let snapshot = GitTreeKnowledgeSource::new(root, git_ref).load_snapshot()?;
@@ -194,6 +220,21 @@ fn spec_blob_path(requirement: &Requirement, requirement_id: &str) -> String {
         ),
         RequirementSource::External => requirement.source_locator.clone().unwrap_or_default(),
     }
+}
+
+/// Display ids, as `to` records them, of the Features whose directory tree
+/// differs between two refs. A Feature that no longer exists at `to` is not
+/// reported: its cases are gone, so there is nothing left to reconcile.
+fn changed_feature_ids(root: &Path, from: &str, to: &str) -> Result<BTreeSet<String>, ImpactError> {
+    let before = by_identity_key(id_cache::resolve_feature_versions(root, from, false)?);
+    let after = by_identity_key(id_cache::resolve_feature_versions(root, to, false)?);
+    Ok(after
+        .iter()
+        .filter(|(key, version)| {
+            before.get(*key).map(|earlier| &earlier.tree_sha) != Some(&version.tree_sha)
+        })
+        .map(|(_, version)| version.id.clone())
+        .collect())
 }
 
 /// Requirement UIDs and Case UIDs whose effective content differs between
@@ -359,7 +400,9 @@ pub fn compute(root: &Path, base: &str, head: &str) -> Result<ChangeImpact, Impa
 
     let (changed_requirements, changed_cases) = changed_between(root, &base_commit, &head_commit)?;
     let head_requirements = requirements_at(root, &head_commit)?;
+    let head_features = features_at(root, &head_commit)?;
     let head_cases = cases_at(root, &head_commit)?;
+    let changed_features = changed_feature_ids(root, &base_commit, &head_commit)?;
 
     let mut requirements = Vec::new();
     let mut stale_pins = Vec::new();
@@ -383,14 +426,16 @@ pub fn compute(root: &Path, base: &str, head: &str) -> Result<ChangeImpact, Impa
             continue;
         };
         let spec_changed = changed_requirements.contains(&requirement_uid);
-        if !spec_changed {
-            continue;
-        }
 
         // Reverse lookup: a Requirement does not record its Features, the
-        // Features record it (ADR 0017 §1/§3), so the relation is read from
-        // the case side.
-        let mut feature_ids = BTreeSet::new();
+        // Features record it (ADR 0017 §1/§3). A Feature relates through its
+        // own `requirement_uids`, or through a Scenario that names the
+        // Requirement itself (ADR 0031), which shows up on the case side.
+        let mut feature_ids: BTreeSet<String> = head_features
+            .values()
+            .filter(|feature| feature.requirement_uids.contains(&requirement_uid))
+            .map(|feature| feature.id.clone())
+            .collect();
         let mut cases = Vec::new();
         for case in head_cases.values() {
             let related = case
@@ -422,6 +467,12 @@ pub fn compute(root: &Path, base: &str, head: &str) -> Result<ChangeImpact, Impa
                 case_changed,
                 status,
             });
+        }
+        let feature_changed = feature_ids.iter().any(|id| changed_features.contains(id));
+        // A Requirement is reached from either side: its own spec moved, or a
+        // Feature contributing to it did (§6.1 step 1).
+        if !spec_changed && !feature_changed {
+            continue;
         }
         cases.sort_by(|a, b| a.case_id.cmp(&b.case_id));
 
