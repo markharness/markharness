@@ -126,7 +126,7 @@ pub fn resolve_feature_versions(
     let tree_entries =
         git::ls_tree_recursive(root, git_ref, crate::project_root::KNOWLEDGE_PATH_IN_REPO)?;
 
-    let mut by_id: BTreeMap<String, FeatureVersion> = BTreeMap::new();
+    let mut candidates = Vec::new();
     for entry in &tree_entries {
         if entry.kind != ObjectKind::Blob {
             continue;
@@ -140,7 +140,16 @@ pub fn resolve_feature_versions(
         else {
             continue;
         };
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
+        candidates.push((entry, dir_path, dir_entry));
+    }
+    let blobs: Vec<git::TreeEntry> = candidates
+        .iter()
+        .map(|(entry, ..)| (*entry).clone())
+        .collect();
+    let contents = git::show_blobs_of(root, &blobs)?;
+
+    let mut by_id: BTreeMap<String, FeatureVersion> = BTreeMap::new();
+    for ((_, dir_path, dir_entry), content) in candidates.into_iter().zip(contents) {
         let feature = knowledge::parse_feature(&content).map_err(io::Error::other)?;
 
         if let Some(existing) = by_id.get(&feature.id) {
@@ -240,7 +249,7 @@ fn resolve_marker_versions(
         git::ls_tree_recursive(root, git_ref, crate::project_root::KNOWLEDGE_PATH_IN_REPO)?;
 
     let marker_suffix = format!("/{marker_file}");
-    let mut by_key: BTreeMap<(String, String), SubunitVersion> = BTreeMap::new();
+    let mut candidates = Vec::new();
     for entry in &tree_entries {
         if entry.kind != ObjectKind::Blob {
             continue;
@@ -260,7 +269,18 @@ fn resolve_marker_versions(
         else {
             continue;
         };
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
+        candidates.push((entry, dir_path, feature_dir, sibling_scope, dir_entry));
+    }
+    let blobs: Vec<git::TreeEntry> = candidates
+        .iter()
+        .map(|(entry, ..)| (*entry).clone())
+        .collect();
+    let contents = git::show_blobs_of(root, &blobs)?;
+
+    let mut by_key: BTreeMap<(String, String), SubunitVersion> = BTreeMap::new();
+    for ((_, dir_path, feature_dir, sibling_scope, dir_entry), content) in
+        candidates.into_iter().zip(contents)
+    {
         let id = parse_id(&content).map_err(io::Error::other)?;
 
         let key = (sibling_scope.to_string(), id.clone());
@@ -309,15 +329,19 @@ pub fn resolve_scenario_versions(root: &Path, git_ref: &str) -> io::Result<Vec<S
     let tree_entries =
         git::ls_tree_recursive(root, git_ref, crate::project_root::KNOWLEDGE_PATH_IN_REPO)?;
 
+    let behavior_blobs: Vec<(&str, git::TreeEntry)> = tree_entries
+        .iter()
+        .filter(|entry| entry.kind == ObjectKind::Blob)
+        .filter_map(|entry| {
+            behavior_dir_from_behavior_yml_path(&entry.path).map(|dir| (dir, entry.clone()))
+        })
+        .collect();
+    let entries: Vec<git::TreeEntry> = behavior_blobs.iter().map(|(_, e)| e.clone()).collect();
     let mut behavior_id_by_dir: BTreeMap<String, String> = BTreeMap::new();
-    for entry in &tree_entries {
-        if entry.kind != ObjectKind::Blob {
-            continue;
-        }
-        let Some(behavior_dir) = behavior_dir_from_behavior_yml_path(&entry.path) else {
-            continue;
-        };
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
+    for ((behavior_dir, _), content) in behavior_blobs
+        .iter()
+        .zip(git::show_blobs_of(root, &entries)?)
+    {
         let behavior = knowledge::parse_behavior(&content).map_err(io::Error::other)?;
         behavior_id_by_dir.insert(behavior_dir.to_string(), behavior.id);
     }

@@ -85,13 +85,12 @@ fn load_events(
     entity_uid: &str,
 ) -> io::Result<Vec<IdentityEvent>> {
     let path_in_repo = events_dir_in_repo(kind, entity_uid);
-    let tree_entries = git::ls_tree_recursive(root, git_ref, &path_in_repo)?;
+    let blobs: Vec<git::TreeEntry> = git::ls_tree_recursive(root, git_ref, &path_in_repo)?
+        .into_iter()
+        .filter(|entry| entry.kind == git::ObjectKind::Blob)
+        .collect();
     let mut events = Vec::new();
-    for entry in tree_entries {
-        if entry.kind != git::ObjectKind::Blob {
-            continue;
-        }
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
+    for content in git::show_blobs_of(root, &blobs)? {
         let event: IdentityEvent = serde_yaml_ng::from_str(&content)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         events.push(event);

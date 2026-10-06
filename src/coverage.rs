@@ -200,19 +200,19 @@ fn requirements_at(
     root: &Path,
     git_ref: &str,
 ) -> Result<BTreeMap<String, Requirement>, CoverageError> {
-    let mut requirements = BTreeMap::new();
-    for entry in git::ls_tree_recursive(
+    let entries: Vec<git::TreeEntry> = git::ls_tree_recursive(
         root,
         git_ref,
         &format!(
             "{}/requirements",
             crate::project_root::KNOWLEDGE_PATH_IN_REPO
         ),
-    )? {
-        if entry.kind != git::ObjectKind::Blob || !entry.path.ends_with("/requirement.yml") {
-            continue;
-        }
-        let content = git::show_blob_by_sha(root, &entry.sha)?;
+    )?
+    .into_iter()
+    .filter(|entry| entry.kind == git::ObjectKind::Blob && entry.path.ends_with("/requirement.yml"))
+    .collect();
+    let mut requirements = BTreeMap::new();
+    for (entry, content) in entries.iter().zip(git::show_blobs_of(root, &entries)?) {
         let requirement =
             knowledge::parse_requirement(&content).map_err(|e| CoverageError::Malformed {
                 path: entry.path.clone(),
@@ -228,21 +228,20 @@ fn cases_at(root: &Path, git_ref: &str) -> Result<Vec<TestCase>, CoverageError> 
     Ok(generate::compile_testcases(&snapshot))
 }
 
-/// Every Feature that names `requirement_uid` — itself or through one of its
-/// Scenarios — whether or not it produces a TestCase. Read from the YAML
-/// directly rather than from compiled TestCases, so a Feature with no
-/// Scenario underneath is still visible — that absence is exactly AC21's gap.
-fn features_for_requirement(
+/// For every Requirement uid, the Features that name it — themselves or
+/// through one of their Scenarios — whether or not they produce a TestCase.
+/// Read from the YAML directly rather than from compiled TestCases, so a
+/// Feature with no Scenario underneath is still visible — that absence is
+/// exactly AC21's gap. Read once for all Requirements: reading it per
+/// Requirement re-read every Feature and Scenario for each of them.
+fn features_by_requirement(
     root: &Path,
     git_ref: &str,
-    requirement_uid: &str,
-) -> Result<BTreeSet<String>, CoverageError> {
+) -> Result<BTreeMap<String, BTreeSet<String>>, CoverageError> {
     let features_root = format!("{}/features", crate::project_root::KNOWLEDGE_PATH_IN_REPO);
-    // Feature directory name -> feature.id, for the Scenarios found below
-    // (a scenario.yml carries no feature id of its own).
-    let mut feature_id_by_dir = BTreeMap::new();
-    let mut feature_ids = BTreeSet::new();
-    let mut dirs_of_naming_scenarios = BTreeSet::new();
+    // (Feature directory name, entry) for every feature.yml / scenario.yml.
+    let mut feature_entries = Vec::new();
+    let mut scenario_entries = Vec::new();
     for entry in git::ls_tree_recursive(root, git_ref, &features_root)? {
         if entry.kind != git::ObjectKind::Blob {
             continue;
@@ -253,45 +252,58 @@ fn features_for_requirement(
         let Some((feature_dir, rest)) = relative.split_once('/') else {
             continue;
         };
+        let feature_dir = feature_dir.to_string();
         if rest == "feature.yml" {
-            let content = git::show_blob_by_sha(root, &entry.sha)?;
-            let feature =
-                knowledge::parse_feature(&content).map_err(|e| CoverageError::Malformed {
-                    path: entry.path.clone(),
-                    message: e.to_string(),
-                })?;
-            if feature
-                .requirement_uids
-                .iter()
-                .any(|uid| uid == requirement_uid)
-            {
-                feature_ids.insert(feature.id.clone());
-            }
-            feature_id_by_dir.insert(feature_dir.to_string(), feature.id);
+            feature_entries.push((feature_dir, entry));
         } else if rest.ends_with("/scenario.yml") {
-            let content = git::show_blob_by_sha(root, &entry.sha)?;
-            let scenario =
-                knowledge::parse_scenario(&content).map_err(|e| CoverageError::Malformed {
-                    path: entry.path.clone(),
-                    message: e.to_string(),
-                })?;
-            if scenario
-                .requirement_uids
-                .iter()
-                .any(|uid| uid == requirement_uid)
-            {
-                dirs_of_naming_scenarios.insert(feature_dir.to_string());
-            }
+            scenario_entries.push((feature_dir, entry));
         }
+    }
+    let shas: Vec<&str> = feature_entries
+        .iter()
+        .chain(&scenario_entries)
+        .map(|(_, entry)| entry.sha.as_str())
+        .collect();
+    let mut contents = git::show_blobs_by_sha(root, &shas)?.into_iter();
+
+    let mut features_by_requirement: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Feature directory name -> feature.id, for the Scenarios below (a
+    // scenario.yml carries no feature id of its own).
+    let mut feature_id_by_dir = BTreeMap::new();
+    for (feature_dir, entry) in &feature_entries {
+        let content = contents.next().expect("one content per entry");
+        let feature = knowledge::parse_feature(&content).map_err(|e| CoverageError::Malformed {
+            path: entry.path.clone(),
+            message: e.to_string(),
+        })?;
+        for uid in &feature.requirement_uids {
+            features_by_requirement
+                .entry(uid.clone())
+                .or_default()
+                .insert(feature.id.clone());
+        }
+        feature_id_by_dir.insert(feature_dir.clone(), feature.id);
     }
     // A Scenario naming the Requirement reaches it through the Feature that
     // owns the Scenario, even when the Feature itself does not.
-    feature_ids.extend(
-        dirs_of_naming_scenarios
-            .iter()
-            .filter_map(|dir| feature_id_by_dir.get(dir).cloned()),
-    );
-    Ok(feature_ids)
+    for (feature_dir, entry) in &scenario_entries {
+        let content = contents.next().expect("one content per entry");
+        let scenario =
+            knowledge::parse_scenario(&content).map_err(|e| CoverageError::Malformed {
+                path: entry.path.clone(),
+                message: e.to_string(),
+            })?;
+        let Some(feature_id) = feature_id_by_dir.get(feature_dir) else {
+            continue;
+        };
+        for uid in &scenario.requirement_uids {
+            features_by_requirement
+                .entry(uid.clone())
+                .or_default()
+                .insert(feature_id.clone());
+        }
+    }
+    Ok(features_by_requirement)
 }
 
 /// Computes Release Coverage at `git_ref`.
@@ -326,6 +338,7 @@ pub fn compute(
     };
 
     let cases = cases_at(root, &at_commit)?;
+    let features_by_requirement = features_by_requirement(root, &at_commit)?;
     // Read at the same ref as the Knowledge and the scope: a question about a
     // past ref must be answered from what that ref recorded, not from today's
     // working tree (design principle P3, AC11).
@@ -368,7 +381,10 @@ pub fn compute(
             });
             continue;
         };
-        let feature_ids = features_for_requirement(root, &at_commit, &requirement_uid)?;
+        let feature_ids = features_by_requirement
+            .get(&requirement_uid)
+            .cloned()
+            .unwrap_or_default();
         if feature_ids.is_empty() {
             gaps.push(CoverageGap {
                 kind: GapKind::RequirementHasNoFeature,

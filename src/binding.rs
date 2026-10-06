@@ -252,8 +252,10 @@ pub fn read_all_at(root: &Path, git_ref: &str) -> Result<Vec<ExecutionBinding>, 
     entries.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut bindings = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let content = crate::git::show_blob_by_sha(root, &entry.sha)?;
+    for (entry, content) in entries
+        .iter()
+        .zip(crate::git::show_blobs_of(root, &entries)?)
+    {
         let path = PathBuf::from(&entry.path);
         bindings.push(parse_binding(&path, &content)?);
     }
