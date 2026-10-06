@@ -197,10 +197,11 @@ fn yaml_flow_array(items: &[String]) -> String {
 /// Delegates to `serde_yaml_ng`'s own emitter (serializing `value` as a
 /// standalone document) rather than reimplementing YAML's plain-scalar
 /// rules by hand. Needed for `source_key` (ADR 0030): unlike markharness's
-/// own slug-constrained ids, it holds StrictDoc's UID verbatim with no
-/// charset restriction, so it can contain YAML-significant characters
-/// (`: `, quotes, newlines, a leading `-`/`#`) that plain-scalar output
-/// would corrupt or that would fail to parse back.
+/// own slug-constrained ids, free-form text (`source_key` holds StrictDoc's
+/// UID verbatim; `label`, `source_locator` and `source_revision` are
+/// author-supplied) can contain YAML-significant characters (`: `, ` #`,
+/// quotes, newlines, a leading `-`/`[`/`%`) that plain-scalar output would
+/// corrupt, truncate, or fail to parse back.
 fn yaml_scalar_line(value: &str) -> String {
     let doc = serde_yaml_ng::to_string(value).expect("a string always serializes to YAML");
     // `to_string` always terminates the document with exactly one `\n`;
@@ -246,18 +247,19 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
     // ADR 0023: each mode writes only the fields it owns, so a serialized
     // Requirement can never come back as a mixed-mode file.
     if let Some(locator) = &requirement.source_locator {
-        out.push_str(&format!("source_locator: {locator}\n"));
+        out.push_str(&format!("source_locator: {}\n", yaml_scalar_line(locator)));
     }
     if let Some(revision) = &requirement.source_revision {
-        out.push_str(&format!("source_revision: {revision}\n"));
+        out.push_str(&format!(
+            "source_revision: {}\n",
+            yaml_scalar_line(revision)
+        ));
     }
     if let Some(key) = &requirement.source_key {
         out.push_str(&format!("source_key: {}\n", yaml_scalar_line(key)));
     }
-    // label はプレーンスカラーで出力するため単一行が前提。
-    // knowledge_reconcile::validate の multiline_label チェックが保証する。
     if let Some(label) = &requirement.label {
-        out.push_str(&format!("label: {label}\n"));
+        out.push_str(&format!("label: {}\n", yaml_scalar_line(label)));
     }
     out.push_str(&format!("axis: {}\n", yaml_flow_array(&requirement.axis)));
     if let Some(description) = &requirement.description {
@@ -270,12 +272,10 @@ pub fn serialize_requirement(requirement: &Requirement) -> String {
 
 pub fn serialize_feature(feature: &Feature) -> String {
     let mut out = format!(
-        // label はプレーンスカラーで出力するため単一行が前提。
-        // knowledge_reconcile::validate の multiline_label チェックが保証する。
         "id: {}\nrequirement_uids: {}\nlabel: {}\naxis: {}\n",
         feature.id,
         yaml_flow_array(&feature.requirement_uids),
-        feature.label,
+        yaml_scalar_line(&feature.label),
         yaml_flow_array(&feature.axis)
     );
     if let Some(description) = &feature.description {
@@ -291,12 +291,10 @@ pub fn serialize_feature(feature: &Feature) -> String {
 
 pub fn serialize_behavior(behavior: &Behavior) -> String {
     let mut out = format!(
-        // label はプレーンスカラーで出力するため単一行が前提。
-        // knowledge_reconcile::validate の multiline_label チェックが保証する。
         "id: {}\nfeature: {}\nlabel: {}\naxis: {}\ndescription: |\n",
         behavior.id,
         behavior.feature,
-        behavior.label,
+        yaml_scalar_line(&behavior.label),
         yaml_flow_array(&behavior.axis)
     );
     out.push_str(&indent_block_scalar(&behavior.description, "  "));
@@ -347,7 +345,9 @@ fn serialize_phase_block(phase: &Phase) -> String {
 pub fn serialize_scenario(scenario: &Scenario) -> String {
     let mut out = format!(
         "id: {}\nbehavior: {}\nlabel: {}\ndescription: |\n",
-        scenario.id, scenario.behavior, scenario.label
+        scenario.id,
+        scenario.behavior,
+        yaml_scalar_line(&scenario.label)
     );
     out.push_str(&indent_block_scalar(&scenario.description, "  "));
     out.push_str("phases:\n");
@@ -1161,5 +1161,75 @@ mod tests {
             strip_redundant_scenario_prefix("player-jump", "player-jump-"),
             None
         );
+    }
+
+    /// Labels that a plain `label: <value>` line would corrupt: a `: ` or
+    /// leading indicator makes the file unparseable, and ` #` silently
+    /// truncates the value to a comment.
+    const AWKWARD_SCALARS: &[&str] = &[
+        "a: b", "- dash", "[x]", "%x", "x #y", "a:b", "\"q\"", "it's", "	tab", " lead", "",
+    ];
+
+    #[test]
+    fn requirement_label_and_source_fields_round_trip_through_yaml() {
+        for value in AWKWARD_SCALARS {
+            let requirement = Requirement {
+                id: "r".to_string(),
+                source: RequirementSource::External,
+                label: Some(value.to_string()),
+                axis: Vec::new(),
+                description: None,
+                source_locator: Some(value.to_string()),
+                source_revision: Some(value.to_string()),
+                source_key: None,
+                related_issues: Vec::new(),
+                uid: None,
+            };
+
+            let reparsed = parse_requirement(&serialize_requirement(&requirement))
+                .unwrap_or_else(|e| panic!("{value:?} did not reparse: {e}"));
+
+            assert_eq!(reparsed.label.as_deref(), Some(*value), "label {value:?}");
+            assert_eq!(
+                reparsed.source_locator.as_deref(),
+                Some(*value),
+                "source_locator {value:?}"
+            );
+            assert_eq!(
+                reparsed.source_revision.as_deref(),
+                Some(*value),
+                "source_revision {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn feature_behavior_and_scenario_labels_round_trip_through_yaml() {
+        for value in AWKWARD_SCALARS {
+            let feature = Feature {
+                id: "f".to_string(),
+                requirement_uids: Vec::new(),
+                label: value.to_string(),
+                axis: Vec::new(),
+                description: None,
+                forked_from: None,
+                uid: None,
+            };
+            let reparsed = parse_feature(&serialize_feature(&feature))
+                .unwrap_or_else(|e| panic!("feature {value:?} did not reparse: {e}"));
+            assert_eq!(reparsed.label, *value, "feature {value:?}");
+
+            let mut behavior = sample_behavior();
+            behavior.label = value.to_string();
+            let reparsed = parse_behavior(&serialize_behavior(&behavior))
+                .unwrap_or_else(|e| panic!("behavior {value:?} did not reparse: {e}"));
+            assert_eq!(reparsed.label, *value, "behavior {value:?}");
+
+            let mut scenario = sample_scenario();
+            scenario.label = value.to_string();
+            let reparsed = parse_scenario(&serialize_scenario(&scenario))
+                .unwrap_or_else(|e| panic!("scenario {value:?} did not reparse: {e}"));
+            assert_eq!(reparsed.label, *value, "scenario {value:?}");
+        }
     }
 }
