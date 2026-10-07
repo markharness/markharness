@@ -2100,20 +2100,21 @@ fn check_procedure_references(
     procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
     phases: &[KnowledgePhase],
 ) -> Option<Diagnostic> {
-    for (i, phase) in phases.iter().enumerate() {
-        for (j, step) in phase.steps.iter().enumerate() {
-            if let KnowledgeStepItem::Use { procedure } = step
-                && !procedures.contains_key(procedure)
-            {
-                return Some(Diagnostic::new(
-                    DiagnosticCode::InvalidProcedureReference,
-                    format!("{location}.phases[{i}].steps[{j}]"),
-                    format!("no procedure named '{procedure}' is defined on this Behavior"),
-                ));
-            }
-        }
-    }
-    None
+    knowledge::unresolved_procedure_uses(procedures, phases)
+        .next()
+        .map(|unresolved| {
+            Diagnostic::new(
+                DiagnosticCode::InvalidProcedureReference,
+                format!(
+                    "{location}.phases[{}].steps[{}]",
+                    unresolved.phase, unresolved.step
+                ),
+                format!(
+                    "no procedure named '{}' is defined on this Behavior",
+                    unresolved.procedure
+                ),
+            )
+        })
 }
 
 fn convert_phase(phase: PhaseIntent) -> KnowledgePhase {

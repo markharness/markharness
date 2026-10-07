@@ -122,6 +122,39 @@ pub struct Phase {
     pub results: Vec<String>,
 }
 
+/// A `use:` step naming a Procedure its Behavior does not declare, located
+/// by its position in the Scenario's `phases`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnresolvedProcedureUse<'a> {
+    pub phase: usize,
+    pub step: usize,
+    pub procedure: &'a str,
+}
+
+/// Every `use:` step in `phases` whose name is not a key of `procedures`.
+/// The one rule that decides whether a Scenario still resolves against its
+/// Behavior, shared by `validate` and `knowledge reconcile`.
+pub fn unresolved_procedure_uses<'a>(
+    procedures: &'a BTreeMap<String, Procedure>,
+    phases: &'a [Phase],
+) -> impl Iterator<Item = UnresolvedProcedureUse<'a>> {
+    phases.iter().enumerate().flat_map(move |(phase, p)| {
+        p.steps
+            .iter()
+            .enumerate()
+            .filter_map(move |(step, item)| match item {
+                StepItem::Use { procedure } if !procedures.contains_key(procedure) => {
+                    Some(UnresolvedProcedureUse {
+                        phase,
+                        step,
+                        procedure,
+                    })
+                }
+                _ => None,
+            })
+    })
+}
+
 /// How a `Scenario`'s content was produced. Omitting the field
 /// (`Option::None`) means unknown, not `Manual`; a `knowledge/` file
 /// written before this field existed round-trips to `None` via
@@ -1018,6 +1051,41 @@ mod tests {
 
         assert_eq!(reparsed.phases, scenario.phases);
         assert!(yaml.contains("      - use: login\n"));
+    }
+
+    #[test]
+    fn reports_each_use_step_whose_procedure_the_behavior_does_not_declare() {
+        let mut procedures = BTreeMap::new();
+        procedures.insert(
+            "login".to_string(),
+            Procedure {
+                steps: vec!["Press the login button.".to_string()],
+            },
+        );
+        let use_step = |name: &str| StepItem::Use {
+            procedure: name.to_string(),
+        };
+        let phases = vec![
+            Phase {
+                steps: vec![use_step("login"), use_step("seed")],
+                results: vec!["ok".to_string()],
+            },
+            Phase {
+                steps: vec![
+                    StepItem::Action {
+                        action: "Log out.".to_string(),
+                    },
+                    use_step("logout"),
+                ],
+                results: vec!["ok".to_string()],
+            },
+        ];
+
+        let unresolved: Vec<_> = unresolved_procedure_uses(&procedures, &phases)
+            .map(|u| (u.phase, u.step, u.procedure))
+            .collect();
+
+        assert_eq!(unresolved, vec![(0, 1, "seed"), (1, 1, "logout")]);
     }
 
     #[test]

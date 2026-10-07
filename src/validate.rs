@@ -322,10 +322,10 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
 
         for behavior_dir in find_dirs_with_marker(&feature_dir, "behavior.yml")? {
             let behavior_path = behavior_dir.join("behavior.yml");
-            if let Some(content) =
+            let behavior =
                 validate_file(root, "behavior.schema.json", &behavior_path, &mut issues)?
-                && let Ok(behavior) = knowledge::parse_behavior(&content)
-            {
+                    .and_then(|content| knowledge::parse_behavior(&content).ok());
+            if let Some(behavior) = &behavior {
                 issues.extend(check_axis_tags(
                     root,
                     &behavior_path,
@@ -336,11 +336,13 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
 
             for scenario_dir in find_dirs_with_marker(&behavior_dir, "scenario.yml")? {
                 let scenario_path = scenario_dir.join("scenario.yml");
-                if let Some(content) =
+                let Some(scenario) =
                     validate_file(root, "scenario.schema.json", &scenario_path, &mut issues)?
-                    && let Ok(scenario) = knowledge::parse_scenario(&content)
-                    && uid_mode
-                {
+                        .and_then(|content| knowledge::parse_scenario(&content).ok())
+                else {
+                    continue;
+                };
+                if uid_mode {
                     for uid in &scenario.requirement_uids {
                         if !known_requirement_uids.contains(uid) {
                             issues.push(ValidationIssue {
@@ -350,6 +352,19 @@ pub fn validate_all(root: &Path) -> io::Result<Vec<ValidationIssue>> {
                                 ),
                             });
                         }
+                    }
+                }
+                if let Some(behavior) = &behavior {
+                    for unresolved in
+                        knowledge::unresolved_procedure_uses(&behavior.procedures, &scenario.phases)
+                    {
+                        issues.push(ValidationIssue {
+                            path: rel(root, &scenario_path),
+                            message: format!(
+                                "phases[{}].steps[{}] uses procedure '{}', which Behavior '{}' does not declare",
+                                unresolved.phase, unresolved.step, unresolved.procedure, behavior.id
+                            ),
+                        });
                     }
                 }
             }
@@ -439,6 +454,63 @@ mod tests {
         let issues = validate_all(dir.path()).unwrap();
 
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    fn write_scenario_using_procedure(root: &Path, declared_procedures: &str, used: &str) {
+        let base = root.join(".markharness/knowledge/features/player-jump/jump");
+        fs::write(
+            base.join("behavior.yml"),
+            format!(
+                "id: jump\nfeature: player-jump\nlabel: jump\naxis: [gameplay]\ndescription: |\n  Player presses jump.\nprocedures:{declared_procedures}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            base.join("ground/scenario.yml"),
+            format!(
+                "id: ground\nbehavior: jump\nlabel: ground\ndescription: |\n  Jump from the ground.\nphases:\n  - steps:\n      - use: {used}\n    results:\n      - \"lands safely\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn accepts_a_use_step_naming_a_procedure_its_behavior_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        write_scenario_using_procedure(
+            dir.path(),
+            "\n  seed:\n    steps:\n      - \"Seed the data.\"",
+            "seed",
+        );
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    /// `use:` that resolves to nothing used to pass `validate` and fail only
+    /// when `generate`/`traceability` expanded it.
+    #[test]
+    fn reports_a_use_step_naming_a_procedure_its_behavior_does_not_declare() {
+        let dir = tempfile::tempdir().unwrap();
+        init_project(dir.path());
+        write_valid_tree(dir.path());
+        write_scenario_using_procedure(dir.path(), " {}", "seed");
+
+        let issues = validate_all(dir.path()).unwrap();
+
+        assert_eq!(issues.len(), 1, "unexpected issues: {issues:?}");
+        assert!(
+            issues[0].path.ends_with("ground/scenario.yml"),
+            "{issues:?}"
+        );
+        assert!(issues[0].message.contains("'seed'"), "{issues:?}");
+        assert!(
+            issues[0].message.contains("phases[0].steps[0]"),
+            "{issues:?}"
+        );
     }
 
     /// ADR 0017 §2: Scenarioは複数Phaseを配列順に持てる。
