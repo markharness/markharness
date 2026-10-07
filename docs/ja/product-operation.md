@@ -136,4 +136,4 @@ UC5の主フロー(`markharness changes compute`)自体は変わらないが、�
 
 - `markharness changes annotate <event_id> --type <spec-change|bug-fix|refactor|other>`:`changes compute` が空欄のまま生成した `change_type`(§3.5)を、人間が事後に設定する。`.markharness/changes/` 配下を `event_id` で横断検索するため、対象のマイルストーン区間ファイルを事前に知る必要はない。
 - `markharness changes lineage --commit <merge-commit-sha>`:指定したマージコミットの2親と `git merge-base` によるマージベースを比較し、Feature idごとに線形/真の分岐/1親相当を判定する監査専用コマンド(§3.2)。`changes compute` の主系譜(`.markharness/changes/*.yaml`)には書き込まない。
-- `markharness validate`:`.markharness/knowledge/`・`.markharness/axes/` を `.markharness/schema/*.schema.json`(`markharness init` が既定一式を配置)で構造検証し、axisタグの登録有無・`forked_from` の参照先存在をあわせてチェックする(§3.5の「axes/*.ymlに定義されていない値をfront matterで使えないようスキーマバリデーションで縛る」の実装)。
+- `markharness validate`:`.markharness/knowledge/`・`.markharness/axes/` を `.markharness/schema/*.schema.json`(`markharness init` が既定一式を配置)で構造検証し、axisタグの登録有無・`forked_from` の参照先存在・`use:` が指す手順の宣言有無をあわせてチェックする(§3.5の「axes/*.ymlに定義されていない値をfront matterで使えないようスキーマバリデーションで縛る」の実装)。
