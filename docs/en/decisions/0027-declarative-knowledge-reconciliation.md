@@ -109,7 +109,7 @@ For an existing element selected by UID, only fields present in the Intent chang
 Collections have two distinct categories:
 
 - **Knowledge-element collections** contain Requirements, Features, Behaviors, or Scenarios. Elements named in the Intent are patched by UID or created by new key, while omitted existing elements remain. An empty collection does not delete or retire existing elements.
-- **Value collections** are `axis`, `contributes_to`, `procedures`, `phases`, `steps`, and `results`. Supplying one replaces the whole collection. An empty collection explicitly clears it and differs from omission. The replacement must still satisfy that field's required, non-empty, and reference rules.
+- **Value collections** are `axis`, `contributes_to`, `procedures`, `phases`, `steps`, and `results`. Supplying one replaces the whole collection. An empty collection differs from omission and explicitly clears it, except that `phases`, `steps`, and `results` need at least one entry and cannot be cleared. `axis`, `contributes_to`, and `procedures` have no non-empty rule and can be cleared ([0044](./0044-feature-without-requirement.md)). Each element of the replacement must still satisfy the reference rules.
 
 Omitting a Feature's `contributes_to` preserves its current `requirement_uids`; supplying it replaces the whole collection with the set resolved from document-local keys or Requirement UIDs. This expresses both addition and removal of relationships without separate commands.
 

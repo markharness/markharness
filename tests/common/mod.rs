@@ -9,8 +9,8 @@ use std::path::Path;
 /// Writes a full req-todo -> `feature_id` -> todo-add-task ->
 /// todo-add-task-empty-input scenario tree, none of it migrated yet (no
 /// `uid:` anywhere). The Feature's `requirement_uids` still holds
-/// `req-todo`'s *display id* (schema requires `minItems: 1`, so it can't be
-/// left empty) — exactly the pre-migration placeholder Issue #44 is about.
+/// `req-todo`'s *display id* — exactly the pre-migration placeholder Issue
+/// #44 is about.
 /// `generate::load_knowledge_snapshot`'s requirement-uid resolution falls
 /// back to the raw value when it doesn't match a real Requirement `uid`
 /// (informational field only, ADR 0017 §1・§3), and `identity migrate`
