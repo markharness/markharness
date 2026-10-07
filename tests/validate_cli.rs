@@ -87,6 +87,138 @@ fn validate_accepts_a_native_requirement_with_related_issues() {
     );
 }
 
+fn assert_validate_passes(dir: &Path) {
+    let output = run(&["validate", "--dir", dir.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn reconcile(dir: &Path, intent: &str) {
+    let intent_path = dir.join("intent.yml");
+    std::fs::write(&intent_path, intent).unwrap();
+    let output = run(&[
+        "knowledge",
+        "reconcile",
+        intent_path.to_str().unwrap(),
+        "--dir",
+        dir.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn feature_intent(requirements: &str, contributes_to: &str) -> String {
+    format!(
+        "format: markharness/knowledge-intent/v1
+mode: merge
+
+{requirements}features:
+  - key: feature
+    id: player-jump
+    label: player-jump
+    axis: []
+    description: Jump.
+{contributes_to}    behaviors:
+      - id: jump
+        label: jump
+        axis: []
+        description: Presses jump.
+        scenarios:
+          - id: ground
+            label: ground
+            description: Jump from the ground.
+            phases:
+              - steps:
+                  - action: Do it.
+                results:
+                  - Lands safely.
+"
+    )
+}
+
+/// A Feature is related to Requirements by `contributes_to`, but the
+/// relation is optional (zero or more): a Feature may exist before any
+/// Requirement is linked.
+#[test]
+fn validate_accepts_a_feature_without_requirement() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        run(&["init", "--dir", dir.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+    write_valid_tree(dir.path());
+    std::fs::write(
+        dir.path()
+            .join(".markharness/knowledge/features/player-jump/feature.yml"),
+        "id: player-jump\nrequirement_uids: []\nlabel: player-jump\naxis: [gameplay]\n",
+    )
+    .unwrap();
+
+    assert_validate_passes(dir.path());
+}
+
+#[test]
+fn validate_accepts_a_feature_reconcile_created_without_a_requirement() {
+    for contributes_to in ["", "    contributes_to: []\n"] {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            run(&["init", "--dir", dir.path().to_str().unwrap()])
+                .status
+                .success()
+        );
+
+        reconcile(dir.path(), &feature_intent("", contributes_to));
+
+        assert_validate_passes(dir.path());
+    }
+}
+
+#[test]
+fn validate_accepts_a_feature_left_without_a_requirement_by_knowledge_remove() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        run(&["init", "--dir", dir.path().to_str().unwrap()])
+            .status
+            .success()
+    );
+    reconcile(
+        dir.path(),
+        &feature_intent(
+            "requirements:
+  - key: req
+    id: controls
+    source: native
+    label: controls
+    axis: []
+
+",
+            "    contributes_to: [req]\n",
+        ),
+    );
+    assert_validate_passes(dir.path());
+
+    let removed = run(&[
+        "knowledge",
+        "remove",
+        "requirement",
+        "controls",
+        "--dir",
+        dir.path().to_str().unwrap(),
+    ]);
+    assert!(removed.status.success());
+
+    assert_validate_passes(dir.path());
+}
+
 #[test]
 fn validate_rejects_a_requirement_with_a_non_string_related_issues_item() {
     let dir = tempfile::tempdir().unwrap();
