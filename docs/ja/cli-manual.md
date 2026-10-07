@@ -167,6 +167,7 @@ features:
 ```
 
 - 値のcollection(`axis`・`contributes_to`・`procedures`)は、記述すると**全置換**される。省略すると現在値を保つ。空配列を明示すれば空になる。
+- Scenarioの`phases`、各phaseの`steps`と`results`、各procedureの`steps`は1件以上必要で、空配列や省略はエラー(`missing_required_field`)になる。
 - renameは `uid` で選択した要素の `id` を変えるだけで行う。uidとidentity eventは保持される。
 - Scenarioの親Behaviorを変えるreparentは、`uid` で選択したScenarioを別のBehaviorの下に記述して行う。ファイルの移動は反映結果の `previous_path` で報告される。
 - FeatureとRequirementの関連の追加・削除は、`contributes_to` の全置換で表現する。

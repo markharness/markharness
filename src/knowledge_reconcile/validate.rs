@@ -81,6 +81,9 @@ fn check_blank_strings(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
                 if procedure.name.trim().is_empty() {
                     push_blank(format!("{location}.name"), out);
                 }
+                if procedure.steps.is_empty() {
+                    push_empty_list(format!("{location}.steps"), out);
+                }
                 for (n, step) in procedure.steps.iter().enumerate() {
                     if step.trim().is_empty() {
                         push_blank(format!("{location}.steps[{n}]"), out);
@@ -102,6 +105,12 @@ fn check_blank_strings(doc: &IntentDocument, out: &mut Vec<Diagnostic>) {
                 );
                 for (n, phase) in scenario.phases.iter().flatten().enumerate() {
                     let location = format!("{location}.phases[{n}]");
+                    if phase.steps.is_empty() {
+                        push_empty_list(format!("{location}.steps"), out);
+                    }
+                    if phase.results.is_empty() {
+                        push_empty_list(format!("{location}.results"), out);
+                    }
                     for (m, step) in phase.steps.iter().enumerate() {
                         let (field, value) = match step {
                             StepIntent::Action { action } => ("action", action),
@@ -127,6 +136,17 @@ fn push_blank(location: String, out: &mut Vec<Diagnostic>) {
         DiagnosticCode::MissingRequiredField,
         location,
         "must not be empty",
+    ));
+}
+
+/// A phase or procedure with no steps (or a phase with no results) is not
+/// something a Test Executor can run or check. The Intent cannot tell an
+/// omitted list from `[]`, and both would replace the stored list wholesale.
+fn push_empty_list(location: String, out: &mut Vec<Diagnostic>) {
+    out.push(Diagnostic::new(
+        DiagnosticCode::MissingRequiredField,
+        location,
+        "at least one entry is required",
     ));
 }
 
@@ -672,6 +692,89 @@ features:
                 "expected a blank-string diagnostic at {expected}, got {blanks:?}"
             );
         }
+    }
+
+    /// `steps`/`results` must hold at least one entry (schema `minItems: 1`).
+    /// The Intent cannot tell an omitted list from `[]`, and phases and
+    /// procedures are replaced wholesale, so both are rejected.
+    #[test]
+    fn empty_or_omitted_steps_and_results_are_reported() {
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - key: feature
+    id: add-todo
+    label: add-todo
+    axis: []
+    description: Adds.
+    behaviors:
+      - id: add
+        label: add
+        axis: []
+        description: Adds.
+        procedures:
+          - name: empty-steps
+            steps: []
+          - name: omitted-steps
+        scenarios:
+          - id: empty-lists
+            label: empty-lists
+            description: Empty lists.
+            phases:
+              - steps: []
+                results: []
+              - results:
+                  - Something happened
+              - steps:
+                  - action: Do something
+";
+        let doc = parse_intent(yaml).unwrap();
+        let diagnostics = validate_static(&doc);
+        let missing: Vec<&str> = diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::MissingRequiredField)
+            .map(|d| d.location.as_str())
+            .collect();
+        let behavior = "features[0].behaviors[0]";
+        let mut expected = vec![
+            format!("{behavior}.procedures[0].steps"),
+            format!("{behavior}.procedures[1].steps"),
+        ];
+        for (phase, field) in [(0, "steps"), (0, "results"), (1, "steps"), (2, "results")] {
+            expected.push(format!("{behavior}.scenarios[0].phases[{phase}].{field}"));
+        }
+        for location in &expected {
+            assert!(
+                missing.contains(&location.as_str()),
+                "expected a missing-field diagnostic at {location}, got {missing:?}"
+            );
+        }
+        assert_eq!(missing.len(), expected.len(), "{missing:?}");
+    }
+
+    #[test]
+    fn an_empty_axis_stays_valid() {
+        let yaml = "format: markharness/knowledge-intent/v1
+mode: merge
+
+requirements:
+  - key: req
+    id: todo
+    source: native
+    label: TODO
+    axis: []
+
+features:
+  - key: feature
+    id: add-todo
+    contributes_to: [req]
+    label: add-todo
+    axis: []
+    description: Adds.
+";
+        let doc = parse_intent(yaml).unwrap();
+        assert!(validate_static(&doc).is_empty());
     }
 
     #[test]

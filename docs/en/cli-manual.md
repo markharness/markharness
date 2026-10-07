@@ -167,6 +167,7 @@ features:
 ```
 
 - Value collections (`axis`, `contributes_to`, `procedures`) are **replaced wholesale** when present, keep their current value when omitted, and are cleared by an explicit empty array.
+- A Scenario's `phases`, each phase's `steps` and `results`, and each procedure's `steps` need at least one entry; an empty array or an omitted list is an error (`missing_required_field`).
 - A rename is just a changed `id` on a `uid`-selected element. The uid and its identity events are preserved.
 - Reparenting a Scenario to a different Behavior is expressed by writing the `uid`-selected Scenario under that other Behavior. The file move is reported as `previous_path` in the result.
 - Adding and removing Feature-to-Requirement relationships is expressed by replacing `contributes_to` wholesale.
