@@ -320,6 +320,8 @@ pub fn build_plan(root: &Path, doc: &IntentDocument) -> Result<Plan, PlanError> 
         }
     }
 
+    check_unnamed_scenarios_against_replaced_procedures(root, &edits, &mut diagnostics)?;
+
     if !diagnostics.is_empty() {
         return Err(PlanError::Diagnostics(diagnostics));
     }
@@ -2100,20 +2102,91 @@ fn check_procedure_references(
     procedures: &std::collections::BTreeMap<String, knowledge::Procedure>,
     phases: &[KnowledgePhase],
 ) -> Option<Diagnostic> {
-    for (i, phase) in phases.iter().enumerate() {
-        for (j, step) in phase.steps.iter().enumerate() {
-            if let KnowledgeStepItem::Use { procedure } = step
-                && !procedures.contains_key(procedure)
+    knowledge::unresolved_procedure_uses(procedures, phases)
+        .next()
+        .map(|unresolved| {
+            Diagnostic::new(
+                DiagnosticCode::InvalidProcedureReference,
+                format!(
+                    "{location}.phases[{}].steps[{}]",
+                    unresolved.phase, unresolved.step
+                ),
+                format!(
+                    "no procedure named '{}' is defined on this Behavior",
+                    unresolved.procedure
+                ),
+            )
+        })
+}
+
+/// A Behavior's `procedures` are replaced wholesale, so a Scenario under it
+/// that the Intent does not name can be left using a procedure that is no
+/// longer declared. Scenarios the Intent names are already checked against
+/// the patched procedures, and ones it moves elsewhere are checked against
+/// their new Behavior, so this covers only the rest, and runs after every
+/// Behavior and Scenario has been planned so that a Scenario moved away by
+/// a later entry is not mistaken for one that stays.
+fn check_unnamed_scenarios_against_replaced_procedures(
+    root: &Path,
+    edits: &ExistingElementEdits,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), PlanError> {
+    let named_scenario_uids: HashSet<&str> = edits
+        .scenarios
+        .iter()
+        .map(|outcome| match outcome {
+            ScenarioOutcome::Unchanged { uid, .. } | ScenarioOutcome::Updated { uid, .. } => {
+                uid.as_str()
+            }
+        })
+        .collect();
+    for outcome in &edits.behaviors {
+        let BehaviorOutcome::Updated {
+            canonical,
+            existing_path,
+            ..
+        } = outcome
+        else {
+            continue;
+        };
+        if parse_behavior_file(existing_path)?.procedures == canonical.procedures {
+            continue;
+        }
+        let behavior_dir = existing_path.parent().unwrap_or(existing_path);
+        for found in knowledge_walk::list_entities(root, EntityKind::Scenario)? {
+            if !is_direct_child_of(&found.path, behavior_dir)
+                || found
+                    .uid
+                    .as_deref()
+                    .is_some_and(|uid| named_scenario_uids.contains(uid))
             {
-                return Some(Diagnostic::new(
+                continue;
+            }
+            let scenario = parse_scenario_file(&found.path)?;
+            for unresolved in
+                knowledge::unresolved_procedure_uses(&canonical.procedures, &scenario.phases)
+            {
+                diagnostics.push(Diagnostic::new(
                     DiagnosticCode::InvalidProcedureReference,
-                    format!("{location}.phases[{i}].steps[{j}]"),
-                    format!("no procedure named '{procedure}' is defined on this Behavior"),
+                    found
+                        .path
+                        .strip_prefix(root)
+                        .unwrap_or(&found.path)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    format!(
+                        "Scenario '{}' still uses procedure '{}' (phases[{}].steps[{}]), but Behavior '{}' no longer declares it after this Intent; keep the procedure, or update the Scenario in this Intent too",
+                        scenario.id,
+                        unresolved.procedure,
+                        unresolved.phase,
+                        unresolved.step,
+                        canonical.id
+                    ),
                 ));
             }
         }
     }
-    None
+    Ok(())
 }
 
 fn convert_phase(phase: PhaseIntent) -> KnowledgePhase {
@@ -3669,6 +3742,196 @@ features:
             }
             other => panic!("expected Diagnostics, got {other:?}"),
         }
+    }
+
+    /// `reparent_fixture`'s `capture` Behavior with a `validate_title`
+    /// procedure that its (otherwise unnamed) `empty-title` Scenario uses.
+    fn capture_whose_scenario_uses_validate_title(
+        dir: &tempfile::TempDir,
+        capture_uid: &str,
+        scenario_uid: &str,
+    ) {
+        let capture_dir = dir
+            .path()
+            .join(".markharness/knowledge/features/todo-management/capture");
+        fs::write(
+            capture_dir.join("behavior.yml"),
+            format!(
+                "id: capture\nfeature: todo-management\nlabel: capture\naxis: []\ndescription: Capture a TODO.\nprocedures:\n  validate_title:\n    steps:\n      - Check the title is non-empty\nuid: {capture_uid}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            capture_dir.join("empty-title/scenario.yml"),
+            format!(
+                "id: empty-title\nbehavior: capture\nlabel: empty-title\ndescription: An empty title cannot be added\nphases:\n  - steps:\n      - use: validate_title\n    results:\n      - No TODO is added\nuid: {scenario_uid}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn diagnostics_of(err: PlanError) -> Vec<Diagnostic> {
+        match err {
+            PlanError::Diagnostics(diagnostics) => diagnostics,
+            other => panic!("expected Diagnostics, got {other:?}"),
+        }
+    }
+
+    /// Replacing `procedures` must not leave a Scenario the Intent never
+    /// names pointing at a procedure that no longer exists: it would pass
+    /// `knowledge reconcile` and `validate` and then fail every command that
+    /// expands `use:` steps.
+    #[test]
+    fn replacing_procedures_without_the_one_an_unnamed_scenario_uses_is_rejected() {
+        let (dir, feature_uid, capture_uid, _review_uid, scenario_uid, ..) = reparent_fixture();
+        capture_whose_scenario_uses_validate_title(&dir, &capture_uid, &scenario_uid);
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        procedures:
+          - name: renamed_validate_title
+            steps: [Check the title is non-empty]
+"
+        );
+
+        let diagnostics =
+            diagnostics_of(build_plan(dir.path(), &parse_intent(&yaml).unwrap()).unwrap_err());
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(
+            diagnostics[0].code,
+            DiagnosticCode::InvalidProcedureReference
+        );
+        assert!(
+            diagnostics[0].message.contains("'validate_title'"),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics[0].message.contains("'empty-title'"),
+            "the unnamed Scenario has no Intent location, so the message must name it: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn replacing_procedures_that_still_contain_the_one_an_unnamed_scenario_uses_is_accepted() {
+        let (dir, feature_uid, capture_uid, _review_uid, scenario_uid, ..) = reparent_fixture();
+        capture_whose_scenario_uses_validate_title(&dir, &capture_uid, &scenario_uid);
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        procedures:
+          - name: validate_title
+            steps: [Check the title is not blank]
+"
+        );
+
+        let plan = build_plan(dir.path(), &parse_intent(&yaml).unwrap()).unwrap();
+
+        assert_eq!(plan.behavior_updates.len(), 1);
+    }
+
+    /// The same Intent may rewrite the Scenario to stop using the removed
+    /// procedure, so a Scenario it names is judged by its patched content,
+    /// not by what is on disk.
+    #[test]
+    fn removing_a_procedure_is_accepted_when_the_same_intent_rewrites_the_scenario_using_it() {
+        let (dir, feature_uid, capture_uid, _review_uid, scenario_uid, ..) = reparent_fixture();
+        capture_whose_scenario_uses_validate_title(&dir, &capture_uid, &scenario_uid);
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        procedures: []
+        scenarios:
+          - uid: {scenario_uid}
+            phases:
+              - steps:
+                  - action: Check the title is non-empty
+                results:
+                  - No TODO is added
+"
+        );
+
+        let plan = build_plan(dir.path(), &parse_intent(&yaml).unwrap()).unwrap();
+
+        assert_eq!(plan.behavior_updates.len(), 1);
+        assert_eq!(plan.scenario_updates.len(), 1);
+    }
+
+    /// A Scenario this Intent moves to another Behavior no longer lives
+    /// under the old one, so the old Behavior's procedures are free to go.
+    /// The Behavior being changed is listed first, before the Intent has
+    /// reached the entry that moves the Scenario away.
+    #[test]
+    fn removing_a_procedure_is_accepted_when_the_same_intent_moves_the_scenario_using_it_away() {
+        let (dir, feature_uid, capture_uid, review_uid, scenario_uid, ..) = reparent_fixture();
+        capture_whose_scenario_uses_validate_title(&dir, &capture_uid, &scenario_uid);
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {capture_uid}
+        procedures: []
+      - uid: {review_uid}
+        scenarios:
+          - uid: {scenario_uid}
+            phases:
+              - steps:
+                  - action: Check the title is non-empty
+                results:
+                  - No TODO is added
+"
+        );
+
+        let plan = build_plan(dir.path(), &parse_intent(&yaml).unwrap()).unwrap();
+
+        assert_eq!(plan.behavior_updates.len(), 2);
+        assert_eq!(plan.scenario_updates.len(), 1);
+    }
+
+    /// Only Scenarios under the Behavior whose procedures change are at
+    /// risk; a same-named Behavior elsewhere keeps its own procedures.
+    #[test]
+    fn replacing_procedures_does_not_check_scenarios_of_other_behaviors() {
+        let (dir, feature_uid, capture_uid, review_uid, scenario_uid, ..) = reparent_fixture();
+        capture_whose_scenario_uses_validate_title(&dir, &capture_uid, &scenario_uid);
+        let yaml = format!(
+            "\
+format: markharness/knowledge-intent/v1
+mode: merge
+
+features:
+  - uid: {feature_uid}
+    behaviors:
+      - uid: {review_uid}
+        procedures: []
+"
+        );
+
+        let plan = build_plan(dir.path(), &parse_intent(&yaml).unwrap());
+
+        assert!(plan.is_ok(), "{:?}", plan.err());
     }
 
     /// `Plan::default()` (hand-built, not from [`build_plan`]) carries no

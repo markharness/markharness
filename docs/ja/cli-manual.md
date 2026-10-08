@@ -817,7 +817,7 @@ player-jump: linear
 markharness validate [--json] [-d, --dir <path>]
 ```
 
-**用途**: `.markharness/knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `.markharness/axes/*.yml`、および `.markharness/executions/<milestone>/results.yml` を、対応する `.markharness/schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `.markharness/axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか。
+**用途**: `.markharness/knowledge/` 配下の全YAML(`requirement.yml` / `feature.yml` / `behavior.yml` / `condition.yml` / `expected/*.yml`)と `.markharness/axes/*.yml`、および `.markharness/executions/<milestone>/results.yml` を、対応する `.markharness/schema/*.schema.json`(`markharness init` が既定一式を配置。1.1節)でJSON Schema検証する。加えて、JSON Schema単体では表現できない相互参照制約を検証する: `axis` タグが `.markharness/axes/*.yml` に登録されているか、`feature.yml` の `forked_from` が実在するFeature idを指しているか、`scenario.yml` の `use:` が所属Behaviorの `procedures` に宣言された手順を指しているか([ADR 0045](decisions/0045-procedure-reference-integrity.md))。
 
 **bindingの検証**: `.markharness/bindings/*.yml` は `ExecutionBinding` として読み取り可能であることを検証する(1.12節)。`result`・`executed_at`・`build`・`environment` のような実行事実フィールドを持つbindingは、未知フィールドとして拒否される(ADR 0025 §2)。
 

@@ -109,7 +109,7 @@ UIDを指定した既存要素は、Intentに記載したフィールドだけ�
 Collectionは次の二種類に分ける。
 
 - **Knowledge要素collection**：Requirement・Feature・Behavior・Scenarioの集合。Intentに記載した要素をUIDまたは新規keyでpatch・作成し、未記載の既存要素を維持する。空collectionも既存要素を削除またはRetireしない。
-- **Value collection**：`axis`・`contributes_to`・`procedures`・`phases`・`steps`・`results`。明示した場合はcollection全体を置換する。空collectionは省略とは異なり、空にする明示的な更新である。ただし`phases`・`steps`・`results`は1件以上が必要なため、空にできない。`axis`・`contributes_to`・`procedures`には非空規則がなく、空にできる([0044](./0044-feature-without-requirement.md))。置換後の各要素は参照規則を満たさなければならない。
+- **Value collection**：`axis`・`contributes_to`・`procedures`・`phases`・`steps`・`results`。明示した場合はcollection全体を置換する。空collectionは省略とは異なり、空にする明示的な更新である。ただし`phases`・`steps`・`results`は1件以上が必要なため、空にできない。`axis`・`contributes_to`・`procedures`には非空規則がなく、空にできる([0044](./0044-feature-without-requirement.md))。置換後の各要素は参照規則を満たさなければならない。`procedures`の置換が、その手順を`use:`で参照するScenarioに及ぶことは[0045](./0045-procedure-reference-integrity.md)に従う。
 
 Featureの`contributes_to`を省略した場合は現在の`requirement_uids`を維持し、指定した場合は文書ローカルkeyまたはRequirement UIDを解決した集合で全置換する。これにより、関連の追加と削除を別コマンドなしで表現する。
 
