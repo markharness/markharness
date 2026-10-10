@@ -1149,6 +1149,35 @@ $ markharness traceability show --uid 01ARZ3NDEKTSV4RRFFQ69G5FB1
 
 ---
 
+### 1.26 `markharness gui` — プロジェクトのGUIを開く([ADR 0038](./decisions/0038-gui-as-independent-project.md))
+
+```text
+markharness gui [--dir <path>]
+```
+
+**用途**: プロジェクトの関係・Change Impact・Release Coverageを見て、テスト知識を編集するGUIを開く。GUIは別プロジェクトの別の実行ファイル(`markharness-gui`)で、このコマンドは起動するだけである。GUIは、`traceability`などの読み取りコマンドのJSON出力を通してプロジェクトを読み、編集は`knowledge reconcile`を通す。
+
+**動作**
+
+- 他のコマンドと同じく、プロジェクトのルートを決める: `--dir`、または、カレントディレクトリから上へ辿って最初に見つかる`.markharness/config.toml`を持つディレクトリ。見つからなければ、`markharness init`を促すエラーで終了する。
+- `markharness-gui`を、実行中の`markharness`と同じディレクトリ、次に`PATH`の順に探す。
+- `--dir <プロジェクトのルート>`を付けて実行し、環境変数`MARKHARNESS_BIN`に、実行中の`markharness`のパスを設定する。GUIは、これによって同じ`markharness`を呼ぶ。
+- GUIの終了を待ち、GUIの終了コードで終了する。
+
+**オプション**
+
+| オプション | 説明 |
+|---|---|
+| `--dir`, `-d <path>` | 対象プロジェクトのディレクトリ。省略時はカレントディレクトリ。 |
+
+**終了コード**: GUIを起動した後は、GUIの終了コード。プロジェクトが見つからない場合と、`markharness-gui`が見つからない場合は`1`。
+
+**GUIが見つからない場合**: GUIはGUI入りのリリースアーカイブにだけ含まれ、CLIのみのアーカイブには含まれない。エラーメッセージもそう説明する。GUI入りのアーカイブは、まだ公開していない。GUIの同梱は、テスト知識の編集ができる安定版から行う。
+
+**ユースケース対応**: [ADR 0038](./decisions/0038-gui-as-independent-project.md)。関連: [cli-read-model-design.md](./design/cli-read-model-design.md)§14。
+
+---
+
 ## 2. 未実装(今後実装予定)のコマンド
 
 以下は `docs/product-operation.md` のユースケース図・ユースケース記述に基づく、今後実装予定のコマンドです。コマンド名・オプションは暫定案であり、実装時に変更され得ます。
@@ -1163,7 +1192,7 @@ $ markharness traceability show --uid 01ARZ3NDEKTSV4RRFFQ69G5FB1
 
 ## 3. 動作確認・テスト
 
-実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability_index.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` の `#[cfg(test)] mod tests`、および `knowledge reconcile` の終了コード・出力を検証する `tests/knowledge_reconcile_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`CONTRIBUTING.md`)に従い、コミット前に以下を実行すること:
+実装済みコマンドの単体テストは `cargo test` で実行できる(`src/init.rs` / `src/knowledge.rs` / `src/knowledge_reconcile/` / `src/generate.rs` / `src/verify.rs` / `src/axes.rs` / `src/traceability_index.rs` / `src/git.rs` / `src/id_cache.rs` / `src/changes.rs` / `src/backfill.rs` / `src/gui.rs` の `#[cfg(test)] mod tests`、`knowledge reconcile` の終了コード・出力を検証する `tests/knowledge_reconcile_cli.rs`、および GUI の実行ファイルが無い場合の `gui` の動作を検証する `tests/gui_cli.rs` を参照)。`git.rs`/`id_cache.rs`/`changes.rs`/`backfill.rs` のテストは実際に一時ディレクトリ上で `git init`/`commit`/`tag` を行うため、テスト実行環境に `git` コマンドが必要。Pre-PR チェックリスト(`CONTRIBUTING.md`)に従い、コミット前に以下を実行すること:
 
 ```bash
 cargo test

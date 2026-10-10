@@ -19,6 +19,7 @@ pub mod coverage;
 pub mod fs_safety;
 pub mod generate;
 pub mod git;
+pub mod gui;
 pub mod id_cache;
 pub mod identity;
 pub mod impact;
