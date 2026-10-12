@@ -26,6 +26,11 @@ pub const RULE_VERSION: u32 = 1;
 
 const SCHEMA_VERSION: u32 = 1;
 const RECORD_KIND: &str = "change_impact";
+/// Same shape as `change_impact`, but computed from uncommitted work, so it is
+/// not reproducible and carries no confirmations.
+const WORKTREE_RECORD_KIND: &str = "change_impact_worktree";
+/// What `head_commit` holds when there is no head commit.
+const WORKTREE_HEAD: &str = "worktree";
 
 #[derive(Debug)]
 pub enum ImpactError {
@@ -398,11 +403,69 @@ pub fn compute(root: &Path, base: &str, head: &str) -> Result<ChangeImpact, Impa
         .map(|confirmation| (confirmation.requirement_uid, confirmation.case_uid))
         .collect();
 
-    let (changed_requirements, changed_cases) = changed_between(root, &base_commit, &head_commit)?;
-    let head_requirements = requirements_at(root, &head_commit)?;
-    let head_features = features_at(root, &head_commit)?;
-    let head_cases = cases_at(root, &head_commit)?;
-    let changed_features = changed_feature_ids(root, &base_commit, &head_commit)?;
+    analyze(
+        root,
+        Analysis {
+            record_kind: RECORD_KIND,
+            base_ref: &base_commit,
+            base_commit: base_commit.clone(),
+            head_ref: &head_commit,
+            head_commit: head_commit.clone(),
+            confirmed_pairs,
+            rejected_trailers,
+        },
+    )
+}
+
+/// Computes Change Impact from `HEAD` to the uncommitted state of the tracked
+/// files in the working tree. No commits lie in that range, so no
+/// `Spec-Reviewed` trailer is counted: a pair is `followed_up` or
+/// `unconfirmed`, never `confirmed`. The result is provisional — the working
+/// tree keeps changing — hence its own `record_kind`.
+pub fn compute_worktree(root: &Path) -> Result<ChangeImpact, ImpactError> {
+    let base_commit = git::resolve_commit_oid(root, "HEAD")?;
+    let tree = git::write_tree_of_tracked_worktree(root)?;
+    analyze(
+        root,
+        Analysis {
+            record_kind: WORKTREE_RECORD_KIND,
+            base_ref: &base_commit,
+            base_commit: base_commit.clone(),
+            head_commit: WORKTREE_HEAD.to_string(),
+            head_ref: &tree,
+            confirmed_pairs: BTreeSet::new(),
+            rejected_trailers: Vec::new(),
+        },
+    )
+}
+
+struct Analysis<'a> {
+    record_kind: &'static str,
+    base_commit: String,
+    /// What to read the base side from: a commit OID.
+    base_ref: &'a str,
+    head_commit: String,
+    /// What to read the head side from: a commit OID or a tree OID.
+    head_ref: &'a str,
+    confirmed_pairs: BTreeSet<(String, String)>,
+    rejected_trailers: Vec<RejectedTrailerReport>,
+}
+
+fn analyze(root: &Path, analysis: Analysis) -> Result<ChangeImpact, ImpactError> {
+    let Analysis {
+        record_kind,
+        base_commit,
+        base_ref,
+        head_commit,
+        head_ref,
+        confirmed_pairs,
+        rejected_trailers,
+    } = analysis;
+    let (changed_requirements, changed_cases) = changed_between(root, base_ref, head_ref)?;
+    let head_requirements = requirements_at(root, head_ref)?;
+    let head_features = features_at(root, head_ref)?;
+    let head_cases = cases_at(root, head_ref)?;
+    let changed_features = changed_feature_ids(root, base_ref, head_ref)?;
 
     let mut requirements = Vec::new();
     let mut stale_pins = Vec::new();
@@ -411,7 +474,7 @@ pub fn compute(root: &Path, base: &str, head: &str) -> Result<ChangeImpact, Impa
             requirement.source,
             requirement.source_locator.as_ref(),
             requirement.source_revision.as_ref(),
-        ) && let Some(head_revision) = git::blob_sha_at(root, &head_commit, locator)?
+        ) && let Some(head_revision) = git::blob_sha_at(root, head_ref, locator)?
             && &head_revision != pinned
         {
             stale_pins.push(StalePin {
@@ -491,7 +554,7 @@ pub fn compute(root: &Path, base: &str, head: &str) -> Result<ChangeImpact, Impa
 
     Ok(ChangeImpact {
         schema_version: SCHEMA_VERSION,
-        record_kind: RECORD_KIND,
+        record_kind,
         rule_version: RULE_VERSION,
         base_commit,
         head_commit,

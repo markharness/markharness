@@ -66,7 +66,7 @@ Domain型を直接シリアライズしない。各コマンド専用モジュ�
 
 ## 4. 共通エンベロープ
 
-`record_kind`/`schema_version`は新設するエンベロープ形式ではない。`impact`(`src/impact.rs`の`ChangeImpact`)・`coverage`(`src/coverage.rs`の`ReleaseCoverage`)が、`CommandOutcome`/`Presenter`(`src/presentation.rs`)を一切経由せず、`cli.rs`から`serde_json`で直接出力している既存の形式(`{"schema_version": 1, "record_kind": "<tag>", ...フィールド}`)をそのまま踏襲する。`record_kind`は`markharness-v2-design.md`§9.1・ADR 0025が既に確立している永続レコード(`execution_binding`・`release_scope`・`requirement`等)の命名規約と同じ名前であり、`impact`/`coverage`のCLI出力も既にこの規約に従っている(ADR 0032参照)。
+`record_kind`/`schema_version`は新設するエンベロープ形式ではない。`impact`(`src/impact.rs`の`ChangeImpact`)・`coverage`(`src/coverage.rs`の`ReleaseCoverage`)が、`CommandOutcome`/`Presenter`(`src/presentation.rs`)を一切経由せず、`cli.rs`から`serde_json`で直接出力している既存の形式(`{"schema_version": 1, "record_kind": "<tag>", ...フィールド}`)をそのまま踏襲する。`record_kind`は`markharness-v2-design.md`§9.1・ADR 0025が既に確立している永続レコード(`execution_binding`・`release_scope`等)の命名規約と同じ名前であり、`impact`/`coverage`のCLI出力も既にこの規約に従っている(ADR 0032参照)。
 
 本書が新設するのは、この既存パターンに従う`traceability`だけである。`canonical_imported`/`generated`/`changes_computed`(`markharness changes compute`)は`CommandOutcome`/`Presenter`系統の別の出力形式(`outcome`フィールド)を使う、無関係な書込み系コマンドであり、本書のリードモデルの対象外とする。
 
@@ -86,6 +86,8 @@ traceability
 change_impact
 release_coverage
 ```
+
+`impact --worktree`は`change_impact_worktree`を出力する。フィールド構成は`change_impact`と同一で、`head_commit`は固定文字列`"worktree"`、`rejected_trailers`は常に空になる(ADR 0046)。
 
 ### 4.2 `schema_version`
 
@@ -534,7 +536,7 @@ markharness impact --base main --head HEAD
 markharness coverage --requirements all --at HEAD
 ```
 
-これらは標準出力へ1つのJSONリードモデルを出力する。viewはKnowledgeや`.markharness/`を直接読み取らず、これらの出力を入力とする。`traceability`は、利用者が編集した直後(コミット前)の状態をそのまま反映できる点が、`impact`・`coverage`と異なる(ADR 0033)。
+これらは標準出力へ1つのJSONリードモデルを出力する。viewはKnowledgeや`.markharness/`を直接読み取らず、これらの出力を入力とする。`traceability`は、利用者が編集した直後(コミット前)の状態をそのまま反映できる点が、`impact`・`coverage`と異なる(ADR 0033)。`impact`も`--worktree`でコミット前の変更を暫定結果として読める(ADR 0046)。
 
 GUI([ADR 0038](../decisions/0038-gui-as-independent-project.md))は、これに加えて検証手段を読むために`markharness binding list --json`を使う。`binding list`の出力は§3.3の初期3種のリードモデルではなく、`outcome`と`schema_version`を最上位に持ち各要素が`record_kind`を持つ形式である。したがって、GUIが読むことは0038の範囲で決め、リードモデルへ加えるかどうかは別に決める。
 

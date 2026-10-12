@@ -657,11 +657,14 @@ reference: tests/login.spec.ts
 
 ```text
 markharness impact --base <git-ref> --head <git-ref> [--fail-on-findings] [-d, --dir <path>]
+markharness impact --worktree [-d, --dir <path>]
 ```
 
 **Purpose**: For every Requirement that the `base..head` range changed itself, or whose related Feature the range changed, reports the related Features and TestCases and whether a human confirmed that the two still correspond. `spec_changed` says whether the Requirement itself changed; it is `false` for a Requirement reached only through a changed Feature. A Feature counts as changed when the tree SHA of its whole directory differs between base and head. Only Features that exist at head are considered: a deleted Feature, and the Requirement a Feature was unlinked from, are not reported.
 
 **`--base` is required.** Inferring it from the local branch layout would make the same range produce different results on different machines, breaking reproducibility (design principle P3, AC37). In CI, pass something explicit such as `origin/main`.
+
+**`--worktree`: check changes before committing (ADR 0046)**: Analyses impact from the uncommitted changes between HEAD (the base) and the working tree. It covers staged and unstaged changes alike, using the current content of tracked files. **Untracked files are ignored**; they appear in the result once `git add`ed. It cannot be combined with `--base`, `--head` or `--fail-on-findings`. The result is provisional: `record_kind` is `change_impact_worktree`, `head_commit` is the fixed string `"worktree"`, and `rejected_trailers` is always empty. No commits lie in the range, so `Spec-Reviewed` is not counted and `status` is only `followed_up` or `unconfirmed`. No history is walked, so it works in a shallow clone. A repository with no HEAD (before the first commit) is an error. Each run may add tens to hundreds of KB of blobs for files being edited to the Git object database (reclaimed by `git gc`).
 
 **How a confirmation is recorded: the `Spec-Reviewed` commit trailer**
 

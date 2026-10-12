@@ -123,16 +123,32 @@ pub enum Command {
         /// Earlier Git revision. Required: inferring it from the local
         /// branch layout would make the same range produce different results
         /// on different machines.
-        #[arg(long)]
-        base: String,
+        #[arg(
+            long,
+            required_unless_present = "worktree",
+            conflicts_with = "worktree"
+        )]
+        base: Option<String>,
         /// Later Git revision
+        #[arg(
+            long,
+            required_unless_present = "worktree",
+            conflicts_with = "worktree"
+        )]
+        head: Option<String>,
+        /// Compare HEAD with the uncommitted state of the tracked files in the
+        /// working tree (staged and unstaged changes alike). Untracked files
+        /// are ignored until `git add` tracks them. The result is provisional
+        /// (`record_kind` is `change_impact_worktree`): no Spec-Reviewed
+        /// trailer can be counted, so a pair is never `confirmed`.
         #[arg(long)]
-        head: String,
+        worktree: bool,
         /// Exit with code 2 when anything needs attention (an unconfirmed or
         /// followed-up pair, a stale pin, a rejected trailer). Off by default:
         /// whether a finding should fail CI is the team's policy, not this
-        /// tool's.
-        #[arg(long)]
+        /// tool's. Not available with --worktree, which can never confirm a
+        /// pair and so would always fail.
+        #[arg(long, conflicts_with = "worktree")]
         fail_on_findings: bool,
         /// Target project directory. Defaults to the current directory.
         #[arg(long, short = 'd')]
@@ -1150,11 +1166,18 @@ pub fn run(cli: Cli) -> io::Result<()> {
         Command::Impact {
             base,
             head,
+            worktree,
             fail_on_findings,
             dir,
         } => {
             let root = project_root::resolve(dir, &env::current_dir()?)?;
-            match crate::impact::compute(&root, &base, &head) {
+            let result = match (base, head) {
+                (Some(base), Some(head)) if !worktree => {
+                    crate::impact::compute(&root, &base, &head)
+                }
+                _ => crate::impact::compute_worktree(&root),
+            };
+            match result {
                 Ok(impact) => {
                     println!(
                         "{}",
