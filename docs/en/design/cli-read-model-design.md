@@ -66,7 +66,7 @@ The presence of an `ExecutionBinding` is never presented as meaning a test has b
 
 ## 4. Common envelope
 
-`record_kind`/`schema_version` is not a newly invented envelope shape. `impact` (`ChangeImpact` in `src/impact.rs`) and `coverage` (`ReleaseCoverage` in `src/coverage.rs`) already emit it as-is, never going through `CommandOutcome`/`Presenter` (`src/presentation.rs`) at all — `cli.rs` serializes each struct directly via `serde_json`, producing `{"schema_version": 1, "record_kind": "<tag>", ...fields}`. `record_kind` reuses the name already established by `markharness-v2-design.md` §9.1 and ADR 0025 for persistent records (`execution_binding`, `release_scope`, `requirement`, etc.), and `impact`/`coverage`'s CLI output already follows that convention; see ADR 0032.
+`record_kind`/`schema_version` is not a newly invented envelope shape. `impact` (`ChangeImpact` in `src/impact.rs`) and `coverage` (`ReleaseCoverage` in `src/coverage.rs`) already emit it as-is, never going through `CommandOutcome`/`Presenter` (`src/presentation.rs`) at all — `cli.rs` serializes each struct directly via `serde_json`, producing `{"schema_version": 1, "record_kind": "<tag>", ...fields}`. `record_kind` reuses the name already established by `markharness-v2-design.md` §9.1 and ADR 0025 for persistent records (`execution_binding`, `release_scope`, etc.), and `impact`/`coverage`'s CLI output already follows that convention; see ADR 0032.
 
 This document only adds `traceability`, following that same existing pattern. `canonical_imported`/`generated`/`changes_computed` (`markharness changes compute`) use a different, unrelated output shape from the `CommandOutcome`/`Presenter` path (the `outcome` field) — unrelated write commands, out of scope for this document's read models.
 
@@ -86,6 +86,8 @@ traceability
 change_impact
 release_coverage
 ```
+
+`impact --worktree` emits `change_impact_worktree`. Its fields are identical to `change_impact`; `head_commit` is the fixed string `"worktree"` and `rejected_trailers` is always empty (ADR 0046).
 
 ### 4.2 `schema_version`
 
@@ -534,7 +536,7 @@ markharness impact --base main --head HEAD
 markharness coverage --requirements all --at HEAD
 ```
 
-Each prints a single JSON read model to stdout. view never reads Knowledge or `.markharness/` directly; it takes these outputs as input. `traceability` differs from `impact`/`coverage` in that it can reflect what the user just edited, before it's committed (ADR 0033).
+Each prints a single JSON read model to stdout. view never reads Knowledge or `.markharness/` directly; it takes these outputs as input. `traceability` differs from `impact`/`coverage` in that it can reflect what the user just edited, before it's committed (ADR 0033). `impact` can also read uncommitted changes as a provisional result with `--worktree` (ADR 0046).
 
 The GUI ([ADR 0038](../decisions/0038-gui-as-independent-project.md)) additionally uses `markharness binding list --json` to read verification means. The output of `binding list` is not one of the three initial read models of §3.3; it has `outcome` and `schema_version` at the top level and a `record_kind` in each element. That the GUI reads it is therefore decided within 0038, and whether to add it to the read models is decided separately.
 

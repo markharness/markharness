@@ -657,11 +657,14 @@ reference: tests/login.spec.ts
 
 ```text
 markharness impact --base <git-ref> --head <git-ref> [--fail-on-findings] [-d, --dir <path>]
+markharness impact --worktree [-d, --dir <path>]
 ```
 
 **用途**: `base..head` の区間でRequirement自体が変更された、またはそのRequirementに紐づくFeatureが変更されたRequirementごとに、関連するFeature・TestCaseと、両者の対応が人によって確認されたかを出力する。Requirement側が変更されたかは `spec_changed` で区別し、Featureの変更のみから到達したRequirementでは `false` になる。Featureの変更は、Featureディレクトリ全体のtree SHAのbase/head差分で判定する。headに存在するFeatureだけが対象で、削除されたFeatureや紐づけを外した元のRequirementは出力しない。
 
 **`--base` は必須**。ローカルのbranch配置からbaseを推測すると、同じ区間でも実行環境によって結果が変わり、算出の再現性(設計原則P3、AC37)が壊れるため。CIでは `origin/main` などを明示的に渡す。
+
+**`--worktree`: コミット前の変更を確かめる(ADR 0046)**: HEADを基準に、HEADから作業ツリーまでの未コミット変更で影響を分析する。ステージ済みと未ステージの変更の両方を含み、追跡中のファイルの現在の内容を対象にする。**未追跡のファイルは対象外**で、`git add`すると結果に現れる。`--base`・`--head`・`--fail-on-findings`とは併用できない。結果は暫定で、`record_kind`は`change_impact_worktree`、`head_commit`は固定文字列`"worktree"`、`rejected_trailers`は常に空になる。範囲内にコミットが無いので`Spec-Reviewed`は数えられず、`status`は`followed_up`と`unconfirmed`だけになる。履歴を辿らないため浅いクローンでも動く。HEADが無い(最初のコミット前の)リポジトリではエラーになる。実行のたびに、編集中のファイルのblobがGitのオブジェクトDBに数十KB〜数百KB増えることがある(`git gc`で回収される)。
 
 **対応確認の記録: `Spec-Reviewed` commit trailer**
 

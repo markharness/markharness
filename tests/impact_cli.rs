@@ -523,3 +523,155 @@ fn an_unwalkable_range_fails_with_a_diagnostic() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no-such-branch"), "{stderr}");
 }
+
+fn worktree_impact(root: &Path, extra: &[&str]) -> Output {
+    let mut args = vec!["impact", "--worktree", "--dir", root.to_str().unwrap()];
+    args.extend_from_slice(extra);
+    run(&args)
+}
+
+fn worktree_impact_json(root: &Path) -> serde_json::Value {
+    let output = worktree_impact(root, &[]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("impact must emit JSON")
+}
+
+/// An unstaged edit is analysed against HEAD, and the output says it is a
+/// provisional worktree result rather than a commit-to-commit one.
+#[test]
+fn worktree_reports_an_unstaged_edit_as_a_provisional_result() {
+    let dir = project();
+    write_requirement_native(dir.path(), "controls", "controls v2");
+
+    let value = worktree_impact_json(dir.path());
+    let head = String::from_utf8(git(dir.path(), &["rev-parse", "HEAD"]).stdout).unwrap();
+    assert_eq!(value["record_kind"], "change_impact_worktree");
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["base_commit"], head.trim());
+    assert_eq!(value["head_commit"], "worktree");
+    assert_eq!(value["rejected_trailers"], serde_json::json!([]));
+    assert_eq!(value["requirements"][0]["requirement_id"], "controls");
+    assert_eq!(value["requirements"][0]["spec_changed"], true);
+    assert_eq!(statuses(&value), vec!["unconfirmed"]);
+}
+
+#[test]
+fn worktree_reports_a_staged_edit_and_leaves_the_real_index_alone() {
+    let dir = project();
+    write_requirement_native(dir.path(), "controls", "controls v2");
+    assert!(git(dir.path(), &["add", "-A"]).status.success());
+    let staged_before = git(dir.path(), &["diff", "--cached", "--name-only"]).stdout;
+
+    let value = worktree_impact_json(dir.path());
+    assert_eq!(value["requirements"][0]["requirement_id"], "controls");
+
+    assert_eq!(
+        git(dir.path(), &["diff", "--cached", "--name-only"]).stdout,
+        staged_before
+    );
+}
+
+#[test]
+fn worktree_reports_a_staged_edit_with_a_further_unstaged_edit_at_its_current_content() {
+    let dir = project();
+    write_scenario(dir.path(), "Presses jump twice.", "Rises higher.");
+    assert!(git(dir.path(), &["add", "-A"]).status.success());
+    write_requirement_native(dir.path(), "controls", "controls v2");
+
+    let value = worktree_impact_json(dir.path());
+    assert_eq!(value["requirements"][0]["spec_changed"], true);
+    assert_eq!(statuses(&value), vec!["followed_up"]);
+}
+
+/// Untracked files are out of scope until `git add` makes them tracked.
+#[test]
+fn worktree_ignores_untracked_files_until_they_are_added() {
+    let dir = project();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/features/other/feature.yml"),
+        &format!(
+            "id: other\nrequirement_uids: [{REQUIREMENT_UID}]\nlabel: other\naxis: [gameplay]\n"
+        ),
+    );
+
+    let value = worktree_impact_json(dir.path());
+    assert_eq!(value["requirements"], serde_json::json!([]));
+
+    assert!(git(dir.path(), &["add", "-A"]).status.success());
+    let value = worktree_impact_json(dir.path());
+    assert_eq!(value["requirements"][0]["feature_ids"][1], "player-jump");
+    assert_eq!(value["requirements"][0]["feature_ids"][0], "other");
+}
+
+#[test]
+fn worktree_with_no_changes_reports_nothing() {
+    let dir = project();
+    let value = worktree_impact_json(dir.path());
+    assert_eq!(value["requirements"], serde_json::json!([]));
+}
+
+#[test]
+fn worktree_cannot_be_combined_with_base_head_or_fail_on_findings() {
+    let dir = project();
+    for extra in [
+        &["--base", "HEAD~1"][..],
+        &["--head", "HEAD"][..],
+        &["--fail-on-findings"][..],
+    ] {
+        let output = worktree_impact(dir.path(), extra);
+        assert!(!output.status.success(), "{extra:?} must be rejected");
+    }
+}
+
+#[test]
+fn without_worktree_base_and_head_are_still_required() {
+    let dir = project();
+    let output = run(&["impact", "--dir", dir.path().to_str().unwrap()]);
+    assert!(!output.status.success());
+}
+
+/// The worktree comparison walks no history, so a shallow clone is fine.
+#[test]
+fn worktree_works_in_a_shallow_clone() {
+    let origin = project();
+    let clone_dir = tempfile::tempdir().unwrap();
+    let clone = clone_dir.path().join("clone");
+    let origin_path = origin
+        .path()
+        .to_str()
+        .unwrap()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let url = format!(
+        "file://{}{origin_path}",
+        if origin_path.starts_with('/') {
+            ""
+        } else {
+            "/"
+        }
+    );
+    let output = Command::new("git")
+        .args(["clone", "-q", "--depth", "1", &url])
+        .arg(&clone)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    write_requirement_native(&clone, "controls", "controls v2");
+
+    let value = worktree_impact_json(&clone);
+    assert_eq!(value["requirements"][0]["requirement_id"], "controls");
+}
+
+#[test]
+fn worktree_without_a_head_commit_fails_with_a_diagnostic() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(git(dir.path(), &["init", "-q"]).status.success());
+    let output = worktree_impact(dir.path(), &[]);
+    assert!(!output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+}

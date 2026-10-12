@@ -309,6 +309,42 @@ pub fn write_tree_prefix(root: &Path, path_in_repo: &str) -> io::Result<String> 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// The git tree SHA the whole repository would have if every *tracked* file's
+/// current working-tree content were committed right now: staged and unstaged
+/// edits and deletions alike, but never untracked files. Built in a disposable
+/// copy of the real index (`git add -u`, then `git write-tree`), so the real
+/// staging area and `HEAD` are never touched. A file staged with `git add`
+/// but not yet committed counts as tracked. `write-tree` may write ordinary
+/// content-addressed loose objects, the same ones a commit would create.
+pub fn write_tree_of_tracked_worktree(root: &Path) -> io::Result<String> {
+    let real_index = run_git(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    )?;
+    let temp_dir = tempfile::tempdir()?;
+    let index_path = temp_dir.path().join("index");
+    std::fs::copy(real_index.trim(), &index_path)?;
+    for args in [&["add", "-u"][..], &["write-tree"][..]] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .env("GIT_INDEX_FILE", &index_path)
+            .args(args)
+            .output()?;
+        if !output.status.success() {
+            return Err(io::Error::other(format!(
+                "git {} failed while building a temporary index: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        if args[0] == "write-tree" {
+            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        }
+    }
+    unreachable!("the loop returns on write-tree")
+}
+
 /// The parent commit SHAs of `commit`, in order (empty for a root commit,
 /// one for a normal commit, two for a merge commit), via `git log --format=%P`.
 /// Used by the §3.2 merge-base lineage audit to find a merge commit's P1/P2.

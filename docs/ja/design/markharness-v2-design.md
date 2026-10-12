@@ -275,7 +275,7 @@ V2と将来モデルの関係を次のように固定する。
 | `Spec-Reviewed` trailer | commit時点で対象の対応確認を記録した | `ImpactDecision`、`HumanAttestation` | 欠落しているLink・policy digestや承認を補完する |
 | Git上の削除・再登場 | その時点でファイルが無い、または再び存在する | `retire`、`restore` event | 削除意図や同一Identityとしての復元を推測する |
 
-永続レコードには`schema_version`を持たせる。複数種類のレコードを同じ保存領域または出力に載せる場合は`record_kind`等で種類を明示する。ただし`schema_version`は**全種別で`1`に固定し、今後も上げない**。これは過去のレコードを読むための互換機構ではなく、将来別種のレコードを追加したときに種類を取り違えないための前方向の契約だからである。旧版を読む必要が生じた場合も版で分岐せず、新しい型として追加する(§9.1の既存データ方針)。`record_kind`の値は`execution_binding`・`release_scope`・`requirement`・`change_impact`・`release_coverage`とする。将来の型に必要そうなフィールドをすべてoptionalとしてV2へ足さない。完全モデルは別の型・保存契約として追加し、V2に存在しない情報は`unknown`または`legacy`とする。
+永続レコードには`schema_version`を持たせる。複数種類のレコードを同じ保存領域または出力に載せる場合は`record_kind`等で種類を明示する。ただし`schema_version`は**全種別で`1`に固定し、今後も上げない**。これは過去のレコードを読むための互換機構ではなく、将来別種のレコードを追加したときに種類を取り違えないための前方向の契約だからである。旧版を読む必要が生じた場合も版で分岐せず、新しい型として追加する(§9.1の既存データ方針)。`record_kind`の値は`execution_binding`・`release_scope`・`change_impact`・`change_impact_worktree`・`release_coverage`・`traceability`・`traceability_detail`とする。`change_impact_worktree`は`impact --worktree`の暫定結果で、フィールド構成は`change_impact`と同一である(ADR 0046)。将来の型に必要そうなフィールドをすべてoptionalとしてV2へ足さない。完全モデルは別の型・保存契約として追加し、V2に存在しない情報は`unknown`または`legacy`とする。
 
 #### 9.2.3 Adapterと読み取りの発展方法
 
