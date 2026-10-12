@@ -309,14 +309,15 @@ pub fn write_tree_prefix(root: &Path, path_in_repo: &str) -> io::Result<String> 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// The git tree SHA the whole repository would have if every *tracked* file's
-/// current working-tree content were committed right now: staged and unstaged
-/// edits and deletions alike, but never untracked files. Built in a disposable
-/// copy of the real index (`git add -u`, then `git write-tree`), so the real
-/// staging area and `HEAD` are never touched. A file staged with `git add`
-/// but not yet committed counts as tracked. `write-tree` may write ordinary
+/// The git tree SHA the whole repository would have if the working tree were
+/// committed right now after `git add -A`: staged, unstaged and untracked
+/// files alike, deletions included, with `.gitignore`d files left out. Built
+/// in a disposable copy of the real index (`git add -A`, then
+/// `git write-tree`), so the real staging area and `HEAD` are never touched;
+/// starting from the copy keeps a tracked file that matches `.gitignore` in
+/// the tree, as a real commit would. `write-tree` may write ordinary
 /// content-addressed loose objects, the same ones a commit would create.
-pub fn write_tree_of_tracked_worktree(root: &Path) -> io::Result<String> {
+pub fn write_tree_of_worktree(root: &Path) -> io::Result<String> {
     let real_index = run_git(
         root,
         &["rev-parse", "--path-format=absolute", "--git-path", "index"],
@@ -324,7 +325,7 @@ pub fn write_tree_of_tracked_worktree(root: &Path) -> io::Result<String> {
     let temp_dir = tempfile::tempdir()?;
     let index_path = temp_dir.path().join("index");
     std::fs::copy(real_index.trim(), &index_path)?;
-    for args in [&["add", "-u"][..], &["write-tree"][..]] {
+    for args in [&["add", "-A"][..], &["write-tree"][..]] {
         let output = Command::new("git")
             .arg("-C")
             .arg(root)

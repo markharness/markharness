@@ -664,7 +664,7 @@ markharness impact --worktree [-d, --dir <path>]
 
 **`--base` は必須**。ローカルのbranch配置からbaseを推測すると、同じ区間でも実行環境によって結果が変わり、算出の再現性(設計原則P3、AC37)が壊れるため。CIでは `origin/main` などを明示的に渡す。
 
-**`--worktree`: コミット前の変更を確かめる(ADR 0046)**: HEADを基準に、HEADから作業ツリーまでの未コミット変更で影響を分析する。ステージ済みと未ステージの変更の両方を含み、追跡中のファイルの現在の内容を対象にする。**未追跡のファイルは対象外**で、`git add`すると結果に現れる。`--base`・`--head`・`--fail-on-findings`とは併用できない。結果は暫定で、`record_kind`は`change_impact_worktree`、`head_commit`は固定文字列`"worktree"`、`rejected_trailers`は常に空になる。範囲内にコミットが無いので`Spec-Reviewed`は数えられず、`status`は`followed_up`と`unconfirmed`だけになる。履歴を辿らないため浅いクローンでも動く。HEADが無い(最初のコミット前の)リポジトリではエラーになる。実行のたびに、編集中のファイルのblobがGitのオブジェクトDBに数十KB〜数百KB増えることがある(`git gc`で回収される)。
+**`--worktree`: コミット前の変更を確かめる(ADR 0046・0047)**: HEADを基準に、HEADから作業ツリーまでの未コミット変更で影響を分析する。`git add -A`してコミットした場合と同じツリーを対象にする。ステージ済み・未ステージ・未追跡のファイルを区別せず、現在の内容を読む。`.gitignore`で無視されるファイルは結果に影響しないので、無視したいファイルは`.gitignore`に書く。`--base`・`--head`・`--fail-on-findings`とは併用できない。結果は暫定で、`record_kind`は`change_impact_worktree`、`head_commit`は固定文字列`"worktree"`、`rejected_trailers`は常に空になる。範囲内にコミットが無いので`Spec-Reviewed`は数えられず、`status`は`followed_up`と`unconfirmed`だけになる。履歴を辿らないため浅いクローンでも動く。HEADが無い(最初のコミット前の)リポジトリではエラーになる。実行のたびに、編集中のファイルと未追跡のファイルのblobがGitのオブジェクトDBに書き込まれる。通常は数十KB〜数百KBだが、`.gitignore`に入れていない大きなファイルがあると、その分のハッシュ計算と書き込みが毎回発生する(参照されないblobは`git gc`で回収される)。
 
 **対応確認の記録: `Spec-Reviewed` commit trailer**
 

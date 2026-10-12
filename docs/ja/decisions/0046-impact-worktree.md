@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted(2026-10-12決定)。[0033](0033-traceability-defaults-to-working-tree.md)の決定4のうち、`impact`を作業ツリー対応の対象外とする部分を置き換える(`coverage`は対象外のまま)。
+Accepted(2026-10-12決定)。[0033](0033-traceability-defaults-to-working-tree.md)の決定4のうち、`impact`を作業ツリー対応の対象外とする部分を置き換える(`coverage`は対象外のまま)。決定2(未追跡のファイルを対象外とする)と決定3の`git add -u`は、[0047](0047-impact-worktree-includes-untracked.md)が置き換える。
 
 ## 背景
 

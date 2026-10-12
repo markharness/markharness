@@ -136,11 +136,12 @@ pub enum Command {
             conflicts_with = "worktree"
         )]
         head: Option<String>,
-        /// Compare HEAD with the uncommitted state of the tracked files in the
-        /// working tree (staged and unstaged changes alike). Untracked files
-        /// are ignored until `git add` tracks them. The result is provisional
-        /// (`record_kind` is `change_impact_worktree`): no Spec-Reviewed
-        /// trailer can be counted, so a pair is never `confirmed`.
+        /// Compare HEAD with the uncommitted state of the working tree, as if
+        /// `git add -A` were run and committed: staged, unstaged and untracked
+        /// files alike. Files matching .gitignore are left out. The result is
+        /// provisional (`record_kind` is `change_impact_worktree`): no
+        /// Spec-Reviewed trailer can be counted, so a pair is never
+        /// `confirmed`.
         #[arg(long)]
         worktree: bool,
         /// Exit with code 2 when anything needs attention (an unconfirmed or

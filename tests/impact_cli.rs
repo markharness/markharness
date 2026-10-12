@@ -588,25 +588,122 @@ fn worktree_reports_a_staged_edit_with_a_further_unstaged_edit_at_its_current_co
     assert_eq!(statuses(&value), vec!["followed_up"]);
 }
 
-/// Untracked files are out of scope until `git add` makes them tracked.
+fn write_untracked_feature(root: &Path, id: &str) {
+    write(
+        &root
+            .join(".markharness/knowledge/features")
+            .join(id)
+            .join("feature.yml"),
+        &format!(
+            "id: {id}
+requirement_uids: [{REQUIREMENT_UID}]
+label: {id}
+axis: [gameplay]
+"
+        ),
+    );
+}
+
+/// An untracked Feature shows up without `git add`, as it would after
+/// `git add -A && git commit`, and the real index stays untouched.
 #[test]
-fn worktree_ignores_untracked_files_until_they_are_added() {
+fn worktree_includes_untracked_files_without_touching_the_real_index() {
+    let dir = project();
+    write_untracked_feature(dir.path(), "other");
+    let status_before = git(dir.path(), &["status", "--porcelain"]).stdout;
+
+    let value = worktree_impact_json(dir.path());
+    assert_eq!(value["requirements"][0]["feature_ids"][0], "other");
+    assert_eq!(value["requirements"][0]["feature_ids"][1], "player-jump");
+
+    assert_eq!(
+        git(dir.path(), &["status", "--porcelain"]).stdout,
+        status_before
+    );
+}
+
+/// An untracked new Requirement is reported as a spec change.
+#[test]
+fn worktree_reports_an_untracked_new_requirement() {
     let dir = project();
     write(
         &dir.path()
-            .join(".markharness/knowledge/features/other/feature.yml"),
+            .join(".markharness/knowledge/requirements/extra/requirement.yml"),
+        "id: extra
+source: native
+label: extra
+axis: [gameplay]
+uid: 01ARZ3NDEKTSV4RRFFQ69G5FC2
+",
+    );
+
+    let value = worktree_impact_json(dir.path());
+    let ids: Vec<&str> = value["requirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|requirement| requirement["requirement_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["extra"], "{value}");
+}
+
+/// Files matching `.gitignore` do not affect the result, even under
+/// `knowledge/`.
+#[test]
+fn worktree_ignores_files_matching_gitignore() {
+    let dir = project();
+    let gitignore = dir.path().join(".gitignore");
+    let mut content = std::fs::read_to_string(&gitignore).unwrap();
+    content.push_str(
+        ".markharness/knowledge/features/ignored/
+",
+    );
+    std::fs::write(&gitignore, content).unwrap();
+    commit(dir.path(), "chore: ignore a feature directory");
+    write_untracked_feature(dir.path(), "ignored");
+
+    let value = worktree_impact_json(dir.path());
+    assert_eq!(value["requirements"], serde_json::json!([]));
+}
+
+/// An untracked file outside `knowledge/` counts too: a new external
+/// Requirement and the untracked `.sdoc` it points at are both seen, so its
+/// pin matches the `.sdoc` and is not reported as stale.
+#[test]
+fn worktree_includes_untracked_files_outside_knowledge() {
+    let dir = project();
+    let sdoc = dir.path().join("docs/requirements.sdoc");
+    write(
+        &sdoc,
+        "[REQUIREMENT]
+TITLE: Extra
+",
+    );
+    let blob =
+        String::from_utf8(git(dir.path(), &["hash-object", "--", "docs/requirements.sdoc"]).stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+    write(
+        &dir.path()
+            .join(".markharness/knowledge/requirements/extra/requirement.yml"),
         &format!(
-            "id: other\nrequirement_uids: [{REQUIREMENT_UID}]\nlabel: other\naxis: [gameplay]\n"
+            "id: extra
+source: external
+source_locator: docs/requirements.sdoc
+source_revision: {blob}
+axis: [gameplay]
+uid: 01ARZ3NDEKTSV4RRFFQ69G5FC2
+"
         ),
     );
 
     let value = worktree_impact_json(dir.path());
-    assert_eq!(value["requirements"], serde_json::json!([]));
-
-    assert!(git(dir.path(), &["add", "-A"]).status.success());
-    let value = worktree_impact_json(dir.path());
-    assert_eq!(value["requirements"][0]["feature_ids"][1], "player-jump");
-    assert_eq!(value["requirements"][0]["feature_ids"][0], "other");
+    assert_eq!(
+        value["requirements"][0]["requirement_id"], "extra",
+        "{value}"
+    );
+    assert_eq!(value["stale_pins"], serde_json::json!([]), "{value}");
 }
 
 #[test]
