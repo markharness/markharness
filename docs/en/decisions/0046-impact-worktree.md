@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (decided 2026-10-12). Replaces the part of decision 4 in [0033](0033-traceability-defaults-to-working-tree.md) that excludes `impact` from working-tree support (`coverage` stays excluded).
+Accepted (decided 2026-10-12). Replaces the part of decision 4 in [0033](0033-traceability-defaults-to-working-tree.md) that excludes `impact` from working-tree support (`coverage` stays excluded). Decision 2 (untracked files are out of scope) and the `git add -u` in decision 3 are replaced by [0047](0047-impact-worktree-includes-untracked.md).
 
 ## Background
 
