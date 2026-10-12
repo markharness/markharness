@@ -417,14 +417,14 @@ pub fn compute(root: &Path, base: &str, head: &str) -> Result<ChangeImpact, Impa
     )
 }
 
-/// Computes Change Impact from `HEAD` to the uncommitted state of the tracked
-/// files in the working tree. No commits lie in that range, so no
+/// Computes Change Impact from `HEAD` to the uncommitted state of the working
+/// tree, untracked files included but `.gitignore`d ones left out. No commits lie in that range, so no
 /// `Spec-Reviewed` trailer is counted: a pair is `followed_up` or
 /// `unconfirmed`, never `confirmed`. The result is provisional — the working
 /// tree keeps changing — hence its own `record_kind`.
 pub fn compute_worktree(root: &Path) -> Result<ChangeImpact, ImpactError> {
     let base_commit = git::resolve_commit_oid(root, "HEAD")?;
-    let tree = git::write_tree_of_tracked_worktree(root)?;
+    let tree = git::write_tree_of_worktree(root)?;
     analyze(
         root,
         Analysis {
